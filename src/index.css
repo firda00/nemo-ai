@@ -1,0 +1,179 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+    margin: 0;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Headings: Inter, bold, tight tracking (spec §3 — never a system serif) */
+  h1, h2, h3, h4 {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: #eaecf6;
+    letter-spacing: -0.02em;
+    font-weight: 800;
+  }
+  h1 {
+    font-weight: 900;
+    letter-spacing: -0.035em;
+  }
+  h3, h4 {
+    font-weight: 700;
+    letter-spacing: -0.012em;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: rgba(139, 124, 248, 0.3);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.24);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-container px-5 sm:px-8;
+  }
+
+  /* Buttons: radius 12 (spec §3). Primary = brand gradient (set in Button.tsx). */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* Glass card on dark (spec --card / --border) — subtle hover lift */
+  .card {
+    @apply rounded-2xl border border-white/[0.09] bg-white/[0.045] shadow-card transition-colors duration-200;
+  }
+  .card:hover {
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  /* input / control surface — violet focus ring applied per-field */
+  .glass {
+    @apply rounded-xl border border-white/10 bg-white/[0.03];
+  }
+  .wire {
+    @apply rounded-2xl border border-white/10 bg-white/[0.03];
+  }
+
+  /* uppercase tracked caption label (spec §3 caption) */
+  .mono-label {
+    @apply font-sans text-[12px] font-semibold uppercase tracking-[0.12em] text-muted;
+  }
+
+  /* brand fills */
+  .text-brand {
+    color: #8b7cf8;
+  }
+  .bg-brand {
+    background-image: linear-gradient(135deg, #8b7cf8 0%, #5b7cf6 45%, #22d3ee 100%);
+  }
+
+  /* subtle light dot field on dark */
+  .dot-field {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px);
+    background-size: 28px 28px;
+  }
+
+  /* dark skeleton shimmer */
+  .skeleton {
+    @apply relative overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.03];
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 animate-shimmer;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+    transform: translateX(-100%);
+  }
+
+  /* brand gradient text helper */
+  .text-gradient {
+    @apply bg-brand bg-clip-text text-transparent;
+  }
+
+  /* premium animated aurora backdrop (decorative; place inside a relative parent) */
+  .aurora {
+    position: absolute;
+    inset: -25% -10% auto -10%;
+    height: 780px;
+    pointer-events: none;
+    filter: blur(64px);
+    opacity: 0.6;
+    background:
+      radial-gradient(38% 48% at 18% 28%, rgba(139, 124, 248, 0.5), transparent 70%),
+      radial-gradient(36% 46% at 82% 18%, rgba(34, 211, 238, 0.32), transparent 70%),
+      radial-gradient(48% 58% at 56% 62%, rgba(91, 124, 246, 0.4), transparent 72%);
+    animation: auroraShift 18s ease-in-out infinite alternate;
+  }
+
+  /* faint grid that fades toward the edges */
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(72% 60% at 50% 0%, #000 0%, transparent 78%);
+    -webkit-mask-image: radial-gradient(72% 60% at 50% 0%, #000 0%, transparent 78%);
+  }
+
+  /* animated gradient border (for hero/feature accents) */
+  .gradient-ring {
+    position: relative;
+  }
+  .gradient-ring::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(139, 124, 248, 0.6), rgba(34, 211, 238, 0.35), transparent 60%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+@keyframes auroraShift {
+  0% {
+    transform: translate3d(-2%, -1%, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+  }
+}

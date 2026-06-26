@@ -1,0 +1,74 @@
+# Nemo AI — Supabase config (NEMO_AI_SPEC §7–8).
+# If the CLI complains about this file, run `supabase init` to regenerate it,
+# then re-add the two [functions.*] blocks below.
+project_id = "nemo-ai"
+
+# Telegram webhook must be PUBLIC — Telegram cannot send a Supabase JWT.
+# Authenticity is enforced via Telegram's secret-token header instead.
+[functions.telegram-webhook]
+verify_jwt = false
+
+# Setup helper is gated by the SETUP_SECRET header, so it is also public.
+[functions.setup-telegram]
+verify_jwt = false
+
+# Authenticated (called from the panel with the user's session JWT).
+[functions.connect-telegram]
+verify_jwt = true
+
+[functions.operator-send]
+verify_jwt = true
+
+[functions.crm-push]
+verify_jwt = true
+
+# AI agent builder — called from the panel with the user's session JWT.
+[functions.compose-agent]
+verify_jwt = true
+
+# Test sandbox — runs an agent config through the LLM (no persistence).
+[functions.test-agent]
+verify_jwt = true
+
+# Connect WhatsApp/Instagram/widget to a specific agent (panel, authenticated).
+[functions.connect-channel]
+verify_jwt = true
+
+# Ingest a public URL's text into the knowledge base (panel, authenticated).
+[functions.fetch-url]
+verify_jwt = true
+
+# Autonomous research agent — plans, web-searches (Sonar), synthesizes a report.
+[functions.research-agent]
+verify_jwt = true
+
+# Multi-agent orchestrator (manager) — plans + delegates to sub-agents.
+[functions.orchestrate]
+verify_jwt = true
+
+# Platform admin API — token grants, gift codes (caller must be is_admin).
+[functions.admin-api]
+verify_jwt = true
+
+# Redeem a gift code (any authenticated user).
+[functions.redeem-gift]
+verify_jwt = true
+
+# Stripe: create a Checkout Session (authenticated panel).
+[functions.create-checkout]
+verify_jwt = true
+
+# Stripe webhook must be PUBLIC — Stripe can't send a Supabase JWT.
+# Authenticity is enforced via the Stripe-Signature header.
+[functions.stripe-webhook]
+verify_jwt = false
+
+# Meta channel webhooks must be PUBLIC (Meta verification + inbound).
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+[functions.setup-meta]
+verify_jwt = false

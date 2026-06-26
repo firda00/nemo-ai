@@ -1,0 +1,115 @@
+import type { AgentColor, Lang } from './index'
+
+// ---- Agent platform (mooonai-style) domain types ----
+
+export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget'
+// Agent kind — what the agent DOES. 'chat' answers customers on channels;
+// 'qualifier' chats to qualify/score leads and route hot ones to an operator;
+// 'research' autonomously searches the web and writes reports; 'workflow' runs
+// multi-step tool tasks (orchestration phase).
+export type AgentKind = 'chat' | 'qualifier' | 'research' | 'workflow'
+export type AgentStatus = 'active' | 'paused' | 'draft'
+export type AgentSchedule = '24/7' | 'work-hours'
+// 'auto' replies in the customer's language; otherwise force a base language.
+export type AgentLang = 'auto' | Lang | 'en'
+
+export interface AgentPrompt {
+  role: string
+  tasks: string
+  tone: string
+  rules: string
+}
+
+export interface LeadFormField {
+  id: string
+  label: string
+  type: 'text' | 'phone' | 'select'
+  required: boolean
+}
+
+export interface LeadFormConfig {
+  enabled: boolean
+  fields: LeadFormField[]
+  trigger: string
+  destination: 'crm' | 'table'
+}
+
+export interface KnowledgeDoc {
+  id: string
+  name: string
+  source: 'file' | 'faq' | 'link'
+  status: 'indexed' | 'indexing' | 'error'
+  size: string
+}
+
+export interface PlatformAgent {
+  id: string
+  name: string
+  type: AgentKind
+  avatarColor: AgentColor
+  role: string
+  prompt: AgentPrompt
+  model: string
+  temperature: number
+  timezone: string
+  schedule: AgentSchedule
+  language: AgentLang
+  status: AgentStatus
+  channels: ChannelType[]
+  knowledge: KnowledgeDoc[]
+  leadForm: LeadFormConfig
+  lastActivity: string
+  dialoguesToday: number
+}
+
+export type DialogueStatus = 'open' | 'resolved' | 'needs_operator' | 'error'
+export type DialogueAuthor = 'customer' | 'agent' | 'operator'
+
+export interface DialogueMessage {
+  id: string
+  author: DialogueAuthor
+  content: string
+  time: string
+}
+
+export interface Dialogue {
+  id: string
+  agentId: string
+  channel: ChannelType
+  customerName: string
+  customerContact: string
+  status: DialogueStatus
+  tags: string[]
+  operatorTakeover: boolean
+  unread: number
+  updatedAt: string
+  messages: DialogueMessage[]
+}
+
+export interface Template {
+  id: string
+  industry: string
+  name: { uz: string; ru: string; en: string }
+  description: { uz: string; ru: string; en: string }
+  color: AgentColor
+  preset: AgentPrompt
+}
+
+export interface LLMModelOption {
+  id: string
+  label: string
+  vendor: string
+  tokenRate: number // tokens per dialogue (for the calculator)
+}
+
+export interface ModelDef {
+  id: string // OpenRouter model id, e.g. openai/gpt-4o-mini
+  label: string
+  tokenRate: number
+}
+
+export interface ModelProvider {
+  id: string // OpenRouter vendor prefix, e.g. openai | anthropic | google
+  name: string
+  models: ModelDef[]
+}
