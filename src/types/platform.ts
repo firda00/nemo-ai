@@ -3,11 +3,15 @@ import type { AgentColor, Lang } from './index'
 // ---- Agent platform (mooonai-style) domain types ----
 
 export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget'
-// Agent kind — what the agent DOES. 'chat' answers customers on channels;
-// 'qualifier' chats to qualify/score leads and route hot ones to an operator;
-// 'research' autonomously searches the web and writes reports; 'workflow' runs
-// multi-step tool tasks (orchestration phase).
-export type AgentKind = 'chat' | 'qualifier' | 'research' | 'workflow'
+// Agent kind — what the agent DOES.
+//  chat      — answers customers on channels
+//  qualifier — chats to qualify/score leads and route hot ones to an operator
+//  coder     — writes/fixes code and works with files
+//  content   — generates texts, posts, descriptions, creatives
+//  learning  — chat that remembers past dialogues and improves over time
+//  research  — autonomously searches and writes a sourced report
+//  workflow  — "department / manager": assembles a team of sub-agents for a task
+export type AgentKind = 'chat' | 'qualifier' | 'coder' | 'content' | 'learning' | 'research' | 'workflow'
 export type AgentStatus = 'active' | 'paused' | 'draft'
 export type AgentSchedule = '24/7' | 'work-hours'
 // 'auto' replies in the customer's language; otherwise force a base language.
@@ -54,6 +58,10 @@ export interface PlatformAgent {
   timezone: string
   schedule: AgentSchedule
   language: AgentLang
+  // optional detailed settings — tailor the agent + its team to a market/sphere
+  country?: string
+  purpose?: string
+  niche?: string
   status: AgentStatus
   channels: ChannelType[]
   knowledge: KnowledgeDoc[]

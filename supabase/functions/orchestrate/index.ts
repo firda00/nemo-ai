@@ -25,6 +25,7 @@ const MAX_STEPS = 4
 
 const ROLES = ['researcher', 'analyst', 'writer', 'reviewer'] as const
 type Role = (typeof ROLES)[number]
+const LANG_NAME: Record<string, string> = { uz: 'Uzbek', ru: 'Russian', en: 'English' }
 const roleSystem: Record<Role, string> = {
   researcher: 'You are a research specialist. Use current web sources to gather concrete facts, numbers and dates for the task. Be concise and factual.',
   analyst: 'You are an analyst. Using the provided context, produce structured insights, comparisons and conclusions for the task.',
@@ -73,16 +74,27 @@ Deno.serve(async (req) => {
     if (action === 'plan') {
       const goal = String(body?.goal ?? '').trim()
       if (goal.length < 4) return json({ error: 'goal too short' }, 400)
+      // optional agent context — the manager assembles a team tailored to the sphere
+      const niche = String(body?.niche ?? '').trim()
+      const purpose = String(body?.purpose ?? '').trim()
+      const lang = String(body?.lang ?? '').trim()
+      const ctx = [niche ? `Domain / niche: ${niche}.` : '', purpose ? `Agent purpose: ${purpose}.` : '']
+        .filter(Boolean)
+        .join(' ')
+      const langRule = lang && LANG_NAME[lang]
+        ? `Write the plan and tasks in ${LANG_NAME[lang]}.`
+        : 'Write tasks in the SAME language as the goal.'
       const msgs: ChatMsg[] = [
         {
           role: 'system',
           content:
-            'You are a project manager coordinating AI sub-agents (researcher, analyst, writer, reviewer). ' +
-            'Break the goal into 2-4 sequential steps, each assigned ONE role. Respond ONLY as JSON: ' +
+            'You are a department manager coordinating a team of AI sub-agents. Available roles: researcher, analyst, writer, reviewer. ' +
+            'Assemble the RIGHT team for THIS goal and domain: choose how many steps (2-4) and which roles fit best (you may skip or repeat a role), ' +
+            'and tailor each task specifically to the domain. Respond ONLY as JSON: ' +
             '{"plan": string, "steps": [{"role": "researcher"|"analyst"|"writer"|"reviewer", "task": string}]}. ' +
-            'Use a researcher first if current facts are needed. Write tasks in the SAME language as the goal.',
+            'Use a researcher first if current facts are needed. ' + langRule,
         },
-        { role: 'user', content: goal },
+        { role: 'user', content: ctx ? `${ctx}\n\nGoal: ${goal}` : goal },
       ]
       const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: PLAN_MODEL, messages: msgs, temperature: 0.3 })
       await account(r.tokens)

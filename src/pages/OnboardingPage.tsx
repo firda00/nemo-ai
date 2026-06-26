@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, ArrowLeft, ArrowRight, Check, Rocket, HelpCircle, Plus, FileText, Trash2, Sparkles, Cpu } from 'lucide-react'
+import { X, ArrowLeft, ArrowRight, Check, Rocket, HelpCircle, Plus, FileText, Trash2, Sparkles, Cpu, SlidersHorizontal, ChevronDown } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useAgentStore, blankAgent } from '../store/useAgentStore'
 import { useToast } from '../components/ui/Toast'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
-import { templates, PROVIDERS } from '../data/platform'
+import { templates, PROVIDERS, kindPresets, COUNTRIES, NICHES } from '../data/platform'
 import { channelMeta, channelLabel, agentTypeMeta, AGENT_KINDS } from '../lib/platformMeta'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
@@ -32,6 +32,7 @@ export default function OnboardingPage() {
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
   const [tgToken, setTgToken] = useState('')
+  const [showDetails, setShowDetails] = useState(false)
 
   const set = (patch: Partial<PlatformAgent>) => setDraft((d) => ({ ...d, ...patch }))
   const setPrompt = (patch: Partial<PlatformAgent['prompt']>) => setDraft((d) => ({ ...d, prompt: { ...d.prompt, ...patch } }))
@@ -48,9 +49,21 @@ export default function OnboardingPage() {
     set({ knowledge: [...draft.knowledge, doc] })
   }
 
-  // start the wizard with a chosen kind (qualifier auto-enables the lead form)
+  // start the wizard with a chosen kind. Apply the kind's preset prompt when the
+  // prompt is still empty (so each type acts like a ready preset); qualifier also
+  // auto-enables the lead form.
   const chooseType = (k: AgentKind) => {
-    setDraft((d) => ({ ...d, type: k, leadForm: { ...d.leadForm, enabled: k === 'qualifier' ? true : d.leadForm.enabled } }))
+    setDraft((d) => {
+      const empty = !d.prompt.role && !d.prompt.tasks && !d.prompt.tone && !d.prompt.rules
+      const preset = kindPresets[k]
+      return {
+        ...d,
+        type: k,
+        prompt: empty && preset ? { ...preset } : d.prompt,
+        role: empty && preset ? preset.role : d.role,
+        leadForm: { ...d.leadForm, enabled: k === 'qualifier' ? true : d.leadForm.enabled },
+      }
+    })
     setStep(1)
     setMode('wizard')
   }
@@ -270,6 +283,31 @@ export default function OnboardingPage() {
                     <ModelChips value={draft.model} onChange={(id) => set({ model: id })} />
                     <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted"><Cpu size={13} /> {t('platform.onboarding.modelHint')}</p>
                   </Field>
+
+                  <div className="border-t border-ice/10 pt-4">
+                    <button type="button" onClick={() => setShowDetails((v) => !v)} className="flex w-full items-center justify-between text-xs font-normal text-muted">
+                      <span className="flex items-center gap-1.5"><SlidersHorizontal size={13} /> {t('platform.onboarding.details')} · {t('common.optional')}</span>
+                      <ChevronDown size={15} className={cn('transition-transform', showDetails && 'rotate-180')} />
+                    </button>
+                    {showDetails && (
+                      <div className="mt-3 space-y-4">
+                        <p className="text-[11px] text-muted">{t('platform.onboarding.detailsHint')}</p>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label={t('platform.onboarding.country')}>
+                            <input list="nemo-countries" value={draft.country ?? ''} onChange={(e) => set({ country: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.countryPh')} />
+                          </Field>
+                          <Field label={t('platform.onboarding.niche')}>
+                            <input list="nemo-niches" value={draft.niche ?? ''} onChange={(e) => set({ niche: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.nichePh')} />
+                          </Field>
+                        </div>
+                        <Field label={t('platform.onboarding.purpose')}>
+                          <input value={draft.purpose ?? ''} onChange={(e) => set({ purpose: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.purposePh')} />
+                        </Field>
+                        <datalist id="nemo-countries">{COUNTRIES.map((c) => <option key={c} value={c} />)}</datalist>
+                        <datalist id="nemo-niches">{NICHES.map((c) => <option key={c} value={c} />)}</datalist>
+                      </div>
+                    )}
+                  </div>
                 </Section>
               )}
 

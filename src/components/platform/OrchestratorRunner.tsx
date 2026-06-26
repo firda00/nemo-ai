@@ -35,7 +35,17 @@ const hostOf = (u: string) => {
  * as its OWN short call (action 'step') so nothing times out and the team fills in
  * LIVE, then the manager synthesizes (action 'synth'). Calls `orchestrate`.
  */
-export function OrchestratorRunner({ defaultGoal = '' }: { defaultGoal?: string }) {
+export function OrchestratorRunner({
+  defaultGoal = '',
+  niche,
+  purpose,
+  lang,
+}: {
+  defaultGoal?: string
+  niche?: string
+  purpose?: string
+  lang?: string
+}) {
   const { t } = useI18n()
   const [goal, setGoal] = useState(defaultGoal)
   const [running, setRunning] = useState(false)
@@ -69,9 +79,9 @@ export function OrchestratorRunner({ defaultGoal = '' }: { defaultGoal?: string 
         setResult({ result: `# ${g}\n\n${t('platform.research.demoNote')}`, sources: [] })
         return
       }
-      // 1) manager plans
+      // 1) manager plans (tailored to the agent's niche/purpose/language)
       setPhase('plan')
-      const plan = await call({ action: 'plan', goal: g })
+      const plan = await call({ action: 'plan', goal: g, niche, purpose, lang })
       if (!plan) {
         setError(t('platform.research.error'))
         return

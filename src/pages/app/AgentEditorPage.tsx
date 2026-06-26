@@ -14,11 +14,13 @@ import {
   Plus,
   Trash2,
   HelpCircle,
+  SlidersHorizontal,
+  ChevronDown,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
-import { MODELS } from '../../data/platform'
+import { MODELS, COUNTRIES, NICHES } from '../../data/platform'
 import { Tabs, type TabDef } from '../../components/ui/Tabs'
 import { Button } from '../../components/ui/Button'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -45,6 +47,7 @@ export default function AgentEditorPage() {
   const [draft, setDraft] = useState<PlatformAgent | undefined>(agent)
   const [tab, setTab] = useState('general')
   const [leaveTo, setLeaveTo] = useState<string | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
 
   // The agent may arrive after an async hydrate (e.g. on a hard reload straight
   // to this URL) — seed the draft once it's available instead of redirecting.
@@ -63,6 +66,9 @@ export default function AgentEditorPage() {
       timezone: a.timezone,
       schedule: a.schedule,
       language: a.language,
+      country: a.country ?? '',
+      purpose: a.purpose ?? '',
+      niche: a.niche ?? '',
       leadForm: a.leadForm,
       avatarColor: a.avatarColor,
     })
@@ -163,6 +169,31 @@ export default function AgentEditorPage() {
                   ))}
                 </div>
               </Field>
+
+              <div className="border-t border-ice/10 pt-4">
+                <button type="button" onClick={() => setShowDetails((v) => !v)} className="flex w-full items-center justify-between text-xs font-normal text-muted">
+                  <span className="flex items-center gap-1.5"><SlidersHorizontal size={13} /> {t('platform.onboarding.details')} · {t('common.optional')}</span>
+                  <ChevronDown size={15} className={cn('transition-transform', showDetails && 'rotate-180')} />
+                </button>
+                {showDetails && (
+                  <div className="mt-3 space-y-4">
+                    <p className="text-[11px] text-muted">{t('platform.onboarding.detailsHint')}</p>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label={t('platform.onboarding.country')}>
+                        <input list="nemo-countries" value={draft.country ?? ''} onChange={(e) => set({ country: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.countryPh')} />
+                      </Field>
+                      <Field label={t('platform.onboarding.niche')}>
+                        <input list="nemo-niches" value={draft.niche ?? ''} onChange={(e) => set({ niche: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.nichePh')} />
+                      </Field>
+                    </div>
+                    <Field label={t('platform.onboarding.purpose')}>
+                      <input value={draft.purpose ?? ''} onChange={(e) => set({ purpose: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.purposePh')} />
+                    </Field>
+                    <datalist id="nemo-countries">{COUNTRIES.map((c) => <option key={c} value={c} />)}</datalist>
+                    <datalist id="nemo-niches">{NICHES.map((c) => <option key={c} value={c} />)}</datalist>
+                  </div>
+                )}
+              </div>
             </Card>
           )}
 
@@ -284,7 +315,12 @@ export default function AgentEditorPage() {
             <Card>
               <p className="text-xs text-muted">{t('platform.agentTypes.runHint')}</p>
               {draft.type === 'workflow' ? (
-                <OrchestratorRunner defaultGoal={[draft.prompt.tasks, draft.prompt.role, draft.name].find((x) => x && x.trim()) || ''} />
+                <OrchestratorRunner
+                  defaultGoal={[draft.prompt.tasks, draft.prompt.role, draft.name].find((x) => x && x.trim()) || ''}
+                  niche={draft.niche}
+                  purpose={draft.purpose}
+                  lang={draft.language !== 'auto' ? draft.language : undefined}
+                />
               ) : (
                 <ResearchRunner defaultTask={[draft.prompt.tasks, draft.prompt.role, draft.name].find((x) => x && x.trim()) || ''} />
               )}

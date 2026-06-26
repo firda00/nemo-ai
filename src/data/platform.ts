@@ -1,4 +1,6 @@
 import type {
+  AgentKind,
+  AgentPrompt,
   Dialogue,
   LLMModelOption,
   ModelProvider,
@@ -66,6 +68,39 @@ export const TIMEZONES = [
   'America/Los_Angeles',
   'UTC',
 ]
+
+// Detailed-settings datalist suggestions (free text — any value can be typed in).
+export const COUNTRIES = [
+  'Узбекистан', 'Россия', 'Казахстан', 'Кыргызстан', 'Таджикистан', 'Туркменистан',
+  'Азербайджан', 'Турция', 'ОАЭ', 'США', 'Германия', 'Великобритания',
+]
+export const NICHES = [
+  'Образование', 'E-commerce', 'Недвижимость', 'Медицина', 'Финансы', 'Рестораны',
+  'Туризм', 'Авто', 'Бьюти', 'Логистика', 'IT / SaaS', 'Производство',
+]
+
+// Default prompt scaffold applied when a NEW agent kind is picked (so each type
+// behaves like a sensible preset). The built-in AI can still rewrite it.
+export const kindPresets: Partial<Record<AgentKind, AgentPrompt>> = {
+  coder: {
+    role: 'Ты — опытный инженер-программист.',
+    tasks: 'Пиши и правь код по задаче, объясняй решения, предлагай тесты и улучшения.',
+    tone: 'Чёткий, технический, по делу.',
+    rules: 'Показывай готовый код блоками. Не выдумывай API — уточняй, если данных мало.',
+  },
+  content: {
+    role: 'Ты — контент-маркетолог и копирайтер.',
+    tasks: 'Создавай тексты, посты и описания под задачу и аудиторию; предлагай варианты.',
+    tone: 'Живой, убедительный, в стиле бренда.',
+    rules: 'Без воды. Соблюдай факты. Предлагай 2–3 варианта, когда уместно.',
+  },
+  learning: {
+    role: 'Ты — ассистент, который учится на каждом диалоге.',
+    tasks: 'Помогай пользователю, запоминай важные детали и применяй их в следующих ответах.',
+    tone: 'Дружелюбный, внимательный.',
+    rules: 'Опирайся на память о прошлых диалогах. Не переспрашивай уже выясненное.',
+  },
+}
 
 export const templates: Template[] = [
   {

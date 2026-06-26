@@ -24,7 +24,7 @@ const ALLOWED_MODELS = new Set([
 ])
 const CHANNELS = new Set(['telegram', 'whatsapp', 'instagram', 'widget'])
 const LANGS = new Set(['auto', 'uz', 'ru', 'en'])
-const KINDS_SET = new Set(['chat', 'qualifier', 'research', 'workflow'])
+const KINDS_SET = new Set(['chat', 'qualifier', 'coder', 'content', 'learning', 'research', 'workflow'])
 
 const langName = (l: string) => (l === 'uz' ? 'Uzbek' : l === 'en' ? 'English' : 'Russian')
 
@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
     `Write the human-readable fields (name, role, tasks, tone, rules) in ${langName(lang)}.`,
     'Output ONLY a single minified JSON object, no markdown, no commentary. Schema:',
     '{"name": string (short, e.g. "Sotuv menejeri"),',
-    ' "type": "chat" | "qualifier" | "research" | "workflow",',
+    ' "type": "chat" | "qualifier" | "coder" | "content" | "learning" | "research" | "workflow",',
     ' "prompt": {"role": string, "tasks": string, "tone": string, "rules": string},',
     ' "default_lang": "auto"|"uz"|"ru"|"en" (use "auto" unless the business clearly needs one),',
     ' "model": one of the allowed ids,',
@@ -81,8 +81,11 @@ Deno.serve(async (req) => {
     forcedType
       ? `The agent type is fixed to "${forcedType}". Write the prompt specifically for a ${forcedType} agent and set "type":"${forcedType}".`
       : 'Pick "type": "qualifier" if the user wants to filter/score leads, ask qualifying questions (budget, need, timeline) and route hot leads to an operator; ' +
+        '"coder" if they want to write/fix code; ' +
+        '"content" if they want to generate texts, posts, descriptions or creatives; ' +
+        '"learning" if they want an assistant that remembers past conversations and improves; ' +
         '"research" if they want market/competitor research, monitoring, analysis or reports; ' +
-        '"workflow" for multi-step automations needing a team of sub-agents; ' +
+        '"workflow" for a department/manager that needs a team of sub-agents for a multi-step task; ' +
         '"chat" for customer sales/support conversations on channels. Default "chat".',
     `Allowed model ids: ${[...ALLOWED_MODELS].join(', ')}.`,
     'Pick a cost-effective model (gpt-4o-mini / claude-3.5-haiku / gemini flash) unless the task is complex.',
