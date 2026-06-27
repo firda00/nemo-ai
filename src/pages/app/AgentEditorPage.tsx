@@ -67,6 +67,8 @@ export default function AgentEditorPage() {
       temperature: a.temperature,
       timezone: a.timezone,
       schedule: a.schedule,
+      workStart: a.workStart ?? '',
+      workEnd: a.workEnd ?? '',
       language: a.language,
       country: a.country ?? '',
       purpose: a.purpose ?? '',
@@ -171,6 +173,14 @@ export default function AgentEditorPage() {
                     </button>
                   ))}
                 </div>
+                {draft.schedule === 'work-hours' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <input type="time" value={draft.workStart ?? '09:00'} onChange={(e) => set({ workStart: e.target.value })} className={cn(inputCls, 'w-auto')} />
+                    <span className="text-muted">—</span>
+                    <input type="time" value={draft.workEnd ?? '18:00'} onChange={(e) => set({ workEnd: e.target.value })} className={cn(inputCls, 'w-auto')} />
+                    <span className="text-[11px] text-muted">{t('platform.onboarding.workHoursHint')}</span>
+                  </div>
+                )}
               </Field>
 
               <div className="border-t border-ice/10 pt-4">

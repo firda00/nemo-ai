@@ -7,8 +7,26 @@ import { resolveOpenRouterKey } from './keys.ts'
 
 const RATE_LIMIT_PER_MIN = 20
 
+// "HH:MM" now in a timezone (falls back to UTC on a bad zone).
+function nowInTz(tz: string): string {
+  try {
+    return new Date().toLocaleTimeString('en-GB', { timeZone: tz || 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return new Date().toISOString().slice(11, 16)
+  }
+}
+// Is `now` within [start, end)? Supports overnight windows (e.g. 22:00–06:00).
+function withinWorkHours(tz: string, start: string, end: string): boolean {
+  if (!start || !end || start === end) return true
+  const now = nowInTz(tz)
+  return start < end ? now >= start && now < end : now >= start || now < end
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export async function buildReply(db: any, openrouterKey: string, agent: any, dialogueId: string): Promise<string> {
+  // Honor custom work hours — 24/7 always replies; 'work-hours' only inside the window.
+  if (agent.schedule === 'work-hours' && !withinWorkHours(agent.timezone, agent.work_start, agent.work_end)) return ''
+
   // Cost guard — per-customer rate limit (a dialogue maps 1:1 to an external_id).
   const since = new Date(Date.now() - 60_000).toISOString()
   const { count: recent } = await db

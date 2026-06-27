@@ -71,7 +71,8 @@ Deno.serve(async (req) => {
   const sys = [
     'You are an expert at configuring AI sales & support agents for the Nemo AI platform.',
     'Given a short business description, design ONE agent and output its configuration.',
-    `Write the human-readable fields (name, role, tasks, tone, rules) in ${langName(lang)}.`,
+    'Write the prompt fields (role, tasks, tone, rules) in ENGLISH (the agent still replies to customers in their own language).',
+    `The "name" may be written in ${langName(lang)}.`,
     'Output ONLY a single minified JSON object, no markdown, no commentary. Schema:',
     '{"name": string (short, e.g. "Sotuv menejeri"),',
     ' "type": "chat" | "qualifier" | "coder" | "content" | "learning" | "research" | "workflow",',

@@ -282,6 +282,14 @@ export default function OnboardingPage() {
                         </button>
                       ))}
                     </div>
+                    {draft.schedule === 'work-hours' && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <input type="time" value={draft.workStart ?? '09:00'} onChange={(e) => set({ workStart: e.target.value })} className="glass rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+                        <span className="text-muted">—</span>
+                        <input type="time" value={draft.workEnd ?? '18:00'} onChange={(e) => set({ workEnd: e.target.value })} className="glass rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+                        <span className="text-[11px] text-muted">{t('platform.onboarding.workHoursHint')}</span>
+                      </div>
+                    )}
                   </Field>
                   <Field label={t('platform.onboarding.model')}>
                     <ModelChips value={draft.model} onChange={(id) => set({ model: id })} />

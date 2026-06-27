@@ -57,6 +57,9 @@ export interface PlatformAgent {
   temperature: number
   timezone: string
   schedule: AgentSchedule
+  // when schedule = 'work-hours', the agent is active only between these (HH:MM, agent timezone)
+  workStart?: string
+  workEnd?: string
   language: AgentLang
   // optional detailed settings — tailor the agent + its team to a market/sphere
   country?: string

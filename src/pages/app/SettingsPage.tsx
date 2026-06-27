@@ -10,6 +10,7 @@ import type { Lang } from '../../types'
 const langOptions: { code: Lang; label: string; native: string }[] = [
   { code: 'uz', label: "O‘zbekcha", native: 'UZ' },
   { code: 'ru', label: 'Русский', native: 'RU' },
+  { code: 'en', label: 'English', native: 'EN' },
 ]
 
 interface Member {
@@ -62,7 +63,7 @@ export default function SettingsPage() {
 
       <div className="mt-7 space-y-5">
         <Section icon={Globe} title={t('settings.languageTitle')} desc={t('settings.languageDesc')}>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             {langOptions.map((opt) => {
               const active = lang === opt.code
               return (
