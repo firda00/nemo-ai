@@ -24,6 +24,9 @@ function withinWorkHours(tz: string, start: string, end: string): boolean {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export async function buildReply(db: any, openrouterKey: string, agent: any, dialogueId: string): Promise<string> {
+  // Paused/blocked agents don't reply (admin block pauses all of an account's agents).
+  if (agent.status && agent.status !== 'active') return ''
+
   // Honor custom work hours — 24/7 always replies; 'work-hours' only inside the window.
   if (agent.schedule === 'work-hours' && !withinWorkHours(agent.timezone, agent.work_start, agent.work_end)) return ''
 

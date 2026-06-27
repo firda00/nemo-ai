@@ -59,7 +59,8 @@ Deno.serve(async (req) => {
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
-  const { data: acc } = await admin.from('accounts').select('token_balance').eq('id', accountId).single()
+  const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
+  if (acc?.blocked) return json({ error: 'blocked' }, 403)
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
 
   const account = async (tokens: number) => {

@@ -44,18 +44,59 @@ Deno.serve(async (req) => {
     if (action === 'list_accounts') {
       const { data: accounts } = await admin
         .from('accounts')
-        .select('id, name, plan, token_balance, created_at')
+        .select('id, name, plan, token_balance, blocked, created_at')
         .order('created_at', { ascending: false })
         .limit(200)
-      const { data: users } = await admin.from('users').select('account_id, email, is_admin')
-      const emailByAcc = new Map((users ?? []).map((u: { account_id: string; email: string }) => [u.account_id, u.email]))
+      const { data: users } = await admin.from('users').select('id, account_id, email, is_admin')
+      // user_id + email + admin-flag keyed by account
+      const userByAcc = new Map((users ?? []).map((u: { id: string; account_id: string; email: string }) => [u.account_id, u]))
       const adminAccs = new Set((users ?? []).filter((u: { is_admin: boolean }) => u.is_admin).map((u: { account_id: string }) => u.account_id))
-      const rows = (accounts ?? []).map((a: { id: string; name: string; plan: string; token_balance: number; created_at: string }) => ({
-        ...a,
-        email: emailByAcc.get(a.id) ?? a.name,
-        is_admin: adminAccs.has(a.id),
-      }))
+      // agent count per account
+      const { data: ags } = await admin.from('agents').select('account_id')
+      const agentCount = new Map<string, number>()
+      for (const a of ags ?? []) agentCount.set(a.account_id, (agentCount.get(a.account_id) ?? 0) + 1)
+      // last login from auth.users (GoTrue admin)
+      const lastLogin = new Map<string, string | null>()
+      try {
+        const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+        for (const u of list?.users ?? []) lastLogin.set(u.id, u.last_sign_in_at ?? null)
+      } catch (_) { /* listUsers may be unavailable in some envs */ }
+      const rows = (accounts ?? []).map((a: { id: string; name: string; plan: string; token_balance: number; blocked: boolean; created_at: string }) => {
+        const u = userByAcc.get(a.id) as { id: string; email: string } | undefined
+        return {
+          ...a,
+          email: u?.email ?? a.name,
+          user_id: u?.id ?? null,
+          is_admin: adminAccs.has(a.id),
+          agents: agentCount.get(a.id) ?? 0,
+          last_login: u ? lastLogin.get(u.id) ?? null : null,
+        }
+      })
       return json({ ok: true, accounts: rows })
+    }
+
+    if (action === 'block') {
+      const accountId = String(body?.account_id ?? '')
+      const blocked = Boolean(body?.blocked)
+      if (!accountId) return json({ error: 'account_id required' }, 400)
+      await admin.from('accounts').update({ blocked }).eq('id', accountId)
+      // pause all of the account's agents when blocking (they stop replying)
+      if (blocked) await admin.from('agents').update({ status: 'paused' }).eq('account_id', accountId)
+      return json({ ok: true, blocked })
+    }
+
+    if (action === 'ban') {
+      const userId = String(body?.user_id ?? '')
+      const banned = Boolean(body?.banned)
+      if (!userId) return json({ error: 'user_id required' }, 400)
+      // hard ban — GoTrue prevents login entirely ('none' to lift it)
+      await admin.auth.admin.updateUserById(userId, { ban_duration: banned ? '876000h' : 'none' })
+      const { data: u } = await admin.from('users').select('account_id').eq('id', userId).single()
+      if (u?.account_id) {
+        await admin.from('accounts').update({ blocked: banned }).eq('id', u.account_id)
+        if (banned) await admin.from('agents').update({ status: 'paused' }).eq('account_id', u.account_id)
+      }
+      return json({ ok: true, banned })
     }
 
     if (action === 'grant' || action === 'set') {

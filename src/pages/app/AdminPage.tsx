@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ShieldCheck, Plus, Check, Coins, Gift, Loader2 } from 'lucide-react'
+import { ShieldCheck, Plus, Check, Coins, Gift, Loader2, Lock, Unlock, Ban } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
@@ -9,10 +9,14 @@ import { cn } from '../../lib/cn'
 
 interface Account {
   id: string
+  user_id: string | null
   email: string
   plan: string
   token_balance: number
   is_admin: boolean
+  blocked: boolean
+  agents: number
+  last_login: string | null
 }
 interface GiftRow {
   code: string
@@ -69,6 +73,29 @@ export default function AdminPage() {
     setAmounts((m) => ({ ...m, [id]: '' }))
     if (id === accountId) refreshBalance()
     toast(t('platform.adminPanel.granted'))
+  }
+
+  // soft block / unblock (unblock also lifts any hard ban)
+  const setBlocked = async (a: Account, blocked: boolean) => {
+    const res = await call('block', { account_id: a.id, blocked })
+    if (!res) { toast(t('common.error')); return }
+    if (!blocked && a.user_id) await call('ban', { user_id: a.user_id, banned: false })
+    setAccounts((accs) => accs.map((x) => (x.id === a.id ? { ...x, blocked } : x)))
+    toast(blocked ? t('platform.adminPanel.blockedMsg') : t('platform.adminPanel.unblockedMsg'))
+  }
+  // hard ban (cannot log in)
+  const banUser = async (a: Account) => {
+    if (!a.user_id) return
+    const res = await call('ban', { user_id: a.user_id, banned: true })
+    if (!res) { toast(t('common.error')); return }
+    setAccounts((accs) => accs.map((x) => (x.id === a.id ? { ...x, blocked: true } : x)))
+    toast(t('platform.adminPanel.bannedMsg'))
+  }
+
+  const fmtLogin = (iso: string | null) => {
+    if (!iso) return t('platform.adminPanel.never')
+    const d = new Date(iso)
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   }
 
   const createGift = async () => {
@@ -151,6 +178,9 @@ export default function AdminPage() {
               <thead>
                 <tr className="border-b border-ice/[0.07] text-left text-xs text-muted">
                   <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colAccount')}</th>
+                  <th className="py-2 pr-3 text-center font-normal">{t('platform.adminPanel.colAgents')}</th>
+                  <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colLast')}</th>
+                  <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colStatus')}</th>
                   <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colBalance')}</th>
                   <th className="py-2 font-normal">{t('platform.adminPanel.amountPh')}</th>
                 </tr>
@@ -160,9 +190,16 @@ export default function AdminPage() {
                   <tr key={a.id} className="border-b border-ice/[0.05]">
                     <td className="py-2.5 pr-3">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-text">{a.email}</span>
+                        <span className="max-w-[180px] truncate text-text">{a.email}</span>
                         {a.is_admin && <span className="rounded-full bg-violet/15 px-1.5 py-0.5 text-[9px] text-violet">{t('platform.adminPanel.adminBadge')}</span>}
                       </div>
+                    </td>
+                    <td className="py-2.5 pr-3 text-center text-muted">{a.agents}</td>
+                    <td className="py-2.5 pr-3 text-xs text-muted">{fmtLogin(a.last_login)}</td>
+                    <td className="py-2.5 pr-3">
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px]', a.blocked ? 'bg-danger/15 text-danger' : 'bg-teal/15 text-teal')}>
+                        {a.blocked ? t('platform.adminPanel.statusBlocked') : t('platform.adminPanel.statusActive')}
+                      </span>
                     </td>
                     <td className="py-2.5 pr-3 font-medium text-text">{a.token_balance.toLocaleString()}</td>
                     <td className="py-2.5">
@@ -171,15 +208,31 @@ export default function AdminPage() {
                           value={amounts[a.id] ?? ''}
                           onChange={(e) => setAmounts((m) => ({ ...m, [a.id]: e.target.value }))}
                           placeholder={t('platform.adminPanel.amountPh')}
-                          className={cn(inputCls, 'w-28')}
+                          className={cn(inputCls, 'w-24')}
                           inputMode="numeric"
                         />
-                        <button onClick={() => apply(a.id, 'grant')} className="rounded-lg bg-brand px-2.5 py-1.5 text-xs font-medium text-white">
-                          <Plus size={12} className="mr-0.5 inline" />{t('platform.adminPanel.grant')}
+                        <button onClick={() => apply(a.id, 'grant')} className="rounded-lg bg-brand px-2 py-1.5 text-xs font-medium text-white" title={t('platform.adminPanel.grant')}>
+                          <Plus size={13} />
                         </button>
-                        <button onClick={() => apply(a.id, 'set')} className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-text">
-                          <Check size={12} className="mr-0.5 inline" />{t('platform.adminPanel.setBalance')}
+                        <button onClick={() => apply(a.id, 'set')} className="rounded-lg border border-ice/12 px-2 py-1.5 text-xs font-medium text-muted hover:text-text" title={t('platform.adminPanel.setBalance')}>
+                          <Check size={13} />
                         </button>
+                        {!a.is_admin && (
+                          <>
+                            <button
+                              onClick={() => setBlocked(a, !a.blocked)}
+                              className={cn('rounded-lg border px-2 py-1.5 text-xs', a.blocked ? 'border-teal/30 text-teal hover:bg-teal/10' : 'border-ice/12 text-muted hover:text-text')}
+                              title={a.blocked ? t('platform.adminPanel.unblock') : t('platform.adminPanel.block')}
+                            >
+                              {a.blocked ? <Unlock size={13} /> : <Lock size={13} />}
+                            </button>
+                            {!a.blocked && (
+                              <button onClick={() => banUser(a)} className="rounded-lg border border-danger/30 px-2 py-1.5 text-xs text-danger hover:bg-danger/10" title={t('platform.adminPanel.ban')}>
+                                <Ban size={13} />
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
