@@ -11,14 +11,14 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!
 
-// keep in sync with src/data/billing.ts
+// Credits (1 credit = 1000 LLM tokens). keep in sync with src/data/billing.ts
 export const PACKAGES: Record<string, { usd: number; tokens: number }> = {
-  starter: { usd: 5, tokens: 250_000 },
-  pro: { usd: 20, tokens: 1_200_000 },
-  business: { usd: 50, tokens: 3_500_000 },
+  starter: { usd: 5, tokens: 1_250 },
+  pro: { usd: 20, tokens: 5_500 },
+  business: { usd: 50, tokens: 15_000 },
 }
-// custom top-up base rate ($1 = 50 000 tokens) + bounds — keep in sync with src/data/billing.ts
-const USD_TO_TOKENS = 50_000
+// custom top-up base rate ($1 = 250 credits) + bounds — keep in sync with src/data/billing.ts
+const USD_TO_TOKENS = 250
 const CUSTOM_MIN_USD = 1
 const CUSTOM_MAX_USD = 500
 
