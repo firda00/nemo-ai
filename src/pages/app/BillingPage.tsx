@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Coins, Zap, BadgeCheck, Gift, Loader2, Check } from 'lucide-react'
+import { Coins, Zap, BadgeCheck, Gift, Loader2, Check, CreditCard } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { MODELS } from '../../data/platform'
-import { TOKEN_PACKAGES } from '../../data/billing'
+import {
+  TOKEN_PACKAGES,
+  USD_TO_TOKENS,
+  TOKENS_PER_DIALOGUE,
+  AGENT_PRICE_USD,
+  CUSTOM_MIN_USD,
+  CUSTOM_MAX_USD,
+  tokensForUsd,
+} from '../../data/billing'
 import { Button } from '../../components/ui/Button'
 import { useAgentStore } from '../../store/useAgentStore'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
@@ -28,7 +36,10 @@ export default function BillingPage() {
   const [giftCode, setGiftCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [buying, setBuying] = useState<string | null>(null)
-  const cost = (dialogs * 1500).toLocaleString('ru-RU')
+  const [customUsd, setCustomUsd] = useState(10)
+  const [buyingCustom, setBuyingCustom] = useState(false)
+  // estimated monthly cost in USD (tokens consumed -> dollars)
+  const estUsd = (dialogs * TOKENS_PER_DIALOGUE) / USD_TO_TOKENS
 
   useEffect(() => {
     if (live && supabase) {
@@ -63,6 +74,26 @@ export default function BillingPage() {
     const url = (data as any)?.url as string | undefined
     if (error || !url) {
       setBuying(null)
+      toast(t('platform.billing.buyErr'))
+      return
+    }
+    window.location.href = url
+  }
+
+  // custom top-up: pay an arbitrary $ amount; tokens are derived server-side
+  const buyCustom = async () => {
+    const amt = Math.round(customUsd)
+    if (amt < CUSTOM_MIN_USD) return
+    if (!live || !supabase) {
+      toast(t('platform.billing.buyErr'))
+      return
+    }
+    setBuyingCustom(true)
+    const { data, error } = await supabase.functions.invoke('create-checkout', { body: { usd: amt } })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const url = (data as any)?.url as string | undefined
+    if (error || !url) {
+      setBuyingCustom(false)
       toast(t('platform.billing.buyErr'))
       return
     }
@@ -108,6 +139,7 @@ export default function BillingPage() {
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15 text-violet"><BadgeCheck size={18} /></span>
           <p className="mt-4 text-xs text-muted">{t('platform.billing.planTitle')}</p>
           <p className="mt-0.5 text-lg font-normal text-text">{t('platform.billing.planBeta')}</p>
+          <p className="mt-2 text-[11px] text-muted">{t('platform.billing.perAgent')}: <span className="text-text">${AGENT_PRICE_USD}/{t('platform.billing.mo')}</span></p>
         </div>
         <div className="card rounded-2xl p-5">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan/15 text-cyan"><Coins size={18} /></span>
@@ -169,7 +201,60 @@ export default function BillingPage() {
         </div>
       </section>
 
-      {/* calculator */}
+      {/* custom top-up — choose any $ amount, pay button appears at the bottom */}
+      <section className="card mt-5 rounded-2xl p-6">
+        <h2 className="font-medium text-text">{t('platform.billing.customTitle')}</h2>
+        <p className="mt-0.5 text-sm text-muted">{t('platform.billing.customDesc')}</p>
+        <div className="mt-4 flex items-end gap-4">
+          <label className="block">
+            <span className="block text-xs text-muted">{t('platform.billing.amount')}</span>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className="text-2xl font-bold text-muted">$</span>
+              <input
+                type="number"
+                min={CUSTOM_MIN_USD}
+                max={CUSTOM_MAX_USD}
+                value={customUsd}
+                onChange={(e) => setCustomUsd(Math.min(CUSTOM_MAX_USD, Math.max(0, Math.round(Number(e.target.value) || 0))))}
+                className="glass w-28 rounded-xl px-3 py-2 text-2xl font-bold text-text outline-none focus:border-violet/50"
+              />
+            </div>
+          </label>
+          <p className="mb-1 flex items-center gap-1.5 text-sm text-muted">
+            <Coins size={15} className="text-cyan" /> {tokensForUsd(customUsd).toLocaleString()} {t('platform.billing.tokens')}
+          </p>
+        </div>
+        <input
+          type="range"
+          min={CUSTOM_MIN_USD}
+          max={100}
+          step={1}
+          value={Math.min(customUsd, 100)}
+          onChange={(e) => setCustomUsd(Number(e.target.value))}
+          aria-label={t('platform.billing.amount')}
+          className="mt-4 w-full cursor-pointer accent-violet"
+        />
+        <div className="mt-1 flex justify-between text-[11px] text-muted"><span>${CUSTOM_MIN_USD}</span><span>$100</span></div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {[5, 10, 25, 50, 100].map((v) => (
+            <button
+              key={v}
+              onClick={() => setCustomUsd(v)}
+              className={cn('rounded-pill border px-3 py-1 text-xs font-medium transition', customUsd === v ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+            >
+              ${v}
+            </button>
+          ))}
+        </div>
+        {/* pay button — appears at the bottom once an amount is chosen */}
+        {customUsd >= CUSTOM_MIN_USD && (
+          <Button className="mt-5" fullWidth onClick={buyCustom} disabled={buyingCustom}>
+            {buyingCustom ? <Loader2 size={15} className="animate-spin" /> : <CreditCard size={15} />} {t('platform.billing.pay')} ${Math.round(customUsd)}
+          </Button>
+        )}
+      </section>
+
+      {/* calculator (USD) */}
       <div className="card mt-5 rounded-2xl p-6">
         <h2 className="font-normal text-text">{t('platform.billing.calcTitle')}</h2>
         <p className="mt-1 text-sm text-muted">{t('platform.billing.calcDesc')}</p>
@@ -181,7 +266,7 @@ export default function BillingPage() {
         <div className="mt-1 flex justify-between text-[11px] text-muted"><span>50</span><span>2000</span></div>
         <div className="mt-5 flex items-center justify-between rounded-2xl border border-ice/[0.07] bg-ice/[0.02] p-4">
           <span className="text-xs text-muted">{t('platform.billing.estimate')}</span>
-          <p className="text-2xl font-normal text-text">{cost} <span className="text-sm text-muted">{t('platform.billing.perMonth')}</span></p>
+          <p className="text-2xl font-normal text-text">${estUsd.toFixed(estUsd < 10 ? 1 : 0)} <span className="text-sm text-muted">{t('platform.billing.perMonth')}</span></p>
         </div>
       </div>
 

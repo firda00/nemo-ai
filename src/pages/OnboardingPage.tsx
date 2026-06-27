@@ -6,6 +6,7 @@ import { useAgentStore, blankAgent } from '../store/useAgentStore'
 import { useToast } from '../components/ui/Toast'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
 import { templates, PROVIDERS, kindPresets, COUNTRIES, NICHES } from '../data/platform'
+import { AGENT_PRICE_USD } from '../data/billing'
 import { channelMeta, channelLabel, agentTypeMeta, AGENT_KINDS } from '../lib/platformMeta'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
@@ -166,6 +167,9 @@ export default function OnboardingPage() {
           <div className="animate-fadeInUp">
             <h1 className="text-2xl font-normal tracking-tight text-text sm:text-3xl">{t('platform.onboarding.chooseTitle')}</h1>
             <p className="mt-2 text-muted">{t('platform.onboarding.chooseSubtitle')}</p>
+            <p className="mt-3 inline-flex items-center gap-1.5 rounded-pill border border-ice/10 bg-ice/[0.03] px-3 py-1 text-xs text-muted">
+              {t('platform.billing.perAgent')}: <span className="text-text">${AGENT_PRICE_USD}/{t('platform.billing.mo')}</span> · {t('platform.onboarding.priceTokens')}
+            </p>
 
             {/* AI builds the agent — the built-in agent writes the prompt */}
             <div className="mt-7 gradient-ring rounded-2xl p-px">

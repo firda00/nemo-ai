@@ -17,6 +17,10 @@ export const PACKAGES: Record<string, { usd: number; tokens: number }> = {
   pro: { usd: 20, tokens: 1_200_000 },
   business: { usd: 50, tokens: 3_500_000 },
 }
+// custom top-up base rate ($1 = 50 000 tokens) + bounds — keep in sync with src/data/billing.ts
+const USD_TO_TOKENS = 50_000
+const CUSTOM_MIN_USD = 1
+const CUSTOM_MAX_USD = 500
 
 function form(params: Record<string, string>): string {
   return Object.entries(params)
@@ -35,9 +39,25 @@ Deno.serve(async (req) => {
   } = await userDb.auth.getUser()
   if (!user) return json({ error: 'unauthorized' }, 401)
 
-  const { package: pkgId } = await req.json().catch(() => ({}))
-  const pkg = PACKAGES[String(pkgId)]
-  if (!pkg) return json({ error: 'invalid package' }, 400)
+  const { package: pkgId, usd: customUsd } = await req.json().catch(() => ({}))
+
+  // Resolve amount + tokens SERVER-SIDE (never trust a client-supplied token count).
+  let usd: number
+  let tokens: number
+  let productName: string
+  if (pkgId != null && pkgId !== '') {
+    const pkg = PACKAGES[String(pkgId)]
+    if (!pkg) return json({ error: 'invalid package' }, 400)
+    usd = pkg.usd
+    tokens = pkg.tokens
+    productName = `Nemo AI — ${pkg.tokens.toLocaleString('en-US')} tokens`
+  } else {
+    const n = Math.round(Number(customUsd))
+    if (!Number.isFinite(n) || n < CUSTOM_MIN_USD || n > CUSTOM_MAX_USD) return json({ error: 'invalid amount' }, 400)
+    usd = n
+    tokens = n * USD_TO_TOKENS
+    productName = `Nemo AI — $${n} top up (${tokens.toLocaleString('en-US')} tokens)`
+  }
 
   const { data: prof } = await userDb.from('users').select('account_id').single()
   const accountId = prof?.account_id
@@ -50,11 +70,11 @@ Deno.serve(async (req) => {
     cancel_url: `${origin}/app/billing`,
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': 'usd',
-    'line_items[0][price_data][unit_amount]': String(pkg.usd * 100),
-    'line_items[0][price_data][product_data][name]': `Nemo AI — ${pkg.tokens.toLocaleString('en-US')} tokens`,
+    'line_items[0][price_data][unit_amount]': String(usd * 100),
+    'line_items[0][price_data][product_data][name]': productName,
     'metadata[account_id]': accountId,
-    'metadata[tokens]': String(pkg.tokens),
-    'metadata[package]': String(pkgId),
+    'metadata[tokens]': String(tokens),
+    'metadata[package]': String(pkgId ?? 'custom'),
     client_reference_id: accountId,
   })
 
