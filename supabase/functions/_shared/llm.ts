@@ -58,7 +58,7 @@ export async function callOpenRouter(opts: {
 }
 
 // deno-lint-ignore no-explicit-any
-export function buildSystemPrompt(agent: any, knowledge: string): string {
+export function buildSystemPrompt(agent: any, knowledge: string, memory = ''): string {
   const p = agent?.prompt ?? {}
   const LANG_NAME: Record<string, string> = { uz: 'Uzbek', ru: 'Russian', en: 'English' }
   const langRule =
@@ -72,8 +72,11 @@ export function buildSystemPrompt(agent: any, knowledge: string): string {
     p.tasks ? `Your tasks: ${p.tasks}` : '',
     p.tone ? `Tone of voice: ${p.tone}` : '',
     p.rules ? `Rules you MUST follow: ${p.rules}` : '',
+    agent?.country ? `The business operates in: ${agent.country}.` : '',
+    agent?.niche ? `Industry / niche: ${agent.niche}.` : '',
     langRule,
     knowledge ? `\nKnowledge base — use it to answer accurately:\n${knowledge}` : '',
+    memory ? `\nMemory from earlier conversations — use it for continuity, do not re-ask what you already know:\n${memory}` : '',
     `Be concise, friendly and helpful. If you cannot help or the request is sensitive, say a human operator will join shortly.`,
   ]
     .filter(Boolean)

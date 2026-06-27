@@ -7,6 +7,7 @@
 //   body { "agent": {...}, "message": "...", "history": [{author, content}] }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, buildSystemPrompt, type ChatMsg } from '../_shared/llm.ts'
+import { loadMemory, saveMemory } from '../_shared/memory.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -70,8 +71,19 @@ Deno.serve(async (req) => {
       .slice(0, 4000)
   }
 
+  // self-improving agents recall memory from past chats (and learn from this one)
+  const isLearning = agent?.type === 'learning'
+  const memory = isLearning && agentId ? await loadMemory(userDb, agentId) : ''
+
   const messages: ChatMsg[] = [
-    { role: 'system', content: buildSystemPrompt({ name: agent?.name, prompt: agent?.prompt, default_lang: agent?.default_lang }, knowledge) },
+    {
+      role: 'system',
+      content: buildSystemPrompt(
+        { name: agent?.name, prompt: agent?.prompt, default_lang: agent?.default_lang, country: agent?.country, niche: agent?.niche },
+        knowledge,
+        memory,
+      ),
+    },
     ...history,
     { role: 'user', content: message },
   ]
@@ -82,6 +94,7 @@ Deno.serve(async (req) => {
       await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: out.tokens })
     }
+    if (isLearning && agentId) await saveMemory(userDb, accountId, agentId, null, message)
     return json({ ok: true, reply: out.content })
   } catch (e) {
     console.error('test-agent LLM error:', e)

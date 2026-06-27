@@ -70,6 +70,25 @@ export interface PlatformAgent {
   dialoguesToday: number
 }
 
+// A persistent "department": a manager (workflow) agent's saved team of specialist
+// sub-agents, tailored to a sphere. Sub-agents run as the team for a task.
+export interface SubAgent {
+  id: string
+  role: string
+  name: string
+  prompt: AgentPrompt
+  model?: string
+  status?: string
+}
+
+export interface Department {
+  id: string
+  name: string
+  niche?: string
+  mainAgentId?: string
+  subAgents: SubAgent[]
+}
+
 export type DialogueStatus = 'open' | 'resolved' | 'needs_operator' | 'error'
 export type DialogueAuthor = 'customer' | 'agent' | 'operator'
 

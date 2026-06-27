@@ -16,10 +16,20 @@ const ROLE_COLOR: Record<string, string> = {
 
 interface Step {
   role: string
+  label?: string
+  system?: string
   task: string
   output: string
   sources: string[]
   status: 'pending' | 'running' | 'done'
+}
+
+// A saved department team: each member runs as one step with its own system prompt.
+export interface TeamMember {
+  role: string
+  name?: string
+  task: string
+  system?: string
 }
 
 const hostOf = (u: string) => {
@@ -40,11 +50,14 @@ export function OrchestratorRunner({
   niche,
   purpose,
   lang,
+  team,
 }: {
   defaultGoal?: string
   niche?: string
   purpose?: string
   lang?: string
+  /** When provided, run this saved department team instead of planning a new one. */
+  team?: TeamMember[]
 }) {
   const { t } = useI18n()
   const [goal, setGoal] = useState(defaultGoal)
@@ -79,15 +92,21 @@ export function OrchestratorRunner({
         setResult({ result: `# ${g}\n\n${t('platform.research.demoNote')}`, sources: [] })
         return
       }
-      // 1) manager plans (tailored to the agent's niche/purpose/language)
-      setPhase('plan')
-      const plan = await call({ action: 'plan', goal: g, niche, purpose, lang })
-      if (!plan) {
-        setError(t('platform.research.error'))
-        return
+      // 1) get the team — a saved department runs as-is; otherwise the manager plans
+      let planned: Step[]
+      if (team && team.length) {
+        planned = team.map((m) => ({ role: m.role, label: m.name || m.role, system: m.system, task: m.task, output: '', sources: [], status: 'pending' as const }))
+        setSteps(planned)
+      } else {
+        setPhase('plan')
+        const plan = await call({ action: 'plan', goal: g, niche, purpose, lang })
+        if (!plan) {
+          setError(t('platform.research.error'))
+          return
+        }
+        planned = (plan.steps ?? []).map((s: { role: string; task: string }) => ({ role: s.role, task: s.task, output: '', sources: [], status: 'pending' as const }))
+        setSteps(planned)
       }
-      const planned: Step[] = (plan.steps ?? []).map((s: { role: string; task: string }) => ({ role: s.role, task: s.task, output: '', sources: [], status: 'pending' as const }))
-      setSteps(planned)
 
       // 2) sub-agents run one by one (live)
       setPhase('team')
@@ -95,8 +114,8 @@ export function OrchestratorRunner({
       const allSources = new Set<string>()
       for (let i = 0; i < planned.length; i++) {
         setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'running' } : s)))
-        const context = done.map((d) => `[${d.role}] ${d.output}`).join('\n\n').slice(0, 4000)
-        const r = await call({ action: 'step', goal: g, role: planned[i].role, task: planned[i].task, context })
+        const context = done.map((d) => `[${d.label ?? d.role}] ${d.output}`).join('\n\n').slice(0, 4000)
+        const r = await call({ action: 'step', goal: g, role: planned[i].role, task: planned[i].task, system: planned[i].system, context })
         const output = r?.output ?? ''
         const srcs: string[] = r?.sources ?? []
         srcs.forEach((x) => allSources.add(x))
@@ -172,7 +191,7 @@ export function OrchestratorRunner({
               return (
                 <div key={i} className="rounded-xl border border-ice/[0.07]">
                   <button onClick={() => s.status === 'done' && setOpenStep(openStep === i ? null : i)} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left">
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${color}22`, color }}>{roleLabel(s.role)}</span>
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${color}22`, color }}>{s.label ?? roleLabel(s.role)}</span>
                     <span className="min-w-0 flex-1 truncate text-sm text-text">{s.task}</span>
                     {s.status === 'running' ? (
                       <Loader2 size={14} className="shrink-0 animate-spin text-violet" />

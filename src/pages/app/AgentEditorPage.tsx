@@ -16,6 +16,7 @@ import {
   HelpCircle,
   SlidersHorizontal,
   ChevronDown,
+  Users,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -31,6 +32,7 @@ import { ChannelsManager } from '../../components/platform/ChannelsManager'
 import { KnowledgeManager } from '../../components/platform/KnowledgeManager'
 import { ResearchRunner } from '../../components/platform/ResearchRunner'
 import { OrchestratorRunner } from '../../components/platform/OrchestratorRunner'
+import { DepartmentPanel } from '../../components/platform/DepartmentPanel'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
 import { cn } from '../../lib/cn'
 import type { PlatformAgent } from '../../types/platform'
@@ -107,6 +109,7 @@ export default function AgentEditorPage() {
         { key: 'prompt', label: t('platform.editor.tabs.prompt'), icon: MessageSquareText },
         { key: 'knowledge', label: t('platform.editor.tabs.knowledge'), icon: BookOpen },
         { key: 'model', label: t('platform.editor.tabs.model'), icon: Cpu },
+        ...(draft.type === 'workflow' ? [{ key: 'department', label: t('platform.department.tab'), icon: Users }] : []),
         { key: 'run', label: t('platform.agentTypes.runTab'), icon: Telescope },
       ]
     : [
@@ -310,6 +313,8 @@ export default function AgentEditorPage() {
           )}
 
           {tab === 'test' && <TestChat agent={draft} />}
+
+          {tab === 'department' && <DepartmentPanel agent={draft} />}
 
           {tab === 'run' && (
             <Card>

@@ -108,14 +108,61 @@ Deno.serve(async (req) => {
       return json({ ok: true, plan: typeof parsed?.plan === 'string' ? parsed.plan : '', steps })
     }
 
+    // 'staff' — design a persistent team of specialist sub-agents for a sphere.
+    if (action === 'staff') {
+      const goal = String(body?.goal ?? '').trim()
+      const niche = String(body?.niche ?? '').trim()
+      const purpose = String(body?.purpose ?? '').trim()
+      const lang = String(body?.lang ?? '').trim()
+      const ctx = [niche ? `Domain / niche: ${niche}.` : '', purpose ? `Purpose: ${purpose}.` : '', goal ? `Goal / context: ${goal}.` : '']
+        .filter(Boolean)
+        .join(' ')
+      const langRule = lang && LANG_NAME[lang] ? `Write every field in ${LANG_NAME[lang]}.` : 'Write every field in the language of the domain.'
+      const msgs: ChatMsg[] = [
+        {
+          role: 'system',
+          content:
+            'You are a department architect. Design a small team of 2-4 specialist sub-agents for the described business/sphere. ' +
+            'Each sub-agent has a short domain role title, a name, and a prompt (role, tasks, tone, rules). Make them complementary and specific to the sphere. ' +
+            'Respond ONLY as JSON: {"subagents":[{"role":string,"name":string,"prompt":{"role":string,"tasks":string,"tone":string,"rules":string}}]}. ' +
+            langRule,
+        },
+        { role: 'user', content: ctx || goal || 'A general business assistant team.' },
+      ]
+      const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: PLAN_MODEL, messages: msgs, temperature: 0.5, maxTokens: 1200 })
+      await account(r.tokens)
+      const parsed = extractJson(r.content)
+      const rawSubs = Array.isArray(parsed?.subagents) ? (parsed!.subagents as Array<Record<string, unknown>>) : []
+      const subagents = rawSubs
+        .filter((s) => s && typeof s.role === 'string')
+        .slice(0, 4)
+        .map((s) => {
+          const p = (s.prompt ?? {}) as Record<string, unknown>
+          return {
+            role: String(s.role).slice(0, 60),
+            name: String((s.name as string) ?? s.role).slice(0, 60),
+            prompt: {
+              role: String(p.role ?? '').slice(0, 500),
+              tasks: String(p.tasks ?? '').slice(0, 700),
+              tone: String(p.tone ?? '').slice(0, 300),
+              rules: String(p.rules ?? '').slice(0, 500),
+            },
+          }
+        })
+      if (!subagents.length) return json({ error: 'parse_failed' }, 502)
+      return json({ ok: true, subagents })
+    }
+
     if (action === 'step') {
       const goal = String(body?.goal ?? '')
       const role = (ROLES as readonly string[]).includes(body?.role) ? (body.role as Role) : 'analyst'
       const task = String(body?.task ?? '')
       const context = String(body?.context ?? '').slice(0, 4000)
+      // a saved sub-agent can supply its own system prompt (custom domain role)
+      const customSystem = String(body?.system ?? '').trim()
       const model = role === 'researcher' ? RESEARCH_MODEL : WORK_MODEL
       const msgs: ChatMsg[] = [
-        { role: 'system', content: roleSystem[role] },
+        { role: 'system', content: customSystem || roleSystem[role] },
         { role: 'user', content: `Overall goal: ${goal}\n\nYour step: ${task}${context ? `\n\nContext from previous steps:\n${context}` : ''}` },
       ]
       const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model, messages: msgs, temperature: role === 'researcher' ? 0.2 : 0.5, maxTokens: 800 })

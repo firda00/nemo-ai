@@ -2,6 +2,7 @@
 // Builds context (system prompt + knowledge + recent history), calls the LLM,
 // stores the agent reply + token usage, and returns the reply text ('' on failure).
 import { callOpenRouter, buildSystemPrompt, type ChatMsg } from './llm.ts'
+import { loadMemory, saveMemory } from './memory.ts'
 
 const RATE_LIMIT_PER_MIN = 20
 
@@ -34,8 +35,12 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     .join('\n')
     .slice(0, 4000)
 
+  // self-improving agents recall memory across dialogues
+  const isLearning = agent.type === 'learning'
+  const memory = isLearning ? await loadMemory(db, agent.id) : ''
+
   const messages: ChatMsg[] = [
-    { role: 'system', content: buildSystemPrompt(agent, knowledge) },
+    { role: 'system', content: buildSystemPrompt(agent, knowledge, memory) },
     ...(history ?? []).map((m: any): ChatMsg => ({ role: m.author === 'customer' ? 'user' : 'assistant', content: m.content })),
   ]
 
@@ -46,6 +51,11 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       await db.from('usage').insert({ account_id: agent.account_id, tokens: out.tokens, model: agent.model })
       // decrement the account's token balance by what we just spent
       if (out.tokens) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: out.tokens })
+      // learn from the latest customer turn (newest 'customer' message)
+      if (isLearning) {
+        const lastCustomer = [...(history ?? [])].reverse().find((m: any) => m.author === 'customer')
+        if (lastCustomer?.content) await saveMemory(db, agent.account_id, agent.id, dialogueId, lastCustomer.content)
+      }
     }
     return out.content
   } catch (e) {

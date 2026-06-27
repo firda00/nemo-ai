@@ -681,6 +681,17 @@ const uz = {
       team: 'Jamoa',
       roles: { researcher: 'Tadqiqotchi', analyst: 'Tahlilchi', writer: 'Yozuvchi', reviewer: 'Tekshiruvchi' },
     },
+    department: {
+      tab: 'Bo‘lim',
+      title: 'Bo‘lim (jamoa)',
+      subtitle: 'AI soha uchun maxsus sub-agentlar jamoasini tuzadi va saqlaydi.',
+      generate: 'Bo‘lim tuzish (AI)',
+      generating: 'Jamoa tuzilmoqda…',
+      regenerate: 'Qayta tuzish',
+      members: 'Aʼzolar',
+      runTitle: 'Bo‘limni ishga tushirish',
+      created: 'Bo‘lim tuzildi',
+    },
     editor: {
       back: 'Agentlar',
       save: 'Saqlash',
@@ -1468,6 +1479,17 @@ const ru: typeof uz = {
       team: 'Команда',
       roles: { researcher: 'Ресёрчер', analyst: 'Аналитик', writer: 'Писатель', reviewer: 'Проверяющий' },
     },
+    department: {
+      tab: 'Отдел',
+      title: 'Отдел (команда)',
+      subtitle: 'ИИ соберёт и сохранит команду специализированных под-агентов под сферу.',
+      generate: 'Сформировать отдел (ИИ)',
+      generating: 'Собираю команду…',
+      regenerate: 'Пересоздать',
+      members: 'Участники',
+      runTitle: 'Запустить отдел',
+      created: 'Отдел сформирован',
+    },
     editor: {
       back: 'Агенты',
       save: 'Сохранить',
@@ -1853,6 +1875,12 @@ const enOverride: DeepPartial<typeof uz> = {
       running: 'The team is working…', phasePlan: 'Manager is planning', phaseTeam: 'Team is executing', phaseSynth: 'Assembling the result',
       result: 'Result', team: 'Team',
       roles: { researcher: 'Researcher', analyst: 'Analyst', writer: 'Writer', reviewer: 'Reviewer' },
+    },
+    department: {
+      tab: 'Department', title: 'Department (team)',
+      subtitle: 'AI assembles and saves a team of specialist sub-agents for the sphere.',
+      generate: 'Build the department (AI)', generating: 'Assembling the team…',
+      regenerate: 'Rebuild', members: 'Members', runTitle: 'Run the department', created: 'Department created',
     },
     editor: {
       back: 'Agents', save: 'Save', saved: 'Saved', test: 'Test in chat', unsaved: 'Unsaved changes',
