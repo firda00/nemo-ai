@@ -7,6 +7,7 @@
 //   body { "description": "...", "ui_lang": "uz" | "ru" | "en" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -98,10 +99,11 @@ Deno.serve(async (req) => {
     { role: 'user', content: desc },
   ]
 
+  const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
   let parsed: Record<string, unknown> | null = null
   let tokens = 0
   try {
-    const out = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: COMPOSER_MODEL, messages, temperature: 0.5 })
+    const out = await callOpenRouter({ apiKey: orKey, model: COMPOSER_MODEL, messages, temperature: 0.5 })
     tokens = out.tokens
     parsed = extractJson(out.content)
   } catch (e) {

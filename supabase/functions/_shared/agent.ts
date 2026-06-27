@@ -3,6 +3,7 @@
 // stores the agent reply + token usage, and returns the reply text ('' on failure).
 import { callOpenRouter, buildSystemPrompt, type ChatMsg } from './llm.ts'
 import { loadMemory, saveMemory } from './memory.ts'
+import { resolveOpenRouterKey } from './keys.ts'
 
 const RATE_LIMIT_PER_MIN = 20
 
@@ -45,7 +46,9 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
   ]
 
   try {
-    const out = await callOpenRouter({ apiKey: openrouterKey, model: agent.model, messages, temperature: Number(agent.temperature) })
+    // use the account's own OpenRouter key if they set one, else Nemo's shared key
+    const apiKey = await resolveOpenRouterKey(db, agent.account_id, openrouterKey)
+    const out = await callOpenRouter({ apiKey, model: agent.model, messages, temperature: Number(agent.temperature) })
     if (out.content) {
       await db.from('messages').insert({ dialogue_id: dialogueId, author: 'agent', content: out.content })
       await db.from('usage').insert({ account_id: agent.account_id, tokens: out.tokens, model: agent.model })

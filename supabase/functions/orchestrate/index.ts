@@ -9,6 +9,7 @@
 //   POST /functions/v1/orchestrate   (Authorization: Bearer <user jwt>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -66,6 +67,8 @@ Deno.serve(async (req) => {
     await admin.from('usage').insert({ account_id: accountId, tokens, model: 'orchestrate' })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
   }
+  // account's own OpenRouter key if set, else Nemo's shared key
+  const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
 
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')
@@ -96,7 +99,7 @@ Deno.serve(async (req) => {
         },
         { role: 'user', content: ctx ? `${ctx}\n\nGoal: ${goal}` : goal },
       ]
-      const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: PLAN_MODEL, messages: msgs, temperature: 0.3 })
+      const r = await callOpenRouter({ apiKey: orKey, model: PLAN_MODEL, messages: msgs, temperature: 0.3 })
       await account(r.tokens)
       const parsed = extractJson(r.content)
       let steps = Array.isArray(parsed?.steps) ? (parsed!.steps as { role: string; task: string }[]) : []
@@ -129,7 +132,7 @@ Deno.serve(async (req) => {
         },
         { role: 'user', content: ctx || goal || 'A general business assistant team.' },
       ]
-      const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: PLAN_MODEL, messages: msgs, temperature: 0.5, maxTokens: 1200 })
+      const r = await callOpenRouter({ apiKey: orKey, model: PLAN_MODEL, messages: msgs, temperature: 0.5, maxTokens: 1200 })
       await account(r.tokens)
       const parsed = extractJson(r.content)
       const rawSubs = Array.isArray(parsed?.subagents) ? (parsed!.subagents as Array<Record<string, unknown>>) : []
@@ -165,7 +168,7 @@ Deno.serve(async (req) => {
         { role: 'system', content: customSystem || roleSystem[role] },
         { role: 'user', content: `Overall goal: ${goal}\n\nYour step: ${task}${context ? `\n\nContext from previous steps:\n${context}` : ''}` },
       ]
-      const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model, messages: msgs, temperature: role === 'researcher' ? 0.2 : 0.5, maxTokens: 800 })
+      const r = await callOpenRouter({ apiKey: orKey, model, messages: msgs, temperature: role === 'researcher' ? 0.2 : 0.5, maxTokens: 800 })
       await account(r.tokens)
       return json({ ok: true, output: r.content, sources: r.citations })
     }
@@ -183,7 +186,7 @@ Deno.serve(async (req) => {
         },
         { role: 'user', content: `Goal: ${goal}\n\nSub-agent outputs:\n${steps.map((s) => `## ${s.role}: ${s.task}\n${s.output || '(no output)'}`).join('\n\n')}\n\nSources:\n${sources.join('\n')}` },
       ]
-      const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: WORK_MODEL, messages: msgs, temperature: 0.4, maxTokens: 1400 })
+      const r = await callOpenRouter({ apiKey: orKey, model: WORK_MODEL, messages: msgs, temperature: 0.4, maxTokens: 1400 })
       await account(r.tokens)
       const stepRows = steps.map((s) => ({ query: `${s.role}: ${s.task}`, findings: s.output, sources: s.sources ?? [] }))
       const { data: run } = await userDb

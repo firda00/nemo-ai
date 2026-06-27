@@ -8,6 +8,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, buildSystemPrompt, type ChatMsg } from '../_shared/llm.ts'
 import { loadMemory, saveMemory } from '../_shared/memory.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -89,7 +90,8 @@ Deno.serve(async (req) => {
   ]
 
   try {
-    const out = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model, messages, temperature })
+    const apiKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
+    const out = await callOpenRouter({ apiKey, model, messages, temperature })
     if (out.tokens) {
       await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: out.tokens })

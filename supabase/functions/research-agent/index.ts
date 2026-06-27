@@ -7,6 +7,7 @@
 //   body { "task": "..." }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -55,6 +56,7 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const { data: acc } = await admin.from('accounts').select('token_balance').eq('id', accountId).single()
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
+  const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
 
   let tokens = 0
   try {
@@ -68,7 +70,7 @@ Deno.serve(async (req) => {
       },
       { role: 'user', content: goal },
     ]
-    const plan = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: PLAN_MODEL, messages: planMsg, temperature: 0.3 })
+    const plan = await callOpenRouter({ apiKey: orKey, model: PLAN_MODEL, messages: planMsg, temperature: 0.3 })
     tokens += plan.tokens
     const parsed = extractJson(plan.content)
     let queries = Array.isArray(parsed?.queries) ? (parsed!.queries as unknown[]).map(String).filter(Boolean) : []
@@ -84,7 +86,7 @@ Deno.serve(async (req) => {
         { role: 'user', content: q },
       ]
       try {
-        const r = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: SEARCH_MODEL, messages: searchMsg, temperature: 0.2, maxTokens: 700 })
+        const r = await callOpenRouter({ apiKey: orKey, model: SEARCH_MODEL, messages: searchMsg, temperature: 0.2, maxTokens: 700 })
         tokens += r.tokens
         r.citations.forEach((c) => allSources.add(c))
         steps.push({ query: q, findings: r.content, sources: r.citations })
@@ -109,7 +111,7 @@ Deno.serve(async (req) => {
       },
       { role: 'user', content: `Task: ${goal}\n\nFindings:\n${findingsBlock}\n\nKnown source URLs:\n${sources.join('\n')}` },
     ]
-    const synth = await callOpenRouter({ apiKey: OPENROUTER_API_KEY, model: SYNTH_MODEL, messages: synthMsg, temperature: 0.4, maxTokens: 1800 })
+    const synth = await callOpenRouter({ apiKey: orKey, model: SYNTH_MODEL, messages: synthMsg, temperature: 0.4, maxTokens: 1800 })
     tokens += synth.tokens
     const report = synth.content
 

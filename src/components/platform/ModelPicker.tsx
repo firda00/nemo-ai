@@ -31,28 +31,30 @@ export function ModelPicker({
   const [activeId, setActiveId] = useState(selectedProvider.id)
   const active = PROVIDERS.find((p) => p.id === activeId) ?? PROVIDERS[0]
 
-  const [keyed, setKeyed] = useState<string[]>([])
+  // Everything runs through OpenRouter, so BYO key = ONE OpenRouter key per
+  // account (applies to every model). We can detect that a key exists but never
+  // read the secret back.
+  const [hasOwnKey, setHasOwnKey] = useState(false)
   const [useOwn, setUseOwn] = useState(false)
   const [keyInput, setKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
 
-  // which providers already have a customer key (we can read the provider name,
-  // never the secret itself)
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
     let on = true
     supabase
       .from('provider_keys')
       .select('provider')
+      .eq('provider', 'openrouter')
+      .maybeSingle()
       .then(({ data }) => {
-        if (on) setKeyed((data ?? []).map((r: { provider: string }) => r.provider))
+        if (on) setHasOwnKey(Boolean(data))
       })
     return () => {
       on = false
     }
   }, [])
 
-  const hasOwnKey = keyed.includes(active.id)
   const showOwn = useOwn || hasOwnKey
 
   const saveKey = async () => {
@@ -60,21 +62,21 @@ export function ModelPicker({
     setSavingKey(true)
     const { error } = await supabase
       .from('provider_keys')
-      .upsert({ provider: active.id, api_key: keyInput.trim() }, { onConflict: 'account_id,provider' })
+      .upsert({ provider: 'openrouter', api_key: keyInput.trim() }, { onConflict: 'account_id,provider' })
     setSavingKey(false)
     if (error) {
       toast(error.message)
       return
     }
-    setKeyed((p) => (p.includes(active.id) ? p : [...p, active.id]))
+    setHasOwnKey(true)
     setKeyInput('')
     toast(t('platform.editor.keySaved'))
   }
 
   const removeKey = async () => {
     if (!isSupabaseEnabled || !supabase) return
-    await supabase.from('provider_keys').delete().eq('provider', active.id)
-    setKeyed((p) => p.filter((x) => x !== active.id))
+    await supabase.from('provider_keys').delete().eq('provider', 'openrouter')
+    setHasOwnKey(false)
     setUseOwn(false)
     toast(t('platform.editor.keyRemoved'))
   }
@@ -97,7 +99,6 @@ export function ModelPicker({
               )}
             >
               {p.name}
-              {keyed.includes(p.id) && <KeyRound size={11} className="ml-1.5 inline text-teal" />}
             </button>
           ))}
         </div>
@@ -126,7 +127,7 @@ export function ModelPicker({
       {/* API key source for the active company */}
       <div className="space-y-3 rounded-2xl border border-ice/10 bg-ice/[0.02] p-4">
         <p className="text-xs font-normal text-muted">
-          {t('platform.editor.keySource')} · {active.name}
+          {t('platform.editor.keySource')} · OpenRouter
         </p>
         <div className="grid gap-2.5 sm:grid-cols-2">
           <button
