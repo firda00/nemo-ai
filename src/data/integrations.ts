@@ -12,6 +12,7 @@ export type IntCategory =
   | 'helpdesk'
   | 'ecommerce'
   | 'social'
+  | 'tools'
 
 export type IntRegion = 'uz' | 'ru' | 'us' | 'eu' | 'mena' | 'africa' | 'global'
 
@@ -24,7 +25,7 @@ export interface CatalogItem {
 }
 
 export const INT_CATEGORIES: IntCategory[] = [
-  'messenger', 'crm', 'telephony', 'marketplace', 'payment', 'calendar', 'helpdesk', 'ecommerce', 'social',
+  'messenger', 'crm', 'telephony', 'marketplace', 'payment', 'calendar', 'helpdesk', 'ecommerce', 'social', 'tools',
 ]
 export const INT_REGIONS: IntRegion[] = ['uz', 'ru', 'us', 'eu', 'mena', 'africa', 'global']
 
@@ -104,4 +105,18 @@ export const INTEGRATIONS: CatalogItem[] = [
   { id: 'tiktok', name: 'TikTok', category: 'social', regions: ['global'], status: 'soon' },
   { id: 'facebook', name: 'Facebook', category: 'social', regions: ['global'], status: 'soon' },
   { id: 'linkedin', name: 'LinkedIn', category: 'social', regions: ['us', 'global'], status: 'soon' },
+
+  // tools & foundations (open-source building blocks we can self-host + offer)
+  { id: 'opencode', name: 'OpenCode', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'openclaw', name: 'OpenClaw', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'twenty', name: 'Twenty CRM', category: 'crm', regions: ['global'], status: 'soon' },
+  { id: 'keycloak', name: 'Keycloak (SSO)', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'sentry', name: 'Sentry', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'plausible', name: 'Plausible Analytics', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'plane', name: 'Plane', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'inboxzero', name: 'Inbox Zero', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'docmost', name: 'Docmost', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'growthbook', name: 'GrowthBook', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'formbricks', name: 'Formbricks', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'tonpay', name: 'TON Pay', category: 'payment', regions: ['global'], status: 'soon' },
 ]

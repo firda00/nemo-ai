@@ -486,7 +486,7 @@ const uz = {
       soon: 'Tez orada',
       requestSoon: 'Bu integratsiya tez orada. So‘rovingiz qabul qilindi.',
       noResults: 'Hech narsa topilmadi',
-      cat: { messenger: 'Messenjerlar', crm: 'CRM', telephony: 'Telefoniya', marketplace: 'Marketpleyslar', payment: 'To‘lovlar', calendar: 'Kalendarlar', helpdesk: 'Qo‘llab-quvvatlash', ecommerce: 'E-commerce', social: 'Ijtimoiy tarmoqlar' },
+      cat: { messenger: 'Messenjerlar', crm: 'CRM', telephony: 'Telefoniya', marketplace: 'Marketpleyslar', payment: 'To‘lovlar', calendar: 'Kalendarlar', helpdesk: 'Qo‘llab-quvvatlash', ecommerce: 'E-commerce', social: 'Ijtimoiy tarmoqlar', tools: 'Asboblar' },
       region: { uz: 'O‘zbekiston', ru: 'Rossiya', us: 'AQSH', eu: 'Yevropa', mena: 'Yaqin Sharq', africa: 'Afrika', global: 'Global' },
       desc: {
         telegram: 'Telegram-bot orqali mijozlar bilan suhbat.',
@@ -1314,7 +1314,7 @@ const ru: typeof uz = {
       soon: 'Скоро',
       requestSoon: 'Эта интеграция скоро. Ваш запрос принят.',
       noResults: 'Ничего не найдено',
-      cat: { messenger: 'Мессенджеры', crm: 'CRM', telephony: 'Телефония', marketplace: 'Маркетплейсы', payment: 'Платежи', calendar: 'Календари', helpdesk: 'Поддержка', ecommerce: 'E-commerce', social: 'Соцсети' },
+      cat: { messenger: 'Мессенджеры', crm: 'CRM', telephony: 'Телефония', marketplace: 'Маркетплейсы', payment: 'Платежи', calendar: 'Календари', helpdesk: 'Поддержка', ecommerce: 'E-commerce', social: 'Соцсети', tools: 'Инструменты' },
       region: { uz: 'Узбекистан', ru: 'Россия', us: 'США', eu: 'Европа', mena: 'Ближний Восток', africa: 'Африка', global: 'Глобально' },
       desc: {
         telegram: 'Чат с клиентами через Telegram-бота.',
@@ -1846,7 +1846,7 @@ const enOverride: DeepPartial<typeof uz> = {
       catalogDesc: 'Services from around the world — search and filter by region. New ones added regularly.',
       searchPh: 'Search integrations…', allCats: 'All', allRegions: 'All regions', soon: 'Soon',
       requestSoon: 'This integration is coming soon. Your request is noted.', noResults: 'Nothing found',
-      cat: { messenger: 'Messengers', crm: 'CRM', telephony: 'Telephony', marketplace: 'Marketplaces', payment: 'Payments', calendar: 'Calendars', helpdesk: 'Help desk', ecommerce: 'E-commerce', social: 'Social' },
+      cat: { messenger: 'Messengers', crm: 'CRM', telephony: 'Telephony', marketplace: 'Marketplaces', payment: 'Payments', calendar: 'Calendars', helpdesk: 'Help desk', ecommerce: 'E-commerce', social: 'Social', tools: 'Tools' },
       region: { uz: 'Uzbekistan', ru: 'Russia', us: 'USA', eu: 'Europe', mena: 'Middle East', africa: 'Africa', global: 'Global' },
       desc: {
         telegram: 'Chat with customers via a Telegram bot.', whatsapp: 'Messages via WhatsApp Cloud API.',

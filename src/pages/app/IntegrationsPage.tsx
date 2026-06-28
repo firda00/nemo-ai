@@ -14,6 +14,7 @@ import {
   LifeBuoy,
   Store,
   Share2,
+  Wrench,
   Search,
   Plug,
   Unplug,
@@ -68,6 +69,7 @@ const CAT_META: Record<IntCategory, { Icon: LucideIcon; color: string }> = {
   helpdesk: { Icon: LifeBuoy, color: '#22D3EE' },
   ecommerce: { Icon: Store, color: '#13C5B4' },
   social: { Icon: Share2, color: '#5A8DEE' },
+  tools: { Icon: Wrench, color: '#9AA4B2' },
 }
 
 export default function IntegrationsPage() {
