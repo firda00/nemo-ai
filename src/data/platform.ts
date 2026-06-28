@@ -79,6 +79,16 @@ export const NICHES = [
   'Туризм', 'Авто', 'Бьюти', 'Логистика', 'IT / SaaS', 'Производство',
 ]
 
+// Voice options (TTS) — synthesis activates once a voice provider key is connected.
+export const VOICES = [
+  { id: 'alloy', label: 'Alloy' },
+  { id: 'nova', label: 'Nova' },
+  { id: 'verse', label: 'Verse' },
+  { id: 'aria', label: 'Aria' },
+  { id: 'sage', label: 'Sage' },
+  { id: 'ember', label: 'Ember' },
+]
+
 // Default prompt scaffold applied when a NEW agent kind is picked (so each type
 // behaves like a sensible preset). The built-in AI can still rewrite it.
 export const kindPresets: Partial<Record<AgentKind, AgentPrompt>> = {

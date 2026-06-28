@@ -1,15 +1,19 @@
-import { Send, MessageCircle, Camera, Globe, MessagesSquare, Telescope, Workflow, UserCheck, Code2, PenLine, Brain } from 'lucide-react'
+import { Send, MessageCircle, Camera, Globe, MessagesSquare, Telescope, Workflow, UserCheck, Code2, PenLine, Brain, Hash, Play } from 'lucide-react'
 import type { ChannelType, AgentStatus, AgentKind, DialogueStatus } from '../types/platform'
 
 // Channel visual + label metadata — vivid brand-true colors that pop on dark.
+// `soon` channels need a persistent worker (Discord gateway / YouTube live chat) —
+// not runnable on serverless yet, so they appear but can't be connected.
 export const channelMeta: Record<
   ChannelType,
-  { Icon: typeof Send; color: string; proper: string | null }
+  { Icon: typeof Send; color: string; proper: string | null; soon?: boolean }
 > = {
   telegram: { Icon: Send, color: '#3FA9F5', proper: 'Telegram' }, // telegram blue
   whatsapp: { Icon: MessageCircle, color: '#25D366', proper: 'WhatsApp' }, // whatsapp green
   instagram: { Icon: Camera, color: '#E1306C', proper: 'Instagram' }, // instagram magenta
   widget: { Icon: Globe, color: '#22D3EE', proper: null }, // cyan accent
+  discord: { Icon: Hash, color: '#5865F2', proper: 'Discord', soon: true }, // discord blurple
+  youtube: { Icon: Play, color: '#FF0000', proper: 'YouTube', soon: true }, // youtube red
 }
 
 export function channelLabel(type: ChannelType, t: (k: string) => string): string {

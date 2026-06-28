@@ -17,11 +17,13 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Users,
+  Mic,
+  Check,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
-import { MODELS, COUNTRIES, NICHES } from '../../data/platform'
+import { MODELS, COUNTRIES, NICHES, VOICES } from '../../data/platform'
 import { Tabs, type TabDef } from '../../components/ui/Tabs'
 import { Button } from '../../components/ui/Button'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -73,6 +75,9 @@ export default function AgentEditorPage() {
       country: a.country ?? '',
       purpose: a.purpose ?? '',
       niche: a.niche ?? '',
+      voiceEnabled: a.voiceEnabled ?? false,
+      voiceMode: a.voiceMode ?? 'both',
+      voiceId: a.voiceId ?? '',
       leadForm: a.leadForm,
       avatarColor: a.avatarColor,
     })
@@ -204,6 +209,53 @@ export default function AgentEditorPage() {
                     </Field>
                     <datalist id="nemo-countries">{COUNTRIES.map((c) => <option key={c} value={c} />)}</datalist>
                     <datalist id="nemo-niches">{NICHES.map((c) => <option key={c} value={c} />)}</datalist>
+                  </div>
+                )}
+              </div>
+
+              {/* voice (TTS/STT) — config only for now */}
+              <div className="border-t border-ice/10 pt-4">
+                <label className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-sm font-normal text-text"><Mic size={15} className="text-violet" /> {t('platform.editor.voiceTitle')}</span>
+                  <button
+                    onClick={() => set({ voiceEnabled: !draft.voiceEnabled })}
+                    className={cn('relative h-6 w-11 rounded-full transition-colors', draft.voiceEnabled ? 'bg-teal' : 'bg-ice/15')}
+                    role="switch"
+                    aria-checked={draft.voiceEnabled ?? false}
+                  >
+                    <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-ice transition-all', draft.voiceEnabled ? 'left-[22px]' : 'left-0.5')} />
+                  </button>
+                </label>
+                {draft.voiceEnabled && (
+                  <div className="mt-3 space-y-4">
+                    <Field label={t('platform.editor.voiceMode')}>
+                      <div className="flex flex-wrap gap-2">
+                        {(['tts', 'stt', 'both'] as const).map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => set({ voiceMode: m })}
+                            className={cn('rounded-xl border px-3 py-2 text-xs font-medium transition', draft.voiceMode === m ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+                          >
+                            {m === 'tts' ? t('platform.editor.voiceTts') : m === 'stt' ? t('platform.editor.voiceStt') : t('platform.editor.voiceBoth')}
+                          </button>
+                        ))}
+                      </div>
+                    </Field>
+                    <Field label={t('platform.editor.voiceSelect')}>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {VOICES.map((v) => (
+                          <button
+                            key={v.id}
+                            onClick={() => set({ voiceId: v.id })}
+                            className={cn('flex items-center justify-between rounded-xl border px-3 py-2 text-sm transition', draft.voiceId === v.id ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+                          >
+                            {v.label}
+                            {draft.voiceId === v.id && <Check size={14} className="text-violet" />}
+                          </button>
+                        ))}
+                      </div>
+                    </Field>
+                    <p className="flex items-center gap-1.5 text-[11px] text-amber"><HelpCircle size={13} /> {t('platform.editor.voiceSoon')}</p>
                   </div>
                 )}
               </div>

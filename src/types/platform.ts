@@ -2,7 +2,7 @@ import type { AgentColor, Lang } from './index'
 
 // ---- Agent platform (mooonai-style) domain types ----
 
-export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget'
+export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget' | 'discord' | 'youtube'
 // Agent kind — what the agent DOES.
 //  chat      — answers customers on channels
 //  qualifier — chats to qualify/score leads and route hot ones to an operator
@@ -65,6 +65,10 @@ export interface PlatformAgent {
   country?: string
   purpose?: string
   niche?: string
+  // voice (TTS/STT) — config only for now; synthesis activates with a provider key
+  voiceEnabled?: boolean
+  voiceMode?: 'tts' | 'stt' | 'both'
+  voiceId?: string
   status: AgentStatus
   channels: ChannelType[]
   knowledge: KnowledgeDoc[]

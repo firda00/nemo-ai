@@ -159,10 +159,12 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-normal text-text">{channelLabel(c, t)}</p>
                 <p className={cn('text-[11px]', on ? 'text-teal' : 'text-muted')}>
-                  {on ? t('platform.channels.connected') : t('platform.channels.connect')}
+                  {meta.soon ? t('platform.integrations.soon') : on ? t('platform.channels.connected') : t('platform.channels.connect')}
                 </p>
               </div>
-              {on ? (
+              {meta.soon ? (
+                <span className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted">{t('platform.integrations.soon')}</span>
+              ) : on ? (
                 <button onClick={() => disconnect(c)} className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-danger">
                   <Unplug size={13} className="mr-1 inline" />
                   {t('platform.integrations.disconnect')}

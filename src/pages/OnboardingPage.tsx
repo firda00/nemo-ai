@@ -391,12 +391,18 @@ export default function OnboardingPage() {
                       const meta = channelMeta[c]
                       const on = draft.channels.includes(c)
                       return (
-                        <button key={c} onClick={() => toggleChannel(c)} className={cn('flex items-center gap-3 rounded-xl border p-4 text-left transition', on ? 'border-violet/50 bg-violet/10' : 'border-ice/10 hover:border-ice/25')}>
+                        <button
+                          key={c}
+                          type="button"
+                          disabled={meta.soon}
+                          onClick={() => !meta.soon && toggleChannel(c)}
+                          className={cn('flex items-center gap-3 rounded-xl border p-4 text-left transition', on ? 'border-violet/50 bg-violet/10' : 'border-ice/10 hover:border-ice/25', meta.soon && 'cursor-not-allowed opacity-50')}
+                        >
                           <span className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: `${meta.color}22`, color: meta.color }}>
                             <meta.Icon size={18} />
                           </span>
                           <span className="flex-1 text-sm font-normal text-text">{channelLabel(c, t)}</span>
-                          {on && <Check size={18} className="text-violet" />}
+                          {meta.soon ? <span className="text-[10px] text-muted">{t('platform.agentTypes.soon')}</span> : on && <Check size={18} className="text-violet" />}
                         </button>
                       )
                     })}
