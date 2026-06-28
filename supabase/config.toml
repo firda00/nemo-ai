@@ -30,6 +30,10 @@ verify_jwt = true
 [functions.test-agent]
 verify_jwt = true
 
+# Edit an uploaded file's text with the agent (panel, authenticated).
+[functions.edit-file]
+verify_jwt = true
+
 # Connect WhatsApp/Instagram/widget to a specific agent (panel, authenticated).
 [functions.connect-channel]
 verify_jwt = true

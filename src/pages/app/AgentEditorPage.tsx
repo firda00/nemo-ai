@@ -19,6 +19,7 @@ import {
   Users,
   Mic,
   Check,
+  FileText,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -35,6 +36,7 @@ import { KnowledgeManager } from '../../components/platform/KnowledgeManager'
 import { ResearchRunner } from '../../components/platform/ResearchRunner'
 import { OrchestratorRunner } from '../../components/platform/OrchestratorRunner'
 import { DepartmentPanel } from '../../components/platform/DepartmentPanel'
+import { FileRunner } from '../../components/platform/FileRunner'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
 import { cn } from '../../lib/cn'
 import type { PlatformAgent } from '../../types/platform'
@@ -124,6 +126,7 @@ export default function AgentEditorPage() {
         { key: 'prompt', label: t('platform.editor.tabs.prompt'), icon: MessageSquareText },
         { key: 'knowledge', label: t('platform.editor.tabs.knowledge'), icon: BookOpen },
         { key: 'model', label: t('platform.editor.tabs.model'), icon: Cpu },
+        ...(draft.type === 'coder' || draft.type === 'content' ? [{ key: 'files', label: t('platform.files.tab'), icon: FileText }] : []),
         { key: 'leadForms', label: t('platform.editor.tabs.leadForms'), icon: ClipboardList },
         { key: 'channels', label: t('platform.editor.tabs.channels'), icon: Plug },
         { key: 'test', label: t('platform.editor.tabs.test'), icon: FlaskConical },
@@ -377,6 +380,8 @@ export default function AgentEditorPage() {
           {tab === 'test' && <TestChat agent={draft} />}
 
           {tab === 'department' && <DepartmentPanel agent={draft} />}
+
+          {tab === 'files' && <FileRunner agent={draft} />}
 
           {tab === 'run' && (
             <Card>
