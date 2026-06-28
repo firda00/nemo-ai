@@ -32,7 +32,7 @@ export default function AuthPage() {
   const [view, setView] = useState<View>('auth')
   const [sent, setSent] = useState(false)
   const [subEmail, setSubEmail] = useState('')
-  const [form, setForm] = useState({ name: '', email: '', password: '', invite: '' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', invite: (params.get('ref') ?? '').toUpperCase() })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -44,7 +44,7 @@ export default function AuthPage() {
     setErr('')
     setBusy(true)
     const res = isSignup
-      ? await signup(form.name || form.email, form.email, form.password)
+      ? await signup(form.name || form.email, form.email, form.password, form.invite)
       : await login(form.email, form.password)
     setBusy(false)
     if (res.error) {

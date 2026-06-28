@@ -23,7 +23,7 @@ interface AuthContextValue {
   /** True when running against the live Supabase backend (vs demo mode). */
   live: boolean
   login: (email: string, password?: string) => Promise<AuthResult>
-  signup: (name: string, email: string, password?: string) => Promise<AuthResult>
+  signup: (name: string, email: string, password?: string, ref?: string) => Promise<AuthResult>
   loginWithGoogle: () => Promise<AuthResult>
   logout: () => Promise<void>
   updateUser: (patch: Partial<User>) => void
@@ -128,12 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const signup = useCallback(
-    async (name: string, email: string, password?: string): Promise<AuthResult> => {
+    async (name: string, email: string, password?: string, ref?: string): Promise<AuthResult> => {
       if (live && supabase) {
         const { data, error } = await supabase.auth.signUp({
           email,
           password: password ?? '',
-          options: { data: { name } },
+          options: { data: { name, ...(ref?.trim() ? { ref: ref.trim() } : {}) } },
         })
         if (!error && data.session) setUser(userFromSession(data.session.user))
         return error ? { error: error.message } : {}

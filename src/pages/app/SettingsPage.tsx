@@ -1,8 +1,10 @@
-import { useState } from 'react'
-import { Globe, User as UserIcon, Gauge, Users, Check, UserPlus, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Globe, User as UserIcon, Gauge, Users, Check, UserPlus, Trash2, Gift, Copy } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../components/ui/Toast'
+import { useAgentStore } from '../../store/useAgentStore'
+import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/cn'
 import type { Lang } from '../../types'
@@ -47,6 +49,27 @@ export default function SettingsPage() {
     { id: 'o2', email: 'sevara@nemo.ai', role: 'operator' },
   ])
   const [invite, setInvite] = useState('')
+
+  // referral code / link
+  const accountId = useAgentStore((s) => s.accountId)
+  const [refCode, setRefCode] = useState('')
+  const [refCopied, setRefCopied] = useState(false)
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase || !accountId) {
+      if (!isSupabaseEnabled) setRefCode('NEMO-DEMO')
+      return
+    }
+    supabase.from('accounts').select('referral_code').eq('id', accountId).single().then(({ data }) => {
+      if (data?.referral_code) setRefCode(data.referral_code)
+    })
+  }, [accountId])
+  const refLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/signup?ref=${refCode}`
+  const copyRef = () => {
+    navigator.clipboard?.writeText(refLink)
+    setRefCopied(true)
+    toast(t('settings.referralCopied'))
+    window.setTimeout(() => setRefCopied(false), 2000)
+  }
 
   const addMember = () => {
     const email = invite.trim()
@@ -102,6 +125,16 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+        </Section>
+
+        <Section icon={Gift} title={t('settings.referralTitle')} desc={t('settings.referralDesc')}>
+          <div className="flex gap-2">
+            <input readOnly value={refLink} className="glass w-full rounded-xl px-3 py-2.5 font-mono text-xs text-cyan outline-none" />
+            <Button size="md" onClick={copyRef} disabled={!refCode}>
+              {refCopied ? <Check size={15} /> : <Copy size={15} />} {refCopied ? t('settings.referralCopied') : t('settings.referralCopy')}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted">{t('settings.referralHint')}</p>
         </Section>
 
         <Section icon={Gauge} title={t('settings.quotaTitle')} desc={t('settings.quotaDesc')}>
