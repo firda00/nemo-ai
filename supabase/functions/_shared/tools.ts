@@ -15,6 +15,10 @@ const TOOLS: Record<string, { provider: string; spec: any }> = {
   slack_send_message: { provider: 'slack', spec: { type: 'function', function: { name: 'slack_send_message', description: 'Send a message to a Slack channel', parameters: { type: 'object', properties: { channel: { type: 'string' }, text: { type: 'string' } }, required: ['channel', 'text'] } } } },
   hubspot_create_contact: { provider: 'hubspot', spec: { type: 'function', function: { name: 'hubspot_create_contact', description: 'Create a HubSpot contact', parameters: { type: 'object', properties: { email: { type: 'string' }, firstname: { type: 'string' }, lastname: { type: 'string' }, phone: { type: 'string' } }, required: ['email'] } } } },
   browser_task: { provider: 'hyperbrowser', spec: { type: 'function', function: { name: 'browser_task', description: 'Visit a website and perform a task the user authorized (fill a form, submit an application, look something up)', parameters: { type: 'object', properties: { url: { type: 'string' }, task: { type: 'string' } }, required: ['task'] } } } },
+  notion_create_page: { provider: 'notion', spec: { type: 'function', function: { name: 'notion_create_page', description: 'Create a new page in Notion under a parent page or database. Needs the 32-char parent id from the Notion URL — ask the user for their Notion page/database link if you do not have it. The integration must be shared with that page.', parameters: { type: 'object', properties: { parent_id: { type: 'string', description: 'The 32-char id from the Notion page/database URL' }, parent_type: { type: 'string', enum: ['page', 'database'], description: "'page' (default) or 'database'" }, title: { type: 'string' }, content: { type: 'string', description: 'Optional body text' } }, required: ['parent_id', 'title'] } } } },
+  airtable_create_record: { provider: 'airtable', spec: { type: 'function', function: { name: 'airtable_create_record', description: 'Add a record (row) to an Airtable table. Needs the base id (starts with app…) and the table name from the Airtable URL. fields is an object of column name -> value.', parameters: { type: 'object', properties: { base_id: { type: 'string' }, table: { type: 'string' }, fields: { type: 'object', description: 'Column name -> value', additionalProperties: true } }, required: ['base_id', 'table', 'fields'] } } } },
+  bitrix24_create_lead: { provider: 'bitrix24', spec: { type: 'function', function: { name: 'bitrix24_create_lead', description: 'Create a lead in Bitrix24 CRM. Works when the connected Bitrix24 key is the full incoming-webhook URL.', parameters: { type: 'object', properties: { title: { type: 'string' }, name: { type: 'string' }, phone: { type: 'string' }, comment: { type: 'string' } }, required: ['title'] } } } },
+  stripe_create_customer: { provider: 'stripe', spec: { type: 'function', function: { name: 'stripe_create_customer', description: 'Create a customer in Stripe (email required; name/phone optional).', parameters: { type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, phone: { type: 'string' } }, required: ['email'] } } } },
 }
 
 const GOOGLE_TOOLS: Record<string, any> = {
@@ -124,13 +128,72 @@ async function execProvider(name: string, args: any, key: string): Promise<{ ok:
       if (out.pending) return { ok: true, result: `Агент работает в браузере (job ${out.jobId}).` }
       return out.ok ? { ok: true, result: out.result ?? 'Готово' } : { ok: false, result: out.error ?? 'Не выполнено' }
     }
+    if (name === 'notion_create_page') {
+      const H = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Notion-Version': '2022-06-28' }
+      const isDb = String(args.parent_type ?? 'page') === 'database'
+      const pid = String(args.parent_id ?? '').replace(/-/g, '')
+      const parent = isDb ? { database_id: pid } : { page_id: pid }
+      // a page parent uses the built-in 'title' prop; a database uses its title column (commonly 'Name')
+      const properties = isDb
+        ? { Name: { title: [{ text: { content: String(args.title ?? '') } }] } }
+        : { title: { title: [{ text: { content: String(args.title ?? '') } }] } }
+      const children = args.content ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: String(args.content).slice(0, 1800) } }] } }] : []
+      const r = await fetch('https://api.notion.com/v1/pages', { method: 'POST', headers: H, body: JSON.stringify({ parent, properties, children }) }).then((x) => x.json())
+      return r?.id ? { ok: true, result: `Страница создана в Notion: ${r.url ?? r.id}` } : { ok: false, result: `Notion не создал страницу (${r?.message ?? 'ошибка'}). Проверьте parent_id и что интеграция добавлена в нужную страницу/базу.` }
+    }
+    if (name === 'airtable_create_record') {
+      const base = String(args.base_id ?? ''); const table = String(args.table ?? '')
+      const fields = (args.fields && typeof args.fields === 'object' && !Array.isArray(args.fields)) ? args.fields : {}
+      const r = await fetch(`https://api.airtable.com/v0/${base}/${encodeURIComponent(table)}`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }).then((x) => x.json())
+      return r?.id ? { ok: true, result: `Запись добавлена в Airtable (${table})` } : { ok: false, result: `Airtable не принял запись (${r?.error?.message ?? r?.error?.type ?? 'ошибка'}). Проверьте base_id, имя таблицы и имена колонок.` }
+    }
+    if (name === 'bitrix24_create_lead') {
+      const base = key.replace(/\/+$/, '')
+      if (!/^https?:\/\//i.test(base)) return { ok: false, result: 'Для Bitrix24 вставьте в «Интеграции» полный URL входящего вебхука (https://portal.bitrix24.ru/rest/1/xxxx/).' }
+      const fields: any = { TITLE: String(args.title ?? 'Nemo lead') }
+      if (args.name) fields.NAME = String(args.name)
+      if (args.comment) fields.COMMENTS = String(args.comment)
+      if (args.phone) fields.PHONE = [{ VALUE: String(args.phone), VALUE_TYPE: 'WORK' }]
+      const r = await fetch(`${base}/crm.lead.add.json`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }).then((x) => x.json())
+      return r?.result ? { ok: true, result: `Лид создан в Bitrix24 (id ${r.result})` } : { ok: false, result: `Bitrix24 не создал лид (${r?.error_description ?? r?.error ?? 'ошибка'}). Проверьте URL вебхука и права.` }
+    }
+    if (name === 'stripe_create_customer') {
+      const form = new URLSearchParams()
+      if (args.email) form.set('email', String(args.email))
+      if (args.name) form.set('name', String(args.name))
+      if (args.phone) form.set('phone', String(args.phone))
+      const r = await fetch('https://api.stripe.com/v1/customers', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() }).then((x) => x.json())
+      return r?.id ? { ok: true, result: `Клиент создан в Stripe (id ${r.id})` } : { ok: false, result: `Stripe не создал клиента (${r?.error?.message ?? 'ошибка'}).` }
+    }
     return { ok: false, result: 'unknown tool' }
   } catch (e) { return { ok: false, result: String(e).slice(0, 200) } }
 }
 
+// Dispatch a single tool call to the right executor (web / Google OAuth / keyed provider).
+async function execAnyTool(
+  name: string,
+  args: any,
+  ctx: { orKey: string; db: any; accountId: string; keyByProvider: Record<string, string> },
+): Promise<{ ok: boolean; result: string; tokens?: number }> {
+  if (ALWAYS_TOOLS[name]) return await execAlways(name, args, ctx.orKey)
+  if (GOOGLE_TOOLS[name]) {
+    const gt = await googleAccessToken(ctx.db, ctx.accountId)
+    return gt.token
+      ? await execGoogle(name, args, gt.token, gt.email ?? '')
+      : { ok: false, result: 'Чтобы создавать Google-Таблицы и Документы или отправлять письма, подключите Google в разделе «Интеграции».' }
+  }
+  const provider = TOOLS[name]?.provider
+  const key = provider === 'hyperbrowser' ? (ctx.keyByProvider['hyperbrowser'] || NEMO_HB_KEY) : ctx.keyByProvider[provider]
+  return key
+    ? await execProvider(name, args, key)
+    : { ok: false, result: `Инструмент «${provider}» не подключён. Добавьте ключ в разделе «Интеграции», чтобы я мог выполнить это действие.` }
+}
+
 /**
- * One tool-use pass. Returns { ran:true, result } if a tool was executed (result has the
- * REAL link/data), { ran:false } if no tool was needed, or null if no tools are connected.
+ * Agentic tool-use loop. The model may call tools over SEVERAL steps (e.g. search the web,
+ * then create a sheet, then email the link) — each tool result is fed back so it can decide
+ * the next action, and it ends with a short natural-language reply. Returns { ran:true, result }
+ * if any tool executed, { ran:false } if none were needed, or null if no tools are connected.
  */
 export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
   const { data: keysRows } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
@@ -156,33 +219,43 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
   ]
   if (!specs.length) return null // nothing connected + no web scope -> normal conversational reply
 
+  const ctx = { orKey, db, accountId, keyByProvider }
   try {
-    const msgs = [
-      { role: 'system', content: 'You are an assistant with connected tools. If the user asks you to DO something a tool can do (create a Google Sheet/Doc, send an email, add a calendar event, append data, create a CRM contact, read a specific web page, search the live web, or browse/act on a website), CALL the correct tool with correct arguments. Use read_webpage to fetch a given URL (e.g. a marketplace rules page or a listing); use web_search for current facts/prices you do not know; use browser_task ONLY when you must ACT on a site (fill a form, submit). Never use browser_task for Google Sheets/Docs/Gmail/Calendar (those have dedicated tools). If the needed tool is NOT in the provided tools list, do NOT call any tool — reply normally. Never claim to have done something you did not do.' },
+    const msgs: any[] = [
+      { role: 'system', content: "You are an assistant with connected tools. If the user asks you to DO something a tool can do (create a Google Sheet/Doc, send an email, add a calendar event, append data, create a CRM contact, read a specific web page, search the live web, or browse/act on a website), CALL the correct tool with correct arguments. You may call tools over SEVERAL steps: use one tool, read its result, then call the next (e.g. search the web, then put the findings into a new sheet, then email the link). Use read_webpage to fetch a given URL; use web_search for current facts/prices you do not know; use browser_task ONLY when you must ACT on a site (fill a form, submit). Never use browser_task for Google Sheets/Docs/Gmail/Calendar (those have dedicated tools). If the needed tool is NOT in the provided tools list, do NOT call any tool. When the task is complete, reply with a SHORT natural-language message in the user's language that says what you did and includes any links. Never claim to have done something you did not do." },
       ...(history ?? []).slice(-6).map((m: any) => ({ role: m.author === 'customer' ? 'user' : 'assistant', content: String(m.content ?? '') })),
       { role: 'user', content: userText },
     ]
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { Authorization: `Bearer ${orKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: PRIMARY_MODEL, temperature: 0, tools: specs, tool_choice: 'auto', messages: msgs }) }).then((x) => x.json())
-    const choice = r?.choices?.[0]?.message
-    const tokens = r?.usage?.total_tokens ?? 0
-    const call = choice?.tool_calls?.[0]
-    if (!call) return { ran: false, tokens }
-    const name = call.function?.name
-    const args = (() => { try { return JSON.parse(call.function?.arguments ?? '{}') } catch { return {} } })()
-
-    let out: { ok: boolean; result: string; tokens?: number }
-    if (ALWAYS_TOOLS[name]) {
-      out = await execAlways(name, args, orKey)
-    } else if (GOOGLE_TOOLS[name]) {
-      const gt = await googleAccessToken(db, accountId)
-      out = gt.token ? await execGoogle(name, args, gt.token, gt.email ?? '') : { ok: false, result: 'Чтобы создавать Google-Таблицы и Документы или отправлять письма, подключите Google в разделе «Интеграции».' }
-    } else {
-      const provider = TOOLS[name]?.provider
-      const key = provider === 'hyperbrowser' ? (keyByProvider['hyperbrowser'] || NEMO_HB_KEY) : keyByProvider[provider]
-      out = key ? await execProvider(name, args, key) : { ok: false, result: `Инструмент «${provider}» не подключён. Добавьте ключ в разделе «Интеграции», чтобы я мог выполнить это действие.` }
+    const MAX_STEPS = 5
+    let totalTokens = 0
+    let ranAny = false
+    let lastTool: string | undefined
+    let lastResult = ''
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { Authorization: `Bearer ${orKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: PRIMARY_MODEL, temperature: 0, tools: specs, tool_choice: 'auto', messages: msgs }) }).then((x) => x.json())
+      const choice = r?.choices?.[0]?.message
+      totalTokens += r?.usage?.total_tokens ?? 0
+      const call = choice?.tool_calls?.[0]
+      if (!call) {
+        // model produced a plain message -> final answer (or no tool was needed at all)
+        if (!ranAny) return { ran: false, tokens: totalTokens }
+        const content = String(choice?.content ?? '').trim()
+        return { ran: true, tool: lastTool, result: content || lastResult || 'Готово.', tokens: totalTokens }
+      }
+      const name = call.function?.name
+      const args = (() => { try { return JSON.parse(call.function?.arguments ?? '{}') } catch { return {} } })()
+      const out = await execAnyTool(name, args, ctx)
+      totalTokens += out.tokens ?? 0
+      ranAny = true
+      lastTool = name
+      lastResult = out.result
+      await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: String(out.result).slice(0, 1000), ok: out.ok })
+      // feed the call + its result back so the model can chain the next action or finish
+      msgs.push({ role: 'assistant', content: choice.content ?? '', tool_calls: choice.tool_calls })
+      msgs.push({ role: 'tool', tool_call_id: call.id, name, content: String(out.result).slice(0, 2000) })
     }
-    await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: String(out.result).slice(0, 1000), ok: out.ok })
-    return { ran: true, tool: name, result: out.result, tokens: tokens + (out.tokens ?? 0) }
+    // step budget exhausted -> return the last real result we produced
+    return ranAny ? { ran: true, tool: lastTool, result: lastResult || 'Готово.', tokens: totalTokens } : { ran: false, tokens: totalTokens }
   } catch { return { ran: false, tokens: 0 } }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
