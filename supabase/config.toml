@@ -86,6 +86,10 @@ verify_jwt = false
 [functions.daily-digest]
 verify_jwt = false
 
+# Weekly team report. PUBLIC so pg_cron can call it with x-cron-secret.
+[functions.weekly-report]
+verify_jwt = false
+
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
 # Returns the agent reply as JSON; the agent runtime runs via buildReply.
 [functions.widget-webhook]
