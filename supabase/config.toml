@@ -73,6 +73,10 @@ verify_jwt = true
 [functions.ops-watchdog]
 verify_jwt = false
 
+# Autonomous support SLA agent. PUBLIC so pg_cron can call it with the x-cron-secret header.
+[functions.support-sla]
+verify_jwt = false
+
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
 # Returns the agent reply as JSON; the agent runtime runs via buildReply.
 [functions.widget-webhook]
