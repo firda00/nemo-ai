@@ -13,7 +13,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 const SLA_MIN = 15   // waiting longer than this = breach
-const WINDOW_MIN = 12 // only newly-crossed breaches (matches the ~10-min cron cadence, + jitter)
+const WINDOW_MIN = 10 // only newly-crossed breaches; = cron cadence so a breach is paged once
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any
@@ -58,8 +58,10 @@ Deno.serve(async (req) => {
       const { data: bp } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', accountId).maybeSingle()
       const target = bp?.notify_chat_id
       if (!target) continue
-      // any Telegram bot token on this account's agents
-      const accAgentIds = Object.entries(agentMap).filter(([, v]) => v.account_id === accountId).map(([id]) => id)
+      // any Telegram bot token on ANY of this account's agents (not only the breaching ones)
+      const { data: accAgents } = await db.from('agents').select('id').eq('account_id', accountId)
+      const accAgentIds = (accAgents ?? []).map((a: Any) => a.id)
+      if (!accAgentIds.length) continue
       const { data: ch } = await db.from('channels').select('credentials').eq('type', 'telegram').in('agent_id', accAgentIds).limit(1).maybeSingle()
       const token = ch?.credentials?.bot_token
       if (!token) continue

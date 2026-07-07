@@ -66,7 +66,8 @@ Deno.serve(async (req) => {
 
   // 5) cost guard — today's token burn + the single top-spending account (anomaly = runaway)
   details.cost = await timed(async () => {
-    const { data } = await db.rpc('ops_usage_today')
+    const { data, error } = await db.rpc('ops_usage_today')
+    if (error) return { ok: false, info: `rpc error: ${error.message.slice(0, 80)}` }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const row: any = Array.isArray(data) ? data[0] : data
     const total = Number(row?.total ?? 0), top = Number(row?.top_tokens ?? 0)

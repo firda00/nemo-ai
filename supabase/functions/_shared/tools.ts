@@ -264,24 +264,28 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
       const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { Authorization: `Bearer ${orKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: PRIMARY_MODEL, temperature: 0, tools: specs, tool_choice: 'auto', messages: msgs }) }).then((x) => x.json())
       const choice = r?.choices?.[0]?.message
       totalTokens += r?.usage?.total_tokens ?? 0
-      const call = choice?.tool_calls?.[0]
-      if (!call) {
+      const calls = choice?.tool_calls ?? []
+      if (!calls.length) {
         // model produced a plain message -> final answer (or no tool was needed at all)
         if (!ranAny) return { ran: false, tokens: totalTokens }
         const content = String(choice?.content ?? '').trim()
         return { ran: true, tool: lastTool, result: content || lastResult || 'Готово.', tokens: totalTokens }
       }
-      const name = call.function?.name
-      const args = (() => { try { return JSON.parse(call.function?.arguments ?? '{}') } catch { return {} } })()
-      const out = await execAnyTool(name, args, ctx)
-      totalTokens += out.tokens ?? 0
-      ranAny = true
-      lastTool = name
-      lastResult = out.result
-      await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: String(out.result).slice(0, 1000), ok: out.ok })
-      // feed the call + its result back so the model can chain the next action or finish
+      // record the assistant turn (with ALL its tool_calls) ONCE, then answer EVERY call —
+      // the model may emit parallel tool calls, and each tool_call_id needs its own tool reply
+      // or the next request 400s and the whole action silently fails.
       msgs.push({ role: 'assistant', content: choice.content ?? '', tool_calls: choice.tool_calls })
-      msgs.push({ role: 'tool', tool_call_id: call.id, name, content: String(out.result).slice(0, 2000) })
+      for (const c of calls) {
+        const name = c.function?.name
+        const args = (() => { try { return JSON.parse(c.function?.arguments ?? '{}') } catch { return {} } })()
+        const out = await execAnyTool(name, args, ctx)
+        totalTokens += out.tokens ?? 0
+        ranAny = true
+        lastTool = name
+        lastResult = out.result
+        await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: String(out.result).slice(0, 1000), ok: out.ok })
+        msgs.push({ role: 'tool', tool_call_id: c.id, name, content: String(out.result).slice(0, 2000) })
+      }
     }
     // step budget exhausted -> return the last real result we produced
     return ranAny ? { ran: true, tool: lastTool, result: lastResult || 'Готово.', tokens: totalTokens } : { ran: false, tokens: totalTokens }

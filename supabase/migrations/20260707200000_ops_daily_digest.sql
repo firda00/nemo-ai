@@ -39,4 +39,4 @@ as $$
   where bp.notify_chat_id is not null and bp.notify_chat_id <> '';
 $$;
 
-revoke all on function public.ops_daily_digest() from anon, authenticated;
+revoke all on function public.ops_daily_digest() from public;

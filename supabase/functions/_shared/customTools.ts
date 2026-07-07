@@ -30,11 +30,15 @@ const arrOf = (v: any): any[] => (Array.isArray(v) ? v : [])
 export function buildCustomSpecs(rows: CustomToolRow[]): { specs: any[]; index: Record<string, { row: CustomToolRow; mcpTool?: string }> } {
   const specs: any[] = []
   const index: Record<string, { row: CustomToolRow; mcpTool?: string }> = {}
+  const used = new Set<string>()
+  // distinct tool names can normalize to the same function id — keep them unique so a call
+  // isn't misrouted to the wrong tool
+  const uniq = (n: string) => { let f = n, i = 2; while (used.has(f)) f = `${n}_${i++}`.slice(0, 60); used.add(f); return f }
   for (const row of rows) {
     if (row.kind === 'mcp') {
       for (const t of arrOf(row.params)) {
         if (!t?.name) continue
-        const fn = mcpFnName(row.name, t.name)
+        const fn = uniq(mcpFnName(row.name, t.name))
         const parameters = t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : { type: 'object', properties: {} }
         specs.push({ type: 'function', function: { name: fn, description: String(t.description ?? t.name).slice(0, 300), parameters } })
         index[fn] = { row, mcpTool: t.name }
@@ -47,7 +51,7 @@ export function buildCustomSpecs(rows: CustomToolRow[]): { specs: any[]; index: 
         props[p.name] = { type: p.type || 'string', description: String(p.description ?? '').slice(0, 200) }
         if (p.required) required.push(p.name)
       }
-      const fn = httpFnName(row.name)
+      const fn = uniq(httpFnName(row.name))
       specs.push({ type: 'function', function: { name: fn, description: String(row.description || row.name).slice(0, 300), parameters: { type: 'object', properties: props, required } } })
       index[fn] = { row }
     }
@@ -55,18 +59,23 @@ export function buildCustomSpecs(rows: CustomToolRow[]): { specs: any[]; index: 
   return { specs, index }
 }
 
-const interpolate = (tpl: string, args: Record<string, any>) =>
-  String(tpl ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => (k in args ? String(args[k]) : ''))
+const has = (o: Record<string, any>, k: string) => Object.prototype.hasOwnProperty.call(o, k)
+// Context-safe interpolation so LLM-supplied args can't inject into the request:
+// URL context percent-encodes each value; JSON-body context escapes it as a JSON string.
+const interpUrl = (tpl: string, args: Record<string, any>) =>
+  String(tpl ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => (has(args, k) ? encodeURIComponent(String(args[k])) : ''))
+const interpJson = (tpl: string, args: Record<string, any>) =>
+  String(tpl ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => (has(args, k) ? JSON.stringify(String(args[k])).slice(1, -1) : ''))
 
 async function execHttp(row: CustomToolRow, args: Record<string, any>): Promise<{ ok: boolean; result: string }> {
   const method = String(row.method || 'POST').toUpperCase()
-  let url = interpolate(row.url, args)
+  let url = interpUrl(row.url, args)
   const headers: Record<string, string> = { 'User-Agent': 'NemoBot/1.0' }
   for (const [k, v] of Object.entries(objOf(row.headers))) headers[k] = String(v)
   let body: string | undefined
   const hasBody = method === 'POST' || method === 'PUT' || method === 'PATCH'
   if (hasBody) {
-    body = row.body_template && row.body_template.trim() ? interpolate(row.body_template, args) : JSON.stringify(args ?? {})
+    body = row.body_template && row.body_template.trim() ? interpJson(row.body_template, args) : JSON.stringify(args ?? {})
     if (!Object.keys(headers).some((h) => h.toLowerCase() === 'content-type')) headers['Content-Type'] = 'application/json'
   } else if (!/\{\{/.test(row.url) && args && typeof args === 'object') {
     const qs = new URLSearchParams()

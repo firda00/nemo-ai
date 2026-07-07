@@ -16,4 +16,4 @@ as $$
          coalesce((select t from tops), 0)::bigint;
 $$;
 
-revoke all on function public.ops_usage_today() from anon, authenticated;
+revoke all on function public.ops_usage_today() from public;

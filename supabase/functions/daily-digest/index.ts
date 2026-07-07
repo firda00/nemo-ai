@@ -23,7 +23,8 @@ Deno.serve(async (req) => {
   }
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
 
-  const { data: rows } = await db.rpc('ops_daily_digest')
+  const { data: rows, error } = await db.rpc('ops_daily_digest')
+  if (error) return json({ ok: false, error: error.message }, 500)
   const accounts = (rows ?? []) as Any[]
   // only accounts that actually had activity yesterday (don't ping idle owners)
   const active = accounts.filter((r) => Number(r.dialogues) + Number(r.leads) + Number(r.tokens) > 0)
