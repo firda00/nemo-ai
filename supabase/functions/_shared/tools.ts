@@ -9,6 +9,11 @@ import { safeFetch } from './net.ts'
 import { buildCustomSpecs, execCustomTool, type CustomToolRow } from './customTools.ts'
 
 const NEMO_HB_KEY = Deno.env.get('HYPERBROWSER_API_KEY') ?? ''
+// Code sandbox lives on the VPS worker (same host/secret as the video renderer).
+const RENDER_WORKER_URL = (Deno.env.get('RENDER_WORKER_URL') ?? '').replace(/\/$/, '')
+const RENDER_SECRET = Deno.env.get('RENDER_SECRET') ?? ''
+
+const RUNCODE_TOOL = { type: 'function', function: { name: 'run_code', description: 'Execute JavaScript/TypeScript in a secure sandbox (no internet, no file access) to CALCULATE or TRANSFORM data: math, statistics, parsing/formatting text, dates, currency, building a table/CSV from given values. Put the data inline in the code. Print the final result with console.log — that output is returned. Prefer this over guessing any calculation.', parameters: { type: 'object', properties: { code: { type: 'string', description: 'Self-contained JS/TS. console.log the result.' } }, required: ['code'] } } }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const TOOLS: Record<string, { provider: string; spec: any }> = {
@@ -107,6 +112,20 @@ async function execGoogle(name: string, args: any, token: string, email: string)
   return { ok: false, result: 'unknown google tool' }
 }
 
+// Run code in the VPS sandbox (Deno deny-all). Pure compute; returns console.log output.
+async function execRunCode(args: any): Promise<{ ok: boolean; result: string }> {
+  if (!RENDER_WORKER_URL || !RENDER_SECRET) return { ok: false, result: 'Песочница кода не настроена.' }
+  const code = String(args?.code ?? '')
+  if (!code.trim()) return { ok: false, result: 'Пустой код.' }
+  try {
+    const r = await fetch(`${RENDER_WORKER_URL}/run-code`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-render-secret': RENDER_SECRET }, body: JSON.stringify({ code }) }).then((x) => x.json())
+    if (r?.ok) return { ok: true, result: (String(r.output ?? '').trim() || 'Готово (вывод пуст).').slice(0, 1500) }
+    return { ok: false, result: `Код завершился с ошибкой: ${String(r?.error ?? 'unknown').slice(0, 500)}` }
+  } catch (e) {
+    return { ok: false, result: `Не удалось выполнить код (${String(e).slice(0, 120)}).` }
+  }
+}
+
 async function execProvider(name: string, args: any, key: string): Promise<{ ok: boolean; result: string }> {
   try {
     if (name === 'github_create_issue') {
@@ -177,6 +196,7 @@ async function execAnyTool(
   ctx: { orKey: string; db: any; accountId: string; keyByProvider: Record<string, string>; customIndex: Record<string, { row: CustomToolRow; mcpTool?: string }> },
 ): Promise<{ ok: boolean; result: string; tokens?: number }> {
   if (ctx.customIndex[name]) return await execCustomTool(ctx.customIndex, name, args)
+  if (name === 'run_code') return await execRunCode(args)
   if (ALWAYS_TOOLS[name]) return await execAlways(name, args, ctx.orKey)
   if (GOOGLE_TOOLS[name]) {
     const gt = await googleAccessToken(ctx.db, ctx.accountId)
@@ -214,6 +234,9 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
   const alwaysSpecs: unknown[] = []
   if (hasUrl || webAgent) alwaysSpecs.push(ALWAYS_TOOLS.read_webpage)
   if (webAgent) alwaysSpecs.push(ALWAYS_TOOLS.web_search)
+  // compute-oriented agents get the code sandbox for calculations / data transforms
+  const codeAgent = ['analyst', 'research', 'coder', 'marketplace', 'content', 'workflow'].includes(agentType ?? '')
+  if (codeAgent && RENDER_WORKER_URL && RENDER_SECRET) alwaysSpecs.push(RUNCODE_TOOL)
   // user-defined tools (HTTP endpoints + MCP servers) — the "teach a skill" layer
   const { data: ctRows } = await db.from('custom_tools').select('id, kind, name, description, method, url, headers, params, body_template, mcp_url, mcp_headers').eq('account_id', accountId).eq('enabled', true)
   const { specs: customSpecs, index: customIndex } = buildCustomSpecs((ctRows ?? []) as CustomToolRow[])

@@ -10,8 +10,12 @@ import { createClient } from '@supabase/supabase-js'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { readFile, unlink } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
+
+// Deno binary for the code sandbox (installed to /usr/local/bin on the VPS).
+const DENO_BIN = process.env.DENO_BIN || '/usr/local/bin/deno'
 
 const PORT = Number(process.env.PORT || 4020)
 const HOST = process.env.HOST || '127.0.0.1'
@@ -120,6 +124,33 @@ async function processNext() {
   }
 }
 
+// ---- code sandbox: run untrusted JS/TS with Deno's deny-all model ----
+// The script (from stdin) gets NO permissions: no net, no file read/write, no env, no
+// subprocess (`--no-prompt` auto-denies instead of hanging). Only compute + console.log.
+// Wall-clock timeout + output cap + a memory-limited V8 keep the shared box safe.
+function runSandbox(code, timeoutMs) {
+  return new Promise((resolve) => {
+    const maxOut = 20000
+    let out = '', err = '', done = false
+    let child
+    try {
+      child = spawn(DENO_BIN, ['run', '--no-prompt', '--quiet', '--v8-flags=--max-old-space-size=128', '-'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: os.tmpdir(), DENO_DIR: path.join(os.tmpdir(), 'deno_cache'), NO_COLOR: '1' },
+      })
+    } catch (e) {
+      return resolve({ ok: false, error: 'sandbox unavailable: ' + String(e?.message || e), output: '' })
+    }
+    const finish = (r) => { if (!done) { done = true; clearTimeout(timer); try { child.kill('SIGKILL') } catch { /* already gone */ } resolve(r) } }
+    const timer = setTimeout(() => finish({ ok: false, error: `timeout (${Math.round(timeoutMs / 1000)}s)`, output: out.slice(0, maxOut) }), timeoutMs)
+    child.stdout.on('data', (d) => { if (out.length < maxOut) out += d.toString() })
+    child.stderr.on('data', (d) => { if (err.length < maxOut) err += d.toString() })
+    child.on('error', (e) => finish({ ok: false, error: 'spawn: ' + String(e?.message || e), output: '' }))
+    child.on('close', (codeExit) => finish({ ok: codeExit === 0, output: out.slice(0, maxOut), error: codeExit === 0 ? '' : (err.slice(0, 2000) || `exit ${codeExit}`) }))
+    try { child.stdin.write(String(code)); child.stdin.end() } catch { /* stdin closed */ }
+  })
+}
+
 // ---- http ----
 const app = express()
 app.use(express.json({ limit: '2mb' }))
@@ -146,6 +177,15 @@ app.get('/render/:id', (req, res) => {
   const job = jobs.get(req.params.id)
   if (!job) return res.status(404).json({ error: 'not found' })
   res.json({ status: job.status, url: job.url, error: job.error, bytes: job.bytes })
+})
+
+// Synchronous code sandbox (JS/TS via Deno, no I/O). Used by the run_code agent tool.
+app.post('/run-code', async (req, res) => {
+  const code = typeof req.body?.code === 'string' ? req.body.code.slice(0, 20000) : ''
+  if (!code.trim()) return res.status(400).json({ ok: false, error: 'no code' })
+  const timeoutMs = clampNum(req.body?.timeoutMs, 1000, 15000, 8000)
+  const r = await runSandbox(code, timeoutMs)
+  res.json(r)
 })
 
 async function main() {
