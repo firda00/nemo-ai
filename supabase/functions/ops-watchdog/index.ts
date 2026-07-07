@@ -64,9 +64,19 @@ Deno.serve(async (req) => {
     return { ok: w === 0 && e === 0, info: `${w} kutmoqda / ${e} xato` }
   })
 
-  // overall status: down if site/DB down; warn if worker down or support needs attention
+  // 5) cost guard — today's token burn + the single top-spending account (anomaly = runaway)
+  details.cost = await timed(async () => {
+    const { data } = await db.rpc('ops_usage_today')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row: any = Array.isArray(data) ? data[0] : data
+    const total = Number(row?.total ?? 0), top = Number(row?.top_tokens ?? 0)
+    const spike = top > 3_000_000 // one account burning >3M tokens/day = investigate
+    return { ok: !spike, info: `${total.toLocaleString('ru-RU')} tok bugun · top hisob ${top.toLocaleString('ru-RU')}` }
+  })
+
+  // overall status: down if site/DB down; warn if worker/support/cost need attention
   const hard = details.database.ok && details.site.ok
-  const status = !hard ? 'down' : (details.worker.ok && details.support.ok) ? 'ok' : 'warn'
+  const status = !hard ? 'down' : (details.worker.ok && details.support.ok && details.cost.ok) ? 'ok' : 'warn'
   const failing = Object.entries(details).filter(([, c]) => !c.ok).map(([k]) => k)
   const summary = status === 'ok' ? 'Hammasi ishlayapti' : `Muammo: ${failing.join(', ')}`
 
