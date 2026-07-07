@@ -88,7 +88,6 @@ export default function ResearchPage() {
 
   useEffect(() => {
     if (running) {
-      setPhase(0)
       phaseTimer.current = setInterval(() => setPhase((p) => Math.min(p + 1, PHASES.length - 1)), 5500)
     } else if (phaseTimer.current) {
       clearInterval(phaseTimer.current)
@@ -104,6 +103,7 @@ export default function ResearchPage() {
     if (goal.length < 4 || running) return
     setError('')
     setResult(null)
+    setPhase(0)
     setRunning(true)
     try {
       if (live && supabase) {
@@ -120,7 +120,7 @@ export default function ResearchPage() {
         await new Promise((r) => setTimeout(r, 1800))
         setResult({
           task: goal,
-          report: `# ${goal}\n\n## ${t('platform.research.demoNote')}\n\n- Пример пункта 1\n- Пример пункта 2\n\n**Источник:** [example.com](https://example.com)`,
+          report: `# ${goal}\n\n## ${t('platform.research.demoNote')}\n\n- ${t('researchPage.demoItem1')}\n- ${t('researchPage.demoItem2')}\n\n**${t('researchPage.demoSource')}:** [example.com](https://example.com)`,
           sources: ['https://example.com'],
           steps: [{ query: goal, findings: 'demo', sources: ['https://example.com'] }],
         })

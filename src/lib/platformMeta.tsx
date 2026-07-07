@@ -1,4 +1,4 @@
-import { Send, MessageCircle, Camera, Globe, MessagesSquare, Telescope, Workflow, UserCheck, Code2, PenLine, Brain, Hash, Play } from 'lucide-react'
+import { Send, MessageCircle, Camera, Globe, MessagesSquare, Telescope, Workflow, UserCheck, Code2, PenLine, Brain, Hash, Play, Handshake, LifeBuoy, CalendarCheck, BarChart3, Megaphone, ShoppingBag } from 'lucide-react'
 import type { ChannelType, AgentStatus, AgentKind, DialogueStatus } from '../types/platform'
 
 // Channel visual + label metadata — vivid brand-true colors that pop on dark.
@@ -26,13 +26,19 @@ export function channelLabel(type: ChannelType, t: (k: string) => string): strin
 export const agentTypeMeta: Record<AgentKind, { Icon: typeof Send; color: string; key: string }> = {
   chat: { Icon: MessagesSquare, color: '#8B7CF8', key: 'platform.agentTypes.chat' },
   qualifier: { Icon: UserCheck, color: '#5A8DEE', key: 'platform.agentTypes.qualifier' },
+  sales: { Icon: Handshake, color: '#22C55E', key: 'platform.agentTypes.sales' },
+  support: { Icon: LifeBuoy, color: '#38BDF8', key: 'platform.agentTypes.support' },
+  booking: { Icon: CalendarCheck, color: '#F472B6', key: 'platform.agentTypes.booking' },
+  analyst: { Icon: BarChart3, color: '#A78BFA', key: 'platform.agentTypes.analyst' },
+  smm: { Icon: Megaphone, color: '#FB923C', key: 'platform.agentTypes.smm' },
+  marketplace: { Icon: ShoppingBag, color: '#F59E0B', key: 'platform.agentTypes.marketplace' },
   coder: { Icon: Code2, color: '#34D399', key: 'platform.agentTypes.coder' },
   content: { Icon: PenLine, color: '#F4A640', key: 'platform.agentTypes.content' },
   learning: { Icon: Brain, color: '#EC6CB0', key: 'platform.agentTypes.learning' },
   research: { Icon: Telescope, color: '#22D3EE', key: 'platform.agentTypes.research' },
   workflow: { Icon: Workflow, color: '#13C5B4', key: 'platform.agentTypes.workflow' },
 }
-export const AGENT_KINDS: AgentKind[] = ['chat', 'qualifier', 'coder', 'content', 'learning', 'research', 'workflow']
+export const AGENT_KINDS: AgentKind[] = ['chat', 'qualifier', 'sales', 'support', 'booking', 'analyst', 'smm', 'marketplace', 'coder', 'content', 'learning', 'research', 'workflow']
 
 // agent status pill style — soft tint badges
 export const agentStatusStyle: Record<AgentStatus, string> = {

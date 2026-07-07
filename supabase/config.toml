@@ -30,6 +30,10 @@ verify_jwt = true
 [functions.test-agent]
 verify_jwt = true
 
+# Live-readiness probe for the panel (auth + account + LLM key checks).
+[functions.backend-status]
+verify_jwt = true
+
 # Edit an uploaded file's text with the agent (panel, authenticated).
 [functions.edit-file]
 verify_jwt = true
@@ -49,6 +53,26 @@ verify_jwt = true
 # Multi-agent orchestrator (manager) — plans + delegates to sub-agents.
 [functions.orchestrate]
 verify_jwt = true
+
+# Ustudy Operations Team workflows (payment control, meeting-to-tasks) — real
+# specialist sub-agents, structured output, saves runs/tasks/notifications.
+[functions.ops-workflow]
+verify_jwt = true
+
+# Auto follow-up / nurture sequences. PUBLIC so a cron can call run_due; the cron
+# path is gated by the x-cron-secret header (FOLLOWUP_CRON_SECRET), user actions
+# still require a Bearer JWT (checked inside the function).
+[functions.follow-up]
+verify_jwt = false
+
+# Multi-language content localization (one source -> localized post per language/platform).
+[functions.localize]
+verify_jwt = true
+
+# Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
+# Returns the agent reply as JSON; the agent runtime runs via buildReply.
+[functions.widget-webhook]
+verify_jwt = false
 
 # Platform admin API — token grants, gift codes (caller must be is_admin).
 [functions.admin-api]

@@ -35,7 +35,7 @@ export default function LeadsPage() {
           setLoading(false)
         })
     } else {
-      setLoading(false)
+      window.setTimeout(() => setLoading(false), 0)
     }
   }, [])
 

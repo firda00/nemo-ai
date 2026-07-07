@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
       try {
         const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
         for (const u of list?.users ?? []) lastLogin.set(u.id, u.last_sign_in_at ?? null)
-      } catch (_) { /* listUsers may be unavailable in some envs */ }
+      } catch { /* listUsers may be unavailable in some envs */ }
       const rows = (accounts ?? []).map((a: { id: string; name: string; plan: string; token_balance: number; blocked: boolean; created_at: string }) => {
         const u = userByAcc.get(a.id) as { id: string; email: string } | undefined
         return {
@@ -97,6 +97,14 @@ Deno.serve(async (req) => {
         if (banned) await admin.from('agents').update({ status: 'paused' }).eq('account_id', u.account_id)
       }
       return json({ ok: true, banned })
+    }
+
+    if (action === 'set_plan') {
+      const accountId = String(body?.account_id ?? '')
+      const plan = String(body?.plan ?? '')
+      if (!accountId || !['free', 'starter', 'pro', 'business', 'agency', 'enterprise', 'beta'].includes(plan)) return json({ error: 'account_id and valid plan required' }, 400)
+      await admin.from('accounts').update({ plan }).eq('id', accountId)
+      return json({ ok: true, plan })
     }
 
     if (action === 'grant' || action === 'set') {

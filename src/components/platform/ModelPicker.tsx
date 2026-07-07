@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Check, KeyRound, Sparkles, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Check, KeyRound, Sparkles } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { PROVIDERS, providerOf } from '../../data/platform'
-import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useToast } from '../ui/Toast'
 import { cn } from '../../lib/cn'
 
@@ -11,8 +10,8 @@ const inputCls =
 
 /**
  * Model selection grouped by company. The user picks a company, then a model,
- * and chooses the API-key source: Nemo's key (billed via balance) or their own
- * key (stored server-only in provider_keys — never read back to the client).
+ * and chooses the API-key source. Provider key storage is intentionally disabled
+ * in the browser build until a secure Edge Function/encryption path is enabled.
  */
 export function ModelPicker({
   model,
@@ -31,54 +30,21 @@ export function ModelPicker({
   const [activeId, setActiveId] = useState(selectedProvider.id)
   const active = PROVIDERS.find((p) => p.id === activeId) ?? PROVIDERS[0]
 
-  // Everything runs through OpenRouter, so BYO key = ONE OpenRouter key per
-  // account (applies to every model). We can detect that a key exists but never
-  // read the secret back.
-  const [hasOwnKey, setHasOwnKey] = useState(false)
   const [useOwn, setUseOwn] = useState(false)
   const [keyInput, setKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
 
-  useEffect(() => {
-    if (!isSupabaseEnabled || !supabase) return
-    let on = true
-    supabase
-      .from('provider_keys')
-      .select('provider')
-      .eq('provider', 'openrouter')
-      .maybeSingle()
-      .then(({ data }) => {
-        if (on) setHasOwnKey(Boolean(data))
-      })
-    return () => {
-      on = false
-    }
-  }, [])
-
-  const showOwn = useOwn || hasOwnKey
+  const showOwn = useOwn
 
   const saveKey = async () => {
-    if (!isSupabaseEnabled || !supabase || !keyInput.trim()) return
+    // SECURITY TODO: route provider key saves through an authenticated Edge Function
+    // that encrypts server-side before writing provider_keys. Never write real keys
+    // directly from the browser.
+    if (!keyInput.trim()) return
     setSavingKey(true)
-    const { error } = await supabase
-      .from('provider_keys')
-      .upsert({ provider: 'openrouter', api_key: keyInput.trim() }, { onConflict: 'account_id,provider' })
     setSavingKey(false)
-    if (error) {
-      toast(error.message)
-      return
-    }
-    setHasOwnKey(true)
     setKeyInput('')
-    toast(t('platform.editor.keySaved'))
-  }
-
-  const removeKey = async () => {
-    if (!isSupabaseEnabled || !supabase) return
-    await supabase.from('provider_keys').delete().eq('provider', 'openrouter')
-    setHasOwnKey(false)
-    setUseOwn(false)
-    toast(t('platform.editor.keyRemoved'))
+    toast('Provider key storage is not enabled in this demo build.')
   }
 
   return (
@@ -150,42 +116,34 @@ export function ModelPicker({
             )}
           >
             <p className="flex items-center gap-1.5 text-sm font-normal text-text">
-              <KeyRound size={14} className={hasOwnKey ? 'text-teal' : 'text-cyan'} /> {t('platform.editor.keyOwn')}
+              <KeyRound size={14} className="text-cyan" /> {t('platform.editor.keyOwn')}
             </p>
-            <p className="mt-1 text-[11px] leading-snug text-muted">{t('platform.editor.keyOwnHint')}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted">Provider key storage is not enabled in this demo build.</p>
           </button>
         </div>
 
         {showOwn && (
           <div>
-            {hasOwnKey ? (
-              <div className="flex items-center justify-between rounded-xl border border-teal/25 bg-teal/[0.06] px-3 py-2.5">
-                <span className="flex items-center gap-2 text-sm text-teal">
-                  <Check size={15} /> {t('platform.editor.keyConnected')}
-                </span>
-                <button onClick={removeKey} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06] hover:text-danger">
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            ) : (
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={keyInput}
-                  onChange={(e) => setKeyInput(e.target.value)}
-                  placeholder={t('platform.editor.keyPlaceholder')}
-                  className={inputCls}
-                  autoComplete="off"
-                />
-                <button
-                  onClick={saveKey}
-                  disabled={savingKey || !keyInput.trim()}
-                  className="shrink-0 rounded-xl bg-brand px-3 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {savingKey ? '…' : t('platform.editor.keySave')}
-                </button>
-              </div>
-            )}
+            <div className="rounded-xl border border-amber/25 bg-amber/10 p-3 text-xs leading-relaxed text-muted">
+              Provider key storage is not enabled in this demo build. For production, save keys through a secure Edge Function and store encrypted server-side values only.
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="password"
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+                placeholder={t('platform.editor.keyPlaceholder')}
+                className={inputCls}
+                autoComplete="off"
+              />
+              <button
+                onClick={saveKey}
+                disabled={savingKey || !keyInput.trim()}
+                className="shrink-0 rounded-xl bg-brand px-3 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {savingKey ? '…' : t('platform.editor.keySave')}
+              </button>
+            </div>
           </div>
         )}
       </div>

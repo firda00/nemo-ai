@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MessagesSquare, Clock, CheckCircle2, UserPlus, Star } from 'lucide-react'
+import { MessagesSquare, Clock, CheckCircle2, UserPlus, Star, Users } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { analytics } from '../../data/platform'
 import { channelLabel } from '../../lib/platformMeta'
@@ -39,10 +39,16 @@ export default function AnalyticsPage() {
   ]
 
   const vDialogues = live ? String(summary?.total ?? 0) : String(m.dialogues)
-  const vResp = live ? '—' : `${m.avgResponseSec}${t('platform.analytics.sec')}`
+  const vResp = live
+    ? (summary?.avgResponseSec != null ? `${summary.avgResponseSec}${t('platform.analytics.sec')}` : '—')
+    : `${m.avgResponseSec}${t('platform.analytics.sec')}`
   const vResolved = `${live ? summary?.resolvedPct ?? 0 : m.resolvedPct}%`
-  const vLead = live ? '—' : `${m.leadConvPct}%`
-  const vSat = live ? '—' : `${m.satisfaction}/5`
+  const vLead = `${live ? summary?.leadConvPct ?? 0 : m.leadConvPct}%`
+  // 5th tile: real leads count in live mode, satisfaction in the demo
+  const demoLeads = analytics.funnel.find((f) => f.label === 'leads')?.value ?? 0
+  const fifthIcon = live ? Users : Star
+  const fifthLabel = live ? t('platform.analytics.fleads') : t('platform.analytics.mSat')
+  const fifthValue = live ? String(summary?.leads ?? demoLeads) : `${m.satisfaction}/5`
 
   const daily = live
     ? (summary?.daily ?? []).slice(-range)
@@ -56,7 +62,6 @@ export default function AnalyticsPage() {
   const funnel = live
     ? [
         { label: 'dialogues', value: summary?.total ?? 0 },
-        { label: 'qualified', value: summary?.total ?? 0 },
         { label: 'leads', value: summary?.leads ?? 0 },
         { label: 'orders', value: summary?.resolved ?? 0 },
       ]
@@ -84,7 +89,7 @@ export default function AnalyticsPage() {
         <Metric icon={Clock} label={t('platform.analytics.mResp')} value={vResp} tone="bg-blue/15 text-blue" />
         <Metric icon={CheckCircle2} label={t('platform.analytics.mResolved')} value={vResolved} tone="bg-teal/15 text-teal" />
         <Metric icon={UserPlus} label={t('platform.analytics.mLead')} value={vLead} tone="bg-cyan/15 text-cyan" />
-        <Metric icon={Star} label={t('platform.analytics.mSat')} value={vSat} tone="bg-amber/15 text-amber" />
+        <Metric icon={fifthIcon} label={fifthLabel} value={fifthValue} tone="bg-amber/15 text-amber" />
       </div>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-3">

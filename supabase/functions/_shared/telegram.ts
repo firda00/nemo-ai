@@ -9,8 +9,9 @@ export async function tgSend(botToken: string, chatId: number | string, text: st
   return res.ok
 }
 
-// deno-lint-ignore no-explicit-any
-export async function tgSetWebhook(botToken: string, url: string, secret: string): Promise<any> {
+type TelegramResponse<T = unknown> = { ok?: boolean; result?: T; description?: string }
+
+export async function tgSetWebhook(botToken: string, url: string, secret: string): Promise<TelegramResponse> {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -19,8 +20,7 @@ export async function tgSetWebhook(botToken: string, url: string, secret: string
   return await res.json()
 }
 
-// deno-lint-ignore no-explicit-any
-export async function tgGetMe(botToken: string): Promise<any> {
+export async function tgGetMe(botToken: string): Promise<TelegramResponse> {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`)
   return await res.json()
 }

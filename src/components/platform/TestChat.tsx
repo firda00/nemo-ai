@@ -4,6 +4,7 @@ import { useAgentChat } from '../../hooks/useAgentChat'
 import { ChatComposer } from '../chat/ChatComposer'
 import { AgentAvatar } from '../ui/AgentAvatar'
 import { cn } from '../../lib/cn'
+import { isSupabaseEnabled } from '../../lib/supabase'
 import type { PlatformAgent } from '../../types/platform'
 
 export function TestChat({ agent }: { agent: PlatformAgent }) {
@@ -23,7 +24,7 @@ export function TestChat({ agent }: { agent: PlatformAgent }) {
         <AgentAvatar color={color} glyph="search" size="sm" />
         <div>
           <p className="text-sm font-normal text-text">{agentName || 'Agent'}</p>
-          <p className="text-[11px] text-muted">{t('platform.editor.testHint')}</p>
+          <p className="text-[11px] text-muted">{isSupabaseEnabled ? t('platform.editor.testHint') : 'Local simulation · connect API provider for real model replies'}</p>
         </div>
       </div>
 

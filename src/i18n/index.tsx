@@ -11,6 +11,11 @@ import type { Lang } from '../types'
 import { translations, type Dict } from './translations'
 
 const STORAGE_KEY = 'nemo.lang'
+const PAGE_TITLES: Record<Lang, string> = {
+  en: 'Nemo AI - AI Team Builder for Business Workflows',
+  ru: 'Nemo AI - платформа AI-команд для бизнеса',
+  uz: 'Nemo AI - biznes uchun AI-komandalar platformasi',
+}
 
 interface I18nContextValue {
   lang: Lang
@@ -37,7 +42,7 @@ function getInitialLang(): Lang {
     const stored = window.localStorage.getItem(STORAGE_KEY)
     if (stored === 'uz' || stored === 'ru' || stored === 'en') return stored
   }
-  return 'uz' // TZ default
+  return 'en'
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -53,6 +58,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = lang
+    document.title = PAGE_TITLES[lang]
   }, [lang])
 
   const t = useCallback(

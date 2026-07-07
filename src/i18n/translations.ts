@@ -1,4 +1,5 @@
 import type { Lang } from '../types'
+import { extraUz, extraRu, extraEn } from './extra'
 
 // Full UZ/RU dictionaries. UZ is the default language (TZ 2 UX goal).
 // Both languages mirror the same shape so the t() resolver is symmetric.
@@ -22,6 +23,13 @@ const uz = {
     menu: 'Menyu',
     language: 'Til',
   },
+  mvp: {
+    sidebar: { workspace: 'Nemo workspace', agents: 'Agentlar', aiTeams: 'AI-komandalar', createAgent: 'Agent yaratish', createTeam: 'AI-komanda yaratish', templates: 'Templates', runWorkflow: 'Workflow ishga tushirish', results: 'Natijalar', settings: 'Sozlamalar' },
+    dashboard: { eyebrow: 'AI Team Operating System', title: 'Dashboard', subtitle: 'AI-komandalar yarating, workflow ishga tushiring va natijalarni bitta joyda ko‘ring.', createTeam: 'AI-komanda yaratish', runDemo: 'Demo workflow ishga tushirish', activeTeams: 'Active AI Teams', workflowsRun: 'Workflowlar', leadsProcessed: 'Leadlar', avgResponse: 'O‘rtacha javob vaqti', teamsTitle: 'AI-komandalar', teamsDesc: 'Saqlangan workflow komandalar va ularning holati.', openTeams: 'AI-komandalarni ochish', empty: 'Hali AI-komanda yaratilmagan.', createFirst: 'Birinchi komandani yaratish', ready: 'Team Lead + Specialist Agents · workflowga tayyor', active: 'Active', latest: 'Oxirgi agent activity' },
+    pilot: { eyebrow: 'Nemo Pilot', title: 'Nemo Pilot', subtitle: '6-iyul ichki demo uchun routine admin va operations workflowlarini ishga tushiring.', openTemplates: 'Templatelarni ochish', courseConsultant: 'Course Consultant yaratish', courseConsultantDesc: 'Kurs tavsiyalari uchun standalone agent.', operationsTeam: 'Operations Team yaratish', operationsTeamDesc: 'Payment, admin escalation, meeting tasks va reportlar.', paymentDemo: 'Payment Control Demo', paymentDemoDesc: 'Reminder, admin escalation va risk darajasini yarating.', meetingDemo: 'Meeting to Tasks Demo', meetingDemoDesc: 'Owner, deadline va weekly reportni ajrating.' },
+    settings: { eyebrow: 'Workspace sozlamalari', title: 'Sozlamalar', subtitle: 'Faqat ishlaydigan MVP sozlamalari ko‘rsatilgan. Advanced API keys va team permissions coming soon.', profile: 'Profil', profileDesc: 'Asosiy account ma’lumotlari.', name: 'Ism', email: 'Email', language: 'Til', languageDesc: 'Workspace uchun interfeys tili.', usage: 'Billing / Usage', usageDesc: 'Pilot pricing mavjud. Usage production workflow runlarga ulanadi.', pilotPlan: 'Pilot plan', pilotDesc: 'AI Teams uchun oddiy pricing. MVP UI’da token/VPS complexity yo‘q.', openPricing: 'Pricing ochish', apiKeys: 'API keys', apiKeysDesc: 'Real provider integrations kerak bo‘lgan pilotlar uchun coming soon.', teamMembers: 'Team members', teamMembersDesc: 'Multi-user workspaces uchun coming soon.', comingSoon: 'Coming soon' },
+    templates: { ready: 'Ready', demo: 'Demo template', vertical: 'Vertical', use: 'Template ishlatish' },
+  },
   nav: {
     howItWorks: 'Qanday ishlaydi',
     features: 'Imkoniyatlar',
@@ -40,49 +48,72 @@ const uz = {
     profile: 'Profil',
   },
   landing: {
-    badge: 'AI-agentlar platformasi — beta',
-    title: 'AI-agent yarating —',
-    titleAccent: 'u 24/7 sotadi va javob beradi',
+    badge: 'AI workforce operating system — beta',
+    title: 'AI-komanda yarating —',
+    titleAccent: 'u maqsadni subagentlarga bo‘lib bajaradi',
     subtitle:
-      'Nemo AI bilan kod yozmasdan AI-agent yig‘asiz, uni Telegram, WhatsApp, Instagram va saytingizga ulaysiz. Agent mijozlar bilan ishlaydi — sotuv va qo‘llab-quvvatlashni avtomatlashtiradi, operator esa istalgan payt suhbatni qo‘lga oladi.',
+      'Nemo AI bilan kodsiz AI-komanda yaratasiz: bosh agent maqsadni tushunadi, subagentlarni yig‘adi va vazifalarni ularga bo‘lib beradi. Komanda Telegram, WhatsApp, Instagram va saytingizda ishlaydi — kontent, sotuv va qo‘llab-quvvatlashni avtomatlashtiradi.',
     ctaPrimary: 'Bepul boshlash',
     ctaSecondary: 'Qanday ishlaydi',
     note: 'Beta · Taklif kodi bo‘yicha · UZ/RU',
     previewUserMsg: 'Mijozlarga sovg‘a aksiyasi haqida post va e’lon matnini tayyorlab ber',
     previewNemoMsg: 'Yaxshi! Men jamoani yig‘yapman: tadqiqotchi, yozuvchi va tekshiruvchi…',
     previewTeam: 'Jonli jamoa',
+    heroPreview: {
+      architect: 'AI-komanda arxitektori',
+      workspace: 'Nemo Content OS',
+      live: 'Jonli',
+      master: 'Master',
+      masterRole: 'Intent router',
+      sales: 'Kontent',
+      salesRole: 'Post va ssenariy',
+      support: 'Nashr',
+      supportRole: 'Reja va kanal',
+      reviewer: 'Analitik',
+      reviewerRole: 'Natija va yaxshilash',
+      routes: 'yo‘naltiradi',
+      connected: 'ulangan',
+      channelsTitle: 'Telegram, WhatsApp, Instagram, Website',
+      channelsDesc: 'Bitta orkestratsiya qatlami kontekstni saqlaydi, vazifalarni agentlarga bo‘ladi va operatorga suhbatni olish imkonini beradi.',
+      autoResolve: 'avto javob',
+      response: 'javob',
+      channels: 'kanal',
+      traceIntent: 'Niyat aniqlandi',
+      traceSales: 'Kontent subagenti matn tayyorladi',
+      traceReview: 'Analitik subagent tekshirdi',
+    },
     how: {
       title: 'Qanday ishlaydi',
       subtitle: 'To‘rt qadamda — kodsiz.',
       steps: [
         {
           k: '01',
-          title: 'Agent yarating',
-          desc: 'Onboarding sehrgarida nom, rol va vazifalarni belgilang — kod yozmasdan.',
+          title: 'Maqsadni yozing',
+          desc: 'Nima kerakligini ayting: kontent jamoasi, sotuv bo‘limi, support yoki boshqa AI-komanda.',
         },
         {
           k: '02',
-          title: 'O‘rgating',
-          desc: 'Prompt va bilim bazasini (fayllar, FAQ, havolalar) qo‘shing — agent shularga tayanadi.',
+          title: 'Komandani tuzing',
+          desc: 'Nemo bosh agent, subagentlar, rollar va vazifalar sxemasini taklif qiladi.',
         },
         {
           k: '03',
-          title: 'Kanallarni ulang',
-          desc: 'Telegram, WhatsApp, Instagram yoki sayt vidjeti — bir necha bosishda.',
+          title: 'Bilim va kanallarni ulang',
+          desc: 'Fayllar, FAQ, havolalar, Telegram, WhatsApp, Instagram yoki sayt vidjeti — bir necha bosishda.',
         },
         {
           k: '04',
           title: 'Ishga tushiring',
-          desc: 'Agent 24/7 javob beradi, siz analitikani kuzatasiz, operator istalgan payt qo‘shiladi.',
+          desc: 'AI-komanda 24/7 ishlaydi, siz analitika va agentlar izini ko‘rasiz, operator istalgan payt qo‘shiladi.',
         },
       ],
     },
     why: {
       title: 'Nega Nemo AI?',
-      desc: 'Kodsiz, tez va ikki tilli — biznesingiz uchun ko‘p kanalli AI-agent. Sotuv va qo‘llab-quvvatlashni avtomatlashtiring, nazorat o‘zingizda qoladi.',
+      desc: 'Kodsiz, tez va ikki tilli — biznesingiz uchun AI-komanda. Bitta bosh agent maqsadni boshqaradi, subagentlar esa kontent, sotuv, support yoki analitikani bajaradi.',
       points: [
         'Kod yozmasdan sozlash',
-        'Bitta agent — barcha kanallarda',
+        'Bitta maqsad — bir nechta subagent',
         'Operator istalgan payt suhbatni qo‘lga oladi',
       ],
     },
@@ -91,12 +122,12 @@ const uz = {
       subtitle: 'Bitta platformada — agent yaratishdan analitikagacha.',
       items: [
         {
-          title: 'Kodsiz konstruktor',
-          desc: 'Onboarding va vizual redaktorda agent yarating hamda sozlang.',
+          title: 'AI-komanda konstruktori',
+          desc: 'Maqsadni yozing — Nemo bosh agent va kerakli subagentlarni taklif qiladi.',
         },
         {
           title: 'Ko‘p kanalli',
-          desc: 'Telegram, WhatsApp, Instagram va sayt vidjeti — bitta agent hammasida.',
+          desc: 'Telegram, WhatsApp, Instagram va sayt vidjeti — AI-komanda hamma kanalda ishlaydi.',
         },
         {
           title: 'Suhbat menejeri',
@@ -141,7 +172,7 @@ const uz = {
       subtitle: 'Sozlash oson — bir necha daqiqada boshlaysiz.',
       steps: [
         { title: 'Ro‘yxatdan o‘ting', desc: 'Taklif kodi yoki Google bilan — bir daqiqada.' },
-        { title: 'Agent yarating', desc: 'Prompt va bilim bazasini sozlang.' },
+        { title: 'AI-komanda yarating', desc: 'Maqsad, rollar, subagentlar va bilim bazasini sozlang.' },
         { title: 'Kanalni ulang', desc: 'Telegram yoki vidjetni ulang va ishga tushiring.' },
       ],
     },
@@ -165,7 +196,7 @@ const uz = {
     faq: {
       title: 'Tez-tez beriladigan savollar',
       items: [
-        { q: 'Nemo AI qanday ishlaydi?', a: 'Siz AI-agent yaratasiz, uni prompt va bilim bazasi bilan sozlaysiz, kanallarga ulaysiz — agent mijozlar bilan 24/7 suhbatlashadi.' },
+        { q: 'Nemo AI qanday ishlaydi?', a: 'Siz maqsadni yozasiz — Nemo bosh agent va subagentlardan AI-komanda tuzadi, bilim bazasi va kanallarga ulaydi, komanda esa vazifalarni 24/7 bajaradi.' },
         { q: 'Kod yozishim kerakmi?', a: 'Yo‘q. Onboarding sehrgari va vizual redaktor orqali agent kodsiz yaratiladi.' },
         { q: 'Qaysi kanallar ulanadi?', a: 'Telegram, WhatsApp, Instagram va sayt vidjeti. Bitta agent bir nechta kanalda ishlay oladi.' },
         { q: 'Operator suhbatga aralasha oladimi?', a: 'Ha. Istalgan dialogni operator qo‘lga olishi, javob berishi va yana agentga qaytarishi mumkin.' },
@@ -178,19 +209,19 @@ const uz = {
       cta: 'Navbatga yozilish',
     },
     finalCta: {
-      title: 'Bugun AI-agentingizni yarating',
+      title: 'Bugun AI-komandangizni yarating',
       desc: 'Beta’ga taklif kodi bilan kiring yoki navbatga yoziling.',
       button: 'Boshlash',
     },
     footer: {
-      tagline: 'Biznes uchun ko‘p kanalli AI-agent. Sotuv va qo‘llab-quvvatlashni avtomatlashtiring.',
+      tagline: 'Biznes uchun AI-komandalar. Kontent, sotuv va qo‘llab-quvvatlashni avtomatlashtiring.',
       product: 'Mahsulot',
       company: 'Kompaniya',
       legal: 'Huquqiy',
       privacy: 'Maxfiylik',
       terms: 'Shartlar',
       rights: 'Barcha huquqlar himoyalangan.',
-      madeBy: 'Ustudy IT tomonidan',
+      madeBy: 'Nemo AI tomonidan',
     },
   },
   auth: {
@@ -389,6 +420,7 @@ const uz = {
   platform: {
     nav: {
       dashboard: 'Boshqaruv paneli',
+      agentTeams: 'AI-komandalar',
       agents: 'Agentlar',
       research: 'Tadqiqot',
       dialogues: 'Suhbatlar',
@@ -695,6 +727,13 @@ const uz = {
       learning: 'O‘z-o‘zini o‘rgatuvchi',
       research: 'Tadqiqotchi',
       workflow: 'Bo‘lim / Menejer',
+      sales: 'Sotuvchi (Closer)', support: 'Qo‘llab-quvvatlash', booking: 'Yozuv / Bron', analyst: 'Analitik', smm: 'SMM-agent', marketplace: 'Marketpleys-agent',
+      salesDesc: 'E‘tirozlar bilan ishlaydi, mijozni qarorga olib keladi va bitimni yopadi.',
+      supportDesc: 'Bilim bazasidan savollarga javob beradi, murakkab holatlarni operatorga uzatadi.',
+      bookingDesc: 'Bo‘sh vaqtni taklif qiladi, kalendarga yozadi, tasdiqlaydi va eslatadi.',
+      analystDesc: 'Ma‘lumot va metrikalarni o‘qib, hisobot va tahlillar tayyorlaydi.',
+      smmDesc: 'Kontent-reja tuzadi, har bir platforma uchun post yozadi va rejalashtiradi.',
+      marketplaceDesc: 'Mahsulotlarni tadqiq qiladi, do‘konni tahlil qiladi, marketpleys qoidalarini o‘qiydi va kerakli o‘lchamdagi infografika tayyorlaydi.',
       chatDesc: 'Mijozlar bilan kanallarda suhbatlashadi (Telegram, WhatsApp…).',
       qualifierDesc: 'Murojaatlarni saralaydi, byudjet va ehtiyojni aniqlab, sifatli leadni operatorga uzatadi.',
       coderDesc: 'Kod yozadi va tuzatadi, fayllar bilan ishlaydi.',
@@ -879,6 +918,13 @@ const ru: typeof uz = {
     menu: 'Меню',
     language: 'Язык',
   },
+  mvp: {
+    sidebar: { workspace: 'Nemo workspace', agents: 'Агенты', aiTeams: 'AI-команды', createAgent: 'Создать агента', createTeam: 'Создать AI-команду', templates: 'Templates', runWorkflow: 'Запустить workflow', results: 'Результаты', settings: 'Настройки' },
+    dashboard: { eyebrow: 'AI Team Operating System', title: 'Dashboard', subtitle: 'Создавайте AI-команды, запускайте workflow и смотрите результаты в одном месте.', createTeam: 'Создать AI-команду', runDemo: 'Запустить demo workflow', activeTeams: 'Активные AI-команды', workflowsRun: 'Workflow запущено', leadsProcessed: 'Лидов обработано', avgResponse: 'Среднее время ответа', teamsTitle: 'AI-команды', teamsDesc: 'Сохранённые workflow-команды и их текущий статус.', openTeams: 'Открыть AI-команды', empty: 'AI-команда ещё не создана.', createFirst: 'Создать первую команду', ready: 'Team Lead + Specialist Agents · готово к workflow', active: 'Active', latest: 'Последняя активность агентов' },
+    pilot: { eyebrow: 'Nemo Pilot', title: 'Nemo Pilot', subtitle: 'Запустите routine admin и operations workflow для внутреннего демо 6 июля.', openTemplates: 'Открыть templates', courseConsultant: 'Создать Course Consultant', courseConsultantDesc: 'Standalone agent для рекомендаций по курсам.', operationsTeam: 'Создать Operations Team', operationsTeamDesc: 'Платежи, эскалации админам, meeting tasks и отчёты.', paymentDemo: 'Payment Control Demo', paymentDemoDesc: 'Создать reminder, admin escalation и уровень риска.', meetingDemo: 'Meeting to Tasks Demo', meetingDemoDesc: 'Извлечь owner, deadline и weekly report.' },
+    settings: { eyebrow: 'Настройки workspace', title: 'Настройки', subtitle: 'Показаны только рабочие MVP-настройки. Advanced API keys и team permissions отмечены как coming soon.', profile: 'Профиль', profileDesc: 'Основная информация аккаунта.', name: 'Имя', email: 'Email', language: 'Язык', languageDesc: 'Язык интерфейса workspace.', usage: 'Billing / Usage', usageDesc: 'Pilot pricing доступен. Usage будет подключён к production workflow runs.', pilotPlan: 'Pilot plan', pilotDesc: 'Простой pricing для AI Teams. Без token/VPS complexity в MVP UI.', openPricing: 'Открыть pricing', apiKeys: 'API keys', apiKeysDesc: 'Coming soon для пилотов, которым нужны real provider integrations.', teamMembers: 'Team members', teamMembersDesc: 'Coming soon для multi-user workspaces.', comingSoon: 'Coming soon' },
+    templates: { ready: 'Ready', demo: 'Demo template', vertical: 'Vertical', use: 'Использовать шаблон' },
+  },
   nav: {
     howItWorks: 'Как работает',
     features: 'Возможности',
@@ -897,49 +943,72 @@ const ru: typeof uz = {
     profile: 'Профиль',
   },
   landing: {
-    badge: 'Платформа AI-агентов — бета',
-    title: 'Создайте AI-агента —',
-    titleAccent: 'он продаёт и отвечает 24/7',
+    badge: 'Operating system для AI-команд — бета',
+    title: 'Создайте AI-команду —',
+    titleAccent: 'она сама делит цель между субагентами',
     subtitle:
-      'С Nemo AI вы без кода собираете AI-агента, подключаете его к Telegram, WhatsApp, Instagram и сайту. Агент общается с клиентами — автоматизирует продажи и поддержку, а оператор в любой момент берёт диалог на себя.',
+      'С Nemo AI вы без кода создаёте AI-команду: главный агент понимает цель, собирает субагентов и распределяет между ними задачи. Команда работает в Telegram, WhatsApp, Instagram и на сайте — автоматизирует контент, продажи и поддержку.',
     ctaPrimary: 'Начать бесплатно',
     ctaSecondary: 'Как это работает',
     note: 'Бета · По коду приглашения · UZ/RU',
     previewUserMsg: 'Подготовь пост и текст объявления об акции с подарками для клиентов',
     previewNemoMsg: 'Отлично! Собираю команду: исследователь, копирайтер и ревьюер…',
     previewTeam: 'Живая команда',
+    heroPreview: {
+      architect: 'Архитектор AI-команды',
+      workspace: 'Nemo Content OS',
+      live: 'Активно',
+      master: 'Master',
+      masterRole: 'Маршрутизация намерений',
+      sales: 'Контент',
+      salesRole: 'Посты и сценарии',
+      support: 'Публикация',
+      supportRole: 'План и каналы',
+      reviewer: 'Аналитик',
+      reviewerRole: 'Метрики и улучшения',
+      routes: 'маршрутизирует',
+      connected: 'подключён',
+      channelsTitle: 'Telegram, WhatsApp, Instagram, сайт',
+      channelsDesc: 'Один слой оркестрации хранит контекст, делегирует задачи агентам и даёт оператору перехватить диалог.',
+      autoResolve: 'автоответ',
+      response: 'ответ',
+      channels: 'канала',
+      traceIntent: 'Намерение определено',
+      traceSales: 'Контент-субагент подготовил текст',
+      traceReview: 'Аналитик проверил результат',
+    },
     how: {
       title: 'Как это работает',
       subtitle: 'Четыре шага — без кода.',
       steps: [
         {
           k: '01',
-          title: 'Создайте агента',
-          desc: 'В мастере онбординга задайте имя, роль и задачи — без кода.',
+          title: 'Опишите цель',
+          desc: 'Напишите, что нужно: контент-команда, отдел продаж, поддержка или другая AI-команда.',
         },
         {
           k: '02',
-          title: 'Обучите',
-          desc: 'Добавьте промпт и базу знаний (файлы, FAQ, ссылки) — агент опирается на них.',
+          title: 'Соберите команду',
+          desc: 'Nemo предложит главного агента, субагентов, роли и схему задач.',
         },
         {
           k: '03',
-          title: 'Подключите каналы',
-          desc: 'Telegram, WhatsApp, Instagram или виджет на сайт — в пару кликов.',
+          title: 'Подключите знания и каналы',
+          desc: 'Файлы, FAQ, ссылки, Telegram, WhatsApp, Instagram или виджет на сайт — в пару кликов.',
         },
         {
           k: '04',
           title: 'Запустите',
-          desc: 'Агент отвечает 24/7, вы следите за аналитикой, оператор подключается в любой момент.',
+          desc: 'AI-команда работает 24/7, вы видите аналитику и trace агентов, оператор подключается в любой момент.',
         },
       ],
     },
     why: {
       title: 'Почему Nemo AI?',
-      desc: 'Без кода, быстро и на двух языках — мультиканальный AI-агент для бизнеса. Автоматизируйте продажи и поддержку, контроль остаётся за вами.',
+      desc: 'Без кода, быстро и на двух языках — AI-команда для бизнеса. Главный агент управляет целью, а субагенты делают контент, продажи, поддержку или аналитику.',
       points: [
         'Настройка без кода',
-        'Один агент — во всех каналах',
+        'Одна цель — несколько субагентов',
         'Оператор берёт диалог в любой момент',
       ],
     },
@@ -948,12 +1017,12 @@ const ru: typeof uz = {
       subtitle: 'Всё на одной платформе — от создания агента до аналитики.',
       items: [
         {
-          title: 'Конструктор без кода',
-          desc: 'Создавайте и настраивайте агента в онбординге и визуальном редакторе.',
+          title: 'Конструктор AI-команд',
+          desc: 'Опишите цель — Nemo предложит главного агента и нужных субагентов.',
         },
         {
           title: 'Мультиканальность',
-          desc: 'Telegram, WhatsApp, Instagram и виджет на сайт — один агент во всех.',
+          desc: 'Telegram, WhatsApp, Instagram и виджет на сайт — AI-команда работает во всех каналах.',
         },
         {
           title: 'Менеджер диалогов',
@@ -998,7 +1067,7 @@ const ru: typeof uz = {
       subtitle: 'Настройка простая — начнёте за пару минут.',
       steps: [
         { title: 'Зарегистрируйтесь', desc: 'По коду приглашения или через Google — за минуту.' },
-        { title: 'Создайте агента', desc: 'Настройте промпт и базу знаний.' },
+        { title: 'Создайте AI-команду', desc: 'Настройте цель, роли, субагентов и базу знаний.' },
         { title: 'Подключите канал', desc: 'Подключите Telegram или виджет и запустите.' },
       ],
     },
@@ -1022,7 +1091,7 @@ const ru: typeof uz = {
     faq: {
       title: 'Частые вопросы',
       items: [
-        { q: 'Как работает Nemo AI?', a: 'Вы создаёте AI-агента, настраиваете его промптом и базой знаний, подключаете к каналам — агент общается с клиентами 24/7.' },
+        { q: 'Как работает Nemo AI?', a: 'Вы описываете цель — Nemo собирает AI-команду из главного агента и субагентов, подключает знания и каналы, а команда выполняет задачи 24/7.' },
         { q: 'Нужно ли писать код?', a: 'Нет. Агент создаётся без кода — через мастер онбординга и визуальный редактор.' },
         { q: 'Какие каналы подключаются?', a: 'Telegram, WhatsApp, Instagram и виджет на сайт. Один агент может работать в нескольких каналах.' },
         { q: 'Может ли оператор вмешаться в диалог?', a: 'Да. Любой диалог оператор может перехватить, ответить и вернуть агенту.' },
@@ -1035,19 +1104,19 @@ const ru: typeof uz = {
       cta: 'Записаться в очередь',
     },
     finalCta: {
-      title: 'Создайте своего AI-агента сегодня',
+      title: 'Создайте свою AI-команду сегодня',
       desc: 'Войдите в бету по коду приглашения или запишитесь в очередь.',
       button: 'Начать',
     },
     footer: {
-      tagline: 'Мультиканальный AI-агент для бизнеса. Автоматизируйте продажи и поддержку.',
+      tagline: 'AI-команды для бизнеса. Автоматизируйте контент, продажи и поддержку.',
       product: 'Продукт',
       company: 'Компания',
       legal: 'Правовое',
       privacy: 'Конфиденциальность',
       terms: 'Условия',
       rights: 'Все права защищены.',
-      madeBy: 'от Ustudy IT',
+      madeBy: 'от Nemo AI',
     },
   },
   auth: {
@@ -1246,6 +1315,7 @@ const ru: typeof uz = {
   platform: {
     nav: {
       dashboard: 'Панель',
+      agentTeams: 'AI-команды',
       agents: 'Агенты',
       research: 'Ресёрч',
       dialogues: 'Диалоги',
@@ -1552,6 +1622,13 @@ const ru: typeof uz = {
       learning: 'Самообучающийся',
       research: 'Ресёрчер',
       workflow: 'Отдел / Менеджер',
+      sales: 'Продавец (Closer)', support: 'Поддержка', booking: 'Запись / Бронь', analyst: 'Аналитик', smm: 'SMM-агент', marketplace: 'Маркетплейс-агент',
+      salesDesc: 'Работает с возражениями, доводит клиента до решения и закрывает сделку.',
+      supportDesc: 'Отвечает на частые вопросы из базы знаний, сложные случаи передаёт оператору.',
+      bookingDesc: 'Предлагает слоты, записывает в календарь, подтверждает и напоминает.',
+      analystDesc: 'Читает данные и метрики, готовит отчёты, сводки и выводы.',
+      smmDesc: 'Строит контент-план, пишет посты под каждую платформу и планирует их.',
+      marketplaceDesc: 'Изучает товары, анализирует магазин, читает правила маркетплейса и готовит инфографику нужных размеров.',
       chatDesc: 'Общается с клиентами в каналах (Telegram, WhatsApp…).',
       qualifierDesc: 'Отбирает обращения, выясняет бюджет и потребность, передаёт качественный лид оператору.',
       coderDesc: 'Пишет и правит код, работает с файлами.',
@@ -1743,40 +1820,70 @@ const enOverride: DeepPartial<typeof uz> = {
     save: 'Save', saved: 'Saved', cancel: 'Cancel', close: 'Close', enabled: 'Enabled', disabled: 'Disabled',
     beta: 'Beta', soon: 'Soon', optional: 'optional', menu: 'Menu', language: 'Language',
   },
+  mvp: {
+    sidebar: { workspace: 'Nemo workspace', agents: 'Agents', aiTeams: 'AI Teams', createAgent: 'Create Agent', createTeam: 'Create AI Team', templates: 'Templates', runWorkflow: 'Run Workflow', results: 'Results', settings: 'Settings' },
+    dashboard: { eyebrow: 'AI Team Operating System', title: 'Dashboard', subtitle: 'Create AI Teams, run workflows, and review results from one place.', createTeam: 'Create AI Team', runDemo: 'Run Demo Workflow', activeTeams: 'Active AI Teams', workflowsRun: 'Workflows run', leadsProcessed: 'Leads processed', avgResponse: 'Avg response time', teamsTitle: 'AI Teams', teamsDesc: 'Saved workflow teams and their current status.', openTeams: 'Open AI Teams', empty: 'No AI Team created yet.', createFirst: 'Create first team', ready: 'Team Lead + Specialist Agents · ready to run workflow', active: 'Active', latest: 'Latest agent activity' },
+    pilot: { eyebrow: 'Nemo Pilot', title: 'Nemo Pilot', subtitle: 'Run routine admin and operations workflows for the July 6 internal demo.', openTemplates: 'Open Templates', courseConsultant: 'Create Course Consultant', courseConsultantDesc: 'Standalone agent for course recommendations.', operationsTeam: 'Create Operations Team', operationsTeamDesc: 'Payments, admin escalation, meeting tasks and reports.', paymentDemo: 'Payment Control Demo', paymentDemoDesc: 'Generate reminder, admin escalation and risk level.', meetingDemo: 'Meeting to Tasks Demo', meetingDemoDesc: 'Extract owners, deadlines and weekly report.' },
+    settings: { eyebrow: 'Workspace settings', title: 'Settings', subtitle: 'Only working MVP settings are shown. Advanced API keys and team permissions are marked as coming soon.', profile: 'Profile', profileDesc: 'Basic account information.', name: 'Name', email: 'Email', language: 'Language', languageDesc: 'Interface language for the workspace.', usage: 'Billing / Usage', usageDesc: 'Pilot pricing is available. Usage details will be connected to production workflow runs.', pilotPlan: 'Pilot plan', pilotDesc: 'Simple pricing for AI Teams. No token/VPS complexity in MVP UI.', openPricing: 'Open pricing', apiKeys: 'API keys', apiKeysDesc: 'Coming soon for pilots that need real provider integrations.', teamMembers: 'Team members', teamMembersDesc: 'Coming soon for multi-user workspaces.', comingSoon: 'Coming soon' },
+    templates: { ready: 'Ready', demo: 'Demo template', vertical: 'Vertical', use: 'Use template' },
+  },
   nav: {
     howItWorks: 'How it works', features: 'Features', scenarios: 'Use cases', pricing: 'Pricing', faq: 'FAQ',
     login: 'Log in', signup: 'Sign up', openApp: 'Open app', tryFree: 'Try for free', chat: 'Chat',
     history: 'History', settings: 'Settings', admin: 'Admin', logout: 'Log out', profile: 'Profile',
   },
   landing: {
-    badge: 'AI agent platform — beta',
-    title: 'Build an AI agent —',
-    titleAccent: 'it sells and replies 24/7',
+    badge: 'AI workforce operating system — beta',
+    title: 'Build an AI team —',
+    titleAccent: 'it splits goals between sub-agents',
     subtitle:
-      'With Nemo AI you assemble an AI agent without code and connect it to Telegram, WhatsApp, Instagram and your website. The agent works with customers — automating sales and support, while an operator can take over any conversation at any time.',
+      'With Nemo AI you create an AI team without code: the master agent understands the goal, assembles sub-agents and delegates tasks. The team works in Telegram, WhatsApp, Instagram and your website — automating content, sales and support.',
     ctaPrimary: 'Start free', ctaSecondary: 'How it works', note: 'Beta · Invite code · UZ/RU/EN',
     previewUserMsg: 'Prepare a post and ad copy about our gift promo for customers',
     previewNemoMsg: 'Great! I’m assembling the team: researcher, writer and reviewer…',
     previewTeam: 'Live team',
+    heroPreview: {
+      architect: 'AI team architect',
+      workspace: 'Nemo Content OS',
+      live: 'Live',
+      master: 'Master',
+      masterRole: 'Intent router',
+      sales: 'Content',
+      salesRole: 'Posts and scripts',
+      support: 'Publishing',
+      supportRole: 'Plan and channels',
+      reviewer: 'Analyst',
+      reviewerRole: 'Metrics and improvement',
+      routes: 'routes',
+      connected: 'connected',
+      channelsTitle: 'Telegram, WhatsApp, Instagram, Website',
+      channelsDesc: 'One orchestration layer keeps context, delegates work and lets an operator take over.',
+      autoResolve: 'auto-resolve',
+      response: 'response',
+      channels: 'channels',
+      traceIntent: 'Intent detected',
+      traceSales: 'Content sub-agent drafted the copy',
+      traceReview: 'Analyst sub-agent reviewed the result',
+    },
     how: {
       title: 'How it works', subtitle: 'In four steps — no code.',
       steps: [
-        { k: '01', title: 'Create an agent', desc: 'Set name, role and tasks in the onboarding wizard — no code.' },
-        { k: '02', title: 'Train it', desc: 'Add a prompt and knowledge base (files, FAQ, links) — the agent relies on them.' },
-        { k: '03', title: 'Connect channels', desc: 'Telegram, WhatsApp, Instagram or a website widget — in a few clicks.' },
-        { k: '04', title: 'Go live', desc: 'The agent replies 24/7, you watch analytics, an operator joins anytime.' },
+        { k: '01', title: 'Describe the goal', desc: 'Tell Nemo what you need: content, sales, support or another AI team.' },
+        { k: '02', title: 'Assemble the team', desc: 'Nemo proposes a master agent, sub-agents, roles and task flow.' },
+        { k: '03', title: 'Connect knowledge and channels', desc: 'Files, FAQ, links, Telegram, WhatsApp, Instagram or a website widget — in a few clicks.' },
+        { k: '04', title: 'Go live', desc: 'The AI team works 24/7, you watch analytics and agent trace, an operator joins anytime.' },
       ],
     },
     why: {
       title: 'Why Nemo AI?',
-      desc: 'No-code, fast and multilingual — a multi-channel AI agent for your business. Automate sales and support while you stay in control.',
-      points: ['No-code setup', 'One agent — every channel', 'An operator can take over anytime'],
+      desc: 'No-code, fast and multilingual — an AI team for your business. The master agent manages the goal while sub-agents handle content, sales, support or analytics.',
+      points: ['No-code setup', 'One goal — multiple sub-agents', 'An operator can take over anytime'],
     },
     features: {
       title: 'Features', subtitle: 'One platform — from building an agent to analytics.',
       items: [
-        { title: 'No-code builder', desc: 'Create and configure an agent in onboarding and a visual editor.' },
-        { title: 'Multi-channel', desc: 'Telegram, WhatsApp, Instagram and a website widget — one agent everywhere.' },
+        { title: 'AI team builder', desc: 'Describe the goal — Nemo proposes the master agent and required sub-agents.' },
+        { title: 'Multi-channel', desc: 'Telegram, WhatsApp, Instagram and a website widget — the AI team works everywhere.' },
         { title: 'Conversation manager', desc: 'Manage all dialogues in one place; an operator takes over when needed.' },
         { title: 'Knowledge base', desc: 'Accurate answers based on files, FAQ and links (RAG).' },
         { title: 'Lead forms & CRM', desc: 'Capture customer details and send them to a CRM or a table.' },
@@ -1798,7 +1905,7 @@ const enOverride: DeepPartial<typeof uz> = {
       title: 'Go live in 3 steps', subtitle: 'Setup is easy — start in minutes.',
       steps: [
         { title: 'Sign up', desc: 'With an invite code or Google — in a minute.' },
-        { title: 'Create an agent', desc: 'Configure the prompt and knowledge base.' },
+        { title: 'Create an AI team', desc: 'Configure the goal, roles, sub-agents and knowledge base.' },
         { title: 'Connect a channel', desc: 'Connect Telegram or a widget and go live.' },
       ],
     },
@@ -1818,7 +1925,7 @@ const enOverride: DeepPartial<typeof uz> = {
     faq: {
       title: 'Frequently asked questions',
       items: [
-        { q: 'How does Nemo AI work?', a: 'You create an AI agent, configure it with a prompt and knowledge base, connect channels — and the agent chats with customers 24/7.' },
+        { q: 'How does Nemo AI work?', a: 'You describe a goal — Nemo assembles an AI team with a master agent and sub-agents, connects knowledge and channels, and the team works 24/7.' },
         { q: 'Do I need to write code?', a: 'No. The agent is built without code via the onboarding wizard and a visual editor.' },
         { q: 'Which channels connect?', a: 'Telegram, WhatsApp, Instagram and a website widget. One agent can work across several channels.' },
         { q: 'Can an operator join the chat?', a: 'Yes. An operator can take over any dialogue, reply, and hand it back to the agent.' },
@@ -1826,11 +1933,11 @@ const enOverride: DeepPartial<typeof uz> = {
       ],
     },
     pricing: { title: 'Pricing', note: 'Free during beta. Pricing plans will be announced later.', cta: 'Join the waitlist' },
-    finalCta: { title: 'Build your AI agent today', desc: 'Enter the beta with an invite code or join the waitlist.', button: 'Get started' },
+    finalCta: { title: 'Build your AI team today', desc: 'Enter the beta with an invite code or join the waitlist.', button: 'Get started' },
     footer: {
-      tagline: 'A multi-channel AI agent for business. Automate sales and support.',
+      tagline: 'AI teams for business. Automate content, sales and support.',
       product: 'Product', company: 'Company', legal: 'Legal', privacy: 'Privacy', terms: 'Terms',
-      rights: 'All rights reserved.', madeBy: 'by Ustudy IT',
+      rights: 'All rights reserved.', madeBy: 'by Nemo AI',
     },
   },
   auth: {
@@ -1866,7 +1973,7 @@ const enOverride: DeepPartial<typeof uz> = {
   },
   platform: {
     nav: {
-      dashboard: 'Dashboard', agents: 'Agents', research: 'Research', dialogues: 'Dialogues', knowledge: 'Knowledge base',
+      dashboard: 'Dashboard', agentTeams: 'AI teams', agents: 'Agents', research: 'Research', dialogues: 'Dialogues', knowledge: 'Knowledge base',
       integrations: 'Integrations', leadForms: 'Lead forms', templates: 'Templates', analytics: 'Analytics',
       billing: 'Billing', settings: 'Settings', admin: 'Admin',
     },
@@ -1995,6 +2102,13 @@ const enOverride: DeepPartial<typeof uz> = {
     agentTypes: {
       pickTitle: 'Agent type', chat: 'Chat / Support', qualifier: 'Lead qualifier', coder: 'Coder', content: 'Content agent',
       learning: 'Self-improving', research: 'Researcher', workflow: 'Department / Manager',
+      sales: 'Sales closer', support: 'Support', booking: 'Booking', analyst: 'Analyst', smm: 'SMM agent', marketplace: 'Marketplace agent',
+      salesDesc: 'Handles objections, pushes to a decision and closes the deal.',
+      supportDesc: 'Answers FAQs from the knowledge base, escalates hard cases to a human.',
+      bookingDesc: 'Offers slots, books them in the calendar, confirms and reminds.',
+      analystDesc: 'Reads data and metrics, produces reports, digests and insights.',
+      smmDesc: 'Plans content, writes posts per platform and schedules them.',
+      marketplaceDesc: 'Researches products, audits the store, reads marketplace rules and builds sized infographics.',
       chatDesc: 'Chats with customers across channels (Telegram, WhatsApp…).',
       qualifierDesc: 'Filters inquiries, finds budget and need, passes qualified leads to an operator.',
       coderDesc: 'Writes and fixes code, works with files.',
@@ -2069,5 +2183,11 @@ const enOverride: DeepPartial<typeof uz> = {
 
 const en = deepMerge(ru, enOverride)
 
-export const translations: Record<Lang, typeof uz> = { uz, ru, en }
+// Base dictionaries + the auto-generated per-screen extras (deep-merged so a new
+// screen namespace adds keys without touching the hand-written base above).
+export const translations: Record<Lang, typeof uz> = {
+  uz: deepMerge(uz, extraUz),
+  ru: deepMerge(ru, extraRu),
+  en: deepMerge(en, extraEn),
+}
 export type Dict = typeof uz

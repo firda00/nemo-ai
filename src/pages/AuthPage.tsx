@@ -115,7 +115,7 @@ export default function AuthPage() {
               ))}
             </ul>
           </div>
-          <p className="relative text-xs text-muted">© {new Date().getFullYear()} Nemo AI · Ustudy IT</p>
+          <p className="relative text-xs text-muted">© {new Date().getFullYear()} Nemo AI</p>
         </div>
       </div>
 

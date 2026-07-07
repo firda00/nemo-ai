@@ -32,12 +32,23 @@ Deno.serve(async (req) => {
   const me = await tgGetMe(botToken)
   if (!me.ok) return json({ error: 'invalid bot token', detail: me }, 400)
 
-  const { data: profile } = await db.from('users').select('account_id').eq('id', user.id).single()
+  const { data: profile } = await db.from('users').select('account_id').eq('id', user.id).maybeSingle()
   const accountId = profile?.account_id
   if (!accountId) return json({ error: 'no account for user' }, 400)
 
-  // pick the target agent (provided, or first, or create a default one)
+  // optional: bind this bot to a specific SUB-AGENT (its own bot) and/or a GROUP task-bot
+  const subAgentId = (body.sub_agent_id as string | undefined) || undefined
+  const scope = body.scope === 'group' ? 'group' : 'dm'
+  const label = typeof body.label === 'string' ? body.label.slice(0, 80) : null
+
+  // pick the target agent (provided, or the sub-agent's parent lead, or first, or create one)
   let agentId = body.agent_id as string | undefined
+  if (subAgentId) {
+    const { data: sa } = await db.from('sub_agents').select('department_id').eq('id', subAgentId).maybeSingle()
+    if (!sa) return json({ error: 'sub_agent not found' }, 404)
+    const { data: dept } = await db.from('departments').select('main_agent_id').eq('id', sa.department_id).maybeSingle()
+    if (dept?.main_agent_id) agentId = dept.main_agent_id
+  }
   if (!agentId) {
     const { data: agents } = await db.from('agents').select('id').eq('account_id', accountId).limit(1)
     agentId = agents?.[0]?.id
@@ -56,6 +67,9 @@ Deno.serve(async (req) => {
     .from('channels')
     .insert({
       agent_id: agentId,
+      sub_agent_id: subAgentId ?? null,
+      scope,
+      label,
       type: 'telegram',
       credentials: { bot_token: botToken, username: me.result.username },
       secret_token: secret,
@@ -68,5 +82,5 @@ Deno.serve(async (req) => {
   const webhookUrl = `${SUPABASE_URL}/functions/v1/telegram-webhook/${channel.id}`
   const wh = await tgSetWebhook(botToken, webhookUrl, secret)
 
-  return json({ ok: wh.ok === true, bot: me.result.username, agent_id: agentId, channel_id: channel.id })
+  return json({ ok: wh.ok === true, bot: me.result.username, agent_id: agentId, sub_agent_id: subAgentId ?? null, scope, channel_id: channel.id })
 })

@@ -1,0 +1,290 @@
+// Ustudy Operations Team — real business workflows (structured, persisted).
+//   POST /functions/v1/ops-workflow   (Authorization: Bearer <user jwt>)
+//   action 'payment_control'  { department_id?, input, lang } -> reminders + admin escalations + summary
+//   action 'meeting_to_tasks' { department_id?, input, lang } -> decisions + tasks + weekly report
+//
+// Each step runs ONE real specialist sub-agent (using its saved prompt when the
+// team exists) through OpenRouter, produces strict JSON, and the whole run —
+// per-step agent trace + manager summary + tasks/notifications — is saved to the
+// DB (research_runs + tasks + notifications). Token-guarded + usage-accounted.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
+import { corsHeaders, json } from '../_shared/cors.ts'
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
+const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
+const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
+
+const LANG_NAME: Record<string, string> = { uz: 'Uzbek', ru: 'Russian', en: 'English' }
+
+function extractJson(text: string): Record<string, unknown> | null {
+  const s = text.indexOf('{')
+  const e = text.lastIndexOf('}')
+  if (s === -1 || e === -1 || e < s) return null
+  try {
+    return JSON.parse(text.slice(s, e + 1))
+  } catch {
+    return null
+  }
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function subSystem(sa: any, fallback: string): string {
+  if (!sa) return fallback
+  const p = sa.prompt ?? {}
+  return [
+    `You are "${sa.name}", a ${sa.role}.`,
+    p.role && `Role: ${p.role}`,
+    p.tasks && `Tasks: ${p.tasks}`,
+    p.tone && `Tone: ${p.tone}`,
+    p.rules && `Rules: ${p.rules}`,
+  ].filter(Boolean).join('\n')
+}
+
+const oneOf = (v: unknown, allowed: string[], def: string) => (allowed.includes(String(v)) ? String(v) : def)
+const validDate = (d: unknown): string | null => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null)
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader) return json({ error: 'unauthorized' }, 401)
+  const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
+  const { data: { user } } = await userDb.auth.getUser()
+  if (!user) return json({ error: 'unauthorized' }, 401)
+
+  const { data: prof } = await userDb.from('users').select('account_id').eq('id', user.id).maybeSingle()
+  const accountId = prof?.account_id
+  if (!accountId) return json({ error: 'no account' }, 403)
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
+  if (acc?.blocked) return json({ error: 'blocked' }, 403)
+  if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
+  const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
+  if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
+
+  const body = await req.json().catch(() => ({}))
+  const action = String(body?.action ?? '')
+  const lang = String(body?.lang ?? '').trim()
+  const departmentId = typeof body?.department_id === 'string' ? body.department_id : null
+  const langRule = lang && LANG_NAME[lang] ? `Write all human-facing text in ${LANG_NAME[lang]}.` : 'Write in the same language as the input.'
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Load the team's saved specialist sub-agents (RLS-scoped). If department_id
+  // belongs to another account, RLS returns nothing and we fall back to defaults.
+  let subs: any[] = []
+  let deptNiche = ''
+  if (departmentId) {
+    const { data: d } = await userDb.from('departments').select('id, niche').eq('id', departmentId).maybeSingle()
+    if (!d) return json({ error: 'department not found' }, 404)
+    deptNiche = String(d.niche ?? '')
+    const { data: s } = await userDb.from('sub_agents').select('*').eq('department_id', departmentId)
+    subs = s ?? []
+  }
+  // Business-agnostic context so the SAME workflows fit ANY tenant (gym, clinic,
+  // shop, courses…), not just education. Prefer an explicit hint, else the team niche.
+  const business = (String(body?.business ?? '').trim() || deptNiche).slice(0, 200)
+  const bizCtx = business ? `The business is: ${business}. ` : ''
+  const find = (part: string) => subs.find((s) => String(s.name ?? '').toLowerCase().includes(part.toLowerCase()))
+
+  let totalTokens = 0
+  const trace: { query: string; findings: string }[] = []
+  const runStep = async (sa: any, roleName: string, fallbackSystem: string, userContent: string, temperature = 0.4): Promise<string> => {
+    const messages: ChatMsg[] = [
+      { role: 'system', content: `${subSystem(sa, fallbackSystem)}\n${langRule}` },
+      { role: 'user', content: userContent },
+    ]
+    const r = await callOpenRouter({ apiKey: orKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages, temperature, maxTokens: 900 })
+    totalTokens += r.tokens
+    trace.push({ query: roleName, findings: r.content })
+    return r.content
+  }
+  const charge = async () => {
+    if (!totalTokens) return
+    await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: 'ops-workflow' })
+    await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: totalTokens })
+  }
+
+  try {
+    if (action === 'payment_control') {
+      const input = String(body?.input ?? '').trim().slice(0, 6000)
+      if (input.length < 4) return json({ error: 'input required' }, 400)
+
+      const remRaw = await runStep(
+        find('Payment Reminder'),
+        'Payment Reminder Agent',
+        `You are a payment reminder specialist for a business. ${bizCtx}Be respectful and concrete.`,
+        `Payment rows (customer, item/service, amount, due, status):\n${input}\n\nFor each unpaid or partial customer, write a short respectful reminder message and assess payment risk. Respond ONLY as JSON: {"reminders":[{"student":string,"course":string,"amount":string,"due":string,"risk":"low"|"medium"|"high","message":string}]} (use the "student" field for the customer name, "course" for the item/service).`,
+        0.5,
+      )
+      const reminders = (extractJson(remRaw)?.reminders as any[]) ?? []
+
+      const escRaw = await runStep(
+        find('Admin Control'),
+        'Admin Control Agent',
+        'You are an admin-control escalation specialist. Escalate overdue / high-risk / no-response cases to the responsible admin.',
+        `Reminders JSON:\n${JSON.stringify(reminders)}\n\nFor every high or medium risk (or overdue) case create an escalation for the responsible admin with a concrete next action. Respond ONLY as JSON: {"escalations":[{"admin":string,"student":string,"risk":"low"|"medium"|"high","action":string,"note":string}]}.`,
+        0.4,
+      )
+      const escalations = (extractJson(escRaw)?.escalations as any[]) ?? []
+
+      const summary = await runStep(
+        find('Report'),
+        'Report Agent',
+        'You are a manager-report specialist. Write concise, decision-ready Markdown.',
+        `Write a short manager report in Markdown for payment control.\nReminders:\n${JSON.stringify(reminders)}\nEscalations:\n${JSON.stringify(escalations)}\n\nInclude: a one-line overview, a risk table (student, amount, risk, action), and recommended next actions.`,
+        0.4,
+      )
+
+      const { data: run } = await userDb
+        .from('research_runs')
+        .insert({ task: 'Payment Control', kind: 'payment_control', department_id: departmentId, status: 'done', report: summary, sources: [], steps: trace, tokens: totalTokens })
+        .select('id')
+        .single()
+      const runId = run?.id ?? null
+
+      const notifRows = escalations
+        .filter((e) => e && (e.student || e.note || e.action))
+        .slice(0, 30)
+        .map((e) => ({
+          department_id: departmentId,
+          run_id: runId,
+          kind: 'admin_escalation',
+          title: `Payment escalation: ${String(e.student ?? '').slice(0, 120)}`.trim(),
+          body: String(e.note ?? e.action ?? '').slice(0, 1000),
+          risk: oneOf(e.risk, ['low', 'medium', 'high'], 'medium'),
+          target: e.admin ? String(e.admin).slice(0, 120) : null,
+        }))
+      let notification_ids: string[] = []
+      if (notifRows.length) {
+        const { data: n } = await userDb.from('notifications').insert(notifRows).select('id')
+        notification_ids = (n ?? []).map((x: any) => x.id)
+      }
+
+      await charge()
+      return json({ ok: true, run_id: runId, reminders, escalations, summary, notification_ids })
+    }
+
+    if (action === 'meeting_to_tasks') {
+      const input = String(body?.input ?? '').trim().slice(0, 8000)
+      if (input.length < 4) return json({ error: 'input required' }, 400)
+
+      const anRaw = await runStep(
+        find('Meeting Analyst'),
+        'Meeting Analyst Agent',
+        'You are a meeting analyst. Extract decisions and concrete action items from a transcript.',
+        `Meeting transcript:\n${input}\n\nExtract key decisions and action items with owner, deadline (YYYY-MM-DD if a date is present, else null) and priority. Respond ONLY as JSON: {"decisions":[string],"tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high"}]}.`,
+        0.3,
+      )
+      const analyst = extractJson(anRaw) ?? {}
+      const decisions = Array.isArray(analyst.decisions) ? (analyst.decisions as string[]).map(String) : []
+      const rawTasks = Array.isArray(analyst.tasks) ? (analyst.tasks as any[]) : []
+
+      const tmRaw = await runStep(
+        find('Task Manager'),
+        'Task Manager Agent',
+        'You are a task manager. Turn action items into a clean, trackable task table.',
+        `Today is ${today}. Raw tasks JSON:\n${JSON.stringify(rawTasks)}\n\nNormalize into a clean task table. Set status: "todo" | "in_progress" | "done" | "overdue" ("overdue" if the deadline is before today). Keep owner, deadline and priority. Respond ONLY as JSON: {"tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high","status":string}]}.`,
+        0.3,
+      )
+      const normalized = (extractJson(tmRaw)?.tasks as any[]) ?? rawTasks
+
+      const summary = await runStep(
+        find('Report'),
+        'Report Agent',
+        'You are a manager-report specialist. Write a concise weekly operations report in Markdown.',
+        `Write a short weekly operations report in Markdown.\nDecisions:\n${JSON.stringify(decisions)}\nTasks:\n${JSON.stringify(normalized)}\n\nInclude: decisions, a task summary grouped by owner, overdue/at-risk items, and next-week priorities.`,
+        0.4,
+      )
+
+      const { data: run } = await userDb
+        .from('research_runs')
+        .insert({ task: 'Meeting to Tasks', kind: 'meeting_to_tasks', department_id: departmentId, status: 'done', report: summary, sources: [], steps: trace, tokens: totalTokens })
+        .select('id')
+        .single()
+      const runId = run?.id ?? null
+
+      const taskRows = (normalized as any[])
+        .filter((t) => t && t.title)
+        .slice(0, 40)
+        .map((t) => ({
+          department_id: departmentId,
+          run_id: runId,
+          title: String(t.title).slice(0, 300),
+          owner: t.owner ? String(t.owner).slice(0, 120) : null,
+          deadline: validDate(t.deadline),
+          priority: oneOf(t.priority, ['low', 'medium', 'high'], 'medium'),
+          status: oneOf(t.status, ['todo', 'in_progress', 'done', 'overdue'], 'todo'),
+          source: 'meeting',
+        }))
+      let task_ids: string[] = []
+      if (taskRows.length) {
+        const { data: tr } = await userDb.from('tasks').insert(taskRows).select('id')
+        task_ids = (tr ?? []).map((x: any) => x.id)
+      }
+
+      await charge()
+      return json({ ok: true, run_id: runId, decisions, tasks: taskRows, task_ids })
+    }
+
+    // retention_scan — detect students who stopped attending / didn't pay next month
+    // ("ушли, а мы не знаем") and draft a ready personal win-back message for each.
+    if (action === 'retention_scan') {
+      const input = String(body?.input ?? '').trim().slice(0, 8000)
+      if (input.length < 4) return json({ error: 'input required' }, 400)
+
+      const raw = await runStep(
+        find('Retention') ?? find('Payment Reminder'),
+        'Retention Specialist',
+        `You are a customer-retention specialist for a business. ${bizCtx}You spot customers/clients who stopped engaging (visits, sessions, orders, attendance) or did not renew/pay for the next period, and you write warm, personal win-back messages that get them back.`,
+        `Today is ${today}. Customer rows (name, contact, last activity/visit, renewal/payment status):\n${input}\n\n` +
+          'For EACH person decide status: "active" | "at_risk" | "churned" (churned = stopped engaging AND did not renew/pay for the next period; at_risk = missed a payment/renewal or engagement clearly dropping). ' +
+          'For every at_risk or churned person, write a ready-to-send PERSONAL message: address them by name, reference their specific situation, and offer a concrete way back (e.g. discount, flexible option, a call). Fit the message to THIS business. ' +
+          'Respond ONLY as JSON: {"students":[{"name":string,"contact":string,"status":"active"|"at_risk"|"churned","reason":string,"message":string|null}]}.',
+        0.5,
+      )
+      const students = ((extractJson(raw)?.students as any[]) ?? []).filter((s) => s && s.name)
+      const flagged = students.filter((s) => s.status === 'churned' || s.status === 'at_risk')
+
+      const summary = await runStep(
+        find('Report'),
+        'Report Agent',
+        'You are a manager-report specialist. Write concise, decision-ready Markdown.',
+        `Write a short manager report in Markdown on student retention.\nStudents:\n${JSON.stringify(students)}\n\nInclude: counts (active / at-risk / churned), who left and why, and recommended next actions.`,
+        0.4,
+      )
+
+      const { data: run } = await userDb
+        .from('research_runs')
+        .insert({ task: 'Retention Scan', kind: 'retention_scan', department_id: departmentId, status: 'done', report: summary, sources: [], steps: trace, tokens: totalTokens })
+        .select('id')
+        .single()
+      const runId = run?.id ?? null
+
+      const notifRows = flagged.slice(0, 40).map((s) => ({
+        department_id: departmentId,
+        run_id: runId,
+        kind: s.status === 'churned' ? 'churn_alert' : 'payment_risk',
+        title: `${s.status === 'churned' ? 'Ушёл' : 'Риск'}: ${String(s.name ?? '').slice(0, 120)}`.trim(),
+        body: String(s.reason ?? '').slice(0, 1000),
+        risk: s.status === 'churned' ? 'high' : 'medium',
+        target: s.contact ? String(s.contact).slice(0, 120) : null,
+      }))
+      let notification_ids: string[] = []
+      if (notifRows.length) {
+        const { data: n } = await userDb.from('notifications').insert(notifRows).select('id')
+        notification_ids = (n ?? []).map((x: any) => x.id)
+      }
+
+      await charge()
+      return json({ ok: true, run_id: runId, students, flagged, summary, notification_ids })
+    }
+
+    return json({ error: 'unknown action' }, 400)
+  } catch (e) {
+    console.error('ops-workflow error:', e)
+    return json({ error: 'ops_failed', detail: String(e) }, 502)
+  }
+})
+/* eslint-enable @typescript-eslint/no-explicit-any */

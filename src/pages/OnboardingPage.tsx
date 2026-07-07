@@ -1,13 +1,14 @@
-import { useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { X, ArrowLeft, ArrowRight, Check, Rocket, HelpCircle, Plus, FileText, Trash2, Sparkles, Cpu, SlidersHorizontal, ChevronDown } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { X, ArrowLeft, ArrowRight, Check, Rocket, HelpCircle, FileText, Trash2, Sparkles, Cpu, SlidersHorizontal, ChevronDown, Upload, Loader2, Volume2, KeyRound, Lock } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useAgentStore, blankAgent } from '../store/useAgentStore'
 import { useToast } from '../components/ui/Toast'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
-import { templates, PROVIDERS, kindPresets, COUNTRIES, NICHES } from '../data/platform'
+import { templates, PROVIDERS, kindPresets, COUNTRIES, NICHES, VOICES } from '../data/platform'
 import { AGENT_PRICE_USD } from '../data/billing'
 import { channelMeta, channelLabel, agentTypeMeta, AGENT_KINDS } from '../lib/platformMeta'
+import { extractText, KNOWLEDGE_ACCEPT } from '../lib/extractText'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
 import { LanguageToggle } from '../components/ui/LanguageToggle'
@@ -19,9 +20,94 @@ import type { ChannelType, PlatformAgent, KnowledgeDoc, AgentKind } from '../typ
 
 const inputCls = 'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-cobalt/50 focus:shadow-glow'
 
+const defaultLeadFields = [
+  { id: 'lead_name', label: 'Имя', type: 'text' as const, required: true },
+  { id: 'lead_phone', label: 'Телефон', type: 'phone' as const, required: true },
+  { id: 'lead_location', label: 'Где живёте / город', type: 'text' as const, required: false },
+  { id: 'lead_reason', label: 'Причина обращения', type: 'text' as const, required: true },
+  { id: 'lead_interactions', label: 'Сколько раз уже обращались', type: 'text' as const, required: false },
+  { id: 'lead_interest', label: 'Интересующий продукт / курс / услуга', type: 'text' as const, required: true },
+]
+
+const channelSetup: Partial<Record<ChannelType, { key: string; label: string; placeholder: string; hint?: string }[]>> = {
+  telegram: [{ key: 'bot_token', label: 'Telegram bot token', placeholder: '123456789:AAH...', hint: 'Можно пропустить и подключить токен позже в настройках агента.' }],
+  instagram: [
+    { key: 'account', label: 'Instagram account / page', placeholder: '@brand или Page ID' },
+    { key: 'page_token', label: 'Meta Page Access Token', placeholder: 'EAAG...', hint: 'Если токена пока нет, оставьте пустым и подключите позже.' },
+  ],
+  whatsapp: [
+    { key: 'phone_number_id', label: 'WhatsApp phone number ID', placeholder: '102938475610293' },
+    { key: 'token', label: 'WhatsApp / Meta token', placeholder: 'EAAG...' },
+  ],
+  widget: [
+    { key: 'site', label: 'Website URL', placeholder: 'https://example.com' },
+    { key: 'brand_color', label: 'Widget accent color', placeholder: '#8B7CF8' },
+  ],
+}
+
+const formatFileSize = (size: number) => {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+const byoProviders = [
+  {
+    id: 'openrouter-free',
+    name: 'Free models',
+    desc: 'No API key now. Good for demo and pre-investment testing.',
+    models: PROVIDERS.flatMap((p) => p.models.map((m) => ({ ...m, provider: p.name }))),
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    desc: 'Customer-owned key. We store it encrypted and never show it back.',
+    models: [
+      { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini', provider: 'OpenAI' },
+      { id: 'openai/gpt-4.1-mini', label: 'GPT-4.1 mini', provider: 'OpenAI' },
+    ],
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    desc: 'Customer-owned Claude key. Encrypted vault storage.',
+    models: [
+      { id: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku', provider: 'Anthropic' },
+      { id: 'anthropic/claude-3.7-sonnet', label: 'Claude 3.7 Sonnet', provider: 'Anthropic' },
+    ],
+  },
+  {
+    id: 'google',
+    name: 'Google AI',
+    desc: 'Customer-owned Gemini key. Encrypted vault storage.',
+    models: [
+      { id: 'google/gemini-2.0-flash', label: 'Gemini 2.0 Flash', provider: 'Google' },
+      { id: 'google/gemini-1.5-pro', label: 'Gemini 1.5 Pro', provider: 'Google' },
+    ],
+  },
+]
+
+const TEAM_BLUEPRINTS = [
+  {
+    title: 'AI Sales Team',
+    desc: 'Квалифицирует лидов, отвечает на вопросы, закрывает заявки и передаёт горячих клиентов оператору/CRM.',
+    prompt: 'У меня малый бизнес. Нужна AI-команда продаж: главный агент, квалификатор лидов, консультант по продукту, агент возражений и CRM handoff. Команда должна отвечать в мессенджерах, собирать телефон, бюджет и потребность, затем передавать горячих лидов оператору.',
+  },
+  {
+    title: 'AI Support Team',
+    desc: 'Закрывает частые вопросы, ищет ответы в базе знаний и передаёт сложные случаи человеку.',
+    prompt: 'Нужна AI-команда поддержки: главный агент, FAQ-специалист, агент базы знаний, агент диагностики проблемы и агент эскалации оператору. Команда должна отвечать клиентам 24/7 и снижать нагрузку на поддержку.',
+  },
+  {
+    title: 'AI Content Team',
+    desc: 'Генерирует идеи, сценарии, посты, календарь публикаций и анализирует результат.',
+    prompt: 'Нужна AI-команда для контента: главный контент-агент, идеолог, сценарист, копирайтер, публикатор и аналитик. Команда должна создавать контент-план, Reels-сценарии, посты и рекомендации по улучшению.',
+  },
+]
+
 export default function OnboardingPage() {
   const { t, lang, dict } = useI18n()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const toast = useToast()
   const addAgent = useAgentStore((s) => s.addAgent)
 
@@ -29,26 +115,57 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1)
   const [draft, setDraft] = useState<PlatformAgent>(blankAgent())
   const [saving, setSaving] = useState(false)
-  const [aiDesc, setAiDesc] = useState('')
+  const [aiDesc, setAiDesc] = useState(() => {
+    const team = params.get('team')
+    return team ? `Create ${team} for a small business. Include a master agent, specialist sub-agents, channels, company brain, quality checks and CRM handoff.` : ''
+  })
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
   const [tgToken, setTgToken] = useState('')
+  const [channelSettings, setChannelSettings] = useState<Partial<Record<ChannelType, Record<string, string>>>>({})
+  const [uploadingKnowledge, setUploadingKnowledge] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const set = (patch: Partial<PlatformAgent>) => setDraft((d) => ({ ...d, ...patch }))
   const setPrompt = (patch: Partial<PlatformAgent['prompt']>) => setDraft((d) => ({ ...d, prompt: { ...d.prompt, ...patch } }))
 
-  // dynamic wizard steps — runner agents (research / multi-agent) skip channels + test
-  const isRunner = draft.type === 'research' || draft.type === 'workflow'
+  // dynamic wizard steps — technical agents can skip customer channels; AI teams still need deploy channels.
+  const isRunner = draft.type === 'research' || draft.type === 'coder'
   const stepKeys: ('agent' | 'prompt' | 'channels' | 'test')[] = isRunner ? ['agent', 'prompt'] : ['agent', 'prompt', 'channels', 'test']
   const stepLabels = isRunner ? dict.platform.onboarding.steps.slice(0, 2) : dict.platform.onboarding.steps
   const cur = stepKeys[step - 1]
   const lastStep = stepKeys.length
 
-  const addKnowledge = () => {
-    const doc: KnowledgeDoc = { id: `k${Date.now()}`, name: 'Yangi_manba.pdf', source: 'file', status: 'indexed', size: '1.1 MB' }
-    set({ knowledge: [...draft.knowledge, doc] })
+  const addKnowledgeFiles = async (files: FileList | null) => {
+    if (!files?.length) return
+    setUploadingKnowledge(true)
+    try {
+      const next: KnowledgeDoc[] = []
+      for (const file of Array.from(files)) {
+        try {
+          await extractText(file)
+          next.push({ id: `k${Date.now()}_${file.name}`, name: file.name, source: 'file', status: 'indexed', size: formatFileSize(file.size) })
+        } catch {
+          next.push({ id: `k${Date.now()}_${file.name}`, name: file.name, source: 'file', status: 'error', size: formatFileSize(file.size) })
+        }
+      }
+      set({ knowledge: [...draft.knowledge, ...next] })
+    } finally {
+      setUploadingKnowledge(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
   }
+
+  const expandLeadForm = (enabled = true) =>
+    set(({
+      leadForm: {
+        ...draft.leadForm,
+        enabled,
+        fields: defaultLeadFields,
+        trigger: 'когда клиент проявил интерес, спросил цену, курс, товар, услугу или попросил консультацию',
+      },
+    }))
 
   // start the wizard with a chosen kind. Apply the kind's preset prompt when the
   // prompt is still empty (so each type acts like a ready preset); qualifier also
@@ -62,7 +179,7 @@ export default function OnboardingPage() {
         type: k,
         prompt: empty && preset ? { ...preset } : d.prompt,
         role: empty && preset ? preset.role : d.role,
-        leadForm: { ...d.leadForm, enabled: k === 'qualifier' ? true : d.leadForm.enabled },
+          leadForm: k === 'qualifier' ? { ...d.leadForm, enabled: true, fields: defaultLeadFields } : d.leadForm,
       }
     })
     setStep(1)
@@ -112,8 +229,33 @@ export default function OnboardingPage() {
           channels: keepType ? d.channels : Array.isArray(a.channels) ? a.channels : d.channels,
         }))
       } else {
-        // demo fallback (no backend): light local prefill so the flow still works
-        setDraft((d) => ({ ...d, name: d.name || aiDesc.trim().split(/\s+/).slice(0, 3).join(' '), prompt: { ...d.prompt, tasks: aiDesc.trim() } }))
+        const text = aiDesc.trim()
+        const lower = text.toLowerCase()
+        const isContent = /content|контент|post|reels|script/.test(lower)
+        const isSupport = /support|поддерж|faq|help/.test(lower)
+        const isSales = /sales|sale|lead|crm|продаж|лид/.test(lower)
+        const name = isContent ? 'AI Content Team' : isSupport ? 'AI Support Team' : isSales ? 'AI Sales Team' : 'Custom AI Team'
+        const specialists = isContent
+          ? 'Sub-agents: strategist, scriptwriter, copywriter, publishing agent, analyst.'
+          : isSupport
+            ? 'Sub-agents: FAQ specialist, knowledge agent, troubleshooting agent, escalation agent.'
+            : 'Sub-agents: lead qualifier, product expert, objection handler, CRM handoff agent.'
+        setDraft((d) => ({
+          ...d,
+          name,
+          type: 'workflow',
+          role: 'Master AI team leader',
+          purpose: text,
+          niche: isContent ? 'Content / Marketing' : isSupport ? 'Customer Support' : 'Sales / SMB',
+          prompt: {
+            role: 'You are the master agent for an AI team. Understand the business goal, route work to specialist sub-agents, synthesize results and escalate to a human when needed.',
+            tasks: `${text}\n\n${specialists}\nUse Company Brain, keep an Agent Trace, capture measurable outcomes and calculate Nemo Score.`,
+            tone: 'Professional, concise, business-focused, trustworthy.',
+            rules: 'Do not act as a single chatbot. Always decompose complex goals, delegate to sub-agents, verify quality and explain the result clearly.',
+          },
+          leadForm: { ...d.leadForm, enabled: isSales || isSupport, fields: isSales || isSupport ? defaultLeadFields : d.leadForm.fields },
+          channels: ['telegram', 'widget'],
+        }))
       }
       if (!keepType) {
         setStep(1)
@@ -126,6 +268,27 @@ export default function OnboardingPage() {
 
   const toggleChannel = (c: ChannelType) =>
     set({ channels: draft.channels.includes(c) ? draft.channels.filter((x) => x !== c) : [...draft.channels, c] })
+
+  const updateChannelSetting = (channel: ChannelType, key: string, value: string) => {
+    setChannelSettings((prev) => ({
+      ...prev,
+      [channel]: { ...(prev[channel] ?? {}), [key]: value },
+    }))
+    if (channel === 'telegram' && key === 'bot_token') setTgToken(value)
+  }
+
+  const previewVoice = (voiceId: string) => {
+    if (!('speechSynthesis' in window)) {
+      toast('Voice preview is not supported in this browser')
+      return
+    }
+    window.speechSynthesis.cancel()
+    const sample = new SpeechSynthesisUtterance('Hello, I am your Nemo AI assistant. I can answer customers and qualify leads.')
+    sample.lang = draft.language === 'ru' ? 'ru-RU' : draft.language === 'uz' ? 'uz-UZ' : 'en-US'
+    sample.pitch = voiceId === 'nova' || voiceId === 'aria' ? 1.15 : voiceId === 'ember' ? 0.85 : 1
+    sample.rate = voiceId === 'sage' ? 0.9 : 1
+    window.speechSynthesis.speak(sample)
+  }
 
   const finish = async () => {
     setSaving(true)
@@ -152,10 +315,10 @@ export default function OnboardingPage() {
       <div className="dot-field pointer-events-none absolute inset-0 opacity-50" />
       <div className="aurora pointer-events-none absolute inset-x-0 top-0 h-80 opacity-40" />
 
-      <header className="relative flex items-center justify-between px-5 py-4">
+      <header className="sticky top-0 z-50 flex items-center justify-between border-b border-ice/10 bg-void/80 px-5 py-4 backdrop-blur-xl">
         <Logo />
         <div className="flex items-center gap-3">
-          <LanguageToggle />
+          <LanguageToggle showLabel />
           <button onClick={() => navigate('/app')} className="rounded-lg p-2 text-muted hover:bg-ice/[0.05]" aria-label={t('common.close')}>
             <X size={20} />
           </button>
@@ -165,13 +328,27 @@ export default function OnboardingPage() {
       <div className="container-page relative max-w-3xl py-6">
         {mode === 'start' ? (
           <div className="animate-fadeInUp">
-            <h1 className="text-2xl font-normal tracking-tight text-text sm:text-3xl">{t('platform.onboarding.chooseTitle')}</h1>
-            <p className="mt-2 text-muted">{t('platform.onboarding.chooseSubtitle')}</p>
+            <h1 className="text-2xl font-normal tracking-tight text-text sm:text-3xl">{t('onboardingPage.startTitle')}</h1>
+            <p className="mt-2 text-muted">{t('onboardingPage.startSubtitle')}</p>
             <p className="mt-3 inline-flex items-center gap-1.5 rounded-pill border border-ice/10 bg-ice/[0.03] px-3 py-1 text-xs text-muted">
               {t('platform.billing.perAgent')}: <span className="text-text">${AGENT_PRICE_USD}/{t('platform.billing.mo')}</span> · {t('platform.onboarding.priceTokens')}
             </p>
 
-            {/* AI builds the agent — the built-in agent writes the prompt */}
+            <div className="mt-7 grid gap-3 sm:grid-cols-3">
+              {TEAM_BLUEPRINTS.map((item) => (
+                <button
+                  key={item.title}
+                  type="button"
+                  onClick={() => setAiDesc(item.prompt)}
+                  className="card rounded-2xl p-4 text-left transition hover:border-violet/40 hover:bg-white/[0.06]"
+                >
+                  <p className="font-medium text-text">{item.title}</p>
+                  <p className="mt-2 text-xs leading-relaxed text-muted">{item.desc}</p>
+                </button>
+              ))}
+            </div>
+
+            {/* AI builds the team — the built-in agent writes the first blueprint */}
             <div className="mt-7 gradient-ring rounded-2xl p-px">
               <div className="rounded-[15px] bg-void/80 p-5 sm:p-6">
                 <div className="flex items-center gap-2.5">
@@ -179,21 +356,21 @@ export default function OnboardingPage() {
                     <Sparkles size={18} />
                   </span>
                   <div className="min-w-0">
-                    <h2 className="font-normal text-text">{t('platform.onboarding.aiTitle')}</h2>
-                    <p className="text-xs leading-snug text-muted">{t('platform.onboarding.aiSubtitle')}</p>
+                    <h2 className="font-normal text-text">{t('onboardingPage.architectTitle')}</h2>
+                    <p className="text-xs leading-snug text-muted">{t('onboardingPage.architectExample')}</p>
                   </div>
                 </div>
                 <textarea
                   value={aiDesc}
                   onChange={(e) => setAiDesc(e.target.value)}
-                  rows={3}
-                  placeholder={t('platform.onboarding.aiPlaceholder')}
-                  className={`${inputCls} mt-4 resize-none`}
+                  rows={7}
+                  placeholder={t('onboardingPage.aiDescPh')}
+                  className={`${inputCls} mt-4 min-h-44 resize-y leading-relaxed`}
                 />
                 {aiError && <p className="mt-2 text-xs text-danger">{aiError}</p>}
                 <div className="mt-3">
                   <Button onClick={() => composeWithAI()} disabled={aiBusy || aiDesc.trim().length < 8}>
-                    <Sparkles size={16} /> {aiBusy ? t('platform.onboarding.aiGenerating') : t('platform.onboarding.aiGenerate')}
+                    <Sparkles size={16} /> {aiBusy ? t('onboardingPage.designing') : t('onboardingPage.buildTeam')}
                   </Button>
                 </div>
               </div>
@@ -315,8 +492,8 @@ export default function OnboardingPage() {
                         <Field label={t('platform.onboarding.purpose')}>
                           <input value={draft.purpose ?? ''} onChange={(e) => set({ purpose: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.purposePh')} />
                         </Field>
-                        <datalist id="nemo-countries">{COUNTRIES.map((c) => <option key={c} value={c} />)}</datalist>
-                        <datalist id="nemo-niches">{NICHES.map((c) => <option key={c} value={c} />)}</datalist>
+                        <datalist id="nemo-countries">{COUNTRIES[lang].map((c) => <option key={c} value={c} />)}</datalist>
+                        <datalist id="nemo-niches">{NICHES[lang].map((c) => <option key={c} value={c} />)}</datalist>
                       </div>
                     )}
                   </div>
@@ -331,9 +508,9 @@ export default function OnboardingPage() {
                     <textarea
                       value={aiDesc}
                       onChange={(e) => setAiDesc(e.target.value)}
-                      rows={2}
+                      rows={6}
                       placeholder={t('platform.onboarding.describePh')}
-                      className={`${inputCls} mt-3 resize-none`}
+                      className={`${inputCls} mt-3 min-h-36 resize-y leading-relaxed`}
                     />
                     {aiError && <p className="mt-2 text-xs text-danger">{aiError}</p>}
                     <div className="mt-3">
@@ -360,25 +537,97 @@ export default function OnboardingPage() {
                   <p className="flex items-center gap-2 text-xs text-muted"><HelpCircle size={14} /> {t('platform.onboarding.hint')}</p>
 
                   <div className="space-y-2 border-t border-ice/10 pt-4">
+                    <input ref={fileRef} type="file" accept={KNOWLEDGE_ACCEPT} multiple className="hidden" onChange={(e) => addKnowledgeFiles(e.target.files)} />
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-xs font-normal text-muted">{t('platform.editor.knowledgeTitle')} · {t('common.optional')}</span>
-                      <button type="button" onClick={addKnowledge} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/15 px-2.5 py-1.5 text-xs font-medium text-text transition-colors hover:border-ice/30">
-                        <Plus size={14} /> {t('platform.editor.knowledgeAdd')}
+                      <button type="button" onClick={() => fileRef.current?.click()} disabled={uploadingKnowledge} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/15 px-2.5 py-1.5 text-xs font-medium text-text transition-colors hover:border-ice/30 disabled:cursor-not-allowed disabled:opacity-60">
+                        {uploadingKnowledge ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} {uploadingKnowledge ? t('platform.knowledge.indexing') : t('platform.knowledge.uploadFile')}
                       </button>
                     </div>
+                    <p className="text-[11px] leading-snug text-muted">{t('onboardingPage.knowledgeUploadHint')}</p>
                     {draft.knowledge.length > 0 && (
                       <ul className="space-y-2">
                         {draft.knowledge.map((k) => (
                           <li key={k.id} className="flex items-center gap-3 rounded-xl border border-ice/[0.07] bg-ice/[0.02] px-3 py-2.5">
                             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ice/[0.06] text-muted"><FileText size={15} /></span>
-                            <span className="min-w-0 flex-1 truncate text-sm text-text">{k.name}</span>
-                            <span className="rounded-full bg-teal/15 px-2 py-0.5 text-[10px] font-normal text-teal">{t('platform.editor.indexed')}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm text-text">{k.name}</span>
+                              <span className="text-[11px] text-muted">{k.size}</span>
+                            </span>
+                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-normal', k.status === 'error' ? 'bg-danger/15 text-danger' : 'bg-teal/15 text-teal')}>
+                              {k.status === 'error' ? 'Needs retry' : t('platform.editor.indexed')}
+                            </span>
                             <button type="button" onClick={() => set({ knowledge: draft.knowledge.filter((x) => x.id !== k.id) })} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06] hover:text-danger">
                               <Trash2 size={15} />
                             </button>
                           </li>
                         ))}
                       </ul>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 border-t border-ice/10 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-normal text-muted">Voice agent · optional / paid add-on</p>
+                        <p className="mt-1 text-[11px] text-muted">{t('onboardingPage.voicePreviewHint')}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => set({ voiceEnabled: !draft.voiceEnabled })}
+                        className={cn('rounded-xl border px-3 py-2 text-xs font-medium transition', draft.voiceEnabled ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+                      >
+                        {draft.voiceEnabled ? 'Voice enabled' : 'Enable voice'}
+                      </button>
+                    </div>
+                    {draft.voiceEnabled && (
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {VOICES.map((voice) => {
+                          const on = draft.voiceId === voice.id
+                          return (
+                            <div key={voice.id} className={cn('rounded-xl border p-3 transition', on ? 'border-violet/60 bg-violet/10' : 'border-ice/10')}>
+                              <button type="button" onClick={() => set({ voiceId: voice.id })} className="flex w-full items-center justify-between text-left text-sm font-normal text-text">
+                                {voice.label}
+                                {on && <Check size={14} className="text-violet" />}
+                              </button>
+                              <button type="button" onClick={() => previewVoice(voice.id)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2 py-1 text-[11px] text-muted hover:text-text">
+                                <Volume2 size={13} /> Preview
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 border-t border-ice/10 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-normal text-muted">Lead form · sales/support handoff</p>
+                        <p className="mt-1 text-[11px] text-muted">{t('onboardingPage.leadFormHint')}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => expandLeadForm(!draft.leadForm.enabled)}
+                        className={cn('rounded-xl border px-3 py-2 text-xs font-medium transition', draft.leadForm.enabled ? 'border-teal/50 bg-teal/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+                      >
+                        {draft.leadForm.enabled ? 'Lead form enabled' : 'Enable lead form'}
+                      </button>
+                    </div>
+                    {draft.leadForm.enabled && (
+                      <div className="space-y-3 rounded-xl border border-ice/10 bg-ice/[0.02] p-3">
+                        <Field label="When to collect lead data">
+                          <input value={draft.leadForm.trigger} onChange={(e) => set({ leadForm: { ...draft.leadForm, trigger: e.target.value } })} className={inputCls} />
+                        </Field>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {draft.leadForm.fields.map((field) => (
+                            <div key={field.id} className="rounded-lg border border-ice/10 px-3 py-2">
+                              <p className="text-sm text-text">{field.label}</p>
+                              <p className="mt-0.5 text-[11px] text-muted">{field.required ? 'Required' : 'Optional'} · {field.type}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </Section>
@@ -408,11 +657,49 @@ export default function OnboardingPage() {
                     })}
                   </div>
                   {draft.channels.includes('telegram') && (
-                    <div className="mt-4 border-t border-ice/10 pt-4">
-                      <Field label={t('platform.integrations.fields.tgToken')}>
-                        <input value={tgToken} onChange={(e) => setTgToken(e.target.value)} placeholder="123456789:AAH..." className={inputCls} autoComplete="off" />
-                      </Field>
-                      <p className="mt-1.5 text-[11px] text-muted">{t('platform.onboarding.tgTokenHint')}</p>
+                    <p className="mt-3 rounded-xl border border-cyan/20 bg-cyan/[0.05] p-3 text-xs leading-relaxed text-muted">{t('platform.onboarding.tgTokenHint')}</p>
+                  )}
+                  {draft.channels.length > 0 && (
+                    <div className="mt-4 space-y-4 border-t border-ice/10 pt-4">
+                      {draft.channels.map((channel) => {
+                        const fields = channelSetup[channel] ?? []
+                        const meta = channelMeta[channel]
+                        return (
+                          <div key={channel} className="rounded-2xl border border-ice/10 bg-ice/[0.02] p-4">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${meta.color}22`, color: meta.color }}>
+                                <meta.Icon size={15} />
+                              </span>
+                              <div>
+                                <p className="text-sm font-normal text-text">{channelLabel(channel, t)} setup</p>
+                                <p className="text-[11px] text-muted">Optional now. You can finish connection later in agent settings.</p>
+                              </div>
+                            </div>
+                            {channel === 'widget' && (
+                              <div className="mt-3 rounded-xl border border-ice/10 bg-black/20 p-3">
+                                <p className="text-[11px] text-muted">Website widget snippet after creation:</p>
+                                <code className="mt-1 block break-all text-[11px] text-cyan">&lt;script src=&quot;https://cdn.nemo.ai/widget.js&quot; data-agent=&quot;{draft.id}&quot; async&gt;&lt;/script&gt;</code>
+                              </div>
+                            )}
+                            {fields.length > 0 && (
+                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                {fields.map((field) => (
+                                  <Field key={field.key} label={field.label}>
+                                    <input
+                                      value={channelSettings[channel]?.[field.key] ?? ''}
+                                      onChange={(e) => updateChannelSetting(channel, field.key, e.target.value)}
+                                      placeholder={field.placeholder}
+                                      className={inputCls}
+                                      autoComplete="off"
+                                    />
+                                    {field.hint && <p className="mt-1 text-[11px] leading-snug text-muted">{field.hint}</p>}
+                                  </Field>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </Section>
@@ -450,13 +737,71 @@ export default function OnboardingPage() {
 
 // compact model selector (grouped by company) for the creation wizard
 function ModelChips({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const { t } = useI18n()
+  const [providerId, setProviderId] = useState(() => byoProviders.find((p) => p.models.some((m) => m.id === value))?.id ?? 'openrouter-free')
+  const [apiKey, setApiKey] = useState('')
+  const provider = byoProviders.find((p) => p.id === providerId) ?? byoProviders[0]
+  const needsKey = provider.id !== 'openrouter-free'
+
+  const pickProvider = (id: string) => {
+    const next = byoProviders.find((p) => p.id === id) ?? byoProviders[0]
+    setProviderId(next.id)
+    onChange(next.models[0]?.id ?? value)
+  }
+
   return (
-    <div className="space-y-3">
-      {PROVIDERS.map((p) => (
-        <div key={p.id}>
-          <p className="mb-1.5 text-[11px] font-medium text-muted">{p.name}</p>
-          <div className="flex flex-wrap gap-2">
-            {p.models.map((m) => {
+    <div className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-4">
+        {byoProviders.map((p) => {
+          const on = providerId === p.id
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => pickProvider(p.id)}
+              className={cn('rounded-xl border p-3 text-left transition', on ? 'border-violet/60 bg-violet/10' : 'border-ice/10 hover:border-ice/25')}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium text-text">
+                {p.id === 'openrouter-free' ? <Cpu size={14} /> : <KeyRound size={14} />}
+                {p.name}
+                {on && <Check size={13} className="ml-auto text-violet" />}
+              </span>
+              <span className="mt-1 block text-[10px] leading-snug text-muted">{p.id === 'openrouter-free' ? 'Free' : 'BYO key'}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="rounded-2xl border border-ice/10 bg-ice/[0.02] p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-text">{provider.name}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted">{provider.desc}</p>
+          </div>
+          {needsKey && <span className="rounded-pill border border-teal/20 bg-teal/10 px-2.5 py-1 text-[10px] font-medium text-teal">Encrypted</span>}
+        </div>
+
+        {needsKey && (
+          <div className="mb-4 space-y-2">
+            <label className="block space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-normal text-muted"><Lock size={13} /> API key for this agent</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={provider.id === 'openai' ? 'sk-...' : provider.id === 'anthropic' ? 'sk-ant-...' : 'AIza...'}
+                className={inputCls}
+                autoComplete="off"
+              />
+            </label>
+            <p className="text-[11px] leading-snug text-muted">
+              {t('onboardingPage.byoKeyNote')}
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {provider.models.map((m) => {
               const on = value === m.id
               return (
                 <button
@@ -469,10 +814,9 @@ function ModelChips({ value, onChange }: { value: string; onChange: (id: string)
                   {m.label}
                 </button>
               )
-            })}
-          </div>
+          })}
         </div>
-      ))}
+      </div>
     </div>
   )
 }

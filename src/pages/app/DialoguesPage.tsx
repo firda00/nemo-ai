@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search, ArrowLeft, Hand, Bot, Send, X, Info, MessagesSquare, Tag } from 'lucide-react'
+import { Search, ArrowLeft, Hand, Bot, Send, X, Info, MessagesSquare, Tag, GitBranch, CheckCircle2 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { mockDialogues } from '../../data/platform'
@@ -52,7 +52,7 @@ export default function DialoguesPage() {
 
   useEffect(() => {
     if (!live || !supabase) return
-    load()
+    window.setTimeout(() => void load(), 0)
     const ch = supabase
       .channel('dialogues-rt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => load())
@@ -192,6 +192,24 @@ export default function DialoguesPage() {
           </header>
 
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            <div className="mx-auto mb-4 max-w-2xl rounded-2xl border border-violet/20 bg-violet/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex items-center gap-2 text-sm font-medium text-text"><GitBranch size={16} className="text-violet" /> Agent Trace</p>
+                <span className="rounded-pill border border-teal/20 bg-teal/10 px-2.5 py-1 text-[10px] font-medium text-teal">Nemo Score 92</span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {[
+                  ['Team Leader', 'Intent detected'],
+                  ['Knowledge Agent', 'Found answer source'],
+                  ['Sales Specialist', 'Prepared reply'],
+                ].map(([agent, action]) => (
+                  <div key={agent} className="rounded-xl border border-white/10 bg-bg/50 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-text"><CheckCircle2 size={13} className="text-teal" /> {agent}</p>
+                    <p className="mt-1 text-[11px] text-muted">{action}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
             {selected.messages.map((m) => {
               const incoming = m.author === 'customer'
               return (

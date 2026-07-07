@@ -12,7 +12,7 @@ import { corsHeaders, json } from '../_shared/cors.ts'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY')!
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 
 const FREE_MODEL = 'google/gemma-4-31b-it:free'
 const ALLOWED_MODELS = new Set([
@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
   if (instruction.length < 2 || !content) return json({ error: 'instruction and content required' }, 400)
   const model = ALLOWED_MODELS.has(body?.model) ? body.model : FREE_MODEL
 
-  const { data: prof } = await userDb.from('users').select('account_id').single()
+  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
@@ -59,6 +59,7 @@ Deno.serve(async (req) => {
 
   try {
     const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
+    if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
     const out = await callOpenRouter({ apiKey: orKey, model, messages, temperature: 0.2, maxTokens: 4000 })
     if (out.tokens) {
       await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model })

@@ -21,6 +21,7 @@ interface FieldDef {
 interface MetaResult {
   webhook?: string
   verify_token?: string
+  channel_id?: string
 }
 
 /**
@@ -42,7 +43,9 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
   const [result, setResult] = useState<MetaResult | null>(null)
   const [copied, setCopied] = useState('')
 
-  const widgetSnippet = `<script src="https://cdn.nemo.ai/widget.js" data-agent="${agentId}" async></script>`
+  // The visitor pastes this on their site; it loads the widget and talks to widget-webhook
+  // (keyed by the channel id, which we only have AFTER connecting).
+  const snippetFor = (cid: string) => `<script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="${cid}" async></script>`
 
   const fieldsFor = (c: ChannelType): FieldDef[] => {
     switch (c) {
@@ -83,7 +86,7 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
         return
       }
 
-      let data: { ok?: boolean; webhook?: string; verify_token?: string } | null = null
+      let data: { ok?: boolean; webhook?: string; verify_token?: string; channel_id?: string } | null = null
       let error: { message?: string } | null = null
       if (active === 'telegram') {
         const r = await supabase.functions.invoke('connect-telegram', {
@@ -112,7 +115,10 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
         return
       }
       await hydrate()
-      if (data.webhook) {
+      if (active === 'widget') {
+        // widget: show the embed snippet built from the real channel id
+        setResult({ channel_id: data.channel_id, webhook: data.webhook })
+      } else if (data.webhook) {
         // Meta channels: show the webhook + verify token to paste into Meta
         setResult({ webhook: data.webhook, verify_token: data.verify_token })
       } else {
@@ -205,30 +211,41 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
 
             <div className="mt-5 space-y-4">
               {result ? (
-                <div className="space-y-3">
-                  {active !== 'widget' && (
+                active === 'widget' ? (
+                  <div className="space-y-3">
+                    <p className="flex items-start gap-2 rounded-xl border border-teal/15 bg-teal/[0.05] p-3 text-xs leading-relaxed text-muted">
+                      <Check size={15} className="mt-0.5 shrink-0 text-teal" /> {t('channelsManager.widgetConnected')}
+                    </p>
+                    <pre className="overflow-x-auto rounded-xl border border-ice/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{snippetFor(result.channel_id ?? '')}</pre>
+                    <div className="flex items-center justify-between">
+                      <button onClick={() => copy(snippetFor(result.channel_id ?? ''), 'ws')} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-ice/[0.05]">
+                        {copied === 'ws' ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied === 'ws' ? t('platform.integrations.copied') : t('platform.integrations.copy')}
+                      </button>
+                      <Button size="sm" onClick={() => setActive(null)}>
+                        <Check size={14} /> {t('common.close')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
                     <p className="flex items-start gap-2 rounded-xl border border-ice/10 bg-ice/[0.03] p-3 text-xs leading-relaxed text-muted">
                       <ShieldCheck size={15} className="mt-0.5 shrink-0 text-teal" /> {t('platform.editor.chMetaNote')}
                     </p>
-                  )}
-                  <ReadonlyField label={t('platform.editor.chWebhookUrl')} value={result.webhook ?? ''} onCopy={() => copy(result.webhook ?? '', 'wh')} copied={copied === 'wh'} />
-                  {result.verify_token && (
-                    <ReadonlyField label={t('platform.editor.chVerifyToken')} value={result.verify_token} onCopy={() => copy(result.verify_token ?? '', 'vt')} copied={copied === 'vt'} />
-                  )}
-                  <div className="flex justify-end">
-                    <Button size="sm" onClick={() => setActive(null)}>
-                      <Check size={14} /> {t('common.close')}
-                    </Button>
+                    <ReadonlyField label={t('platform.editor.chWebhookUrl')} value={result.webhook ?? ''} onCopy={() => copy(result.webhook ?? '', 'wh')} copied={copied === 'wh'} />
+                    {result.verify_token && (
+                      <ReadonlyField label={t('platform.editor.chVerifyToken')} value={result.verify_token} onCopy={() => copy(result.verify_token ?? '', 'vt')} copied={copied === 'vt'} />
+                    )}
+                    <div className="flex justify-end">
+                      <Button size="sm" onClick={() => setActive(null)}>
+                        <Check size={14} /> {t('common.close')}
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )
               ) : active === 'widget' ? (
                 <div className="space-y-3">
                   <p className="text-xs text-muted">{t('platform.editor.chWidgetNote')}</p>
-                  <pre className="overflow-x-auto rounded-xl border border-ice/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet}</pre>
-                  <div className="flex items-center justify-between">
-                    <button onClick={() => copy(widgetSnippet, 'ws')} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-ice/[0.05]">
-                      {copied === 'ws' ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied === 'ws' ? t('platform.integrations.copied') : t('platform.integrations.copy')}
-                    </button>
+                  <div className="flex justify-end">
                     <Button size="sm" onClick={submit} disabled={busy}>
                       <Plug size={14} /> {busy ? '…' : t('platform.integrations.connect')}
                     </Button>

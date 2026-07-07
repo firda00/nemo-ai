@@ -6,22 +6,21 @@
 //   POST /functions/v1/research-agent   (Authorization: Bearer <user jwt>)
 //   body { "task": "..." }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY')!
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 
-// FREE models only. NOTE: free models cannot browse the web (Sonar is paid), so
-// findings come from the model's own knowledge — no live sources. Add a small
+// Reliable primary model (paid, cheap) with free fallback. NOTE: neither browses
+// the web (Sonar is paid), so findings come from model knowledge — add a small
 // Perplexity budget to restore live web search + citations.
-const FREE_MODEL = 'google/gemma-4-31b-it:free'
-const PLAN_MODEL = FREE_MODEL
-const SEARCH_MODEL = FREE_MODEL
-const SYNTH_MODEL = FREE_MODEL
+const PLAN_MODEL = PRIMARY_MODEL
+const SEARCH_MODEL = PRIMARY_MODEL
+const SYNTH_MODEL = PRIMARY_MODEL
 const MAX_QUERIES = 4
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -50,7 +49,7 @@ Deno.serve(async (req) => {
   const goal = String(task ?? '').trim()
   if (goal.length < 4) return json({ error: 'task too short' }, 400)
 
-  const { data: prof } = await userDb.from('users').select('account_id').single()
+  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
@@ -58,6 +57,7 @@ Deno.serve(async (req) => {
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
   const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
+  if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
 
   let tokens = 0
   try {
@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       },
       { role: 'user', content: goal },
     ]
-    const plan = await callOpenRouter({ apiKey: orKey, model: PLAN_MODEL, messages: planMsg, temperature: 0.3 })
+    const plan = await callOpenRouter({ apiKey: orKey, model: PLAN_MODEL, messages: planMsg, temperature: 0.3, fallbackModel: FALLBACK_MODEL })
     tokens += plan.tokens
     const parsed = extractJson(plan.content)
     let queries = Array.isArray(parsed?.queries) ? (parsed!.queries as unknown[]).map(String).filter(Boolean) : []

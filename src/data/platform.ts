@@ -7,13 +7,32 @@ import type {
   PlatformAgent,
   Template,
 } from '../types/platform'
+import type { Lang } from '../types'
 
 // FREE models only (OpenRouter ":free" tier) — zero cost. Grouped by company.
 // Keep in sync with the FREE_MODEL constants in the edge functions.
 export const PROVIDERS: ModelProvider[] = [
   {
+    id: 'openai',
+    name: 'OpenAI',
+    models: [
+      { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini · reliable', tokenRate: 1 },
+      { id: 'openai/gpt-4o', label: 'GPT-4o', tokenRate: 2 },
+    ],
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic · Claude',
+    models: [{ id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', tokenRate: 2 }],
+  },
+  {
+    id: 'google-gemini',
+    name: 'Google · Gemini',
+    models: [{ id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5', tokenRate: 1 }],
+  },
+  {
     id: 'google',
-    name: 'Google · Gemma',
+    name: 'Google · Gemma (free)',
     models: [
       { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B (free)', tokenRate: 0 },
       { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B (free)', tokenRate: 0 },
@@ -70,14 +89,22 @@ export const TIMEZONES = [
 ]
 
 // Detailed-settings datalist suggestions (free text — any value can be typed in).
-export const COUNTRIES = [
-  'Узбекистан', 'Россия', 'Казахстан', 'Кыргызстан', 'Таджикистан', 'Туркменистан',
-  'Азербайджан', 'Турция', 'ОАЭ', 'США', 'Германия', 'Великобритания',
-]
-export const NICHES = [
-  'Образование', 'E-commerce', 'Недвижимость', 'Медицина', 'Финансы', 'Рестораны',
-  'Туризм', 'Авто', 'Бьюти', 'Логистика', 'IT / SaaS', 'Производство',
-]
+export const COUNTRIES: Record<Lang, string[]> = {
+  uz: ['O‘zbekiston', 'Rossiya', 'Qozog‘iston', 'Qirg‘iziston', 'Tojikiston', 'Turkmaniston',
+    'Ozarbayjon', 'Turkiya', 'BAA', 'AQSH', 'Germaniya', 'Buyuk Britaniya'],
+  ru: ['Узбекистан', 'Россия', 'Казахстан', 'Кыргызстан', 'Таджикистан', 'Туркменистан',
+    'Азербайджан', 'Турция', 'ОАЭ', 'США', 'Германия', 'Великобритания'],
+  en: ['Uzbekistan', 'Russia', 'Kazakhstan', 'Kyrgyzstan', 'Tajikistan', 'Turkmenistan',
+    'Azerbaijan', 'Turkey', 'UAE', 'USA', 'Germany', 'United Kingdom'],
+}
+export const NICHES: Record<Lang, string[]> = {
+  uz: ['Ta’lim', 'E-commerce', 'Ko‘chmas mulk', 'Tibbiyot', 'Moliya', 'Restoranlar',
+    'Turizm', 'Avto', 'Go‘zallik', 'Logistika', 'IT / SaaS', 'Ishlab chiqarish'],
+  ru: ['Образование', 'E-commerce', 'Недвижимость', 'Медицина', 'Финансы', 'Рестораны',
+    'Туризм', 'Авто', 'Бьюти', 'Логистика', 'IT / SaaS', 'Производство'],
+  en: ['Education', 'E-commerce', 'Real estate', 'Healthcare', 'Finance', 'Restaurants',
+    'Tourism', 'Auto', 'Beauty', 'Logistics', 'IT / SaaS', 'Manufacturing'],
+}
 
 // Voice options (TTS) — synthesis activates once a voice provider key is connected.
 export const VOICES = [
@@ -211,6 +238,49 @@ const emptyLeadForm = {
 }
 
 export const seedAgents: PlatformAgent[] = [
+  {
+    id: 'ag_autonomous_operator',
+    name: 'Autonomous Business Operator',
+    type: 'chat',
+    avatarColor: 'cyan',
+    role: 'Autonomous AI Team Lead',
+    prompt: {
+      role: 'You are an autonomous business operator for a small company. You coordinate sales, support, content, coding and reporting specialists.',
+      tasks: 'Accept any business task, identify the goal, route work to the right specialist role, collect missing data, produce a structured result, prepare CRM/report handoff and escalate only when human approval is required.',
+      tone: 'Direct, practical, calm and business-focused.',
+      rules: 'Always show an agent trace. Never pretend an external CRM or channel was updated unless it is connected. Ask for the smallest missing field needed to continue.',
+    },
+    model: 'google/gemma-4-31b-it:free',
+    temperature: 0.4,
+    timezone: 'Asia/Tashkent',
+    schedule: '24/7',
+    language: 'auto',
+    country: 'Uzbekistan',
+    purpose: 'Run business workflows autonomously: qualify leads, draft replies, create content, prepare reports, and coordinate specialist agents.',
+    niche: 'Business operations',
+    voiceEnabled: false,
+    voiceMode: 'both',
+    voiceId: 'alloy',
+    status: 'active',
+    channels: ['telegram', 'widget'],
+    knowledge: [
+      { id: 'k_auto_1', name: 'Autonomous workflow playbook', source: 'faq', status: 'indexed', size: 'built-in' },
+      { id: 'k_auto_2', name: 'CRM handoff rules', source: 'faq', status: 'indexed', size: 'built-in' },
+    ],
+    leadForm: {
+      enabled: true,
+      fields: [
+        { id: 'name', label: 'Name', type: 'text', required: true },
+        { id: 'phone', label: 'Phone', type: 'phone', required: true },
+        { id: 'interest', label: 'Interest', type: 'text', required: true },
+        { id: 'next_action', label: 'Next action', type: 'text', required: false },
+      ],
+      trigger: 'when the customer shows interest, asks for price, asks for a demo, or gives contact details',
+      destination: 'table',
+    },
+    lastActivity: 'ready now',
+    dialoguesToday: 0,
+  },
   {
     id: 'ag_sales',
     name: 'Sotuv menejeri',

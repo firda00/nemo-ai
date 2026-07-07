@@ -3,17 +3,19 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import {
   LayoutDashboard,
   Bot,
-  Telescope,
-  MessagesSquare,
-  BookOpen,
-  Plug,
-  ClipboardList,
-  LayoutTemplate,
+  Users,
+  Wand2,
+  PenLine,
+  Building2,
+  Send,
   BarChart3,
+  Archive,
+  Blocks,
   CreditCard,
+  ClipboardList,
+  Repeat,
+  Activity,
   Settings as SettingsIcon,
-  ShieldCheck,
-  Coins,
   Menu,
   X,
   LogOut,
@@ -29,12 +31,11 @@ import { cn } from '../../lib/cn'
 
 export function AppLayout() {
   const { t } = useI18n()
-  const { user, logout } = useAuth()
+  const { user, logout, live, isAuthed } = useAuth()
+  const accountId = useAgentStore((s) => s.accountId)
   const navigate = useNavigate()
   const location = useLocation()
   const hydrate = useAgentStore((s) => s.hydrate)
-  const tokenBalance = useAgentStore((s) => s.tokenBalance)
-  const isAdmin = useAgentStore((s) => s.isAdmin)
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -43,24 +44,45 @@ export function AppLayout() {
     hydrate()
   }, [hydrate])
 
-  const nav: { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; soon?: boolean }[] = [
-    { to: '/app', label: t('platform.nav.dashboard'), icon: LayoutDashboard, end: true },
-    { to: '/app/agents', label: t('platform.nav.agents'), icon: Bot },
-    { to: '/app/research', label: t('platform.nav.research'), icon: Telescope },
-    { to: '/app/dialogues', label: t('platform.nav.dialogues'), icon: MessagesSquare },
-    { to: '/app/knowledge', label: t('platform.nav.knowledge'), icon: BookOpen },
-    { to: '/app/integrations', label: t('platform.nav.integrations'), icon: Plug },
-    { to: '/app/lead-forms', label: t('platform.nav.leadForms'), icon: ClipboardList },
-    { to: '/app/templates', label: t('platform.nav.templates'), icon: LayoutTemplate },
-    { to: '/app/analytics', label: t('platform.nav.analytics'), icon: BarChart3 },
-    { to: '/app/billing', label: t('platform.nav.billing'), icon: CreditCard },
-    { to: '/app/settings', label: t('platform.nav.settings'), icon: SettingsIcon },
-    ...(isAdmin ? [{ to: '/app/admin', label: t('platform.nav.admin'), icon: ShieldCheck }] : []),
+  // Grouped nav — a few labeled sections instead of one long flat list, so the
+  // sidebar is scannable (fixes the "too complex" feeling).
+  type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean }
+  const navGroups: { title: string; items: NavItem[] }[] = [
+    { title: t('appLayout.groupMain'), items: [
+      { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
+      { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
+      { to: '/app/autopost', label: t('appLayout.navAutopost'), icon: Send },
+      { to: '/app/followups', label: t('appLayout.navFollowups'), icon: Repeat },
+    ] },
+    { title: t('appLayout.groupAiTeams'), items: [
+      { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
+      { to: '/app/autonomous', label: t('appLayout.navAutonomous'), icon: Wand2 },
+      { to: '/app/agents', label: t('mvp.sidebar.agents'), icon: Bot },
+      { to: '/app/teams', label: t('mvp.sidebar.aiTeams'), icon: Users },
+      { to: '/app/tools', label: t('appLayout.navTools'), icon: Blocks },
+      { to: '/app/templates', label: t('mvp.sidebar.templates'), icon: ClipboardList },
+    ] },
+    { title: t('appLayout.groupResults'), items: [
+      { to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity },
+      { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
+      { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
+      { to: '/app/results', label: t('mvp.sidebar.results'), icon: ClipboardList },
+    ] },
+    { title: t('appLayout.groupAccount'), items: [
+      { to: '/app/billing', label: t('appLayout.navBilling'), icon: CreditCard },
+      { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },
+    ] },
   ]
+  const nav = navGroups.flatMap((g) => g.items)
 
+  // Header title: fall back to the create pages' own headings when not in nav.
+  const titleFallback: Record<string, string> = {
+    '/app/create-agent': t('mvp.sidebar.createAgent'),
+    '/app/create-team': t('mvp.sidebar.createTeam'),
+  }
   const current = nav
     .filter((n) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)))
-    .sort((a, b) => b.to.length - a.to.length)[0]
+    .sort((a, b) => b.to.length - a.to.length)[0] ?? (titleFallback[location.pathname] ? { label: titleFallback[location.pathname] } : undefined)
 
   const handleLogout = () => {
     logout()
@@ -77,29 +99,33 @@ export function AppLayout() {
           <X size={20} />
         </button>
       </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-        {nav.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            onClick={() => setOpen(false)}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors',
-                isActive ? 'bg-brand text-white shadow-btn' : 'text-muted hover:bg-white/5 hover:text-text',
-              )
-            }
-          >
-            <item.icon size={18} />
-            <span className="flex-1">{item.label}</span>
-            {item.soon && <span className="rounded-pill bg-infoblue px-1.5 py-0.5 text-[9px] font-medium text-midnight">{t('common.soon')}</span>}
-          </NavLink>
+      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+        {navGroups.map((group) => (
+          <div key={group.title} className="space-y-1">
+            <p className="px-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-fog">{group.title}</p>
+            {group.items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                onClick={() => setOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
+                    isActive ? 'bg-brand text-white shadow-btn' : 'text-muted hover:bg-white/5 hover:text-text',
+                  )
+                }
+              >
+                <item.icon size={17} />
+                <span className="flex-1">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
       <div className="border-t border-white/[0.07] p-3">
-        <Button to="/onboarding" fullWidth size="sm">
-          {t('platform.agents.create')}
+        <Button to="/app/create-team" fullWidth size="sm">
+          {t('mvp.sidebar.createTeam')}
         </Button>
       </div>
     </div>
@@ -123,14 +149,12 @@ export function AppLayout() {
               <Menu size={22} />
             </button>
             <h1 className="text-xl font-semibold tracking-tight text-text">{current?.label ?? 'Nemo AI'}</h1>
+            <span className={cn('hidden rounded-pill border px-2.5 py-1 text-[11px] font-medium sm:inline-flex', live && isAuthed && accountId !== 'demo' ? 'border-teal/20 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber')}>
+              {live && isAuthed && accountId !== 'demo' ? 'Live workspace' : 'Demo mode · local simulation'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <Link to="/app/billing" className="hidden items-center gap-2 rounded-pill border border-white/10 bg-white/5 px-3.5 py-1.5 text-sm hover:bg-white/10 sm:flex">
-              <Coins size={14} className="text-cyan" />
-              <span className="font-medium text-text">{tokenBalance.toLocaleString()}</span>
-              <span className="text-xs text-muted">{t('platform.topbar.tokens')}</span>
-            </Link>
             <LanguageToggle />
             <div className="relative">
               <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-1.5 rounded-pill p-0.5 pr-1.5 hover:bg-white/5">

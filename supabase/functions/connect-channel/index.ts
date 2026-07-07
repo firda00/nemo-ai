@@ -59,9 +59,11 @@ Deno.serve(async (req) => {
   if (error || !channel) return json({ error: error?.message ?? 'could not create channel' }, 400)
 
   const webhook =
-    type === 'whatsapp' || type === 'instagram'
-      ? `${SUPABASE_URL}/functions/v1/${type}-webhook/${channel.id}`
-      : undefined
+    type === 'widget'
+      ? `${SUPABASE_URL}/functions/v1/widget-webhook/${channel.id}`
+      : type === 'whatsapp' || type === 'instagram'
+        ? `${SUPABASE_URL}/functions/v1/${type}-webhook/${channel.id}`
+        : undefined
 
   return json({ ok: true, channel_id: channel.id, webhook, verify_token })
 })

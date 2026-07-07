@@ -27,3 +27,4 @@ supabase/.branches
 *.njsproj
 *.sln
 *.sw?
+.gstack/

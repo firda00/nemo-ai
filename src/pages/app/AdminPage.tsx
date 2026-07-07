@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ShieldCheck, Plus, Check, Coins, Gift, Loader2, Lock, Unlock, Ban } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
@@ -40,26 +40,28 @@ export default function AdminPage() {
   const [giftTokens, setGiftTokens] = useState('10000')
   const [giftCount, setGiftCount] = useState('1')
   const [busy, setBusy] = useState(false)
+  const [bcMsg, setBcMsg] = useState('')
+  const [bcBusy, setBcBusy] = useState(false)
+  const [bcResult, setBcResult] = useState<string | null>(null)
 
-  const call = async (action: string, extra: Record<string, unknown> = {}) => {
+  const call = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!isSupabaseEnabled || !supabase) return null
     const { data, error } = await supabase.functions.invoke('admin-api', { body: { action, ...extra } })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (error || !(data as any)?.ok) return null
+    if (error || !(data as { ok?: boolean } | null)?.ok) return null
     return data as Record<string, unknown>
-  }
+  }, [])
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true)
     const [a, g] = await Promise.all([call('list_accounts'), call('list_gifts')])
     if (a) setAccounts((a.accounts as Account[]) ?? [])
     if (g) setGifts((g.gifts as GiftRow[]) ?? [])
     setLoading(false)
-  }
+  }, [call])
   useEffect(() => {
-    if (isAdmin) loadAll()
-    else setLoading(false)
-  }, [isAdmin])
+    if (isAdmin) window.setTimeout(() => void loadAll(), 0)
+    else window.setTimeout(() => setLoading(false), 0)
+  }, [isAdmin, loadAll])
 
   const apply = async (id: string, action: 'grant' | 'set') => {
     const amount = Number(amounts[id])
@@ -82,6 +84,13 @@ export default function AdminPage() {
     if (!blocked && a.user_id) await call('ban', { user_id: a.user_id, banned: false })
     setAccounts((accs) => accs.map((x) => (x.id === a.id ? { ...x, blocked } : x)))
     toast(blocked ? t('platform.adminPanel.blockedMsg') : t('platform.adminPanel.unblockedMsg'))
+  }
+  // set the account's plan tier (controls which LLM the orchestrator uses)
+  const setPlan = async (a: Account, plan: string) => {
+    const res = await call('set_plan', { account_id: a.id, plan })
+    if (!res) { toast(t('common.error')); return }
+    setAccounts((accs) => accs.map((x) => (x.id === a.id ? { ...x, plan } : x)))
+    toast(`Plan → ${plan}`)
   }
   // hard ban (cannot log in)
   const banUser = async (a: Account) => {
@@ -110,6 +119,17 @@ export default function AdminPage() {
     loadAll()
   }
 
+  const sendBroadcast = async () => {
+    if (!supabase || bcBusy || bcMsg.trim().length < 2) return
+    setBcBusy(true); setBcResult(null)
+    try {
+      const { data } = await supabase.functions.invoke('send-broadcast', { body: { message: bcMsg.trim() } })
+      const p = data as { ok?: boolean; recipients?: number; sent?: number; failed?: number; message?: string; error?: string } | null
+      if (p?.ok) { setBcResult(t('adminPage.bcSent', { sent: p.sent ?? 0, recipients: p.recipients ?? 0, failed: p.failed ?? 0 })); setBcMsg('') }
+      else setBcResult(p?.message ?? p?.error ?? t('adminPage.sendFailed'))
+    } catch { setBcResult(t('adminPage.sendError')) } finally { setBcBusy(false) }
+  }
+
   if (!isAdmin) {
     return (
       <div className="container-page max-w-2xl py-16 text-center">
@@ -128,6 +148,17 @@ export default function AdminPage() {
         <div>
           <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.admin')}</h1>
           <p className="text-sm text-muted">{t('platform.adminPanel.subtitle')}</p>
+        </div>
+      </div>
+
+      {/* SMS broadcast — Nemo news/ads to all saved phones */}
+      <div className="card mt-6 rounded-3xl p-6">
+        <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Coins size={16} className="text-violet" /> {t('adminPage.smsTitle')}</h2>
+        <p className="mt-1 text-xs text-muted">{t('adminPage.smsDesc')}</p>
+        <textarea value={bcMsg} onChange={(e) => setBcMsg(e.target.value)} rows={3} placeholder={t('adminPage.smsPh')} className="glass mt-3 w-full resize-y rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+        <div className="mt-3 flex items-center gap-3">
+          <Button onClick={sendBroadcast} disabled={bcBusy || bcMsg.trim().length < 2}>{bcBusy ? <Loader2 size={15} className="animate-spin" /> : <Coins size={15} />} {t('adminPage.sendAll')}</Button>
+          {bcResult && <span className="text-xs text-muted">{bcResult}</span>}
         </div>
       </div>
 
@@ -217,6 +248,11 @@ export default function AdminPage() {
                         <button onClick={() => apply(a.id, 'set')} className="rounded-lg border border-ice/12 px-2 py-1.5 text-xs font-medium text-muted hover:text-text" title={t('platform.adminPanel.setBalance')}>
                           <Check size={13} />
                         </button>
+                        <select value={a.plan ?? 'free'} onChange={(e) => setPlan(a, e.target.value)} className={cn(inputCls, 'w-[92px] cursor-pointer')} title="Plan (free=cheap model, pro/business=gpt-4o)">
+                          <option value="free">free</option>
+                          <option value="pro">pro</option>
+                          <option value="business">business</option>
+                        </select>
                         {!a.is_admin && (
                           <>
                             <button

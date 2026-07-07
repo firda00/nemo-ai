@@ -41,10 +41,38 @@ export const INTEGRATIONS: CatalogItem[] = [
   { id: 'line', name: 'LINE', category: 'messenger', regions: ['global'], status: 'soon' },
   { id: 'signal', name: 'Signal', category: 'messenger', regions: ['global'], status: 'soon' },
 
+  // productivity tools agents can use (Google via OAuth; GitHub/Slack via keys; browser = any site)
+  { id: 'gmail', name: 'Gmail', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'gsheets', name: 'Google Sheets', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'gdocs', name: 'Google Docs', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'github', name: 'GitHub', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'slack', name: 'Slack', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'browser', name: 'AI-браузер (веб-агент)', category: 'tools', regions: ['global'], status: 'live' },
+  { id: 'notion', name: 'Notion', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'airtable', name: 'Airtable', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'gdrive', name: 'Google Drive', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'obsidian', name: 'Obsidian', category: 'tools', regions: ['global'], status: 'soon' },
+
+  // AI-генерация: голоса, аватары, дубляж (подключи ключ провайдера)
+  { id: 'elevenlabs', name: 'ElevenLabs — голоса и дубляж', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'heygen', name: 'HeyGen — аватары и видео-дубляж', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'higgsfield', name: 'Higgsfield — видео и аватары', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'did', name: 'D-ID — говорящие аватары', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'synthesia', name: 'Synthesia — видео с аватаром', category: 'tools', regions: ['global'], status: 'soon' },
+
+  // конструкторы сайтов и лендингов
+  { id: 'webflow', name: 'Webflow', category: 'ecommerce', regions: ['global'], status: 'soon' },
+  { id: 'framer', name: 'Framer', category: 'ecommerce', regions: ['global'], status: 'soon' },
+
+  // ещё маркетплейсы
+  { id: 'yandexmarket', name: 'Яндекс Маркет', category: 'marketplace', regions: ['ru'], status: 'soon' },
+  { id: 'kaspi', name: 'Kaspi (KZ)', category: 'marketplace', regions: ['global'], status: 'soon' },
+  { id: 'temu', name: 'Temu', category: 'marketplace', regions: ['global'], status: 'soon' },
+
   // CRM
   { id: 'amocrm', name: 'amoCRM', category: 'crm', regions: ['ru', 'uz'], status: 'live' },
   { id: 'bitrix24', name: 'Bitrix24', category: 'crm', regions: ['ru', 'uz'], status: 'live' },
-  { id: 'hubspot', name: 'HubSpot', category: 'crm', regions: ['us', 'global'], status: 'soon' },
+  { id: 'hubspot', name: 'HubSpot', category: 'crm', regions: ['us', 'global'], status: 'live' },
   { id: 'salesforce', name: 'Salesforce', category: 'crm', regions: ['us', 'global'], status: 'soon' },
   { id: 'zoho', name: 'Zoho CRM', category: 'crm', regions: ['global'], status: 'soon' },
   { id: 'pipedrive', name: 'Pipedrive', category: 'crm', regions: ['eu', 'global'], status: 'soon' },

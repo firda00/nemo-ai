@@ -1,11 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Globe, User as UserIcon, Gauge, Users, Check, UserPlus, Trash2, Gift, Copy } from 'lucide-react'
+import { Check, CreditCard, Globe, Users, User as UserIcon } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
-import { useToast } from '../../components/ui/Toast'
-import { useAgentStore } from '../../store/useAgentStore'
-import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
+import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import { cn } from '../../lib/cn'
 import type { Lang } from '../../types'
 
@@ -15,90 +12,35 @@ const langOptions: { code: Lang; label: string; native: string }[] = [
   { code: 'en', label: 'English', native: 'EN' },
 ]
 
-interface Member {
-  id: string
-  email: string
-  role: 'owner' | 'operator'
-}
-
-function Section({ icon: Icon, title, desc, children }: { icon: typeof Globe; title: string; desc?: string; children: React.ReactNode }) {
-  return (
-    <section className="card rounded-2xl p-6">
-      <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet/15 text-violet">
-          <Icon size={18} />
-        </span>
-        <div>
-          <h2 className="font-normal text-text">{title}</h2>
-          {desc && <p className="text-xs text-muted">{desc}</p>}
-        </div>
-      </div>
-      <div className="mt-5">{children}</div>
-    </section>
-  )
-}
+const inputCls = 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-text outline-none focus:border-violet/50'
 
 export default function SettingsPage() {
-  const { t, lang, setLang } = useI18n()
+  const { lang, setLang, t } = useI18n()
   const { user, updateUser } = useAuth()
-  const toast = useToast()
-  const quotaPct = user ? Math.min(100, Math.round((user.quotaUsed / user.quotaLimit) * 100)) : 0
-
-  const [members, setMembers] = useState<Member[]>([
-    { id: 'o1', email: user?.email ?? 'owner@nemo.ai', role: 'owner' },
-    { id: 'o2', email: 'sevara@nemo.ai', role: 'operator' },
-  ])
-  const [invite, setInvite] = useState('')
-
-  // referral code / link
-  const accountId = useAgentStore((s) => s.accountId)
-  const [refCode, setRefCode] = useState('')
-  const [refCopied, setRefCopied] = useState(false)
-  useEffect(() => {
-    if (!isSupabaseEnabled || !supabase || !accountId) {
-      if (!isSupabaseEnabled) setRefCode('NEMO-DEMO')
-      return
-    }
-    supabase.from('accounts').select('referral_code').eq('id', accountId).single().then(({ data }) => {
-      if (data?.referral_code) setRefCode(data.referral_code)
-    })
-  }, [accountId])
-  const refLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/signup?ref=${refCode}`
-  const copyRef = () => {
-    navigator.clipboard?.writeText(refLink)
-    setRefCopied(true)
-    toast(t('settings.referralCopied'))
-    window.setTimeout(() => setRefCopied(false), 2000)
-  }
-
-  const addMember = () => {
-    const email = invite.trim()
-    if (!email) return
-    setMembers((m) => [...m, { id: `o${Date.now()}`, email, role: 'operator' }])
-    setInvite('')
-    toast(t('platform.settingsTeam.invited'))
-  }
 
   return (
-    <div className="container-page max-w-3xl py-8">
-      <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.settings')}</h1>
-      <p className="mt-1 text-sm text-muted">{t('settings.subtitle')}</p>
+    <div className="container-page max-w-4xl py-8">
+      <div>
+        <p className="mono-label">{t('mvp.settings.eyebrow')}</p>
+        <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-text">{t('mvp.settings.title')}</h1>
+        <p className="mt-2 text-sm text-muted">{t('mvp.settings.subtitle')}</p>
+      </div>
 
-      <div className="mt-7 space-y-5">
-        <Section icon={Globe} title={t('settings.languageTitle')} desc={t('settings.languageDesc')}>
+      <div className="mt-7 grid gap-5">
+        <Section icon={UserIcon} title={t('mvp.settings.profile')} desc={t('mvp.settings.profileDesc')}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5"><span className="text-xs text-muted">{t('mvp.settings.name')}</span><input value={user?.name ?? ''} onChange={(e) => updateUser({ name: e.target.value })} className={inputCls} /></label>
+            <label className="block space-y-1.5"><span className="text-xs text-muted">{t('mvp.settings.email')}</span><input readOnly value={user?.email ?? ''} className={inputCls} /></label>
+          </div>
+        </Section>
+
+        <Section icon={Globe} title={t('mvp.settings.language')} desc={t('mvp.settings.languageDesc')}>
           <div className="grid gap-3 sm:grid-cols-3">
             {langOptions.map((opt) => {
               const active = lang === opt.code
               return (
-                <button
-                  key={opt.code}
-                  onClick={() => { setLang(opt.code); updateUser({ lang: opt.code }) }}
-                  className={cn('flex items-center justify-between rounded-xl border p-4 text-left transition-all', active ? 'border-violet/60 bg-violet/10 shadow-glow' : 'border-ice/10 hover:border-ice/25')}
-                >
-                  <span className="flex items-center gap-3">
-                    <span className={cn('flex h-9 w-9 items-center justify-center rounded-lg border font-mono text-xs', active ? 'border-cobalt/50 text-cobalt' : 'border-ice/15 text-fog')}>{opt.native}</span>
-                    <span className="text-sm font-normal text-text">{opt.label}</span>
-                  </span>
+                <button key={opt.code} onClick={() => { setLang(opt.code); updateUser({ lang: opt.code }) }} className={cn('flex items-center justify-between rounded-xl border p-4 text-left transition-all', active ? 'border-violet/60 bg-violet/10 shadow-glow' : 'border-white/10 hover:border-white/25')}>
+                  <span className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 font-mono text-xs text-cyan">{opt.native}</span><span className="text-sm font-normal text-text">{opt.label}</span></span>
                   {active && <Check size={18} className="text-violet" />}
                 </button>
               )
@@ -106,72 +48,28 @@ export default function SettingsPage() {
           </div>
         </Section>
 
-        <Section icon={UserIcon} title={t('settings.accountTitle')}>
-          <div className="space-y-4">
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-normal text-muted">{t('settings.name')}</span>
-              <input value={user?.name ?? ''} onChange={(e) => updateUser({ name: e.target.value })} className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none focus:border-violet/50 focus:shadow-glow" />
-            </label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <span className="mb-1.5 block text-xs font-normal text-muted">{t('settings.email')}</span>
-                <div className="rounded-xl border border-ice/[0.07] bg-ice/[0.02] px-3 py-2.5 text-sm text-muted">{user?.email}</div>
-              </div>
-              <div>
-                <span className="mb-1.5 block text-xs font-normal text-muted">{t('settings.plan')}</span>
-                <div className="flex items-center rounded-xl border border-ice/[0.07] bg-ice/[0.02] px-3 py-2.5 text-sm">
-                  <span className="rounded-full bg-teal/15 px-2 py-0.5 text-xs font-normal text-teal">{t('settings.planBeta')}</span>
-                </div>
-              </div>
-            </div>
+        <Section icon={CreditCard} title={t('mvp.settings.usage')} desc={t('mvp.settings.usageDesc')}>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div><p className="font-semibold text-text">{t('mvp.settings.pilotPlan')}</p><p className="mt-1 text-xs text-muted">{t('mvp.settings.pilotDesc')}</p></div>
+            <Button to="/app/billing" size="sm">{t('mvp.settings.openPricing')}</Button>
           </div>
         </Section>
 
-        <Section icon={Gift} title={t('settings.referralTitle')} desc={t('settings.referralDesc')}>
-          <div className="flex gap-2">
-            <input readOnly value={refLink} className="glass w-full rounded-xl px-3 py-2.5 font-mono text-xs text-cyan outline-none" />
-            <Button size="md" onClick={copyRef} disabled={!refCode}>
-              {refCopied ? <Check size={15} /> : <Copy size={15} />} {refCopied ? t('settings.referralCopied') : t('settings.referralCopy')}
-            </Button>
-          </div>
-          <p className="mt-2 text-xs text-muted">{t('settings.referralHint')}</p>
-        </Section>
+        <ConnectAIModel />
 
-        <Section icon={Gauge} title={t('settings.quotaTitle')} desc={t('settings.quotaDesc')}>
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium text-text">{user?.quotaUsed} {t('settings.quotaOf')} {user?.quotaLimit} {t('settings.quotaRuns')}</span>
-            <span className="text-xs font-normal text-muted">{quotaPct}%</span>
-          </div>
-          <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-ice/[0.07]">
-            <div className="h-full rounded-full bg-cobalt transition-all" style={{ width: `${quotaPct}%` }} />
-          </div>
-        </Section>
-
-        <Section icon={Users} title={t('platform.settingsTeam.title')} desc={t('platform.settingsTeam.desc')}>
-          <div className="flex gap-2">
-            <input value={invite} onChange={(e) => setInvite(e.target.value)} placeholder={t('platform.settingsTeam.invitePh')} className="glass flex-1 rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50" />
-            <Button size="md" onClick={addMember}>
-              <UserPlus size={15} /> {t('platform.settingsTeam.invite')}
-            </Button>
-          </div>
-          <ul className="mt-4 space-y-2">
-            {members.map((m) => (
-              <li key={m.id} className="flex items-center gap-3 rounded-xl border border-ice/[0.07] bg-ice/[0.02] px-3 py-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo text-sm font-medium text-white">{m.email.charAt(0).toUpperCase()}</span>
-                <span className="min-w-0 flex-1 truncate text-sm text-text">{m.email}</span>
-                <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-normal', m.role === 'owner' ? 'bg-violet/15 text-violet' : 'bg-ice/[0.06] text-muted')}>
-                  {m.role === 'owner' ? t('platform.settingsTeam.roleOwner') : t('platform.settingsTeam.roleOperator')}
-                </span>
-                {m.role === 'operator' && (
-                  <button onClick={() => setMembers((list) => list.filter((x) => x.id !== m.id))} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06] hover:text-danger">
-                    <Trash2 size={15} />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+        <Section icon={Users} title={t('mvp.settings.teamMembers')} desc={t('mvp.settings.teamMembersDesc')}>
+          <ComingSoon text={t('mvp.settings.teamMembersDesc')} />
         </Section>
       </div>
     </div>
   )
+}
+
+function Section({ icon: Icon, title, desc, children }: { icon: typeof Globe; title: string; desc: string; children: React.ReactNode }) {
+  return <section className="card rounded-2xl p-6"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet/15 text-violet"><Icon size={18} /></span><div><h2 className="font-semibold text-text">{title}</h2><p className="text-xs text-muted">{desc}</p></div></div><div className="mt-5">{children}</div></section>
+}
+
+function ComingSoon({ text }: { text: string }) {
+  const { t } = useI18n()
+  return <div className="rounded-2xl border border-amber/20 bg-amber/10 p-4"><p className="text-sm font-semibold text-text">{t('mvp.settings.comingSoon')}</p><p className="mt-1 text-xs leading-relaxed text-muted">{text}</p></div>
 }

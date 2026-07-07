@@ -50,12 +50,11 @@ export function DepartmentPanel({ agent }: { agent: PlatformAgent }) {
 
   useEffect(() => {
     if (!live || !supabase) {
-      setLoading(false)
+      window.setTimeout(() => setLoading(false), 0)
       return
     }
     let on = true
     ;(async () => {
-      setLoading(true)
       const { data: depts } = await supabase
         .from('departments')
         .select('*')

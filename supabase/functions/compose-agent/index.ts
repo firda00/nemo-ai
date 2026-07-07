@@ -13,7 +13,7 @@ import { corsHeaders, json } from '../_shared/cors.ts'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY')!
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 
 // FREE models only (OpenRouter ":free" tier) — keep in sync with src/data/platform.ts
 const FREE_MODEL = 'google/gemma-4-31b-it:free'
@@ -25,7 +25,7 @@ const ALLOWED_MODELS = new Set([
 ])
 const CHANNELS = new Set(['telegram', 'whatsapp', 'instagram', 'widget'])
 const LANGS = new Set(['auto', 'uz', 'ru', 'en'])
-const KINDS_SET = new Set(['chat', 'qualifier', 'coder', 'content', 'learning', 'research', 'workflow'])
+const KINDS_SET = new Set(['chat', 'qualifier', 'sales', 'support', 'booking', 'analyst', 'smm', 'marketplace', 'coder', 'content', 'learning', 'research', 'workflow'])
 
 const langName = (l: string) => (l === 'uz' ? 'Uzbek' : l === 'en' ? 'English' : 'Russian')
 
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
   const forcedType = typeof typeHint === 'string' && KINDS_SET.has(typeHint) ? typeHint : null
 
   // resolve account + token guard (service role for balance read)
-  const { data: prof } = await userDb.from('users').select('account_id').single()
+  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
     `The "name" may be written in ${langName(lang)}.`,
     'Output ONLY a single minified JSON object, no markdown, no commentary. Schema:',
     '{"name": string (short, e.g. "Sotuv menejeri"),',
-    ' "type": "chat" | "qualifier" | "coder" | "content" | "learning" | "research" | "workflow",',
+    ' "type": "chat" | "qualifier" | "sales" | "support" | "booking" | "analyst" | "smm" | "marketplace" | "coder" | "content" | "learning" | "research" | "workflow",',
     ' "prompt": {"role": string, "tasks": string, "tone": string, "rules": string},',
     ' "default_lang": "auto"|"uz"|"ru"|"en" (use "auto" unless the business clearly needs one),',
     ' "model": one of the allowed ids,',
@@ -84,12 +84,18 @@ Deno.serve(async (req) => {
     forcedType
       ? `The agent type is fixed to "${forcedType}". Write the prompt specifically for a ${forcedType} agent and set "type":"${forcedType}".`
       : 'Pick "type": "qualifier" if the user wants to filter/score leads, ask qualifying questions (budget, need, timeline) and route hot leads to an operator; ' +
+        '"sales" for a closer that handles objections, pushes to a decision and books/closes the deal; ' +
+        '"support" for customer support that answers FAQs from the knowledge base and escalates hard cases to a human; ' +
+        '"booking" for scheduling appointments — offers slots, books them in the calendar, confirms and reminds; ' +
+        '"analyst" if they want an agent that reads data/metrics and produces reports, digests and insights; ' +
+        '"smm" for social media — plans content, writes posts per platform and schedules them; ' +
+        '"marketplace" for an e-commerce marketplace assistant that researches products, analyzes a store\'s best-sellers, audits listings, reads the marketplace rules, and prepares infographics/descriptions to the required sizes; ' +
         '"coder" if they want to write/fix code; ' +
         '"content" if they want to generate texts, posts, descriptions or creatives; ' +
         '"learning" if they want an assistant that remembers past conversations and improves; ' +
         '"research" if they want market/competitor research, monitoring, analysis or reports; ' +
         '"workflow" for a department/manager that needs a team of sub-agents for a multi-step task; ' +
-        '"chat" for customer sales/support conversations on channels. Default "chat".',
+        '"chat" for general customer sales/support conversations on channels. Default "chat".',
     `Allowed model ids: ${[...ALLOWED_MODELS].join(', ')}.`,
     'Pick a cost-effective model (gpt-4o-mini / claude-3.5-haiku / gemini flash) unless the task is complex.',
     'role = who the agent is; tasks = what it does step by step; tone = how it speaks; rules = hard constraints.',
@@ -102,8 +108,9 @@ Deno.serve(async (req) => {
   ]
 
   const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
-  let parsed: Record<string, unknown> | null = null
-  let tokens = 0
+  if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
+  let parsed: Record<string, unknown> | null
+  let tokens: number
   try {
     const out = await callOpenRouter({ apiKey: orKey, model: COMPOSER_MODEL, messages, temperature: 0.5 })
     tokens = out.tokens

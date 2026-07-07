@@ -44,7 +44,7 @@ import type { PlatformAgent } from '../../types/platform'
 export default function AgentEditorPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const toast = useToast()
   const agent = useAgentStore((s) => s.agents.find((a) => a.id === id))
   const hydrated = useAgentStore((s) => s.hydrated)
@@ -58,7 +58,7 @@ export default function AgentEditorPage() {
   // The agent may arrive after an async hydrate (e.g. on a hard reload straight
   // to this URL) — seed the draft once it's available instead of redirecting.
   useEffect(() => {
-    if (agent && !draft) setDraft(agent)
+    if (agent && !draft) window.setTimeout(() => setDraft(agent), 0)
   }, [agent, draft])
 
   // Compare only the fields this editor edits; channels/knowledge are managed
@@ -99,9 +99,10 @@ export default function AgentEditorPage() {
   const setPrompt = (patch: Partial<PlatformAgent['prompt']>) =>
     setDraft((d) => (d ? { ...d, prompt: { ...d.prompt, ...patch } } : d))
 
-  const save = () => {
-    updateAgent(draft.id, draft)
-    toast(t('platform.editor.saved'))
+  const save = async () => {
+    const { error } = await updateAgent(draft.id, draft)
+    if (error) toast(error, 'error')
+    else toast(t('platform.editor.saved'))
   }
 
   const goBack = () => {
@@ -154,7 +155,7 @@ export default function AgentEditorPage() {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[220px_1fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[220px_minmax(0,1fr)_340px] lg:grid-cols-[220px_1fr]">
         <div>
           <Tabs tabs={tabs} active={tab} onChange={setTab} orientation="vertical" className="lg:sticky lg:top-20" />
         </div>
@@ -210,8 +211,8 @@ export default function AgentEditorPage() {
                     <Field label={t('platform.onboarding.purpose')}>
                       <input value={draft.purpose ?? ''} onChange={(e) => set({ purpose: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.purposePh')} />
                     </Field>
-                    <datalist id="nemo-countries">{COUNTRIES.map((c) => <option key={c} value={c} />)}</datalist>
-                    <datalist id="nemo-niches">{NICHES.map((c) => <option key={c} value={c} />)}</datalist>
+                    <datalist id="nemo-countries">{COUNTRIES[lang].map((c) => <option key={c} value={c} />)}</datalist>
+                    <datalist id="nemo-niches">{NICHES[lang].map((c) => <option key={c} value={c} />)}</datalist>
                   </div>
                 )}
               </div>
@@ -399,6 +400,39 @@ export default function AgentEditorPage() {
             </Card>
           )}
         </div>
+
+        <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
+          <div className="card rounded-2xl p-5">
+            <div className="flex items-center gap-3">
+              <AgentAvatar color={draft.avatarColor} glyph="search" size="lg" />
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-text">{draft.name || 'AI Employee'}</p>
+                <p className="text-xs text-muted">{draft.type === 'workflow' ? 'AI Team Lead' : 'Specialist Agent'}</p>
+              </div>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-2 text-xs">
+              <Status label="Status" value={draft.status} tone="text-teal" />
+              <Status label="Tasks today" value={String(draft.dialoguesToday || 0)} />
+              <Status label="Model" value={MODELS.find((m) => m.id === draft.model)?.label ?? 'Free model'} />
+              <Status label="Last test" value="2 min ago" />
+            </div>
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+              <p className="text-xs font-semibold text-text">What this agent can do</p>
+              <p className="mt-1 line-clamp-4 text-xs leading-relaxed text-muted">{draft.prompt.tasks || draft.purpose || 'Define tasks in the Prompt tab to make this AI Employee useful.'}</p>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {(draft.channels.length ? draft.channels : ['test chat']).map((c) => <span key={c} className="rounded-pill border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-muted">{c}</span>)}
+            </div>
+            <Button onClick={save} disabled={!dirty} fullWidth className="mt-5">
+              <Save size={15} /> {dirty ? 'Save changes' : 'Saved'}
+            </Button>
+          </div>
+
+          <div className="card rounded-2xl p-5">
+            <p className="mb-3 text-sm font-semibold text-text">Live preview</p>
+            <TestChat agent={draft} />
+          </div>
+        </aside>
       </div>
 
       <ConfirmDialog
@@ -432,4 +466,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function Card({ children }: { children: ReactNode }) {
   return <div className="card space-y-5 rounded-2xl p-6">{children}</div>
+}
+
+function Status({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return <div className="rounded-xl border border-white/10 bg-white/[0.035] p-2"><p className="text-[10px] uppercase tracking-wide text-muted">{label}</p><p className={cn('mt-1 truncate font-semibold text-text', tone)}>{value}</p></div>
 }

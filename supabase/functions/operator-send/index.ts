@@ -43,8 +43,7 @@ Deno.serve(async (req) => {
   if (dialogue.channel === 'telegram' && dialogue.channel_id && dialogue.external_id) {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { data: ch } = await admin.from('channels').select('credentials').eq('id', dialogue.channel_id).single()
-    // deno-lint-ignore no-explicit-any
-    const botToken = (ch as any)?.credentials?.bot_token
+    const botToken = (ch as { credentials?: { bot_token?: string } } | null)?.credentials?.bot_token
     if (botToken) await tgSend(botToken, dialogue.external_id, text)
   }
 

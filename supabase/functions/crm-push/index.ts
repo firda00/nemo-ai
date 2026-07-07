@@ -6,6 +6,7 @@
 //   body { "webhook_url": "https://...", "lead": { ... }, "provider"?: "bitrix24"|"amocrm"|"google" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { safeFetch } from '../_shared/net.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -26,13 +27,22 @@ Deno.serve(async (req) => {
   if (!webhookUrl) return json({ error: 'webhook_url required' }, 400)
 
   try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: body.provider ?? 'generic', lead: body.lead ?? {}, source: 'nemo-ai' }),
-    })
+    // SSRF-safe: https only, blocks internal/metadata targets, re-validates
+    // redirects, times out. Prevents the CRM webhook from becoming an internal proxy.
+    const { res } = await safeFetch(
+      webhookUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: body.provider ?? 'generic', lead: body.lead ?? {}, source: 'nemo-ai' }),
+      },
+      { httpsOnly: true, maxBytes: 10_000, timeoutMs: 10_000, maxRedirects: 2 },
+    )
     return json({ ok: res.ok, status: res.status })
   } catch (e) {
-    return json({ ok: false, error: String(e) }, 502)
+    const msg = String((e as Error)?.message ?? e)
+    if (msg === 'invalid_url' || msg === 'invalid_protocol') return json({ error: 'invalid webhook_url (https required)' }, 400)
+    if (msg === 'blocked_host') return json({ error: 'blocked host' }, 403)
+    return json({ ok: false, error: 'push_failed' }, 502)
   }
 })

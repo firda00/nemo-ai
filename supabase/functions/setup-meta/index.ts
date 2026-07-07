@@ -6,13 +6,14 @@
 //   whatsapp credentials: { phone_number_id, token }
 //   instagram credentials: { page_token, ig_id }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { timingSafeEqual } from '../_shared/safeEqual.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const SETUP_SECRET = Deno.env.get('SETUP_SECRET')!
 
 Deno.serve(async (req) => {
-  if (req.headers.get('x-setup-secret') !== SETUP_SECRET) {
+  if (!timingSafeEqual(req.headers.get('x-setup-secret'), SETUP_SECRET)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 

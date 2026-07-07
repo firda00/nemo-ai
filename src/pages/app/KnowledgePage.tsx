@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { BookOpen, Plus } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -10,10 +10,7 @@ export default function KnowledgePage() {
   const { t } = useI18n()
   const agents = useAgentStore((s) => s.agents)
   const [agentId, setAgentId] = useState('')
-
-  useEffect(() => {
-    if (!agentId && agents.length) setAgentId(agents[0].id)
-  }, [agents, agentId])
+  const selectedAgentId = agentId || agents[0]?.id || ''
 
   return (
     <div className="container-page max-w-4xl py-8">
@@ -25,7 +22,7 @@ export default function KnowledgePage() {
         {agents.length > 0 && (
           <label className="flex items-center gap-2 text-sm">
             <span className="text-muted">{t('platform.knowledge.agentLabel')}</span>
-            <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="glass rounded-lg px-3 py-2 text-sm text-text outline-none">
+            <select value={selectedAgentId} onChange={(e) => setAgentId(e.target.value)} className="glass rounded-lg px-3 py-2 text-sm text-text outline-none">
               {agents.map((a) => (
                 <option key={a.id} value={a.id} className="bg-panel">
                   {a.name}
@@ -49,10 +46,10 @@ export default function KnowledgePage() {
           />
         </div>
       ) : (
-        agentId && (
+        selectedAgentId && (
           <div className="mt-6 card rounded-2xl p-6">
             {/* keyed so switching agents reloads the manager's doc list */}
-            <KnowledgeManager key={agentId} agentId={agentId} />
+            <KnowledgeManager key={selectedAgentId} agentId={selectedAgentId} />
           </div>
         )
       )}

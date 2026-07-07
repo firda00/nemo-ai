@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   Send,
@@ -33,6 +33,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useIntegrationStore, type IntegrationStatus } from '../../store/useIntegrationStore'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { INTEGRATIONS, INT_CATEGORIES, INT_REGIONS, type IntCategory, type IntRegion } from '../../data/integrations'
+import { GoogleSetup } from '../../components/platform/GoogleSetup'
 import { cn } from '../../lib/cn'
 
 type ConnectMethod = 'token' | 'oauth' | 'widget'
@@ -58,6 +59,20 @@ const statusStyle: Record<IntegrationStatus, string> = {
   error: 'bg-danger/10 text-danger',
 }
 
+function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'rounded-pill border px-3 py-1.5 text-xs font-medium transition',
+        on ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
 // category visual (used when an integration has no dedicated brand icon)
 const CAT_META: Record<IntCategory, { Icon: LucideIcon; color: string }> = {
   messenger: { Icon: MessageCircle, color: '#3FA9F5' },
@@ -70,6 +85,17 @@ const CAT_META: Record<IntCategory, { Icon: LucideIcon; color: string }> = {
   ecommerce: { Icon: Store, color: '#13C5B4' },
   social: { Icon: Share2, color: '#5A8DEE' },
   tools: { Icon: Wrench, color: '#9AA4B2' },
+}
+
+// A few catalog items have a translatable descriptor in their name; resolve those
+// via i18n at render (the raw data keeps the RU name for search/back-compat).
+const NAME_I18N: Record<string, string> = {
+  browser: 'dataUi.intBrowser',
+  elevenlabs: 'dataUi.intElevenlabs',
+  heygen: 'dataUi.intHeygen',
+  higgsfield: 'dataUi.intHiggsfield',
+  did: 'dataUi.intDid',
+  synthesia: 'dataUi.intSynthesia',
 }
 
 export default function IntegrationsPage() {
@@ -136,8 +162,7 @@ export default function IntegrationsPage() {
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('connect-telegram', { body: { bot_token: form.token } })
       setBusy(false)
-      // deno-lint-ignore no-explicit-any
-      if (error || !(data as any)?.ok) {
+      if (error || !(data as { ok?: boolean } | null)?.ok) {
         toast(error?.message ?? t('platform.integrations.statusError'))
         return
       }
@@ -147,8 +172,33 @@ export default function IntegrationsPage() {
     finishConnect(def.id)
   }
 
-  const authorize = (id: string) => {
+  // reflect the REAL Google connection + handle the OAuth return
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase) return
+    ;(async () => {
+      try {
+        const { data } = await supabase!.functions.invoke('google-oauth', { body: { action: 'status' } })
+        if ((data as { connected?: boolean } | null)?.connected) connect('google')
+      } catch { /* ignore */ }
+    })()
+    const p = new URLSearchParams(window.location.search).get('google')
+    if (p === 'connected') { connect('google'); toast(t('integrationsPage.googleConnected')) }
+    else if (p) toast(t('integrationsPage.googleFailed'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const authorize = async (id: string) => {
     setBusy(true)
+    if (id === 'google' && isSupabaseEnabled && supabase) {
+      try {
+        const { data, error } = await supabase.functions.invoke('google-oauth', { body: { action: 'authorize' } })
+        const p = data as { ok?: boolean; url?: string; message?: string } | null
+        if (!error && p?.url) { window.location.href = p.url; return }
+        toast(p?.message ?? t('integrationsPage.googleNotConfigured'))
+      } catch { toast(t('integrationsPage.googleOauthError')) }
+      setBusy(false)
+      return
+    }
     window.setTimeout(() => finishConnect(id), 900)
   }
 
@@ -159,18 +209,6 @@ export default function IntegrationsPage() {
   }
 
   const tokenReady = active?.fields ? active.fields.every((f) => (form[f.key] ?? '').trim().length > 0) : false
-
-  const Chip = ({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) => (
-    <button
-      onClick={onClick}
-      className={cn(
-        'rounded-pill border px-3 py-1.5 text-xs font-medium transition',
-        on ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25',
-      )}
-    >
-      {children}
-    </button>
-  )
 
   return (
     <div className="container-page max-w-6xl py-8">
@@ -239,7 +277,7 @@ export default function IntegrationsPage() {
                   )}
                 </div>
 
-                <h3 className="mt-4 font-medium text-text">{it.name}</h3>
+                <h3 className="mt-4 font-medium text-text">{NAME_I18N[it.id] ? t(NAME_I18N[it.id]) : it.name}</h3>
                 <div className="mt-2 flex flex-1 flex-wrap items-start gap-1.5">
                   <span className="rounded-md bg-ice/[0.06] px-1.5 py-0.5 text-[10px] text-muted">{t(`platform.integrations.cat.${it.category}`)}</span>
                   {it.regions.map((r) => (
@@ -315,11 +353,13 @@ export default function IntegrationsPage() {
                   </label>
                 ))}
 
-              {active.method === 'oauth' && (
+              {active.method === 'oauth' && (active.id === 'google' ? (
+                <GoogleSetup onConnected={() => connect('google')} />
+              ) : (
                 <p className="flex items-start gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs leading-relaxed text-muted">
                   <ExternalLink size={15} className="mt-0.5 shrink-0" /> {t('platform.integrations.authorizeNote')}
                 </p>
-              )}
+              ))}
 
               {active.method === 'widget' && (
                 <div className="space-y-2">
@@ -334,9 +374,9 @@ export default function IntegrationsPage() {
 
             <div className="mt-6 flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => setActive(null)}>
-                {t('common.cancel')}
+                {active.id === 'google' ? t('common.close') : t('common.cancel')}
               </Button>
-              {active.method === 'oauth' ? (
+              {active.id === 'google' ? null : active.method === 'oauth' ? (
                 <Button size="sm" onClick={() => authorize(active.id)} disabled={busy}>
                   {busy ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />} {t('platform.integrations.authorize')}
                 </Button>

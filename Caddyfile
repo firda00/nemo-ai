@@ -1,0 +1,13 @@
+# Nemo AI — Caddy config (auto HTTPS via Let's Encrypt).
+# Put this at /etc/caddy/Caddyfile on the server and replace the domain below
+# with your real DuckDNS subdomain. Then: sudo systemctl restart caddy
+#
+# Serves the built SPA from /var/www/nemo and falls back every route to
+# index.html so client-side routing (/app, /auth, ...) works on refresh.
+
+nemoai.duckdns.org {
+    root * /var/www/nemo
+    encode zstd gzip
+    try_files {path} /index.html
+    file_server
+}

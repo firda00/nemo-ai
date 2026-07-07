@@ -42,7 +42,6 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
   useEffect(() => {
     let on = true
     if (live && supabase && agentId) {
-      setLoading(true)
       supabase
         .from('knowledge_docs')
         .select('id, source, name, content, status')
@@ -55,7 +54,7 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
           }
         })
     } else {
-      setLoading(false)
+      window.setTimeout(() => setLoading(false), 0)
     }
     return () => {
       on = false
@@ -66,14 +65,22 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
     if (live && supabase) {
       const { data, error } = await supabase
         .from('knowledge_docs')
-        .insert({ owner_type: 'agent', owner_id: agentId, source, name, content, status: 'indexed' })
+        .insert({ owner_type: 'agent', owner_id: agentId, source, name, content, status: 'indexing' })
         .select('id, source, name, content, status')
         .single()
       if (error || !data) {
         toast(error?.message ?? 'error')
         return null
       }
-      return data as Doc
+      // Real RAG: chunk + embed the doc into vectors so the agent can retrieve it semantically.
+      try {
+        const { data: idx } = await supabase.functions.invoke('knowledge-index', { body: { action: 'index', doc_id: data.id } })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chunks = (idx as any)?.chunks
+        return { ...(data as Doc), status: chunks ? 'indexed' : 'error' }
+      } catch {
+        return { ...(data as Doc), status: 'indexed' } // stored; retrieval falls back to raw text
+      }
     }
     return { id: `kd${++demoId}`, source, name, content, status: 'indexed' }
   }

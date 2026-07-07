@@ -56,7 +56,6 @@ export function ResearchRunner({
 
   useEffect(() => {
     if (running) {
-      setPhase(0)
       phaseTimer.current = setInterval(() => setPhase((p) => Math.min(p + 1, PHASES.length - 1)), 5500)
     } else if (phaseTimer.current) {
       clearInterval(phaseTimer.current)
@@ -72,6 +71,7 @@ export function ResearchRunner({
     if (goal.length < 4 || running) return
     setError('')
     setResult(null)
+    setPhase(0)
     setRunning(true)
     try {
       if (live && supabase) {

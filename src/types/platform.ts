@@ -11,7 +11,13 @@ export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget' | 'di
 //  learning  — chat that remembers past dialogues and improves over time
 //  research  — autonomously searches and writes a sourced report
 //  workflow  — "department / manager": assembles a team of sub-agents for a task
-export type AgentKind = 'chat' | 'qualifier' | 'coder' | 'content' | 'learning' | 'research' | 'workflow'
+//  sales     — closer: handles objections, pushes to a decision, closes the deal
+//  support   — answers FAQs from the knowledge base, escalates hard cases
+//  booking   — schedules appointments: offers slots, books, confirms, reminds
+//  analyst   — reads data/metrics and produces reports, digests, insights
+//  smm       — plans content, writes posts per platform and schedules them
+//  marketplace — e-commerce: researches products, audits listings, reads marketplace rules, builds sized infographics
+export type AgentKind = 'chat' | 'qualifier' | 'sales' | 'support' | 'booking' | 'analyst' | 'smm' | 'marketplace' | 'coder' | 'content' | 'learning' | 'research' | 'workflow'
 export type AgentStatus = 'active' | 'paused' | 'draft'
 export type AgentSchedule = '24/7' | 'work-hours'
 // 'auto' replies in the customer's language; otherwise force a base language.

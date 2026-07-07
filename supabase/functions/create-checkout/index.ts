@@ -5,6 +5,7 @@
 //   POST /functions/v1/create-checkout   (Authorization: Bearer <user jwt>)
 //   body { "package": "starter" | "pro" | "business" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { PLAN_LIMITS } from '../_shared/plans.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -39,7 +40,38 @@ Deno.serve(async (req) => {
   } = await userDb.auth.getUser()
   if (!user) return json({ error: 'unauthorized' }, 401)
 
-  const { package: pkgId, usd: customUsd } = await req.json().catch(() => ({}))
+  const { package: pkgId, usd: customUsd, plan: planId } = await req.json().catch(() => ({}))
+
+  const { data: prof0 } = await userDb.from('users').select('account_id').maybeSingle()
+  const accountId0 = prof0?.account_id
+  if (!accountId0) return json({ error: 'no account' }, 403)
+  const origin0 = req.headers.get('origin') || 'https://nemo.185.8.213.144.sslip.io'
+
+  // SUBSCRIPTION — a Nemo plan. Recurring payment to Nemo's Stripe; the webhook sets the
+  // account's plan. Inline price_data (recurring) means no pre-created Price IDs needed.
+  if (planId != null && planId !== '') {
+    const plan = PLAN_LIMITS[String(planId)]
+    if (!plan || plan.price <= 0) return json({ error: 'invalid plan' }, 400)
+    const subBody = form({
+      mode: 'subscription',
+      success_url: `${origin0}/app/billing?upgraded=${planId}`,
+      cancel_url: `${origin0}/app/billing`,
+      'line_items[0][quantity]': '1',
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][unit_amount]': String(plan.price * 100),
+      'line_items[0][price_data][recurring][interval]': 'month',
+      'line_items[0][price_data][product_data][name]': `Nemo AI — ${plan.label}`,
+      'metadata[account_id]': accountId0,
+      'metadata[plan]': String(planId),
+      'subscription_data[metadata][account_id]': accountId0,
+      'subscription_data[metadata][plan]': String(planId),
+      client_reference_id: accountId0,
+    })
+    const r = await fetch('https://api.stripe.com/v1/checkout/sessions', { method: 'POST', headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: subBody })
+    const d = await r.json()
+    if (!r.ok) { console.error('stripe error:', d); return json({ error: 'stripe_error', detail: d?.error?.message }, 502) }
+    return json({ ok: true, url: d.url })
+  }
 
   // Resolve amount + tokens SERVER-SIDE (never trust a client-supplied token count).
   let usd: number
@@ -59,7 +91,7 @@ Deno.serve(async (req) => {
     productName = `Nemo AI — $${n} top up (${tokens.toLocaleString('en-US')} tokens)`
   }
 
-  const { data: prof } = await userDb.from('users').select('account_id').single()
+  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
 

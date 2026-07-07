@@ -13,10 +13,10 @@ export function MarketingHeader() {
   const [open, setOpen] = useState(false)
 
   const links = [
-    { href: '#how', label: t('nav.howItWorks') },
-    { href: '#features', label: t('nav.features') },
-    { href: '#pricing', label: t('nav.pricing') },
-    { href: '#faq', label: t('nav.faq') },
+    { href: '#product', label: t('marketingHeader.product') },
+    { href: '#templates', label: t('marketingHeader.templates') },
+    { href: '#workflow', label: t('marketingHeader.workflow') },
+    { href: '/app/billing', label: t('marketingHeader.pricing') },
   ]
 
   return (
@@ -47,8 +47,8 @@ export function MarketingHeader() {
                 <Link to="/auth" className="text-sm font-medium text-muted transition-colors hover:text-text">
                   {t('nav.login')}
                 </Link>
-                <Button to="/auth?mode=signup" size="sm">
-                  {t('nav.tryFree')}
+                <Button to="/auth?mode=signup" size="sm" className="!bg-white !bg-none !text-bg shadow-none hover:brightness-95">
+                  {t('marketingHeader.book')}
                 </Button>
               </>
             )}
@@ -69,8 +69,8 @@ export function MarketingHeader() {
               ))}
               <div className="mt-2 flex items-center justify-between gap-3 px-1">
                 <LanguageToggle />
-                <Button to="/auth?mode=signup" size="sm">
-                  {t('nav.tryFree')}
+                <Button to="/auth?mode=signup" size="sm" className="!bg-white !bg-none !text-bg shadow-none hover:brightness-95">
+                  {t('marketingHeader.book')}
                 </Button>
               </div>
             </div>

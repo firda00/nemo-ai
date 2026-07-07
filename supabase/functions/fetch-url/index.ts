@@ -7,6 +7,7 @@
 //   body { "url": "https://..." }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { safeFetch } from '../_shared/net.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -60,26 +61,25 @@ Deno.serve(async (req) => {
   if (!user) return json({ error: 'unauthorized' }, 401)
 
   const { url } = await req.json().catch(() => ({}))
-  let target: URL
-  try {
-    target = new URL(normalizeUrl(String(url ?? '')))
-  } catch {
-    return json({ error: 'invalid url' }, 400)
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') return json({ error: 'invalid url' }, 400)
+  const normalized = normalizeUrl(String(url ?? ''))
 
   try {
-    const res = await fetch(target.toString(), {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'NemoAI-KnowledgeBot/1.0' },
-    })
+    // SSRF-safe: rejects loopback/link-local/private/metadata hosts, re-validates
+    // every redirect hop, times out, and caps how much body is read into memory.
+    const { res, body } = await safeFetch(
+      normalized,
+      { headers: { 'User-Agent': 'NemoAI-KnowledgeBot/1.0' } },
+      { maxBytes: MAX * 3, timeoutMs: 10_000, maxRedirects: 4 },
+    )
     if (!res.ok) return json({ error: `fetch ${res.status}` }, 502)
     const ctype = res.headers.get('content-type') ?? ''
-    const raw = (await res.text()).slice(0, MAX * 3)
-    const content = ctype.includes('text/html') ? htmlToText(raw) : raw.trim()
+    const content = ctype.includes('text/html') ? htmlToText(body) : body.trim()
     if (!content) return json({ error: 'empty' }, 422)
     return json({ ok: true, content: content.slice(0, MAX) })
   } catch (e) {
+    const msg = String((e as Error)?.message ?? e)
+    if (msg === 'invalid_url' || msg === 'invalid_protocol') return json({ error: 'invalid url' }, 400)
+    if (msg === 'blocked_host') return json({ error: 'blocked host' }, 403)
     console.error('fetch-url error:', e)
     return json({ error: 'fetch_failed' }, 502)
   }

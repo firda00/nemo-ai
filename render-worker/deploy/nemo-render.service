@@ -1,0 +1,21 @@
+[Unit]
+Description=Nemo Content Factory render worker (Remotion)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nemo-render
+EnvironmentFile=/opt/nemo-render/.env
+ExecStart=/usr/bin/node /opt/nemo-render/server.mjs
+Restart=on-failure
+RestartSec=5
+# Keep the shared VPS safe: cap memory + CPU so a render can never starve the neighbor sites.
+MemoryMax=2500M
+CPUQuota=200%
+TasksMax=400
+# Chromium/Remotion write temp frames under /tmp — give the service a private tmp.
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

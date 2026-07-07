@@ -1,21 +1,29 @@
 // OpenRouter LLM gateway (model-agnostic per NEMO_AI_SPEC §4).
 // One API, many models — the model id is chosen per agent (agents.model),
 // e.g. "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-...".
+import { roleSkillBlock } from './skills.ts'
 
 export interface ChatMsg {
   role: 'system' | 'user' | 'assistant'
   content: string
 }
 
-export async function callOpenRouter(opts: {
+// Primary model for platform workflows (team orchestration, research, test chat).
+// Defaults to a cheap, RELIABLE paid model so multi-step runs don't 502 on
+// free-tier rate limits. FALLBACK_MODEL is a free model used only if the primary
+// call fails (e.g. OpenRouter out of credits) so the product degrades instead of
+// hard-failing. Both overridable via Supabase secrets.
+export const PRIMARY_MODEL = Deno.env.get('PRIMARY_MODEL') ?? 'openai/gpt-4o-mini'
+export const FALLBACK_MODEL = Deno.env.get('FALLBACK_MODEL') ?? 'google/gemma-4-31b-it:free'
+
+async function attemptModel(opts: {
   apiKey: string
   model: string
   messages: ChatMsg[]
   temperature?: number
   maxTokens?: number
 }): Promise<{ content: string; tokens: number; citations: string[] }> {
-  // Free models are flaky + rate-limited, so retry transient errors (429 / 5xx)
-  // with backoff. 402 = out of credits (no retry).
+  // Retry transient errors (429 / 5xx) with backoff. 402 = out of credits (no retry).
   const MAX = 3
   let res: Response | null = null
   for (let attempt = 1; attempt <= MAX; attempt++) {
@@ -57,8 +65,36 @@ export async function callOpenRouter(opts: {
   return { content, tokens, citations }
 }
 
-// deno-lint-ignore no-explicit-any
-export function buildSystemPrompt(agent: any, knowledge: string, memory = ''): string {
+export async function callOpenRouter(opts: {
+  apiKey: string
+  model: string
+  messages: ChatMsg[]
+  temperature?: number
+  maxTokens?: number
+  // If the primary model fails, retry once with this model (reliability degrade).
+  fallbackModel?: string
+}): Promise<{ content: string; tokens: number; citations: string[] }> {
+  try {
+    return await attemptModel(opts)
+  } catch (e) {
+    const fb = opts.fallbackModel
+    if (fb && fb !== opts.model) {
+      console.warn(`primary model "${opts.model}" failed (${String((e as Error)?.message ?? e)}); falling back to "${fb}"`)
+      return await attemptModel({ ...opts, model: fb })
+    }
+    throw e
+  }
+}
+
+interface PromptAgent {
+  name?: string
+  prompt?: { role?: string; tasks?: string; tone?: string; rules?: string }
+  default_lang?: string
+  country?: string
+  niche?: string
+}
+
+export function buildSystemPrompt(agent: PromptAgent | null | undefined, knowledge: string, memory = ''): string {
   const p = agent?.prompt ?? {}
   const LANG_NAME: Record<string, string> = { uz: 'Uzbek', ru: 'Russian', en: 'English' }
   const langRule =
@@ -74,6 +110,9 @@ export function buildSystemPrompt(agent: any, knowledge: string, memory = ''): s
     p.rules ? `Rules you MUST follow: ${p.rules}` : '',
     agent?.country ? `The business operates in: ${agent.country}.` : '',
     agent?.niche ? `Industry / niche: ${agent.niche}.` : '',
+    // Persona embodiment: if the agent's role matches a known profession, inject how that
+    // professional actually thinks/works so the agent inhabits the role (no-op if no match).
+    roleSkillBlock(p.role ?? '', `${p.tasks ?? ''} ${agent?.name ?? ''}`),
     langRule,
     knowledge ? `\nKnowledge base — use it to answer accurately:\n${knowledge}` : '',
     memory ? `\nMemory from earlier conversations — use it for continuity, do not re-ask what you already know:\n${memory}` : '',

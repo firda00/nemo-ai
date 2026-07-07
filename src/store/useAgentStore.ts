@@ -8,6 +8,7 @@ let counter = 100
 export const newAgentId = () => `ag_${++counter}`
 
 const palette: AgentColor[] = ['violet', 'blue', 'cyan', 'teal', 'amber']
+const localAgents = () => seedAgents.map((agent) => ({ ...agent }))
 
 export function blankAgent(): PlatformAgent {
   return {
@@ -17,7 +18,7 @@ export function blankAgent(): PlatformAgent {
     avatarColor: palette[counter % palette.length],
     role: '',
     prompt: { role: '', tasks: '', tone: '', rules: '' },
-    model: 'google/gemma-4-31b-it:free',
+    model: 'openai/gpt-4o-mini',
     temperature: 0.6,
     timezone: 'Asia/Tashkent',
     schedule: '24/7',
@@ -115,41 +116,68 @@ interface AgentStore {
   accountId: string | null
   isAdmin: boolean
   tokenBalance: number
+  profileResolved: boolean
   hydrate: () => Promise<void>
   /** Re-fetch the account token balance (after a top-up / gift redeem). */
   refreshBalance: () => Promise<void>
   /** Resolve the caller's account_id (cached), fetching from `users` if needed. */
   ensureAccountId: () => Promise<string | null>
   addAgent: (a: PlatformAgent) => Promise<{ id?: string; error?: string }>
-  updateAgent: (id: string, patch: Partial<PlatformAgent>) => void
-  deleteAgent: (id: string) => void
+  updateAgent: (id: string, patch: Partial<PlatformAgent>) => Promise<{ error?: string }>
+  deleteAgent: (id: string) => Promise<{ error?: string }>
   duplicateAgent: (id: string) => string
-  toggleAgent: (id: string) => void
+  toggleAgent: (id: string) => Promise<{ error?: string }>
+
   getAgent: (id: string) => PlatformAgent | undefined
 }
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
-  agents: isSupabaseEnabled ? [] : seedAgents,
+  agents: isSupabaseEnabled ? [] : localAgents(),
   hydrated: !isSupabaseEnabled,
   accountId: null,
   isAdmin: false,
   tokenBalance: 0,
+  profileResolved: !isSupabaseEnabled,
 
   hydrate: async () => {
     if (!isSupabaseEnabled || !supabase) {
-      set({ hydrated: true })
+      set({ agents: localAgents(), hydrated: true, profileResolved: true })
       return
     }
-    const { data: prof } = await supabase.from('users').select('account_id, is_admin').single()
-    const accountId = prof?.account_id ?? null
+    const { profileResolved, accountId: cachedAccountId, isAdmin: cachedIsAdmin } = get()
+    let accountId = cachedAccountId
+    let isAdmin = cachedIsAdmin
+
+    if (!profileResolved) {
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
+        return
+      }
+
+      const { data: prof, error: profileError } = await supabase.from('users').select('account_id, is_admin').eq('id', sessionData.session.user.id).maybeSingle()
+      if (profileError || !prof?.account_id) {
+        set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
+        return
+      }
+      accountId = prof?.account_id ?? 'demo'
+      isAdmin = Boolean(prof?.is_admin)
+      set({ accountId, isAdmin, profileResolved: true })
+    }
+
+    if (accountId === 'demo') {
+      set({ agents: localAgents(), accountId, isAdmin: false, tokenBalance: 0, hydrated: true })
+      return
+    }
+
     const [{ data }, acc] = await Promise.all([
-      supabase.from('agents').select('*, channels(type)').order('created_at', { ascending: false }),
+      accountId ? supabase.from('agents').select('*, channels(type)').eq('account_id', accountId).order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
       accountId ? supabase.from('accounts').select('token_balance').eq('id', accountId).single() : Promise.resolve({ data: null }),
     ])
     set({
       agents: (data ?? []).map(mapAgent),
       accountId,
-      isAdmin: Boolean(prof?.is_admin),
+      isAdmin,
       tokenBalance: Number((acc as { data: { token_balance?: number } | null })?.data?.token_balance ?? 0),
       hydrated: true,
     })
@@ -158,7 +186,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   refreshBalance: async () => {
     if (!isSupabaseEnabled || !supabase) return
     const accountId = await get().ensureAccountId()
-    if (!accountId) return
+    if (!accountId || accountId === 'demo') return
     const { data } = await supabase.from('accounts').select('token_balance').eq('id', accountId).single()
     set({ tokenBalance: Number(data?.token_balance ?? 0) })
   },
@@ -166,10 +194,20 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   ensureAccountId: async () => {
     const cached = get().accountId
     if (cached) return cached
+    if (get().profileResolved) return cached || null
     if (!isSupabaseEnabled || !supabase) return null
-    const { data } = await supabase.from('users').select('account_id').single()
-    const id = data?.account_id ?? null
-    if (id) set({ accountId: id })
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      set({ accountId: 'demo', isAdmin: false, profileResolved: true })
+      return 'demo'
+    }
+    const { data, error } = await supabase.from('users').select('account_id, is_admin').eq('id', sessionData.session.user.id).maybeSingle()
+    if (error) {
+      set({ accountId: 'demo', isAdmin: false, profileResolved: true })
+      return 'demo'
+    }
+    const id = data?.account_id ?? 'demo'
+    set({ accountId: id, isAdmin: Boolean(data?.is_admin), profileResolved: true })
     return id
   },
 
@@ -184,6 +222,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     // optimistic insert with the temp client id
     set((s) => ({ agents: [a, ...s.agents] }))
     const accountId = await get().ensureAccountId()
+    if (accountId === 'demo') return { id: a.id }
     const { data, error } = await supabase
       .from('agents')
       .insert({ ...toRow(a), ...(accountId ? { account_id: accountId } : {}) })
@@ -199,17 +238,29 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     return { id: real.id }
   },
 
-  updateAgent: (id, patch) => {
+  updateAgent: async (id, patch) => {
     set((s) => ({ agents: s.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
-    if (isSupabaseEnabled && supabase) {
+    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
       const merged = get().agents.find((a) => a.id === id)
-      if (merged) void supabase.from('agents').update(toRow(merged)).eq('id', id).then(() => {})
+      if (merged) {
+        const { error } = await supabase.from('agents').update(toRow(merged)).eq('id', id).eq('account_id', get().accountId as string)
+        if (error) return { error: error.message }
+      }
     }
+    return {}
   },
 
-  deleteAgent: (id) => {
+  deleteAgent: async (id) => {
+    const prev = get().agents
     set((s) => ({ agents: s.agents.filter((a) => a.id !== id) }))
-    if (isSupabaseEnabled && supabase) void supabase.from('agents').delete().eq('id', id).then(() => {})
+    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
+      const { error } = await supabase.from('agents').delete().eq('id', id).eq('account_id', get().accountId as string)
+      if (error) {
+        set({ agents: prev }) // restore so the UI doesn't lie about a delete that failed
+        return { error: error.message }
+      }
+    }
+    return {}
   },
 
   duplicateAgent: (id) => {
@@ -223,7 +274,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       lastActivity: '—',
     }
     set((s) => ({ agents: [copy, ...s.agents] }))
-    if (isSupabaseEnabled && supabase) {
+    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
       const accountId = get().accountId
       void supabase
         .from('agents')
@@ -233,16 +284,20 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     return copy.id
   },
 
-  toggleAgent: (id) => {
+  toggleAgent: async (id) => {
     set((s) => ({
       agents: s.agents.map((a) =>
         a.id === id ? { ...a, status: a.status === 'active' ? 'paused' : 'active' } : a,
       ),
     }))
-    if (isSupabaseEnabled && supabase) {
+    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
       const a = get().agents.find((x) => x.id === id)
-      if (a) void supabase.from('agents').update({ status: a.status }).eq('id', id).then(() => {})
+      if (a) {
+        const { error } = await supabase.from('agents').update({ status: a.status }).eq('id', id).eq('account_id', get().accountId as string)
+        if (error) return { error: error.message }
+      }
     }
+    return {}
   },
 
   getAgent: (id) => get().agents.find((a) => a.id === id),

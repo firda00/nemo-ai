@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
   if (!trimmed) return json({ error: 'code required' }, 400)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
-  const { data: prof } = await admin.from('users').select('account_id').eq('id', user.id).single()
+  const { data: prof } = await admin.from('users').select('account_id').eq('id', user.id).maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
 
