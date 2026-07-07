@@ -6,6 +6,7 @@ import { PRIMARY_MODEL, callOpenRouter } from './llm.ts'
 import { runBrowserTask, looksAbusive } from './browser.ts'
 import { googleAccessToken } from './google.ts'
 import { safeFetch } from './net.ts'
+import { buildCustomSpecs, execCustomTool, type CustomToolRow } from './customTools.ts'
 
 const NEMO_HB_KEY = Deno.env.get('HYPERBROWSER_API_KEY') ?? ''
 
@@ -169,12 +170,13 @@ async function execProvider(name: string, args: any, key: string): Promise<{ ok:
   } catch (e) { return { ok: false, result: String(e).slice(0, 200) } }
 }
 
-// Dispatch a single tool call to the right executor (web / Google OAuth / keyed provider).
+// Dispatch a single tool call to the right executor (web / Google OAuth / keyed provider / custom).
 async function execAnyTool(
   name: string,
   args: any,
-  ctx: { orKey: string; db: any; accountId: string; keyByProvider: Record<string, string> },
+  ctx: { orKey: string; db: any; accountId: string; keyByProvider: Record<string, string>; customIndex: Record<string, { row: CustomToolRow; mcpTool?: string }> },
 ): Promise<{ ok: boolean; result: string; tokens?: number }> {
+  if (ctx.customIndex[name]) return await execCustomTool(ctx.customIndex, name, args)
   if (ALWAYS_TOOLS[name]) return await execAlways(name, args, ctx.orKey)
   if (GOOGLE_TOOLS[name]) {
     const gt = await googleAccessToken(ctx.db, ctx.accountId)
@@ -212,14 +214,18 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
   const alwaysSpecs: unknown[] = []
   if (hasUrl || webAgent) alwaysSpecs.push(ALWAYS_TOOLS.read_webpage)
   if (webAgent) alwaysSpecs.push(ALWAYS_TOOLS.web_search)
+  // user-defined tools (HTTP endpoints + MCP servers) — the "teach a skill" layer
+  const { data: ctRows } = await db.from('custom_tools').select('id, kind, name, description, method, url, headers, params, body_template, mcp_url, mcp_headers').eq('account_id', accountId).eq('enabled', true)
+  const { specs: customSpecs, index: customIndex } = buildCustomSpecs((ctRows ?? []) as CustomToolRow[])
   const specs = [
     ...Object.entries(TOOLS).filter(([, t]) => keyByProvider[t.provider]).map(([, t]) => t.spec),
     ...(googleConnected ? Object.values(GOOGLE_TOOLS) : []),
     ...alwaysSpecs,
+    ...customSpecs,
   ]
   if (!specs.length) return null // nothing connected + no web scope -> normal conversational reply
 
-  const ctx = { orKey, db, accountId, keyByProvider }
+  const ctx = { orKey, db, accountId, keyByProvider, customIndex }
   try {
     const msgs: any[] = [
       { role: 'system', content: "You are an assistant with connected tools. If the user asks you to DO something a tool can do (create a Google Sheet/Doc, send an email, add a calendar event, append data, create a CRM contact, read a specific web page, search the live web, or browse/act on a website), CALL the correct tool with correct arguments. You may call tools over SEVERAL steps: use one tool, read its result, then call the next (e.g. search the web, then put the findings into a new sheet, then email the link). Use read_webpage to fetch a given URL; use web_search for current facts/prices you do not know; use browser_task ONLY when you must ACT on a site (fill a form, submit). Never use browser_task for Google Sheets/Docs/Gmail/Calendar (those have dedicated tools). If the needed tool is NOT in the provided tools list, do NOT call any tool. When the task is complete, reply with a SHORT natural-language message in the user's language that says what you did and includes any links. Never claim to have done something you did not do." },

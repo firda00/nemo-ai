@@ -3,6 +3,7 @@ import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
+import { CustomToolsManager } from '../../components/platform/CustomToolsManager'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 
@@ -194,6 +195,9 @@ export default function IntegrationsToolsPage() {
         </div>
         {brRes && <div className={cn('mt-3 rounded-xl px-3 py-2.5 text-[13px]', brRes.ok ? 'bg-teal/10 text-teal' : 'bg-danger/10 text-danger')}>{brRes.text}</div>}
       </div>
+
+      {/* My tools — user-defined HTTP endpoints + MCP servers become agent tools */}
+      <div className="mt-6"><CustomToolsManager /></div>
 
       {/* Google ecosystem — OAuth connect; unlocks Gmail / Calendar / Sheets as agent tools */}
       <div className="mt-6">
