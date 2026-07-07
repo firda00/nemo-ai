@@ -82,6 +82,10 @@ verify_jwt = false
 [functions.google-oauth]
 verify_jwt = false
 
+# Autonomous founder-pulse (daily digest). PUBLIC so pg_cron can call it with x-cron-secret.
+[functions.daily-digest]
+verify_jwt = false
+
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
 # Returns the agent reply as JSON; the agent runtime runs via buildReply.
 [functions.widget-webhook]
