@@ -32,6 +32,7 @@ export default function ObservabilityPage() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [providers, setProviders] = useState<string[]>([])
   const [dialogues, setDialogues] = useState(0)
+  const [health, setHealth] = useState<{ status: string; summary: string; created_at: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openRun, setOpenRun] = useState<string | null>(null)
@@ -39,12 +40,13 @@ export default function ObservabilityPage() {
   const load = useCallback(async () => {
     if (!live || !supabase) { setError(t('observabilityPage.signInLive')); setLoading(false); return }
     try {
-      const [r, tr, ch, dlg, prov] = await Promise.all([
+      const [r, tr, ch, dlg, prov, ops] = await Promise.all([
         supabase.from('research_runs').select('id, task, status, kind, tokens, steps, created_at').order('created_at', { ascending: false }).limit(20),
         supabase.from('tool_runs').select('id, tool, ok, result, created_at').order('created_at', { ascending: false }).limit(30),
         supabase.from('channels').select('type, status'),
         supabase.from('dialogues').select('id', { count: 'exact', head: true }),
         supabase.functions.invoke('connect-provider', { body: { action: 'status' } }),
+        supabase.from('ops_checks').select('status, summary, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ])
       // supabase-js resolves with {data,error} and does NOT reject on query-level
       // failures (RLS denial, missing table). Without this, a blocked read renders
@@ -59,6 +61,8 @@ export default function ObservabilityPage() {
       setDialogues(dlg.count ?? 0)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setProviders(((prov.data as any)?.connected as string[]) ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setHealth((ops.data as any) ?? null)
     } catch { setError(t('observabilityPage.loadError')) }
     setLoading(false)
   }, [t])
@@ -84,6 +88,16 @@ export default function ObservabilityPage() {
         <div className="mt-6 grid gap-3 sm:grid-cols-4">{[0, 1, 2, 3].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-white/[0.03]" />)}</div>
       ) : (
         <>
+          {health && (
+            <div className={cn('mt-6 flex items-center gap-3 rounded-2xl border px-4 py-3', health.status === 'ok' ? 'border-teal/25 bg-teal/[0.06]' : health.status === 'warn' ? 'border-amber/25 bg-amber/[0.06]' : 'border-danger/25 bg-danger/[0.06]')}>
+              <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', health.status === 'ok' ? 'bg-teal' : health.status === 'warn' ? 'bg-amber' : 'bg-danger')} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-text">{t('observabilityPage.healthTitle')}: {health.status === 'ok' ? t('observabilityPage.healthOk') : health.status === 'warn' ? t('observabilityPage.healthWarn') : t('observabilityPage.healthDown')}</p>
+                <p className="truncate text-[11px] text-muted">{health.summary} · {fmt(health.created_at)}</p>
+              </div>
+              <span className="shrink-0 text-[10px] text-fog">{t('observabilityPage.healthAuto')}</span>
+            </div>
+          )}
           <div className="mt-6 grid gap-3 sm:grid-cols-4">
             <Tile icon={Plug} n={connCount} l={t('observabilityPage.tileConnections')} tone="bg-teal/15 text-teal" />
             <Tile icon={Users} n={runs.length} l={t('observabilityPage.tileRuns')} tone="bg-violet/15 text-violet" />
