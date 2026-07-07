@@ -77,6 +77,11 @@ verify_jwt = false
 [functions.support-sla]
 verify_jwt = false
 
+# Google OAuth. PUBLIC because Google's /callback redirect carries no JWT (authed actions
+# verify the Bearer token manually inside the function; the callback is signed-state protected).
+[functions.google-oauth]
+verify_jwt = false
+
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
 # Returns the agent reply as JSON; the agent runtime runs via buildReply.
 [functions.widget-webhook]
