@@ -28,3 +28,8 @@ supabase/.branches
 *.sln
 *.sw?
 .gstack/
+
+# Multi-agent runtime state and browser evidence
+agent-hub/state/*.json
+!agent-hub/state/*.example.json
+agent-hub/artifacts/

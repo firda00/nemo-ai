@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "purpose": "Executable inventory of Nemo capabilities that must remain wired while Claude and Codex add features.",
+  "capabilities": [
+    {
+      "id": "public-and-app-routes",
+      "description": "Public pages and authenticated application shell are registered.",
+      "requiredFiles": ["src/App.tsx"],
+      "requiredText": [
+        { "file": "src/App.tsx", "contains": ["path=\"/auth\"", "path=\"/app\"", "path=\"agents\"", "path=\"swarms\"", "path=\"dialogues\"", "path=\"integrations\""] }
+      ]
+    },
+    {
+      "id": "auth-and-tenant-isolation",
+      "description": "Supabase auth exists and migrations contain RLS policies.",
+      "requiredFiles": ["src/context/AuthContext.tsx", "src/lib/supabase.ts"],
+      "migrationText": ["enable row level security", "create policy"]
+    },
+    {
+      "id": "agent-authoring-and-test",
+      "description": "Agents can be composed, edited, and tested.",
+      "requiredFiles": ["src/pages/app/AgentEditorPage.tsx", "supabase/functions/compose-agent/index.ts", "supabase/functions/test-agent/index.ts"]
+    },
+    {
+      "id": "routing-and-human-handoff",
+      "description": "The runtime routes to specialists and supports operator takeover.",
+      "requiredFiles": ["supabase/functions/_shared/agent.ts", "src/pages/app/DialoguesPage.tsx"],
+      "requiredText": [
+        { "file": "supabase/functions/_shared/agent.ts", "contains": ["classifyRoute", "sub_agents"] },
+        { "file": "src/pages/app/DialoguesPage.tsx", "contains": ["operator_takeover", "needs_operator"] }
+      ]
+    },
+    {
+      "id": "memory-and-rag",
+      "description": "Agent memory and indexed knowledge are present.",
+      "requiredFiles": ["supabase/functions/_shared/memory.ts", "supabase/functions/_shared/knowledge.ts", "supabase/functions/knowledge-index/index.ts"]
+    },
+    {
+      "id": "tools-and-integrations",
+      "description": "Built-in tools, custom HTTP/MCP tools, and channel connection flows exist.",
+      "requiredFiles": ["supabase/functions/_shared/tools.ts", "supabase/functions/_shared/customTools.ts", "supabase/functions/custom-tools/index.ts", "supabase/functions/connect-channel/index.ts"]
+    },
+    {
+      "id": "peer-review-loop",
+      "description": "Agent work is cross-reviewed, revised, and escalated if it cannot converge.",
+      "requiredFiles": ["src/components/platform/AutonomousRunner.tsx", "supabase/functions/orchestrate/index.ts"],
+      "requiredText": [
+        { "file": "src/components/platform/AutonomousRunner.tsx", "contains": ["action: 'review'", "CONVERGENCE LOOP", "escalated"] }
+      ]
+    },
+    {
+      "id": "channels",
+      "description": "Telegram, widget, WhatsApp, and Instagram webhooks are implemented.",
+      "requiredFiles": ["supabase/functions/telegram-webhook/index.ts", "supabase/functions/widget-webhook/index.ts", "supabase/functions/whatsapp-webhook/index.ts", "supabase/functions/instagram-webhook/index.ts"]
+    },
+    {
+      "id": "billing",
+      "description": "Billing UI, server checkout, and shared plan rules stay synchronized.",
+      "requiredFiles": ["src/pages/app/BillingPage.tsx", "src/data/billing.ts", "supabase/functions/create-checkout/index.ts", "supabase/functions/_shared/plans.ts"]
+    },
+    {
+      "id": "observability-and-evals",
+      "description": "Runtime health, deterministic agent evals, and post-deploy smoke checks exist.",
+      "requiredFiles": ["src/pages/app/ObservabilityPage.tsx", "supabase/functions/backend-status/index.ts", "eval/agent-eval.mjs", "smoke-ops.ps1"]
+    }
+  ]
+}

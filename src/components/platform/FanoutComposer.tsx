@@ -47,7 +47,12 @@ export function FanoutComposer({ onQueued }: { onQueued?: () => void }) {
     })()
   }, [])
 
-  const toggleLang = (c: string) => setLangs((prev) => { const n = new Set(prev); n.has(c) ? n.delete(c) : n.add(c); return n })
+  const toggleLang = (c: string) => setLangs((prev) => {
+    const next = new Set(prev)
+    if (next.has(c)) next.delete(c)
+    else next.add(c)
+    return next
+  })
 
   const targetsCount = (tgOn ? 1 : 0) + (fbOn ? 1 : 0) + (igOn ? 1 : 0)
   const langCount = Math.max(1, langs.size)

@@ -17,11 +17,12 @@ export default function BillingPage() {
   const [quota, setQuota] = useState(150_000)
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [checkoutBusy, setCheckoutBusy] = useState('')
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(() => (
+    new URLSearchParams(window.location.search).get('upgraded') ? t('billingPage.subscribedNotice') : null
+  ))
 
   useEffect(() => {
-    if (!isSupabaseEnabled || !supabase) { setLoading(false); return }
-    if (new URLSearchParams(window.location.search).get('upgraded')) setNotice(t('billingPage.subscribedNotice'))
+    if (!isSupabaseEnabled || !supabase) return
     ;(async () => {
       try {
         const { data } = await supabase!.functions.invoke('plan-status', { body: {} })
@@ -39,7 +40,7 @@ export default function BillingPage() {
     try {
       const { data } = await supabase.functions.invoke('create-checkout', { body: { plan: id } })
       const p = data as { ok?: boolean; url?: string; detail?: string } | null
-      if (p?.url) { window.location.href = p.url; return }
+      if (p?.url) { window.location.assign(p.url); return }
       setNotice(p?.detail ? t('billingPage.paymentUnavailable', { detail: p.detail }) : t('billingPage.paymentNotConfigured'))
     } catch { setNotice(t('billingPage.paymentError')) } finally { setCheckoutBusy('') }
   }

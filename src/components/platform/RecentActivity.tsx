@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
 
 interface Item { kind: 'run' | 'task' | 'tool'; title: string; sub: string; at: number; ok?: boolean }
+const ACTIVITY_REFERENCE_TIME = Date.now()
 
 /**
  * Real recent-activity feed for the dashboard: the account's latest team runs, created tasks
@@ -17,7 +18,7 @@ export function RecentActivity() {
   const [loading, setLoading] = useState(isSupabaseEnabled)
 
   useEffect(() => {
-    if (!isSupabaseEnabled || !supabase) { setLoading(false); return }
+    if (!isSupabaseEnabled || !supabase) return
     let alive = true
     ;(async () => {
       try {
@@ -41,7 +42,7 @@ export function RecentActivity() {
   }, [])
 
   const rel = (ms: number) => {
-    const d = Date.now() - ms
+    const d = ACTIVITY_REFERENCE_TIME - ms
     if (d < 60_000) return t('recentActivity.justNow')
     if (d < 3_600_000) return t('recentActivity.minAgo', { n: Math.floor(d / 60_000) })
     if (d < 86_400_000) return t('recentActivity.hourAgo', { n: Math.floor(d / 3_600_000) })

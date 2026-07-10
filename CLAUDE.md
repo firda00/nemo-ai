@@ -59,3 +59,16 @@ Do not skip skills, ignore gstack errors, or work around missing gstack.
 Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
 and /browse are available. Use /browse for all web browsing.
 Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
+
+## Claude + Codex development team (REQUIRED)
+
+Start coordinated work through `agent-hub/start-team.ps1`. Claude is the team lead and implementation owner. Codex is the independent architect/reviewer exposed by the `codex-reviewer` MCP server.
+
+- Keep at most three Claude teammates active. Recruit only when parallel work is genuinely independent.
+- Every created team task must contain the exact fields `RECRUIT_REQUEST`, `ROLE`, `TASK`, `OWNED_PATHS`, `REASON`, and `DONE_WHEN`.
+- A file may be edited by only one Claude session at a time. The project hook enforces session-level file ownership.
+- Use Codex with `sandbox: read-only` for architecture and review. Do not ask Codex to edit while Claude teammates are editing.
+- Reuse the feature's Codex `threadId` through `codex-reply`; store thread mappings in `agent-hub/state/codex-threads.json`.
+- Auth, RLS, migrations, billing, secrets, agent routing, external integrations, and deploy require Claude + Codex discussion before implementation and a second review after the diff exists.
+- Never configure a reverse Claude MCP call from Codex. The allowed direction is Claude -> Codex only.
+- Before completion run `npm run quality`. Use the live agent eval only when external API usage is intended.

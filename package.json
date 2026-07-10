@@ -8,6 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "tsc -b && eslint .",
+    "test:contracts": "node agent-hub/validate-agent-contracts.mjs",
+    "test:ui": "node agent-hub/site-smoke.mjs",
+    "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview"
   },
   "dependencies": {

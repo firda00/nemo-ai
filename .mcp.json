@@ -1,0 +1,33 @@
+{
+  "mcpServers": {
+    "codex-reviewer": {
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\firda\\nemo-ai\\agent-hub\\codex-mcp.ps1"
+      ]
+    },
+    "playwright": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated",
+        "--image-responses",
+        "omit",
+        "--output-dir",
+        "C:\\Users\\firda\\nemo-ai\\agent-hub\\artifacts\\playwright"
+      ]
+    },
+    "supabase-readonly": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=ogfmyjiuqmgroobckdyw&read_only=true&features=database,debugging,docs,functions"
+    }
+  }
+}

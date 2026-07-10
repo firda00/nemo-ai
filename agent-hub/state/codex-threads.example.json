@@ -1,0 +1,11 @@
+{
+  "threads": {
+    "main:example-feature": {
+      "threadId": "replace-with-structuredContent.threadId",
+      "contextSummary": "Scope, decisions, risks, changed paths, and current test evidence needed to recover after an MCP restart.",
+      "lastVerdict": "reviewing",
+      "updatedAt": "2026-07-10T00:00:00Z",
+      "status": "reviewing"
+    }
+  }
+}

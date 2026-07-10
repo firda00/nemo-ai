@@ -48,7 +48,7 @@ export function DocExport({ content, title = 'Nemo' }: { content: string; title?
   const asPdf = () => {
     const w = window.open('', '_blank')
     if (!w) return
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${STYLE}@media print{body{margin:0}}</style></head><body>${mdToHtml(content)}<script>window.onload=function(){window.print()}<\/script></body></html>`)
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${STYLE}@media print{body{margin:0}}</style></head><body>${mdToHtml(content)}<script>window.onload=function(){window.print()}</script></body></html>`)
     w.document.close()
   }
 

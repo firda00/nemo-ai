@@ -20,7 +20,14 @@ export default function ActivityPage() {
     try { const { data: d } = await supabase.functions.invoke('activity', { body: {} }); if ((d as any)?.ok) setData(d) } catch { /* ignore */ }
     setLoading(false)
   }
-  useEffect(() => { if (isSupabaseEnabled && supabase) load(); else setLoading(false) }, [])
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase) return
+    let active = true
+    supabase.functions.invoke('activity', { body: {} }).then(({ data: result }) => {
+      if (active && (result as any)?.ok) setData(result)
+    }).catch(() => {}).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
 
   const s = data?.summary
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) } catch { return iso } }

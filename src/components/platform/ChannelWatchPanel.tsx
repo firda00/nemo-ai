@@ -46,7 +46,10 @@ export function ChannelWatchPanel() {
   const [loading, setLoading] = useState(live)
 
   const toggle = (set: Set<string>, setter: (s: Set<string>) => void, v: string) => {
-    const next = new Set(set); next.has(v) ? next.delete(v) : next.add(v); setter(next)
+    const next = new Set(set)
+    if (next.has(v)) next.delete(v)
+    else next.add(v)
+    setter(next)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,7 +65,7 @@ export function ChannelWatchPanel() {
     if (s?.ok) setSources(s.sources); if (d?.ok) setDrafts(d.drafts)
   }
   useEffect(() => {
-    if (!live || !supabase) { setLoading(false); return }
+    if (!live || !supabase) return
     ;(async () => {
       try {
         const { data: chs } = await supabase!.from('channels').select('id, type').eq('type', 'telegram')
