@@ -42,12 +42,17 @@ Deno.serve(async (req) => {
   if (insertError) return json({ error: 'message not saved' }, 500)
 
   // read the bot token server-side only (browser roles cannot select credentials).
-  // `delivered` tells the UI whether the customer actually got the message on the
-  // external channel; for in-app channels persistence IS delivery.
-  let delivered = true
-  if (dialogue.channel === 'telegram') {
-    delivered = false
-    if (dialogue.channel_id && dialogue.external_id) {
+  // `delivered` tells the UI whether the customer actually got the message: only
+  // the in-app widget delivers by persistence alone; every external channel needs
+  // its adapter to succeed, and this endpoint only has a Telegram adapter.
+  let delivered = dialogue.channel === 'widget'
+  if (dialogue.channel === 'telegram' && dialogue.channel_id && dialogue.external_id) {
+    // dialogues.channel_id is tenant-writable, so the caller must be able to SEE
+    // the channel under RLS (account-scoped; credentials column stays revoked)
+    // before the service-role client touches its secrets — a foreign tenant's
+    // channel UUID authorizes nothing
+    const { data: ownedChannel } = await userDb.from('channels').select('id').eq('id', dialogue.channel_id).maybeSingle()
+    if (ownedChannel) {
       const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
       const { data: ch } = await admin.from('channels').select('credentials').eq('id', dialogue.channel_id).single()
       const botToken = (ch as { credentials?: { bot_token?: string } } | null)?.credentials?.bot_token

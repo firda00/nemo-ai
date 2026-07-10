@@ -96,7 +96,15 @@ export async function classifyRoute(apiKey: string, text: string, self: any, sib
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let j: any = {}
   try { j = JSON.parse(r.content) } catch { const s = r.content.indexOf('{'), e = r.content.lastIndexOf('}'); try { j = JSON.parse(r.content.slice(s, e + 1)) } catch { j = {} } }
-  return { route: (String(j.route ?? 'self').trim() || 'self'), confidence: Math.max(0, Math.min(1, Number(j.confidence) || 0)), tokens: r.tokens ?? 0 }
+  const proposed = (String(j.route ?? 'self').trim() || 'self')
+  const selfName = String(self?.name ?? '').trim().toLowerCase()
+  // The lead must not route to itself by name: the classifier sometimes returns
+  // "Sales" for a sales lead even though that is the self option, which creates
+  // a false delegation and makes the golden routing contract flaky.
+  if (proposed.toLowerCase() === selfName) return { route: 'self', confidence: Math.max(0, Math.min(1, Number(j.confidence) || 0)), tokens: r.tokens ?? 0 }
+  // Never execute an LLM-invented teammate name; unknown options are self.
+  const validSibling = siblings.some((s) => String(s.name).trim().toLowerCase() === proposed.toLowerCase())
+  return { route: validSibling ? proposed : 'self', confidence: Math.max(0, Math.min(1, Number(j.confidence) || 0)), tokens: r.tokens ?? 0 }
 }
 
 // Lead capture: extract the customer's details from the conversation into a strict JSON record

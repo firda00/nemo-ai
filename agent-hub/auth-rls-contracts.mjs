@@ -187,23 +187,39 @@ check(
   !/guard_trace_parent_delete/.test(read('supabase/migrations/20260710120000_messages_system_trace_rls.sql'))
 )
 
+// Statement-ordered replay per file: CREATE/DROP TRIGGER, CREATE OR REPLACE
+// FUNCTION (dollar-quote aware) and DROP FUNCTION (incl. CASCADE, which also
+// kills dependent triggers) are applied in source order, so a later migration
+// dropping the guard — even one that drops and recreates in the same file —
+// is modeled and would fail the final-state checks below.
 const guardTriggers = new Map() // "table.trigger" -> statement
 const traceGuardCreates = []
-let guardFnSql = null // last create-or-replace wins, dollar-quote aware
+let guardFnSql = null
 for (const file of migrationFiles) {
   const sql = stripSql(read(path.join('supabase', 'migrations', file)))
-  for (const stmt of sql.match(/create\s+trigger[\s\S]*?;|drop\s+trigger[\s\S]*?;/gi) ?? []) {
-    const name = stmt.match(/trigger\s+(?:if\s+exists\s+)?"?(\w+)"?/i)?.[1]
-    const table = stmt.match(/\bon\s+(?:only\s+)?"?((?:\w+\.)?\w+)"?/i)?.[1]?.replace(/^(?!\w+\.)/, 'public.')
-    if (!name || !table) continue
-    if (/^create/i.test(stmt)) {
-      guardTriggers.set(`${table}.${name}`, stmt)
-      if (/guard_trace|prevent_trace/i.test(name ?? '')) traceGuardCreates.push(`${table}.${name}`)
+  const events = []
+  for (const m of sql.matchAll(/create\s+trigger[\s\S]*?;|drop\s+trigger[\s\S]*?;/gi)) events.push({ i: m.index, kind: 'trigger', stmt: m[0] })
+  for (const m of sql.matchAll(/create\s+or\s+replace\s+function\s+public\.guard_trace_parent_delete\s*\(\)[\s\S]*?\$\$[\s\S]*?\$\$\s*;/gi)) events.push({ i: m.index, kind: 'createFn', stmt: m[0] })
+  for (const m of sql.matchAll(/drop\s+function[^;]*guard_trace_parent_delete[^;]*;/gi)) events.push({ i: m.index, kind: 'dropFn', stmt: m[0] })
+  for (const e of events.sort((a, b) => a.i - b.i)) {
+    if (e.kind === 'createFn') {
+      guardFnSql = e.stmt
+    } else if (e.kind === 'dropFn') {
+      guardFnSql = null
+      if (/\bcascade\b/i.test(e.stmt)) {
+        for (const [key, stmt] of [...guardTriggers]) if (/guard_trace_parent_delete/i.test(stmt)) guardTriggers.delete(key)
+      }
+    } else {
+      const name = e.stmt.match(/trigger\s+(?:if\s+exists\s+)?"?(\w+)"?/i)?.[1]
+      const table = e.stmt.match(/\bon\s+(?:only\s+)?"?((?:\w+\.)?\w+)"?/i)?.[1]?.replace(/^(?!\w+\.)/, 'public.')
+      if (!name || !table) continue
+      if (/^create/i.test(e.stmt)) {
+        guardTriggers.set(`${table}.${name}`, e.stmt)
+        if (/guard_trace|prevent_trace/i.test(name ?? '')) traceGuardCreates.push(`${table}.${name}`)
+      } else {
+        guardTriggers.delete(`${table}.${name}`)
+      }
     }
-    else guardTriggers.delete(`${table}.${name}`)
-  }
-  for (const fn of sql.match(/create\s+or\s+replace\s+function\s+public\.guard_trace_parent_delete\s*\(\)[\s\S]*?\$\$[\s\S]*?\$\$\s*;/gi) ?? []) {
-    guardFnSql = fn
   }
 }
 

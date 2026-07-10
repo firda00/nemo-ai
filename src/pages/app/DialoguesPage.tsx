@@ -58,7 +58,9 @@ export default function DialoguesPage() {
   const [agentNames, setAgentNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(live)
   const [loadError, setLoadError] = useState(false)
-  const loadSeq = useRef(0)
+  const loadBusy = useRef(false)
+  const loadQueued = useRef(false)
+  const replyRev = useRef(0)
   const [selectedId, setSelectedId] = useState<string | null>(params.get('d') ?? (live ? null : mockDialogues[0]?.id ?? null))
   const [query, setQuery] = useState('')
   const [channelF, setChannelF] = useState<ChannelType | 'all'>('all')
@@ -66,30 +68,40 @@ export default function DialoguesPage() {
   const [custOpen, setCustOpen] = useState(false)
   const [reply, setReply] = useState('')
 
-  // live mode: load dialogues + messages from Supabase, refresh on realtime events
+  // live mode: load dialogues + messages from Supabase, refresh on realtime events.
+  // Loads are SERIALIZED (one in flight; overlapping triggers queue exactly one
+  // follow-up), so every completed request lands — a slow backend can never be
+  // starved into showing neither data nor the error banner by the 7s poll.
   const load = useCallback(async () => {
     if (!live || !supabase) return
-    const seq = ++loadSeq.current
-    const { data, error } = await supabase
-      .from('dialogues')
-      .select('*, messages(*, agents(name)), agents(name)')
-      .order('updated_at', { ascending: false })
-    if (seq !== loadSeq.current) return // a newer load started meanwhile — drop this result
-    if (error) {
-      // keep whatever is already on screen and say so, instead of rendering
-      // a fake-empty inbox (the 7s safety poll retries on its own)
-      setLoading(false)
-      setLoadError(true)
+    if (loadBusy.current) {
+      loadQueued.current = true
       return
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = (data ?? []) as any[]
-    setDialogues(rows.map(mapDialogue))
-    const names: Record<string, string> = {}
-    for (const r of rows) if (r.agents?.name) names[r.agent_id] = r.agents.name
-    setAgentNames(names)
-    setLoading(false)
-    setLoadError(false)
+    loadBusy.current = true
+    do {
+      loadQueued.current = false
+      const { data, error } = await supabase
+        .from('dialogues')
+        .select('*, messages(*, agents(name)), agents(name)')
+        .order('updated_at', { ascending: false })
+      if (error) {
+        // keep whatever is already on screen and say so, instead of rendering
+        // a fake-empty inbox (the 7s safety poll retries on its own)
+        setLoading(false)
+        setLoadError(true)
+        continue
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = (data ?? []) as any[]
+      setDialogues(rows.map(mapDialogue))
+      const names: Record<string, string> = {}
+      for (const r of rows) if (r.agents?.name) names[r.agent_id] = r.agents.name
+      setAgentNames(names)
+      setLoading(false)
+      setLoadError(false)
+    } while (loadQueued.current)
+    loadBusy.current = false
   }, [])
 
   useEffect(() => {
@@ -142,6 +154,7 @@ export default function DialoguesPage() {
     if (!text || !selected) return
     const dialogueId = selected.id
     const optimisticId = `op${++mid}`
+    const rev = ++replyRev.current // composer revision at send time
     setReply('')
     setSelected({
       messages: [...selected.messages, { id: optimisticId, author: 'operator', content: text, time: nowTime() }],
@@ -152,9 +165,10 @@ export default function DialoguesPage() {
     const res = data as { ok?: boolean; delivered?: boolean } | null
     if (error || !res?.ok) {
       // not persisted — take the optimistic bubble back (by id: selection/state may
-      // have moved on) and hand the draft back unless a newer one was typed
+      // have moved on) and hand the draft back, unless a newer draft exists or a
+      // newer send already claimed the composer (revision check)
       setDialogues((ds) => ds.map((d) => (d.id === dialogueId ? { ...d, messages: d.messages.filter((m) => m.id !== optimisticId) } : d)))
-      setReply((cur) => (cur ? cur : text))
+      if (replyRev.current === rev) setReply((cur) => (cur ? cur : text))
       toast(t('platform.dialogues.sendError'), 'error')
       return
     }
