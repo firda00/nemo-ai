@@ -892,6 +892,9 @@ const uz = {
       traceConsult: 'Javob tayyorlashda qatnashdi',
       traceUnresolved: 'Jamoadan topilmadi — umumiy mutaxassis javob berdi',
       traceSynthesize: 'Mutaxassislar javobini yakuniy javobga birlashtirdi',
+      loadError: 'Suhbatlarni yuklab bo‘lmadi. Ulanishni tekshirib, qayta urinib ko‘ring.',
+      sendError: 'Xabar yuborilmadi. Qayta urinib ko‘ring.',
+      sendNotDelivered: 'Xabar saqlandi, lekin mijozga yetkazilmadi. Kanal ulanishini tekshiring.',
     },
     analytics: {
       subtitle: 'Suhbatlar va samaradorlik tahlili',
@@ -1815,6 +1818,9 @@ const ru: typeof uz = {
       traceConsult: 'Участвовал в подготовке ответа',
       traceUnresolved: 'Не найден в команде — ответил универсальный специалист',
       traceSynthesize: 'Объединил ответы специалистов в финальный ответ',
+      loadError: 'Не удалось загрузить диалоги. Проверьте подключение и попробуйте ещё раз.',
+      sendError: 'Сообщение не отправлено. Попробуйте ещё раз.',
+      sendNotDelivered: 'Сообщение сохранено, но не доставлено клиенту. Проверьте подключение канала.',
     },
     analytics: {
       subtitle: 'Анализ диалогов и эффективности',
@@ -2235,6 +2241,9 @@ const enOverride: DeepPartial<typeof uz> = {
       trace: 'Agent trace', traceRoute: 'Dialogue handed to this agent ({conf}%)', traceConsult: 'Contributed to the reply',
       traceLeadDirect: 'Lead chose to answer directly', traceLeadDelegate: 'Lead delegated to specialists',
       traceUnresolved: 'Not found in the team — a generic specialist replied', traceSynthesize: 'Merged specialist input into the final reply',
+      loadError: 'Couldn’t load dialogues. Check the connection and retry.',
+      sendError: 'Message not sent. Please try again.',
+      sendNotDelivered: 'Message saved but not delivered to the customer. Check the channel connection.',
     },
     analytics: {
       subtitle: 'Conversation and performance analytics', r7: '7 days', r14: '14 days', r30: '30 days',

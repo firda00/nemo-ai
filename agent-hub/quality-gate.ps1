@@ -9,7 +9,9 @@ $steps = @(
   @{ Name = 'TypeScript and ESLint'; Command = { npm run test } },
   @{ Name = 'Production build'; Command = { npm run build } },
   @{ Name = 'Agent capability contracts'; Command = { npm run test:contracts } },
-  @{ Name = 'Website smoke test'; Command = { npm run test:ui } }
+  @{ Name = 'Auth and trace RLS contracts'; Command = { npm run test:auth-contracts } },
+  @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
+  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } }
 )
 
 Push-Location $root

@@ -36,16 +36,24 @@ Deno.serve(async (req) => {
     .single()
   if (!dialogue) return json({ error: 'dialogue not found' }, 404)
 
-  // store the operator message (user client -> RLS check enforces ownership)
-  await userDb.from('messages').insert({ dialogue_id, author: 'operator', content: text })
+  // store the operator message (user client -> RLS check enforces ownership);
+  // a failed insert must NOT be reported as success — the UI rolls back on it
+  const { error: insertError } = await userDb.from('messages').insert({ dialogue_id, author: 'operator', content: text })
+  if (insertError) return json({ error: 'message not saved' }, 500)
 
-  // read the bot token server-side only (browser roles cannot select credentials)
-  if (dialogue.channel === 'telegram' && dialogue.channel_id && dialogue.external_id) {
-    const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
-    const { data: ch } = await admin.from('channels').select('credentials').eq('id', dialogue.channel_id).single()
-    const botToken = (ch as { credentials?: { bot_token?: string } } | null)?.credentials?.bot_token
-    if (botToken) await tgSend(botToken, dialogue.external_id, text)
+  // read the bot token server-side only (browser roles cannot select credentials).
+  // `delivered` tells the UI whether the customer actually got the message on the
+  // external channel; for in-app channels persistence IS delivery.
+  let delivered = true
+  if (dialogue.channel === 'telegram') {
+    delivered = false
+    if (dialogue.channel_id && dialogue.external_id) {
+      const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+      const { data: ch } = await admin.from('channels').select('credentials').eq('id', dialogue.channel_id).single()
+      const botToken = (ch as { credentials?: { bot_token?: string } } | null)?.credentials?.bot_token
+      if (botToken) delivered = await tgSend(botToken, dialogue.external_id, text).catch(() => false)
+    }
   }
 
-  return json({ ok: true })
+  return json({ ok: true, delivered })
 })

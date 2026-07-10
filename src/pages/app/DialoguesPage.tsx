@@ -1,7 +1,8 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, ArrowLeft, Hand, Bot, Send, X, Info, MessagesSquare, Tag, GitBranch, CheckCircle2, CornerUpRight, HelpCircle } from 'lucide-react'
 import { useI18n } from '../../i18n'
+import { useToast } from '../../components/ui/Toast'
 import { useAgentStore } from '../../store/useAgentStore'
 import { mockDialogues } from '../../data/platform'
 import { channelMeta, channelLabel, dialogueStatusStyle } from '../../lib/platformMeta'
@@ -50,11 +51,14 @@ let mid = 0
 
 export default function DialoguesPage() {
   const { t } = useI18n()
+  const toast = useToast()
   const getAgent = useAgentStore((s) => s.getAgent)
   const [params] = useSearchParams()
   const [dialogues, setDialogues] = useState<Dialogue[]>(live ? [] : mockDialogues)
   const [agentNames, setAgentNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(live)
+  const [loadError, setLoadError] = useState(false)
+  const loadSeq = useRef(0)
   const [selectedId, setSelectedId] = useState<string | null>(params.get('d') ?? (live ? null : mockDialogues[0]?.id ?? null))
   const [query, setQuery] = useState('')
   const [channelF, setChannelF] = useState<ChannelType | 'all'>('all')
@@ -65,10 +69,19 @@ export default function DialoguesPage() {
   // live mode: load dialogues + messages from Supabase, refresh on realtime events
   const load = useCallback(async () => {
     if (!live || !supabase) return
-    const { data } = await supabase
+    const seq = ++loadSeq.current
+    const { data, error } = await supabase
       .from('dialogues')
-      .select('*, messages(*), agents(name)')
+      .select('*, messages(*, agents(name)), agents(name)')
       .order('updated_at', { ascending: false })
+    if (seq !== loadSeq.current) return // a newer load started meanwhile — drop this result
+    if (error) {
+      // keep whatever is already on screen and say so, instead of rendering
+      // a fake-empty inbox (the 7s safety poll retries on its own)
+      setLoading(false)
+      setLoadError(true)
+      return
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = (data ?? []) as any[]
     setDialogues(rows.map(mapDialogue))
@@ -76,6 +89,7 @@ export default function DialoguesPage() {
     for (const r of rows) if (r.agents?.name) names[r.agent_id] = r.agents.name
     setAgentNames(names)
     setLoading(false)
+    setLoadError(false)
   }, [])
 
   useEffect(() => {
@@ -126,14 +140,27 @@ export default function DialoguesPage() {
   const sendReply = async () => {
     const text = reply.trim()
     if (!text || !selected) return
+    const dialogueId = selected.id
+    const optimisticId = `op${++mid}`
     setReply('')
     setSelected({
-      messages: [...selected.messages, { id: `op${++mid}`, author: 'operator', content: text, time: nowTime() }],
+      messages: [...selected.messages, { id: optimisticId, author: 'operator', content: text, time: nowTime() }],
       updatedAt: nowTime(),
     })
-    if (live && supabase) {
-      await supabase.functions.invoke('operator-send', { body: { dialogue_id: selected.id, text } })
+    if (!live || !supabase) return
+    const { data, error } = await supabase.functions.invoke('operator-send', { body: { dialogue_id: dialogueId, text } })
+    const res = data as { ok?: boolean; delivered?: boolean } | null
+    if (error || !res?.ok) {
+      // not persisted — take the optimistic bubble back (by id: selection/state may
+      // have moved on) and hand the draft back unless a newer one was typed
+      setDialogues((ds) => ds.map((d) => (d.id === dialogueId ? { ...d, messages: d.messages.filter((m) => m.id !== optimisticId) } : d)))
+      setReply((cur) => (cur ? cur : text))
+      toast(t('platform.dialogues.sendError'), 'error')
+      return
     }
+    // persisted but the channel hand-off failed (e.g. Telegram down): keep the
+    // bubble — it is in the dialogue — but do not pretend the customer got it
+    if (res.delivered === false) toast(t('platform.dialogues.sendNotDelivered'), 'error')
   }
 
   return (
@@ -161,11 +188,17 @@ export default function DialoguesPage() {
             </select>
           </div>
         </div>
+        {loadError && (
+          <div className="mx-3 mt-2 flex items-center justify-between gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2">
+            <p className="text-xs text-danger">{t('platform.dialogues.loadError')}</p>
+            <button onClick={() => void load()} className="shrink-0 text-xs font-normal text-text hover:underline">{t('common.retry')}</button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-2">
           {loading ? (
             <p className="px-2 py-8 text-center text-xs text-muted">{t('common.loading')}</p>
           ) : filtered.length === 0 ? (
-            <p className="px-2 py-8 text-center text-xs text-muted">{t('platform.dialogues.empty')}</p>
+            !loadError && <p className="px-2 py-8 text-center text-xs text-muted">{t('platform.dialogues.empty')}</p>
           ) : (
             <ul className="space-y-0.5">
               {filtered.map((d) => {
@@ -238,7 +271,10 @@ export default function DialoguesPage() {
                 <Fragment key={m.id}>
                   <div className={cn('flex', incoming ? 'justify-start' : 'justify-end')}>
                     <div className="max-w-[75%]">
-                      {!incoming && <p className={cn('mb-0.5 px-1 text-right text-[10px] font-normal', m.author === 'operator' ? 'text-amber' : 'text-violet')}>{m.author === 'operator' ? t('platform.dialogues.you') : agentName}</p>}
+                      {/* historical attribution: the agent that wrote THIS reply; the
+                          dialogue's current agent is only a fallback (older rows, demo
+                          mocks, or agents deleted since — messages.agent_id is SET NULL) */}
+                      {!incoming && <p className={cn('mb-0.5 px-1 text-right text-[10px] font-normal', m.author === 'operator' ? 'text-amber' : 'text-violet')}>{m.author === 'operator' ? t('platform.dialogues.you') : m.agentName ?? agentName}</p>}
                       <div className={cn('whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed', incoming ? 'glass rounded-tl-md text-text' : m.author === 'operator' ? 'rounded-tr-md border border-orange/40 bg-orange/10 text-text' : 'rounded-tr-md border border-cobalt/40 bg-cobalt/10 text-text')}>
                         {m.content}
                       </div>
@@ -398,7 +434,15 @@ function fmtTime(iso?: string) {
 // --- map Supabase rows -> frontend Dialogue shape (live mode) ---
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapMessage(m: any): DialogueMessage {
-  return { id: m.id, author: m.author, content: m.content ?? '', time: fmtTime(m.created_at), type: m.message_type ?? 'chat' }
+  return {
+    id: m.id,
+    author: m.author,
+    content: m.content ?? '',
+    time: fmtTime(m.created_at),
+    type: m.message_type ?? 'chat',
+    agentId: m.agent_id ?? null,
+    agentName: m.agents?.name ?? null,
+  }
 }
 
 function mapDialogue(row: any): Dialogue {

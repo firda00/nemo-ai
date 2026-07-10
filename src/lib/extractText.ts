@@ -1,5 +1,5 @@
 // Document → plain text extraction for the knowledge base (RAG).
-// Heavy parsers (pdf.js, mammoth, SheetJS) are dynamically imported so they only
+// Heavy parsers (pdf.js, mammoth, read-excel-file) are dynamically imported so they only
 // load when a user actually uploads a file — the main bundle stays small.
 
 const MAX_CHARS = 200_000 // bound what we store per document
@@ -8,7 +8,7 @@ const MAX_CHARS = 200_000 // bound what we store per document
 type Any = any
 
 /** Extensions we accept in the file picker. */
-export const KNOWLEDGE_ACCEPT = '.pdf,.docx,.xlsx,.xls,.txt,.md,.csv,.tsv,.json,.html,.htm'
+export const KNOWLEDGE_ACCEPT = '.pdf,.docx,.xlsx,.txt,.md,.csv,.tsv,.json,.html,.htm'
 
 export async function extractText(file: File): Promise<string> {
   const name = file.name.toLowerCase()
@@ -43,14 +43,16 @@ export async function extractText(file: File): Promise<string> {
     return String(value ?? '').slice(0, MAX_CHARS)
   }
 
-  // Excel .xlsx/.xls (SheetJS)
-  if (/\.(xlsx|xls)$/.test(name) || type.includes('spreadsheetml') || type.includes('ms-excel')) {
-    const XLSX = (await import('xlsx')) as Any
-    const buf = await file.arrayBuffer()
-    const wb = XLSX.read(buf, { type: 'array' })
-    return (wb.SheetNames as string[])
-      .map((n) => `# ${n}\n${XLSX.utils.sheet_to_csv(wb.Sheets[n])}`)
-      .join('\n\n')
+  // Excel .xlsx (read-excel-file). The older SheetJS dependency had known
+  // prototype-pollution/ReDoS advisories and no patched release in npm.
+  // Legacy .xls is intentionally not parsed in-browser until a safe parser is
+  // available; users can export it as .xlsx or .csv.
+  if (name.endsWith('.xlsx') || type.includes('spreadsheetml')) {
+    const readXlsxFile = ((await import('read-excel-file/browser')) as Any).default as (input: File) => Promise<unknown[][]>
+    const rows = await readXlsxFile(file)
+    return rows
+      .map((row) => row.map((cell) => String(cell ?? '')).join(', '))
+      .join('\n')
       .slice(0, MAX_CHARS)
   }
 

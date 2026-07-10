@@ -117,6 +117,10 @@ export interface DialogueMessage {
   time: string
   /** messages.message_type — only 'chat' (or undefined, for legacy/mock rows) renders as a bubble */
   type?: string
+  /** messages.agent_id — which agent actually authored this reply (may differ from the dialogue's current agent) */
+  agentId?: string | null
+  /** historical agent name resolved at load time; null for non-agent authors and agents deleted since (SET NULL) */
+  agentName?: string | null
 }
 
 export type AgentTraceKind = 'route' | 'lead_decision' | 'consult' | 'unresolved_delegate' | 'synthesize'
