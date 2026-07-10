@@ -29,14 +29,14 @@ export default function ActivityPage() {
   return (
     <div className="container-page max-w-6xl py-8">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><BarChart3 size={20} /></span>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-text">{t('activityPage.title')}</h1>
-            <p className="text-sm text-muted">{t('activityPage.subtitle')}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet/15 text-violet"><BarChart3 size={20} /></span>
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-semibold tracking-tight text-text">{t('activityPage.title')}</h1>
+            <p className="truncate text-sm text-muted">{t('activityPage.subtitle')}</p>
           </div>
         </div>
-        <button onClick={load} className="inline-flex items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted hover:text-text"><RefreshCw size={14} /> {t('activityPage.refresh')}</button>
+        <button onClick={load} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted hover:text-text"><RefreshCw size={14} /> <span className="hidden sm:inline">{t('activityPage.refresh')}</span></button>
       </div>
 
       {loading ? (

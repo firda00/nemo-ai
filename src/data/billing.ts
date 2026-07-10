@@ -80,32 +80,34 @@ export const calcUnitEconomics = ({ platformUsd, runtimeBaseUsd, apiBaseUsd, sup
 
 // Packages give more credits per $ (volume discount). Keep in sync with create-checkout.
 export const TOKEN_PACKAGES: TokenPackage[] = [
-  { id: 'starter', usd: 5, tokens: 1_250 },
-  { id: 'pro', usd: 20, tokens: 5_500, popular: true }, // +10% bonus
-  { id: 'business', usd: 50, tokens: 15_000 }, // +20% bonus
+  { id: 'dabbler', usd: 10, tokens: 2_500 },
+  { id: 'starter', usd: 25, tokens: 7_000 }, // +12% bonus
+  { id: 'popular', usd: 50, tokens: 15_000, popular: true }, // +20% bonus
+  { id: 'pro', usd: 100, tokens: 32_000 }, // +28% bonus
+  { id: 'business', usd: 250, tokens: 87_500 }, // +40% bonus
 ]
 
 export const SAAS_PLANS: SaasPlan[] = [
   {
     id: 'starter',
-    usd: 49,
-    teams: 1,
-    includedCredits: 2_500,
+    usd: 59,
+    teams: 3,
+    includedCredits: 6_000,
     features: ['team_builder', 'company_brain', 'agent_trace'],
   },
   {
     id: 'growth',
-    usd: 199,
-    teams: 3,
-    includedCredits: 15_000,
+    usd: 249,
+    teams: 10,
+    includedCredits: 30_000,
     popular: true,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff'],
   },
   {
     id: 'business',
-    usd: 499,
-    teams: 10,
-    includedCredits: 50_000,
+    usd: 699,
+    teams: 30,
+    includedCredits: 90_000,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff', 'priority_support'],
   },
 ]

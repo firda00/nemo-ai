@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag } from 'lucide-react'
+import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag, Sparkles, Search, CalendarClock } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
@@ -73,6 +74,13 @@ const CAT_LABEL: Record<string, string> = {
 }
 // Placeholders that need translation (the rest are Latin-only token formats, left as-is).
 const PH_KEY: Record<string, string> = { stripe: 'stripePh', amocrm: 'amocrmPh', bitrix24: 'bitrix24Ph', hyperbrowser: 'hyperbrowserPh' }
+
+// Built-in AI skills — keyless capability bundles a user toggles per agent (no setup).
+const SKILLS: { id: string; icon: typeof Sparkles; color: string }[] = [
+  { id: 'data-analysis', icon: Sparkles, color: '#8B7CF8' },
+  { id: 'web-research', icon: Search, color: '#22D3EE' },
+  { id: 'scheduling', icon: CalendarClock, color: '#F4A640' },
+]
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function IntegrationsToolsPage() {
@@ -167,6 +175,22 @@ export default function IntegrationsToolsPage() {
         <span>{t('integrationsToolsPage.wrenchNote')}</span>
       </div>
 
+      {/* Built-in AI skills — keyless, toggled per agent (no setup) */}
+      <div className="card mt-4 rounded-3xl p-6">
+        <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={15} className="text-violet" /> {t('agentEdit.skillsCatalogTitle')}</h3>
+        <p className="mt-1 text-[12px] text-muted">{t('agentEdit.skillsCatalogDesc')}</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          {SKILLS.map((s) => (
+            <div key={s.id} className="rounded-2xl border border-ice/10 bg-black/20 p-3.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${s.color}22`, color: s.color }}><s.icon size={16} /></span>
+              <p className="mt-2 text-[13px] font-semibold text-text">{t(`agentEdit.skill_${s.id}`)}</p>
+              <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">{t(`agentEdit.skill_${s.id}Desc`)}</p>
+            </div>
+          ))}
+        </div>
+        <Link to="/app/agents" className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-violet hover:underline"><Sparkles size={12} /> {t('agentEdit.skillsEnableHint')}</Link>
+      </div>
+
       {/* agent tool tester — proves the connected integration is a real tool */}
       <div className="card mt-4 rounded-3xl p-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Play size={15} className="text-violet" /> {t('integrationsToolsPage.toolTesterTitle')}</h3>
@@ -197,7 +221,13 @@ export default function IntegrationsToolsPage() {
       </div>
 
       {/* My tools — user-defined HTTP endpoints + MCP servers become agent tools */}
-      <div className="mt-6"><CustomToolsManager /></div>
+      <div className="mt-6">
+        <div className="card mb-3 flex items-start gap-2 rounded-2xl border border-cyan/15 bg-cyan/[0.05] p-4 text-[12.5px] leading-relaxed text-muted">
+          <Blocks size={15} className="mt-0.5 shrink-0 text-cyan" />
+          <span><b className="text-text">{t('agentEdit.mcpCalloutTitle')}</b> — {t('agentEdit.mcpCalloutDesc')}</span>
+        </div>
+        <CustomToolsManager />
+      </div>
 
       {/* Google ecosystem — OAuth connect; unlocks Gmail / Calendar / Sheets as agent tools */}
       <div className="mt-6">

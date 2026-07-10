@@ -46,6 +46,14 @@ verify_jwt = true
 [functions.fetch-url]
 verify_jwt = true
 
+# Create the structured planerka Google Sheet from the panel (uses the account's connected Google).
+[functions.create-planerka-sheet]
+verify_jwt = true
+
+# Self-evolving agent — analyze recent conversations + owner growth direction, propose an upgrade.
+[functions.evolve-agent]
+verify_jwt = true
+
 # Autonomous research agent — plans, web-searches (Sonar), synthesizes a report.
 [functions.research-agent]
 verify_jwt = true
@@ -69,6 +77,11 @@ verify_jwt = false
 [functions.localize]
 verify_jwt = true
 
+# Autoposting. PUBLIC so pg_cron can call run_due with the x-cron-secret header;
+# user actions (schedule/list/cancel/send_now) still verify the Bearer JWT inside the function.
+[functions.autopost]
+verify_jwt = false
+
 # Autonomous ops watchdog. PUBLIC so pg_cron can call it with the x-cron-secret header.
 [functions.ops-watchdog]
 verify_jwt = false
@@ -88,6 +101,27 @@ verify_jwt = false
 
 # Weekly team report. PUBLIC so pg_cron can call it with x-cron-secret.
 [functions.weekly-report]
+verify_jwt = false
+
+# Morning stand-up brief. PUBLIC so pg_cron can call it with x-cron-secret.
+[functions.morning-brief]
+verify_jwt = false
+
+# Autonomous AI-COO (autopilot) — daily per-account assessment + actions. PUBLIC for pg_cron.
+[functions.ops-autopilot]
+verify_jwt = false
+
+# Public incoming-webhook trigger for automations (auth = the unguessable per-automation secret).
+[functions.automation-hook]
+verify_jwt = false
+
+# Channel watch → auto-localize. PUBLIC so pg_cron can poll YouTube feeds via x-cron-secret;
+# user actions (add/list/run_now/resolve) are gated by the caller's Supabase JWT.
+[functions.watch-sources]
+verify_jwt = false
+
+# Durable-queue worker (Telegram #8). PUBLIC so the webhook + pg_cron can nudge it; gated by x-cron-secret.
+[functions.agent-worker]
 verify_jwt = false
 
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).

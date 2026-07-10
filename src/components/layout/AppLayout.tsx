@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type CSSProperties } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -15,11 +15,15 @@ import {
   ClipboardList,
   Repeat,
   Activity,
+  Workflow,
+  Wrench,
   Settings as SettingsIcon,
   Menu,
   X,
   LogOut,
   ChevronDown,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -33,11 +37,40 @@ export function AppLayout() {
   const { t } = useI18n()
   const { user, logout, live, isAuthed } = useAuth()
   const accountId = useAgentStore((s) => s.accountId)
+  const isAdmin = useAgentStore((s) => s.isAdmin)
   const navigate = useNavigate()
   const location = useLocation()
   const hydrate = useAgentStore((s) => s.hydrate)
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  // desktop sidebar collapse (hide) — persisted so it stays the user's choice
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('nemo.sidebar') === 'collapsed' } catch { return false }
+  })
+  const toggleCollapse = () =>
+    setCollapsed((v) => {
+      const next = !v
+      try { localStorage.setItem('nemo.sidebar', next ? 'collapsed' : 'open') } catch { /* ignore */ }
+      return next
+    })
+  // desktop sidebar width — drag the right edge to resize; persisted, clamped 200–380px
+  const [width, setWidth] = useState(() => {
+    try { const v = Number(localStorage.getItem('nemo.sidebar.w')); return v >= 200 && v <= 380 ? v : 240 } catch { return 240 }
+  })
+  const startDrag = (e: ReactMouseEvent) => {
+    e.preventDefault()
+    let last = width
+    const onMove = (ev: MouseEvent) => { last = Math.min(380, Math.max(200, ev.clientX)); setWidth(last) }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      try { localStorage.setItem('nemo.sidebar.w', String(last)) } catch { /* ignore */ }
+    }
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   // load agents from the live backend (no-op in demo mode)
   useEffect(() => {
@@ -46,7 +79,7 @@ export function AppLayout() {
 
   // Grouped nav — a few labeled sections instead of one long flat list, so the
   // sidebar is scannable (fixes the "too complex" feeling).
-  type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean }
+  type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
     { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
@@ -57,13 +90,16 @@ export function AppLayout() {
     { title: t('appLayout.groupAiTeams'), items: [
       { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
       { to: '/app/autonomous', label: t('appLayout.navAutonomous'), icon: Wand2 },
+      { to: '/app/automations', label: t('appLayout.navAutomations'), icon: Workflow, badge: t('automations.devBadge') },
       { to: '/app/agents', label: t('mvp.sidebar.agents'), icon: Bot },
       { to: '/app/teams', label: t('mvp.sidebar.aiTeams'), icon: Users },
-      { to: '/app/tools', label: t('appLayout.navTools'), icon: Blocks },
+      { to: '/app/integrations', label: t('appLayout.navTools'), icon: Blocks },
+      { to: '/app/tools', label: t('appLayout.navToolsHub'), icon: Wrench },
       { to: '/app/templates', label: t('mvp.sidebar.templates'), icon: ClipboardList },
     ] },
     { title: t('appLayout.groupResults'), items: [
-      { to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity },
+      // Monitoring (system/site health) is an admin-only view.
+      ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
       { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
       { to: '/app/results', label: t('mvp.sidebar.results'), icon: ClipboardList },
@@ -95,6 +131,9 @@ export function AppLayout() {
         <Link to="/" onClick={() => setOpen(false)}>
           <Logo />
         </Link>
+        <button onClick={toggleCollapse} className="hidden rounded-full p-1.5 text-muted hover:bg-white/5 hover:text-text lg:inline-flex" aria-label={t('appLayout.hideSidebar')} title={t('appLayout.hideSidebar')}>
+          <PanelLeftClose size={19} />
+        </button>
         <button onClick={() => setOpen(false)} className="rounded-full p-1.5 text-muted hover:bg-white/5 lg:hidden">
           <X size={20} />
         </button>
@@ -118,6 +157,7 @@ export function AppLayout() {
               >
                 <item.icon size={17} />
                 <span className="flex-1">{item.label}</span>
+                {item.badge && <span className="rounded-full border border-amber/30 bg-amber/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber">{item.badge}</span>}
               </NavLink>
             ))}
           </div>
@@ -132,8 +172,20 @@ export function AppLayout() {
   )
 
   return (
-    <div className="flex min-h-screen bg-bg">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 lg:block">{SidebarBody}</aside>
+    <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '0px' : `${width}px` } as CSSProperties}>
+      <aside className={cn('fixed inset-y-0 left-0 z-30', collapsed ? 'hidden' : 'hidden lg:block')} style={{ width }}>
+        {SidebarBody}
+        {/* drag handle to resize the sidebar */}
+        <div
+          onMouseDown={startDrag}
+          className="group absolute inset-y-0 -right-1 z-40 hidden w-2 cursor-col-resize lg:block"
+          title={t('appLayout.resizeSidebar')}
+          role="separator"
+          aria-orientation="vertical"
+        >
+          <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-violet/50" />
+        </div>
+      </aside>
 
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
@@ -142,12 +194,17 @@ export function AppLayout() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-60">
+      <div className={cn('flex min-w-0 flex-1 flex-col', !collapsed && 'lg:pl-[var(--sb)]')}>
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/[0.07] bg-bg/80 px-4 backdrop-blur sm:px-6">
           <div className="flex items-center gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>
               <Menu size={22} />
             </button>
+            {collapsed && (
+              <button onClick={toggleCollapse} className="hidden rounded-full p-2 text-muted hover:bg-white/5 hover:text-text lg:inline-flex" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
+                <PanelLeftOpen size={22} />
+              </button>
+            )}
             <h1 className="text-xl font-semibold tracking-tight text-text">{current?.label ?? 'Nemo AI'}</h1>
             <span className={cn('hidden rounded-pill border px-2.5 py-1 text-[11px] font-medium sm:inline-flex', live && isAuthed && accountId !== 'demo' ? 'border-teal/20 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber')}>
               {live && isAuthed && accountId !== 'demo' ? 'Live workspace' : 'Demo mode · local simulation'}

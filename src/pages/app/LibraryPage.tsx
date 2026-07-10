@@ -29,7 +29,8 @@ export default function LibraryPage() {
     } catch { /* ignore */ }
     setLoading(false)
   }
-  useEffect(() => { if (isSupabaseEnabled && supabase) load(); else setLoading(false) }, [])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- mount fetch; loading inits from isSupabaseEnabled
+  useEffect(() => { if (isSupabaseEnabled && supabase) load() }, [])
 
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }) } catch { return iso } }
 
@@ -67,7 +68,7 @@ export default function LibraryPage() {
                 {r.kind && <span className="shrink-0 rounded-md bg-violet/10 px-1.5 py-0.5 text-[10px] text-violet">{r.kind}</span>}
                 <ChevronDown size={16} className={cn('shrink-0 text-muted transition-transform', open === r.id && 'rotate-180')} />
               </button>
-              {open === r.id && <div className="border-t border-ice/[0.07] px-4 py-4"><Markdown content={r.report || '—'} /></div>}
+              {open === r.id && <div className="border-t border-ice/[0.07] px-4 py-4"><div className="overflow-x-auto"><Markdown content={r.report || '—'} /></div></div>}
             </div>
           ))}
         </div>

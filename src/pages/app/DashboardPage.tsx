@@ -1,17 +1,13 @@
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Activity, Clock, PlayCircle, Plus, Table2, Users, Zap } from 'lucide-react'
+import { Activity, MessageSquare, PlayCircle, Plus, Table2, Users, Zap } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
+import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useI18n } from '../../i18n'
 import { useBackendStatus } from '../../hooks/useBackendStatus'
 import { QuickStart } from '../../components/platform/QuickStart'
-
-const recent = [
-  ['Team Lead routed workflow', 'Sales Team processed pasted student leads', '2 min ago'],
-  ['Lead Qualifier finished analysis', '5 leads scored as hot/warm/cold', '2 min ago'],
-  ['Follow-up Writer generated messages', 'Personalized replies are ready to copy', '1 min ago'],
-  ['Report Agent saved summary', 'Daily manager report generated', 'Just now'],
-]
+import { RecentActivity } from '../../components/platform/RecentActivity'
 
 function readLocalStorage(key: string): string {
   try {
@@ -21,26 +17,32 @@ function readLocalStorage(key: string): string {
   }
 }
 
-function readWorkflowResults(): unknown[] {
-  try {
-    const raw = readLocalStorage('nemo-workflow-results') || '[]'
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
 export default function DashboardPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const backend = useBackendStatus()
   const agents = useAgentStore((s) => s.agents)
   const teams = agents.filter((a) => a.type === 'workflow')
-  const results = readWorkflowResults()
-  const workflowsRun = results.length ? 1 : 0
   const savedTeamId = readLocalStorage('nemo-current-team-id')
   const savedTeamName = readLocalStorage('nemo-team-name')
+
+  // real dashboard metrics (was localStorage/hard-coded demo numbers)
+  const [stats, setStats] = useState({ runs: 0, leads: 0, dialogues: 0 })
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase) return
+    let alive = true
+    ;(async () => {
+      try {
+        const [r, l, d] = await Promise.all([
+          supabase!.from('research_runs').select('id', { count: 'exact', head: true }),
+          supabase!.from('leads').select('id', { count: 'exact', head: true }),
+          supabase!.from('dialogues').select('id', { count: 'exact', head: true }),
+        ])
+        if (alive) setStats({ runs: r.count ?? 0, leads: l.count ?? 0, dialogues: d.count ?? 0 })
+      } catch { /* ignore */ }
+    })()
+    return () => { alive = false }
+  }, [])
 
   const createCourseConsultant = () => {
     localStorage.setItem('nemo-selected-agent-template', JSON.stringify({
@@ -87,9 +89,9 @@ export default function DashboardPage() {
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Metric icon={Users} label={t('mvp.dashboard.activeTeams')} value={String(Math.max(teams.length, savedTeamId ? 1 : 0))} />
-        <Metric icon={PlayCircle} label={t('mvp.dashboard.workflowsRun')} value={String(workflowsRun)} />
-        <Metric icon={Table2} label={t('mvp.dashboard.leadsProcessed')} value={String(results.length)} />
-        <Metric icon={Clock} label={t('mvp.dashboard.avgResponse')} value="<2s" />
+        <Metric icon={PlayCircle} label={t('mvp.dashboard.workflowsRun')} value={String(stats.runs)} />
+        <Metric icon={Table2} label={t('mvp.dashboard.leadsProcessed')} value={String(stats.leads)} />
+        <Metric icon={MessageSquare} label={t('mvp.dashboard.dialogues')} value={String(stats.dialogues)} />
       </div>
 
       <section className="card mt-6 rounded-3xl p-5">
@@ -133,11 +135,11 @@ export default function DashboardPage() {
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
         <section className="card rounded-3xl p-6">
           <div className="flex items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <h2 className="text-xl font-bold text-text">{t('mvp.dashboard.teamsTitle')}</h2>
               <p className="mt-1 text-sm text-muted">{t('mvp.dashboard.teamsDesc')}</p>
             </div>
-            <Button to="/app/teams" size="sm" variant="outline">{t('mvp.dashboard.openTeams')}</Button>
+            <Button to="/app/teams" size="sm" variant="outline" className="shrink-0">{t('mvp.dashboard.openTeams')}</Button>
           </div>
           <div className="mt-5 space-y-3">
             {teams.length === 0 && !savedTeamId ? (
@@ -147,12 +149,12 @@ export default function DashboardPage() {
               </div>
             ) : (
               <Link to={savedTeamId ? `/app/teams/${savedTeamId}` : '/app/teams'} className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 hover:border-violet/40">
-                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Users size={20} /></span>
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet/15 text-violet"><Users size={20} /></span>
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-text">{savedTeamName || teams[0]?.name || 'AI Sales Team'}</p>
+                  <p className="truncate font-semibold text-text">{savedTeamName || teams[0]?.name || 'AI Sales Team'}</p>
                   <p className="mt-1 text-xs text-muted">{t('mvp.dashboard.ready')}</p>
                 </div>
-                <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">{t('mvp.dashboard.active')}</span>
+                <span className="shrink-0 rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">{t('mvp.dashboard.active')}</span>
               </Link>
             )}
           </div>
@@ -160,16 +162,7 @@ export default function DashboardPage() {
 
         <section className="card rounded-3xl p-6">
           <div className="flex items-center gap-2"><Activity className="text-cyan" size={18} /><h2 className="text-xl font-bold text-text">{t('mvp.dashboard.latest')}</h2></div>
-          <div className="mt-5 space-y-3">
-            {recent.map(([title, desc, time]) => (
-              <div key={title} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div><p className="text-sm font-semibold text-text">{title}</p><p className="mt-1 text-xs text-muted">{desc}</p></div>
-                  <span className="shrink-0 text-[11px] text-muted">{time}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+          <RecentActivity />
         </section>
       </div>
     </div>

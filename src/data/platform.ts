@@ -9,26 +9,62 @@ import type {
 } from '../types/platform'
 import type { Lang } from '../types'
 
-// FREE models only (OpenRouter ":free" tier) — zero cost. Grouped by company.
-// Keep in sync with the FREE_MODEL constants in the edge functions.
+// Model catalog. FREE + efficient models are open to every plan; models flagged `premium:true`
+// are gated to Pro+ (the server enforces this via gateModel() — a non-premium plan is silently
+// downgraded to the cheap primary). Set PREMIUM_ENABLED=false to hide the whole premium block.
+// Model ids verified against the live OpenRouter catalog (Jul 2026).
+export const PREMIUM_ENABLED = true
+
 export const PROVIDERS: ModelProvider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
     models: [
       { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini · reliable', tokenRate: 1 },
-      { id: 'openai/gpt-4o', label: 'GPT-4o', tokenRate: 2 },
+      { id: 'openai/gpt-5.4-mini', label: 'GPT-5.4 mini · fast', tokenRate: 2 },
+      { id: 'openai/gpt-4o', label: 'GPT-4o', tokenRate: 4, premium: true },
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5 · frontier', tokenRate: 6, premium: true },
     ],
   },
   {
     id: 'anthropic',
     name: 'Anthropic · Claude',
-    models: [{ id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', tokenRate: 2 }],
+    models: [
+      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet', tokenRate: 4, premium: true },
+      { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', tokenRate: 5, premium: true },
+      { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8 · max', tokenRate: 8, premium: true },
+    ],
   },
   {
     id: 'google-gemini',
     name: 'Google · Gemini',
-    models: [{ id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5', tokenRate: 1 }],
+    models: [
+      { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5', tokenRate: 1 },
+      { id: 'google/gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', tokenRate: 1 },
+      { id: 'google/gemini-3.5-flash', label: 'Gemini 3.5 Flash', tokenRate: 2 },
+    ],
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    models: [
+      { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash · cheap', tokenRate: 1 },
+      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro', tokenRate: 3, premium: true },
+    ],
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen',
+    models: [
+      { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 80B (free)', tokenRate: 0 },
+      { id: 'qwen/qwen3.7-plus', label: 'Qwen3.7 Plus', tokenRate: 2 },
+      { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max', tokenRate: 3, premium: true },
+    ],
+  },
+  {
+    id: 'zai',
+    name: 'Z.ai · GLM',
+    models: [{ id: 'z-ai/glm-5.2', label: 'GLM 5.2', tokenRate: 2 }],
   },
   {
     id: 'google',
@@ -42,11 +78,6 @@ export const PROVIDERS: ModelProvider[] = [
     id: 'meta-llama',
     name: 'Meta · Llama',
     models: [{ id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (free)', tokenRate: 0 }],
-  },
-  {
-    id: 'qwen',
-    name: 'Qwen',
-    models: [{ id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 80B (free)', tokenRate: 0 }],
   },
   {
     id: 'nousresearch',

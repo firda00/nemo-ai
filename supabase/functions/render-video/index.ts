@@ -8,6 +8,7 @@
 //     { action:'status', job_id }  -> { ok, status:queued|rendering|done|error, url?, error? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { planOf, monthlyVideo } from '../_shared/plans.ts'
+import { elevenTTS, openaiTTS, uploadAudio } from '../_shared/media.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -41,6 +42,10 @@ Deno.serve(async (req) => {
   if (action === 'status') {
     const jobId = String(body?.job_id ?? '')
     if (!jobId) return json({ ok: false, error: 'job_id required' }, 200)
+    // ownership: the render branch records each job id in tool_runs — only the owning account
+    // may read its status/url (otherwise any user could read another tenant's rendered video)
+    const { data: own } = await admin.from('tool_runs').select('id').eq('account_id', accountId).eq('tool', 'render_video').eq('result', jobId).maybeSingle()
+    if (!own) return json({ ok: false, error: 'job not found' }, 200)
     try {
       const r = await fetch(`${WORKER}/render/${encodeURIComponent(jobId)}`, { headers: H }).then((x) => x.json())
       return json({ ok: r?.status !== 'error', status: r?.status, url: r?.url ?? null, error: r?.error ?? null })
@@ -57,11 +62,31 @@ Deno.serve(async (req) => {
     if (used >= plan.videoMonthly) return json({ ok: false, code: 'LIMIT', message: `Лимит видео по тарифу (${plan.videoMonthly}/мес) исчерпан.` }, 200)
   }
 
+  // Voiceover: if a script is given and ElevenLabs is connected, synthesize speech, host it,
+  // and attach it as the video's audio track — so the video comes out WITH narration (not silent).
+  let voiced = false
+  const voiceText = String(body?.voiceText ?? props?.voiceText ?? '').trim()
+  if (voiceText && !props.audioUrl) {
+    // ElevenLabs if connected, else the cheaper OpenAI TTS — so voiceover works on either key
+    let audio = '', provider = ''
+    const { data: vk } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'elevenlabs').maybeSingle()
+    if (vk?.api_key) { audio = await elevenTTS(vk.api_key, voiceText, String(body?.voice_id ?? '').trim() || undefined); provider = 'elevenlabs' }
+    if (!audio) {
+      const { data: ok } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
+      if (ok?.api_key) { audio = await openaiTTS(ok.api_key, voiceText); provider = 'openai' }
+    }
+    const url = audio ? await uploadAudio(admin, accountId, audio) : ''
+    if (url) {
+      props.audioUrl = url; voiced = true
+      await admin.from('media_assets').insert({ account_id: accountId, kind: 'audio', prompt: voiceText.slice(0, 300), provider, data: audio, url })
+    }
+  }
+
   try {
     const r = await fetch(`${WORKER}/render`, { method: 'POST', headers: H, body: JSON.stringify({ accountId, props }) }).then((x) => x.json())
     if (!r?.jobId) return json({ ok: false, error: r?.error ?? 'Не удалось запустить рендер.' }, 200)
     // count this render toward the monthly fair-use cap
     await admin.from('tool_runs').insert({ account_id: accountId, tool: 'render_video', args: { scenes: scenes.length, title: String(props?.title ?? '').slice(0, 120) }, result: r.jobId, ok: true })
-    return json({ ok: true, job_id: r.jobId, status: 'queued' })
+    return json({ ok: true, job_id: r.jobId, status: 'queued', voiced, voiceRequested: Boolean(voiceText) })
   } catch (e) { return json({ ok: false, error: String(e).slice(0, 200) }, 200) }
 })

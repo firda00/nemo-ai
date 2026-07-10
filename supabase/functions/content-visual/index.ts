@@ -6,8 +6,9 @@
 //   POST /functions/v1/content-visual  (Bearer jwt)  { content } -> { ok, prompt, image } | { ok:false, code }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
-import { planOf, monthlyMedia } from '../_shared/plans.ts'
-import { nemoImage, uploadImage } from '../_shared/media.ts'
+import { planOf } from '../_shared/plans.ts'
+import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
+import { nemoImage, uploadImage, imgModelDef } from '../_shared/media.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -42,12 +43,10 @@ Deno.serve(async (req) => {
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   const plan = planOf(acc?.plan)
 
-  // media is included in the subscription — gate by plan + fair-use (admins exempt)
-  if (!prof?.is_admin) {
-    if (!plan.media) return json({ ok: false, code: 'PLAN', message: 'Генерация изображений входит в тариф Starter и выше. Обновите тариф, чтобы ИИ сам создавал визуал.' }, 200)
-    const used = await monthlyMedia(admin, accountId)
-    if (used >= plan.mediaMonthly) return json({ ok: false, code: 'LIMIT', message: `Лимит генераций по вашему тарифу (${plan.mediaMonthly}/мес) исчерпан. Обновите тариф для большего объёма.` }, 200)
-  }
+  // Resolve which key to bill: own key (BYO) → Nemo included (Pro/Max) → weekly trial (Standard/Plus)
+  const access = await resolveMediaAccess(admin, accountId, plan, 'image', OPENROUTER_KEY, Boolean(prof?.is_admin))
+  if (!access.ok) return json({ ok: false, code: access.code, message: access.message }, 200)
+  const imageKey = access.key as string
 
   const body = await req.json().catch(() => ({}))
   const content = String(body?.content ?? '').trim()
@@ -55,26 +54,43 @@ Deno.serve(async (req) => {
   const sizeKey = String(body?.size ?? 'square')
   const sz = Object.prototype.hasOwnProperty.call(SIZES, sizeKey) ? SIZES[sizeKey] : SIZES.square
   const brief = String(body?.brief ?? '').trim().slice(0, 400) // extra art-direction (e.g. "инфографика для карточки Wildberries")
+  // Default to PHOTOREALISTIC (the common complaint is cartoonish/CGI output). A caller can pass
+  // style: 'illustration' | '3d' | 'flat' | 'anime' etc. to opt out of the realism steer.
+  const style = String(body?.style ?? '').trim().toLowerCase()
+  const photoreal = !style || style === 'photo' || style === 'realistic' || style === 'photoreal'
+  // chosen image model (validated against the server allowlist in media.ts). When the caller
+  // asks for a realistic style we force a realistic engine; when they ask for illustration and
+  // haven't picked a model, use the fast stylized engine.
+  const reqModel = String(body?.image_model ?? '').trim()
+  const picked = imgModelDef(reqModel || undefined)
+  const imageModel = reqModel
+    ? picked.id
+    : (photoreal ? imgModelDef(undefined).id : 'google/gemini-2.5-flash-image')
 
   // 1) the AI derives the image prompt itself (English → best image quality)
   let prompt = ''
   let deriveTokens = 0
   try {
+    const realismRule = photoreal
+      ? 'The image MUST be PHOTOREALISTIC — a real photograph shot on a camera, authentic real-world scene, natural lighting, real people/objects, indistinguishable from a genuine photo. Do NOT make it a cartoon, illustration, 3D render, CGI, clipart or flat vector. Mention a camera/lens feel (e.g. shot on DSLR, 50mm, shallow depth of field). '
+      : `Use this visual style: ${style}. `
     const msgs: ChatMsg[] = [
-      { role: 'system', content: 'You are an art director. Read the social/marketing content and write ONE vivid, concrete English image-generation prompt for its MAIN visual. Describe subject, setting, mood, lighting and style. No text/letters in the image. Under 60 words. Output ONLY the prompt.' },
+      { role: 'system', content: 'You are an art director. Read the social/marketing content and write ONE vivid, concrete English image-generation prompt for its MAIN visual. ' + realismRule + 'Describe subject, setting, mood, lighting and lens. No text/letters in the image. Under 65 words. Output ONLY the prompt.' },
       { role: 'user', content: (brief ? `Art direction: ${brief}\n\n` : '') + content.slice(0, 3000) },
     ]
-    const r = await callOpenRouter({ apiKey: OPENROUTER_KEY, model: PRIMARY_MODEL, messages: msgs, temperature: 0.6, maxTokens: 160, fallbackModel: FALLBACK_MODEL })
+    const r = await callOpenRouter({ apiKey: OPENROUTER_KEY, model: PRIMARY_MODEL, messages: msgs, temperature: 0.6, maxTokens: 170, fallbackModel: FALLBACK_MODEL })
     prompt = r.content.replace(/^["'\s]+|["'\s]+$/g, '').slice(0, 900)
     deriveTokens = r.tokens
   } catch { /* fall through to a safe default */ }
   if (prompt.length < 5) prompt = `Clean modern marketing visual for: ${content.slice(0, 200)}`
   prompt = `${prompt} Composition: ${sz.hint}.` // steer proportions for the chosen format
+  // final realism reinforcement for the image model (only when photoreal)
+  if (photoreal) prompt += ' Ultra-realistic photograph, natural lighting, lifelike detail, authentic candid moment, no illustration, no CGI, no cartoon.'
 
   // 2) generate — Nemo's OpenRouter engine first (included), customer OpenAI key as fallback
   let image = ''
   let provider = 'nemo'
-  const nemo = await nemoImage(OPENROUTER_KEY, prompt)
+  const nemo = await nemoImage(imageKey, prompt, imageModel)
   if (nemo.image) image = nemo.image
   else {
     const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
@@ -100,5 +116,5 @@ Deno.serve(async (req) => {
   await admin.from('media_assets').insert({ account_id: accountId, kind: 'image', prompt, provider, data: image.startsWith('data:') ? image : null, url: hosted || (image.startsWith('http') ? image : null) })
   const totalTokens = deriveTokens + (nemo.tokens ?? 0)
   if (totalTokens) { await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: 'media-image' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: totalTokens }) }
-  return json({ ok: true, prompt, image, url: hosted || undefined })
+  return json({ ok: true, prompt, image, url: hosted || undefined, model: provider === 'nemo' ? imageModel : 'gpt-image-1' })
 })

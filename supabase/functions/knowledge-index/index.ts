@@ -14,6 +14,41 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 /* eslint-disable @typescript-eslint/no-explicit-any */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const body = await req.json().catch(() => ({}))
+  const action = String(body?.action ?? 'index')
+
+  // Service-role backfill: (re)index every doc that has no chunks yet. Gated by the cron secret —
+  // no user JWT — used to light up docs that were indexed before the vector schema existed.
+  if (action === 'reindex_missing') {
+    if (req.headers.get('x-cron-secret') !== (Deno.env.get('CRON_SECRET') ?? '')) return json({ error: 'forbidden' }, 403)
+    const { data: docs } = await admin.from('knowledge_docs').select('id, owner_id, owner_type, content')
+    let reindexed = 0, chunksTotal = 0
+    for (const doc of (docs ?? [])) {
+      const { count } = await admin.from('knowledge_chunks').select('id', { count: 'exact', head: true }).eq('doc_id', doc.id)
+      if (count && count > 0) continue
+      const chunks = chunkText(String(doc.content ?? ''))
+      if (!chunks.length) { await admin.from('knowledge_docs').update({ status: 'empty' }).eq('id', doc.id); continue }
+      let stored = 0
+      for (const c of chunks) { try { const emb = await embedText(c); const { error } = await admin.from('knowledge_chunks').insert({ doc_id: doc.id, owner_id: doc.owner_id, owner_type: doc.owner_type ?? 'agent', content: c, embedding: emb }); if (!error) stored++ } catch { /* skip a bad chunk */ } }
+      await admin.from('knowledge_docs').update({ status: stored ? 'indexed' : 'error' }).eq('id', doc.id)
+      reindexed++; chunksTotal += stored
+    }
+    return json({ ok: true, reindexed, chunks: chunksTotal })
+  }
+
+  // Service-role retrieval test: embed a question and run match_knowledge for an agent (cron-gated).
+  if (action === 'search_admin') {
+    if (req.headers.get('x-cron-secret') !== (Deno.env.get('CRON_SECRET') ?? '')) return json({ error: 'forbidden' }, 403)
+    const agentId = String(body?.agent_id ?? '')
+    const query = String(body?.query ?? '').trim()
+    if (!agentId || query.length < 2) return json({ ok: false, error: 'agent_id + query required' }, 200)
+    const emb = await embedText(query.slice(0, 1600))
+    const { data } = await admin.rpc('match_knowledge', { p_owner_id: agentId, p_query: emb, p_k: 5 })
+    return json({ ok: true, results: data ?? [] })
+  }
+
+  // --- user-authed actions (index / search) ---
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -22,10 +57,6 @@ Deno.serve(async (req) => {
   const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
-
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
-  const body = await req.json().catch(() => ({}))
-  const action = String(body?.action ?? 'index')
 
   // helper: verify an agent belongs to this account
   const ownsAgent = async (agentId: string): Promise<boolean> => {

@@ -4,6 +4,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
+import { VIDEO_MODEL_CATALOG, DEFAULT_VIDEO_MODEL } from '../../lib/models'
 
 /**
  * Media tab — connect your OWN generative provider (key stored server-only, write-only)
@@ -42,6 +43,7 @@ export function MediaConnectPanel() {
   const [voiceErr, setVoiceErr] = useState('')
   // async video/avatar testers
   const [vidText, setVidText] = useState('')
+  const [vidModel, setVidModel] = useState(DEFAULT_VIDEO_MODEL)
   const [vidState, setVidState] = useState<{ busy: boolean; url?: string; err?: string; note?: string }>({ busy: false })
   const [avaText, setAvaText] = useState('')
   const [avaState, setAvaState] = useState<{ busy: boolean; url?: string; err?: string; note?: string }>({ busy: false })
@@ -190,9 +192,14 @@ export function MediaConnectPanel() {
       {/* video generation tester (Replicate, async) */}
       <div className="card mt-4 rounded-3xl p-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Video size={15} className="text-violet" /> {t('mediaConnectPanel.testVideoTitle')}</h3>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <input value={vidText} onChange={(e) => setVidText(e.target.value)} placeholder={t('mediaConnectPanel.videoPlaceholder')} className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
-          <Button onClick={() => runAsync('generate-video', { prompt: vidText.trim() }, setVidState)} disabled={vidState.busy || vidText.trim().length < 3}>{vidState.busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Video size={15} /> {t('mediaConnectPanel.generateBtn')}</>}</Button>
+        <div className="mt-3 space-y-2">
+          <select value={vidModel} onChange={(e) => setVidModel(e.target.value)} className="w-full rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
+            {VIDEO_MODEL_CATALOG.map((m) => <option key={m.id} value={m.id} className="bg-panel">{m.label}</option>)}
+          </select>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input value={vidText} onChange={(e) => setVidText(e.target.value)} placeholder={t('mediaConnectPanel.videoPlaceholder')} className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+            <Button onClick={() => runAsync('generate-video', { prompt: vidText.trim(), model: vidModel }, setVidState)} disabled={vidState.busy || vidText.trim().length < 3}>{vidState.busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Video size={15} /> {t('mediaConnectPanel.generateBtn')}</>}</Button>
+          </div>
         </div>
         {vidState.note && <p className="mt-2 text-xs text-muted">{vidState.note}</p>}
         {vidState.err && <p className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{vidState.err}</p>}

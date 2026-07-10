@@ -3,8 +3,9 @@
 // connected their own OpenAI key, it is used as a fallback. Saved to media_assets.
 //   POST /functions/v1/generate-image  (Bearer jwt)  { prompt } -> { ok, image } | { ok:false, code }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { planOf, monthlyMedia } from '../_shared/plans.ts'
-import { nemoImage, uploadImage } from '../_shared/media.ts'
+import { planOf } from '../_shared/plans.ts'
+import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
+import { nemoImage, uploadImage, imgModelDef } from '../_shared/media.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -27,19 +28,24 @@ Deno.serve(async (req) => {
   const { data: acc } = await admin.from('accounts').select('plan, blocked').eq('id', accountId).single()
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   const plan = planOf(acc?.plan)
-  if (!prof?.is_admin) {
-    if (!plan.media) return json({ ok: false, code: 'PLAN', message: 'Генерация изображений входит в тариф Starter и выше.' }, 200)
-    const used = await monthlyMedia(admin, accountId)
-    if (used >= plan.mediaMonthly) return json({ ok: false, code: 'LIMIT', message: `Лимит генераций по тарифу (${plan.mediaMonthly}/мес) исчерпан.` }, 200)
-  }
+  const access = await resolveMediaAccess(admin, accountId, plan, 'image', OPENROUTER_KEY, Boolean(prof?.is_admin))
+  if (!access.ok) return json({ ok: false, code: access.code, message: access.message }, 200)
+  const imageKey = access.key as string
 
   const body = await req.json().catch(() => ({}))
-  const prompt = String(body?.prompt ?? '').trim()
-  if (prompt.length < 3) return json({ ok: false, error: 'Опишите изображение подробнее.' }, 200)
+  const rawPrompt = String(body?.prompt ?? '').trim()
+  if (rawPrompt.length < 3) return json({ ok: false, error: 'Опишите изображение подробнее.' }, 200)
+  const imageModel = imgModelDef(String(body?.image_model ?? '').trim() || undefined).id
+  const style = String(body?.style ?? '').trim().toLowerCase()
+  const photoreal = !style || style === 'photo' || style === 'realistic' || style === 'photoreal'
+  // steer toward a real photograph by default (fixes the cartoon/3D-render look)
+  const prompt = photoreal
+    ? `${rawPrompt}. Ultra-realistic photograph, natural lighting, lifelike detail, shot on camera, no illustration, no CGI, no cartoon.`
+    : rawPrompt
 
   let image = ''
   let provider = 'nemo'
-  const nemo = await nemoImage(OPENROUTER_KEY, prompt)
+  const nemo = await nemoImage(imageKey, prompt, imageModel)
   if (nemo.image) image = nemo.image
   else {
     const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
@@ -62,5 +68,5 @@ Deno.serve(async (req) => {
   const hosted = image.startsWith('data:') ? await uploadImage(admin, accountId, image) : image
   await admin.from('media_assets').insert({ account_id: accountId, kind: 'image', prompt, provider, data: image.startsWith('data:') ? image : null, url: hosted || (image.startsWith('http') ? image : null) })
   if (nemo.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: nemo.tokens, model: 'media-image' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: nemo.tokens }) }
-  return json({ ok: true, image, url: hosted || undefined, provider })
+  return json({ ok: true, image, url: hosted || undefined, provider, model: provider === 'nemo' ? imageModel : 'gpt-image-1' })
 })

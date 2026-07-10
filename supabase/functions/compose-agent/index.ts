@@ -17,7 +17,11 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 
 // FREE models only (OpenRouter ":free" tier) — keep in sync with src/data/platform.ts
 const FREE_MODEL = 'google/gemma-4-31b-it:free'
-const COMPOSER_MODEL = FREE_MODEL
+// The COMPOSER itself must be reliable — the ":free" tier is chronically rate-limited (429),
+// which broke "build my agent". Use a cheap, dependable paid model (a compose call is ~1k tokens),
+// with a free fallback as a last resort.
+const COMPOSER_MODEL = 'openai/gpt-4o-mini'
+const COMPOSER_FALLBACK = 'meta-llama/llama-3.3-70b-instruct:free'
 const ALLOWED_MODELS = new Set([
   'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free',
   'meta-llama/llama-3.3-70b-instruct:free', 'qwen/qwen3-next-80b-a3b-instruct:free',
@@ -112,7 +116,7 @@ Deno.serve(async (req) => {
   let parsed: Record<string, unknown> | null
   let tokens: number
   try {
-    const out = await callOpenRouter({ apiKey: orKey, model: COMPOSER_MODEL, messages, temperature: 0.5 })
+    const out = await callOpenRouter({ apiKey: orKey, model: COMPOSER_MODEL, fallbackModel: COMPOSER_FALLBACK, messages, temperature: 0.5 })
     tokens = out.tokens
     parsed = extractJson(out.content)
   } catch (e) {

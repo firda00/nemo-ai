@@ -27,7 +27,7 @@ const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> =
   github: { label: 'GitHub', ok: (k) => k.startsWith('ghp_') || k.startsWith('github_pat_') || k.length >= 20 },
   stripe: { label: 'Stripe', ok: (k) => k.startsWith('sk_') || k.startsWith('rk_') || k.length >= 20 },
   hubspot: { label: 'HubSpot CRM', ok: (k) => k.length >= 20 },
-  amocrm: { label: 'amoCRM', ok: (k) => k.length >= 20 },
+  amocrm: { label: 'amoCRM (формат: поддомен|токен)', ok: (k) => k.includes('|') && k.length >= 25 },
   bitrix24: { label: 'Bitrix24', ok: (k) => k.length >= 15 },
   notion: { label: 'Notion', ok: (k) => k.startsWith('secret_') || k.startsWith('ntn_') || k.length >= 20 },
   airtable: { label: 'Airtable', ok: (k) => k.length >= 16 },
@@ -36,7 +36,7 @@ const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> =
   // marketplaces (seller API)
   uzum: { label: 'Uzum Market (API продавца)', ok: (k) => k.length >= 10 },
   wildberries: { label: 'Wildberries (API продавца)', ok: (k) => k.length >= 20 },
-  ozon: { label: 'Ozon (API продавца)', ok: (k) => k.length >= 10 },
+  ozon: { label: 'Ozon (формат: Client-Id|Api-Key)', ok: (k) => k.includes('|') && k.length >= 15 },
   kaspi: { label: 'Kaspi (API продавца)', ok: (k) => k.length >= 10 },
   // voice calls
   bland: { label: 'Bland.ai (звонки)', ok: (k) => k.length >= 20 },

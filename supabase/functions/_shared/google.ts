@@ -39,4 +39,68 @@ export async function sheetsAppend(token: string, sheetId: string, values: (stri
     return Boolean(r?.updates)
   } catch { return false }
 }
+
+// Create a brand-new spreadsheet with a bold+frozen header row, and (optionally) a
+// dropdown (data validation) on one column. Returns the new id + shareable edit URL.
+export async function createSpreadsheet(
+  token: string, title: string, headers: string[],
+  opts?: { statusColIndex?: number; statusOptions?: string[] },
+): Promise<{ id: string; url: string } | null> {
+  try {
+    const created = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: { title }, sheets: [{ properties: { title: 'Tasks', gridProperties: { frozenRowCount: 1 } } }] }),
+    }).then((x) => x.json())
+    const id = created?.spreadsheetId
+    if (!id) return null
+    const sheetId = created?.sheets?.[0]?.properties?.sheetId ?? 0
+
+    // header row values
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent('Tasks!A1')}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [headers] }),
+    })
+
+    const requests: any[] = [
+      { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.85, green: 0.92, blue: 0.83 } } }, fields: 'userEnteredFormat(textFormat,backgroundColor)' } },
+    ]
+    if (opts?.statusColIndex != null && opts.statusOptions?.length) {
+      requests.push({ setDataValidation: { range: { sheetId, startRowIndex: 1, startColumnIndex: opts.statusColIndex, endColumnIndex: opts.statusColIndex + 1 }, rule: { condition: { type: 'ONE_OF_LIST', values: opts.statusOptions.map((v) => ({ userEnteredValue: v })) }, showCustomUi: true, strict: false } } })
+    }
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests }),
+    })
+    return { id, url: `https://docs.google.com/spreadsheets/d/${id}/edit` }
+  } catch { return null }
+}
+
+// Write values to a specific range (e.g. update a single Status cell). Never throws.
+export async function updateSheetValues(token: string, sheetId: string, range: string, values: (string | number)[][]): Promise<boolean> {
+  try {
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    }).then((x) => x.json())
+    return Boolean(r?.updatedCells)
+  } catch { return false }
+}
+
+// Read a rectangular block of a sheet's values (for "understand the sheet the user sent").
+export async function readSheetValues(token: string, sheetId: string, range = 'A1:H2000'): Promise<string[][]> {
+  try {
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((x) => x.json())
+    return Array.isArray(r?.values) ? r.values : []
+  } catch { return [] }
+}
+
+// Pull a spreadsheet id out of a pasted Google Sheets URL (or return the raw id).
+export function extractSheetId(text: string): string | null {
+  const m = String(text ?? '').match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  if (m) return m[1]
+  const bare = String(text ?? '').trim()
+  return /^[a-zA-Z0-9-_]{25,}$/.test(bare) ? bare : null
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

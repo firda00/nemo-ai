@@ -8,6 +8,8 @@ import { Markdown } from '../../components/ui/Markdown'
 import { OpsWorkflowRunner, type OpsKind } from '../../components/platform/OpsWorkflowRunner'
 import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
 import { TelegramBotConnect } from '../../components/platform/TelegramBotConnect'
+import { PlanerkaSheetCard } from '../../components/platform/PlanerkaSheetCard'
+import { PlanerkaMembersCard } from '../../components/platform/PlanerkaMembersCard'
 import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustudyTeam'
 import { cn } from '../../lib/cn'
 
@@ -89,7 +91,7 @@ export default function TeamDetailPage() {
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
-    return <div className="container-page max-w-4xl py-10 text-center text-muted">Team not found. Create it from Templates → Operations Team.</div>
+    return <div className="container-page max-w-4xl py-10 text-center text-muted">{t('teamDetailPage.teamNotFound')}</div>
   }
 
   return (
@@ -100,7 +102,7 @@ export default function TeamDetailPage() {
         <p className="max-w-2xl text-sm leading-relaxed text-muted">{goal}</p>
         <div className="flex flex-wrap gap-2">
           <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">{team?.status || 'active'}</span>
-          <span className="rounded-pill border border-violet/20 bg-violet/10 px-3 py-1 text-xs text-violet">{dept ? `${dept.subs.length} specialist agents` : 'no team structure'}</span>
+          <span className="rounded-pill border border-violet/20 bg-violet/10 px-3 py-1 text-xs text-violet">{dept ? t('teamDetailPage.specialistAgents', { n: dept.subs.length }) : t('teamDetailPage.noTeamStructure')}</span>
         </div>
       </div>
 
@@ -108,7 +110,8 @@ export default function TeamDetailPage() {
         {/* LEFT — team structure + workflow runner */}
         <div className="space-y-6">
           <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><Users size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">Team structure</h2></div>
+            <div className="flex items-center gap-2"><Users size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.teamStructure')}</h2></div>
+            {dept && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{t('teamDetailPage.subBotOptionalNote')}</p>}
             <div className="mt-4 space-y-2">
               {(dept?.subs ?? []).map((sa, i) => {
                 const color = COLORS[i % COLORS.length]
@@ -121,7 +124,7 @@ export default function TeamDetailPage() {
                   </div>
                 )
               })}
-              {!dept && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">No saved team structure for this agent.</p>}
+              {!dept && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noSavedStructure')}</p>}
             </div>
           </section>
 
@@ -148,10 +151,10 @@ export default function TeamDetailPage() {
                   <BellRing size={15} /> {t('teamDetailPage.churnBtn')}
                 </button>
                 <button onClick={() => setKind('payment_control')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', kind === 'payment_control' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                  <Wallet size={15} /> Payment Control
+                  <Wallet size={15} /> {t('teamDetailPage.paymentControl')}
                 </button>
                 <button onClick={() => setKind('meeting_to_tasks')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', kind === 'meeting_to_tasks' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                  <ListChecks size={15} /> Meeting to Tasks
+                  <ListChecks size={15} /> {t('teamDetailPage.meetingToTasks')}
                 </button>
               </div>
               <div className="mt-4">
@@ -172,34 +175,60 @@ export default function TeamDetailPage() {
               <div className="flex items-center gap-2"><Send size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.telegramBotsTitle')}</h2></div>
               <p className="mt-2 text-sm leading-relaxed text-muted">{t('teamDetailPage.telegramBotsDesc')}</p>
             </div>
-            <div>
-              <p className="mb-1 text-[13px] font-medium text-text">{t('teamDetailPage.teamCommonBot')}</p>
-              <TelegramBotConnect
-                target={{ agent_id: id }}
-                connected={tgConnected}
-                hint={t('teamDetailPage.teamCommonBotHint')}
-                onConnected={() => setTgConnected(true)}
-              />
+
+            {/* PRIMARY — one master bot / one token runs the whole team. This is the "start here". */}
+            <div className="rounded-2xl border border-violet/25 bg-violet/[0.05] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-pill bg-violet/15 px-2.5 py-0.5 text-[11px] font-semibold text-violet">{t('teamDetailPage.masterBotBadge')}</span>
+                <p className="text-[14px] font-semibold text-text">{t('teamDetailPage.teamCommonBot')}</p>
+              </div>
+              <p className="mt-2 text-[13px] leading-relaxed text-muted">{t('teamDetailPage.teamCommonBotHint')}</p>
+              <ol className="mt-3 space-y-2">
+                {[t('teamDetailPage.botStep1'), t('teamDetailPage.botStep2'), t('teamDetailPage.botStep3')].map((step, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-muted">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet/15 text-[11px] font-semibold text-violet">{i + 1}</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <div className="mt-3.5">
+                <TelegramBotConnect
+                  target={{ agent_id: id }}
+                  connected={tgConnected}
+                  onConnected={() => setTgConnected(true)}
+                />
+              </div>
             </div>
-            <div className="border-t border-ice/[0.06] pt-4">
-              <p className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-text"><Users2 size={14} className="text-amber" /> {t('teamDetailPage.groupBotLabel')}</p>
-              <TelegramBotConnect
-                target={{ agent_id: id, scope: 'group', label: 'Task bot' }}
-                connected={groupConnected}
-                hint={t('teamDetailPage.groupBotHint')}
-                onConnected={() => setGroupConnected(true)}
-              />
-              <p className="mt-2 rounded-xl border border-ice/[0.07] bg-black/20 p-3 text-[12px] leading-relaxed text-muted">
-                {t('teamDetailPage.specialistNotePart1')}<span className="text-text">{t('teamDetailPage.specialistNoteEmphasis')}</span>{t('teamDetailPage.specialistNotePart2')}
-              </p>
-            </div>
+
+            {/* OPTIONAL — group bot + personal specialist bots, folded so they don't distract from the one token. */}
+            <details className="group rounded-2xl border border-ice/[0.07] bg-black/10 [&_summary]:list-none">
+              <summary className="flex cursor-pointer items-center gap-2 p-4 text-[13px] font-medium text-text">
+                <ChevronDown size={15} className="text-muted transition group-open:rotate-180" />
+                {t('teamDetailPage.advancedBotsToggle')}
+                <span className="ml-auto rounded-pill bg-white/[0.06] px-2 py-0.5 text-[10px] text-muted">{t('teamDetailPage.optionalBadge')}</span>
+              </summary>
+              <div className="border-t border-ice/[0.06] p-4">
+                <p className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-text"><Users2 size={14} className="text-amber" /> {t('teamDetailPage.groupBotLabel')}</p>
+                <TelegramBotConnect
+                  target={{ agent_id: id, scope: 'group', label: 'Task bot' }}
+                  connected={groupConnected}
+                  hint={t('teamDetailPage.groupBotHint')}
+                  onConnected={() => setGroupConnected(true)}
+                />
+                <p className="mt-2 rounded-xl border border-ice/[0.07] bg-black/20 p-3 text-[12px] leading-relaxed text-muted">
+                  {t('teamDetailPage.specialistNotePart1')}<span className="text-text">{t('teamDetailPage.specialistNoteEmphasis')}</span>{t('teamDetailPage.specialistNotePart2')}
+                </p>
+              </div>
+            </details>
           </section>
         </div>
 
         {/* RIGHT — live results from the DB */}
         <div className="space-y-6">
+          <PlanerkaSheetCard />
+          <PlanerkaMembersCard />
           <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><BellRing size={18} className="text-amber" /><h2 className="text-lg font-bold text-text">Admin notifications</h2><span className="ml-auto text-xs text-muted">{notifs.length}</span></div>
+            <div className="flex items-center gap-2"><BellRing size={18} className="text-amber" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.adminNotifications')}</h2><span className="ml-auto text-xs text-muted">{notifs.length}</span></div>
             <div className="mt-4 space-y-2">
               {notifs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noNotifications')}</p>}
               {notifs.map((n) => (
@@ -216,7 +245,7 @@ export default function TeamDetailPage() {
           </section>
 
           <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><ClipboardList size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">Tasks</h2><span className="ml-auto text-xs text-muted">{tasks.length}</span></div>
+            <div className="flex items-center gap-2"><ClipboardList size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.tasksHeading')}</h2><span className="ml-auto text-xs text-muted">{tasks.length}</span></div>
             <div className="mt-4 space-y-2">
               {tasks.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noTasks')}</p>}
               {tasks.map((tk) => (
@@ -234,7 +263,7 @@ export default function TeamDetailPage() {
           <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
             <div className="mt-4 space-y-2">
-              {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">No workflow runs yet.</p>}
+              {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}
               {runs.map((run) => {
                 const isOpen = openRun === run.id
                 return (
@@ -255,7 +284,7 @@ export default function TeamDetailPage() {
                         ))}
                         {run.report && (
                           <div className="rounded-lg border border-ice/[0.07] p-3">
-                            <p className="mb-1 text-[11px] font-medium text-text">Manager summary</p>
+                            <p className="mb-1 text-[11px] font-medium text-text">{t('teamDetailPage.managerSummary')}</p>
                             <Markdown content={run.report} />
                           </div>
                         )}

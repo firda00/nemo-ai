@@ -14,14 +14,16 @@ const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!
 
 // Credits (1 credit = 1000 LLM tokens). keep in sync with src/data/billing.ts
 export const PACKAGES: Record<string, { usd: number; tokens: number }> = {
-  starter: { usd: 5, tokens: 1_250 },
-  pro: { usd: 20, tokens: 5_500 },
-  business: { usd: 50, tokens: 15_000 },
+  dabbler: { usd: 10, tokens: 2_500 },
+  starter: { usd: 25, tokens: 7_000 },
+  popular: { usd: 50, tokens: 15_000 },
+  pro: { usd: 100, tokens: 32_000 },
+  business: { usd: 250, tokens: 87_500 },
 }
 // custom top-up base rate ($1 = 250 credits) + bounds — keep in sync with src/data/billing.ts
 const USD_TO_TOKENS = 250
-const CUSTOM_MIN_USD = 1
-const CUSTOM_MAX_USD = 500
+const CUSTOM_MIN_USD = 5
+const CUSTOM_MAX_USD = 1000
 
 function form(params: Record<string, string>): string {
   return Object.entries(params)

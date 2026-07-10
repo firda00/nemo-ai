@@ -1,0 +1,39 @@
+# Runs the deterministic agent behavior eval on every PR / push to main, so a prompt regression
+# is caught before it ships. Needs the repo secret OPENROUTER_API_KEY.
+name: agent-eval
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'supabase/functions/_shared/**'
+      - 'eval/**'
+      - '.github/workflows/agent-eval.yml'
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run agent eval
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::warning::OPENROUTER_API_KEY not set — skipping eval. Add it in repo Settings → Secrets."
+            exit 0
+          fi
+          node eval/agent-eval.mjs | tee eval-output.txt
+          # fail the build if overall pass-rate drops below the 85% bar
+          pct=$(grep -oE 'OVERALL: [0-9]+/[0-9]+ = [0-9]+%' eval-output.txt | grep -oE '[0-9]+%' | tr -d '%')
+          echo "overall=$pct%"
+          if [ -n "$pct" ] && [ "$pct" -lt 85 ]; then
+            echo "::error::Agent eval pass-rate $pct% is below the 85% gate"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-output
+          path: eval-output.txt

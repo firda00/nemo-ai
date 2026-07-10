@@ -82,7 +82,10 @@ export function ModelPicker({
             )}
           >
             <div>
-              <p className="text-sm font-normal text-text">{m.label}</p>
+              <p className="flex items-center gap-1.5 text-sm font-normal text-text">
+                {m.label}
+                {m.premium && <span className="rounded-full bg-violet/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet">Pro 💎</span>}
+              </p>
               <p className="text-[11px] text-muted">{m.id}</p>
             </div>
             {model === m.id && <Check size={16} className="text-violet" />}

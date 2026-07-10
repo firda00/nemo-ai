@@ -1,22 +1,30 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X } from 'lucide-react'
+import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X, MessageSquare } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/ustudyTeam'
+import { IMAGE_MODEL_CATALOG, DEFAULT_IMAGE_MODEL } from '../../lib/models'
 import { useI18n } from '../../i18n'
 import { Markdown } from '../ui/Markdown'
+import { DocExport } from './DocExport'
 import { cn } from '../../lib/cn'
 
 const live = isSupabaseEnabled
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 
+interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {
   role: string
   name: string
   prompt: { role: string; tasks: string; tone: string; rules: string }
   output?: string
-  status: 'pending' | 'running' | 'done'
+  review?: Review | null
+  reviewedBy?: string
+  revised?: boolean
+  revisions?: number
+  escalated?: boolean
+  status: 'pending' | 'running' | 'review' | 'fixing' | 'done'
 }
 
 function subSystem(s: Spec): string {
@@ -60,14 +68,15 @@ export function AutonomousRunner({
   // show the "AI makes the visual" + "send to Telegram" delivery bar under the result
   postActions?: boolean
 }) {
-  const { lang } = useI18n()
+  const { t, lang } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
   const [goal, setGoal] = useState(defaultGoal)
   const [running, setRunning] = useState(false)
-  const [phase, setPhase] = useState<'idle' | 'architect' | 'team' | 'synth'>('idle')
+  const [phase, setPhase] = useState<'idle' | 'architect' | 'team' | 'review' | 'synth'>('idle')
   const [specs, setSpecs] = useState<Spec[]>([])
   const [result, setResult] = useState<string | null>(null)
+  const [escalatedCount, setEscalatedCount] = useState(0)
   const [error, setError] = useState('')
   const [openStep, setOpenStep] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
@@ -135,9 +144,55 @@ export function AutonomousRunner({
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? filled : s)))
       }
 
-      // 3) MANAGER synthesizes the final deliverable
+      // 3) PEER REVIEW — each specialist's work is checked by a TEAMMATE (round-robin), and
+      // revised on issues. So the copywriter checks the scriptwriter and the scriptwriter
+      // checks the copywriter — agents verify each other, not just a single QA.
+      if (done.length >= 2) {
+        setPhase('review')
+        for (let i = 0; i < done.length; i++) {
+          const reviewer = done[(i + 1) % done.length]
+          setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'review' } : s)))
+          // CONVERGENCE LOOP: review -> if issues, revise -> RE-REVIEW the revision, up to N rounds.
+          // Converges when the reviewer approves; if still not approved after the last round, the
+          // work is flagged escalated (handed to a human) instead of silently shipping the reject.
+          const MAX_ROUNDS = 3
+          let review: Review | null = null
+          let revised = false
+          let escalated = false
+          let rounds = 0
+          for (let round = 0; round < MAX_ROUNDS; round++) {
+            const v = await call({
+              action: 'review', goal: g, work: done[i].output ?? '', author_role: done[i].role,
+              reviewer_system: subSystem(reviewer),
+              criteria: 'соответствие задаче; конкретика и факты; отсутствие воды и клише; готовность без доработки',
+            })
+            if (!v) break
+            review = { approved: Boolean(v.approved), score: Number(v.score) || 0, issues: Array.isArray(v.issues) ? v.issues : [], fix: String(v.fix ?? '') }
+            if (review.approved) break
+            if (round === MAX_ROUNDS - 1) { escalated = true; break } // out of rounds, still not converged
+            setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'fixing', review, reviewedBy: reviewer.name } : s)))
+            const fix = await call({
+              action: 'step', goal: g, role: mapRole(done[i].role),
+              task: 'Перепиши свою работу, устранив ВСЕ замечания коллеги. Верни улучшенную версию целиком, в том же формате.',
+              system: subSystem(done[i]),
+              context: `ТВОЯ РАБОТА:\n${(done[i].output ?? '').slice(0, 2600)}\n\nЗАМЕЧАНИЯ КОЛЛЕГИ (${reviewer.name}):\n${review.fix}\n${review.issues.join('\n')}`,
+            })
+            if (!fix?.output) break
+            done[i].output = fix.output; revised = true; rounds = round + 1
+          }
+          done[i] = { ...done[i], review, reviewedBy: reviewer.name, revised, revisions: rounds, escalated, status: 'done' }
+          setSpecs((prev) => prev.map((s, idx) => (idx === i ? done[i] : s)))
+        }
+      }
+
+      // real human-fallback: a piece the reviewer never approved (escalated) is NOT presented as
+      // clean — it's counted, flagged to the manager, and surfaced as a warning on the deliverable.
+      const escN = done.filter((d) => d.escalated).length
+      setEscalatedCount(escN)
+
+      // 4) MANAGER synthesizes the final deliverable (from the peer-reviewed outputs)
       setPhase('synth')
-      const synth = await call({ action: 'synth', goal: g, steps: done.map((d) => ({ role: d.role, task: d.prompt.tasks, output: d.output })), sources: [] })
+      const synth = await call({ action: 'synth', goal: g, steps: done.map((d) => ({ role: d.role, task: d.prompt.tasks, output: d.output, needsHumanReview: Boolean(d.escalated) })), sources: [] })
       if (!synth) {
         setError('Final synthesis failed — check token balance.')
         return
@@ -179,7 +234,7 @@ export function AutonomousRunner({
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run() }}
           rows={2}
           disabled={running}
-          placeholder={placeholder ?? 'Describe a goal, e.g. Find 5 IT schools in Tashkent and draft an outreach message for each.'}
+          placeholder={placeholder ?? t('autonomousRunner.placeholderDefault')}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-text outline-none placeholder:text-muted/70"
         />
         <button onClick={run} disabled={running || goal.trim().length < 4} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition disabled:opacity-40">
@@ -198,8 +253,9 @@ export function AutonomousRunner({
       {specs.length > 0 && (
         <div className="card mt-5 rounded-2xl p-5">
           <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text">
-            <Users size={15} className="text-violet" /> Manager created {specs.length} specialists
-            {running && phase === 'synth' && <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted"><Loader2 size={12} className="animate-spin" /> combining results…</span>}
+            <Users size={15} className="text-violet" /> {t('autonomousRunner.managerCreated', { n: specs.length })}
+            {running && phase === 'review' && <span className="ml-2 inline-flex items-center gap-1 text-xs text-cyan"><Loader2 size={12} className="animate-spin" /> {t('autonomousRunner.crossChecking')}</span>}
+            {running && phase === 'synth' && <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted"><Loader2 size={12} className="animate-spin" /> {t('autonomousRunner.combiningResults')}</span>}
           </p>
           <div className="space-y-2">
             {specs.map((s, i) => {
@@ -213,12 +269,31 @@ export function AutonomousRunner({
                     <span className="min-w-0 flex-1 truncate text-xs text-muted">{s.prompt.tasks}</span>
                     {s.status === 'running' ? (
                       <Loader2 size={14} className="shrink-0 animate-spin text-violet" />
+                    ) : s.status === 'review' ? (
+                      <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-cyan"><Loader2 size={13} className="animate-spin" /> {t('autonomousRunner.reviewing')}</span>
+                    ) : s.status === 'fixing' ? (
+                      <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-amber"><Loader2 size={13} className="animate-spin" /> {t('autonomousRunner.fixing')}</span>
                     ) : s.status === 'done' ? (
                       <><Check size={14} className="shrink-0 text-teal" /><ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', openStep === i && 'rotate-180')} /></>
                     ) : (
                       <span className="shrink-0 text-[11px] text-muted">…</span>
                     )}
                   </button>
+                  {/* peer-review verdict: which teammate checked this, score, issues, revision */}
+                  {s.review && (
+                    <div className="mx-3.5 mb-2.5 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-2">
+                      <p className="flex items-center gap-1.5 text-[11.5px] font-medium text-amber">
+                        <MessageSquare size={12} /> {t('autonomousRunner.reviewedBy', { name: s.reviewedBy ?? '' })} · {s.review.score}/100 · {s.review.approved ? t('autonomousRunner.approved') : t('autonomousRunner.hasIssues')}
+                      </p>
+                      {s.review.issues.length > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {s.review.issues.slice(0, 4).map((it, k) => <li key={k} className="text-[11px] text-muted">• {it}</li>)}
+                        </ul>
+                      )}
+                      {s.revised && <p className="mt-1 text-[11px] font-medium text-teal">{t('autonomousRunner.revisedNote')}</p>}
+                      {s.escalated && <p className="mt-1 text-[11px] font-medium text-amber">{t('autonomousRunner.escalatedNote')}</p>}
+                    </div>
+                  )}
                   {openStep === i && s.status === 'done' && (
                     <div className="border-t border-ice/[0.07] px-3.5 py-3"><Markdown content={s.output || '—'} /></div>
                   )}
@@ -232,17 +307,21 @@ export function AutonomousRunner({
       {result && !running && (
         <div className="mt-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-base font-medium text-text"><Sparkles size={16} className="text-violet" /> Result</h2>
+            <h2 className="flex items-center gap-2 text-base font-medium text-text"><Sparkles size={16} className="text-violet" /> {t('autonomousRunner.resultTitle')}</h2>
             <button onClick={reset} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-text">
-              <RotateCcw size={13} /> New goal
+              <RotateCcw size={13} /> {t('autonomousRunner.newGoal')}
             </button>
           </div>
+          {escalatedCount > 0 && (
+            <div className="rounded-xl border border-amber/30 bg-amber/10 px-4 py-3 text-[13px] text-amber">⚠ {t('autonomousRunner.escalatedBanner', { count: escalatedCount })}</div>
+          )}
           <div className="card rounded-2xl p-6"><Markdown content={result} /></div>
+          <DocExport content={result} title={goal} />
           {postActions && <QualityBar goal={goal} content={result} model={model} lang={lang} onRevised={setResult} />}
           {postActions && <DeliveryBar content={result} />}
           {!presetSpecs?.length && (
             <button onClick={saveTeam} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition disabled:opacity-40">
-              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save this team (reusable)
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} {t('autonomousRunner.saveTeam')}
             </button>
           )}
         </div>
@@ -321,6 +400,9 @@ export function DeliveryBar({ content }: { content: string }) {
   const [img, setImg] = useState<string | null>(null)
   const [imgPrompt, setImgPrompt] = useState('')
   const [imgErr, setImgErr] = useState('')
+  // image realism + engine: default to a photorealistic model (fixes the cartoon/3D look)
+  const [imgStyle, setImgStyle] = useState<'realistic' | 'illustration'>('realistic')
+  const [imgModel, setImgModel] = useState(DEFAULT_IMAGE_MODEL)
   // telegram
   const [tgOpen, setTgOpen] = useState(false)
   const [bots, setBots] = useState<TgBot[]>([])
@@ -333,7 +415,7 @@ export function DeliveryBar({ content }: { content: string }) {
     if (!supabase || imgBusy) return
     setImgBusy(true); setImgErr(''); setImg(null); setImgPrompt('')
     try {
-      const { data } = await supabase.functions.invoke('content-visual', { body: { content } })
+      const { data } = await supabase.functions.invoke('content-visual', { body: { content, style: imgStyle, image_model: imgStyle === 'realistic' ? imgModel : 'google/gemini-2.5-flash-image' } })
       const p = data as { ok?: boolean; image?: string; url?: string; prompt?: string; code?: string; message?: string; error?: string } | null
       if (p?.ok) { setImg(p.image || p.url || null); setImgPrompt(p.prompt || '') }
       else setImgErr(p?.message || p?.error || t('autonomousRunner.visualFailed'))
@@ -365,6 +447,25 @@ export function DeliveryBar({ content }: { content: string }) {
   return (
     <div className="card rounded-2xl border border-violet/15 bg-violet/[0.04] p-4">
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">{t('autonomousRunner.deliveryTitle')}</p>
+      {/* image realism: realistic photo (default) vs illustration, + engine when realistic */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-xl border border-ice/12 p-0.5">
+          {(['realistic', 'illustration'] as const).map((s) => (
+            <button key={s} onClick={() => setImgStyle(s)}
+              className={cn('rounded-[10px] px-3 py-1.5 text-xs font-medium transition', imgStyle === s ? 'bg-violet/20 text-text' : 'text-muted hover:text-text')}>
+              {t(`autonomousRunner.style_${s}`)}
+            </button>
+          ))}
+        </div>
+        {imgStyle === 'realistic' && (
+          <select value={imgModel} onChange={(e) => setImgModel(e.target.value)}
+            className="rounded-xl border border-ice/12 bg-black/20 px-3 py-1.5 text-xs text-text outline-none focus:border-violet/50">
+            {IMAGE_MODEL_CATALOG.filter((m) => m.realistic).map((m) => (
+              <option key={m.id} value={m.id} className="bg-panel">{m.label}</option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="flex flex-wrap gap-2">
         <button onClick={makeVisual} disabled={imgBusy} className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-medium text-white transition disabled:opacity-40">
           {imgBusy ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={15} />} {t('autonomousRunner.aiMakesVisual')}

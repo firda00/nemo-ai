@@ -9,11 +9,16 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
+const NEMO_REPLICATE_KEY = Deno.env.get('REPLICATE_API_KEY') ?? '' // "included"/trial video runs on Nemo's key
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function keyFor(admin: any, accountId: string, provider: string): Promise<string | null> {
   const { data } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', provider).maybeSingle()
-  return data?.api_key ?? null
+  if (data?.api_key) return data.api_key
+  // No own key → the job was created on Nemo's included/trial key; poll it with the same key.
+  // (resolveMediaAccess picks BYO-first at creation, so "has own key" matches "created on own key".)
+  if (provider === 'replicate' && NEMO_REPLICATE_KEY) return NEMO_REPLICATE_KEY
+  return null
 }
 
 async function finalize(admin: any, job: any, url: string) {

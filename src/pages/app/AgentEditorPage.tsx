@@ -20,6 +20,8 @@ import {
   Mic,
   Check,
   FileText,
+  User,
+  Sparkles,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -33,6 +35,7 @@ import { TimezoneField, LanguageField } from '../../components/platform/Timezone
 import { ModelPicker } from '../../components/platform/ModelPicker'
 import { ChannelsManager } from '../../components/platform/ChannelsManager'
 import { KnowledgeManager } from '../../components/platform/KnowledgeManager'
+import { AgentGrowth } from '../../components/platform/AgentGrowth'
 import { ResearchRunner } from '../../components/platform/ResearchRunner'
 import { OrchestratorRunner } from '../../components/platform/OrchestratorRunner'
 import { DepartmentPanel } from '../../components/platform/DepartmentPanel'
@@ -80,6 +83,9 @@ export default function AgentEditorPage() {
       voiceEnabled: a.voiceEnabled ?? false,
       voiceMode: a.voiceMode ?? 'both',
       voiceId: a.voiceId ?? '',
+      personaMode: a.personaMode ?? 'business',
+      ownerName: a.ownerName ?? '',
+      skills: a.skills ?? [],
       leadForm: a.leadForm,
       avatarColor: a.avatarColor,
     })
@@ -138,7 +144,7 @@ export default function AgentEditorPage() {
       {/* header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={goBack} className="rounded-lg border border-ice/10 p-2 text-muted hover:bg-ice/[0.05]">
+          <button onClick={goBack} aria-label={t('platform.editor.back')} className="rounded-lg border border-ice/10 p-2 text-muted hover:bg-ice/[0.05]">
             <ArrowLeft size={18} />
           </button>
           <AgentAvatar color={draft.avatarColor} glyph="search" size="md" />
@@ -263,6 +269,53 @@ export default function AgentEditorPage() {
                   </div>
                 )}
               </div>
+
+              {/* Personal-assistant mode: answer in Telegram AS one individual, not the company */}
+              <div className="border-t border-ice/10 pt-4">
+                <label className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-sm font-normal text-text"><User size={15} className="text-violet" /> {t('agentEdit.personalTitle')}</span>
+                  <button
+                    onClick={() => set({ personaMode: draft.personaMode === 'personal' ? 'business' : 'personal' })}
+                    className={cn('relative h-6 w-11 rounded-full transition-colors', draft.personaMode === 'personal' ? 'bg-teal' : 'bg-ice/15')}
+                    role="switch"
+                    aria-checked={draft.personaMode === 'personal'}
+                  >
+                    <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-ice transition-all', draft.personaMode === 'personal' ? 'left-[22px]' : 'left-0.5')} />
+                  </button>
+                </label>
+                <p className="mt-1 text-[11px] text-muted">{t('agentEdit.personalHint')}</p>
+                {draft.personaMode === 'personal' && (
+                  <div className="mt-3">
+                    <Field label={t('agentEdit.ownerName')}>
+                      <input value={draft.ownerName ?? ''} onChange={(e) => set({ ownerName: e.target.value })} className={inputCls} placeholder={t('agentEdit.ownerNamePh')} />
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              {/* Selectable skills — capability bundles layered on top of the agent type */}
+              <div className="border-t border-ice/10 pt-4">
+                <p className="flex items-center gap-1.5 text-sm font-normal text-text"><Sparkles size={15} className="text-violet" /> {t('agentEdit.skillsTitle')}</p>
+                <p className="mb-3 mt-1 text-[11px] text-muted">{t('agentEdit.skillsHint')}</p>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {(['data-analysis', 'web-research', 'scheduling'] as const).map((sk) => {
+                    const on = (draft.skills ?? []).includes(sk)
+                    return (
+                      <button
+                        key={sk}
+                        onClick={() => set({ skills: on ? (draft.skills ?? []).filter((x) => x !== sk) : [...(draft.skills ?? []), sk] })}
+                        className={cn('rounded-xl border px-3 py-2.5 text-left transition', on ? 'border-violet/60 bg-violet/10' : 'border-ice/10 hover:border-ice/25')}
+                      >
+                        <span className="flex items-center justify-between text-sm font-medium text-text">
+                          {t(`agentEdit.skill_${sk}`)}
+                          {on && <Check size={14} className="text-violet" />}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-muted">{t(`agentEdit.skill_${sk}Desc`)}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </Card>
           )}
 
@@ -285,6 +338,7 @@ export default function AgentEditorPage() {
               <p className="flex items-center gap-2 text-xs text-muted">
                 <HelpCircle size={14} /> {t('platform.onboarding.hint')}
               </p>
+              <AgentGrowth agentId={draft.id} onApplied={(p) => setPrompt(p)} />
             </Card>
           )}
 
@@ -406,32 +460,34 @@ export default function AgentEditorPage() {
             <div className="flex items-center gap-3">
               <AgentAvatar color={draft.avatarColor} glyph="search" size="lg" />
               <div className="min-w-0">
-                <p className="truncate font-semibold text-text">{draft.name || 'AI Employee'}</p>
-                <p className="text-xs text-muted">{draft.type === 'workflow' ? 'AI Team Lead' : 'Specialist Agent'}</p>
+                <p className="truncate font-semibold text-text">{draft.name || t('platform.editor.asideEmployee')}</p>
+                <p className="text-xs text-muted">{draft.type === 'workflow' ? t('platform.editor.asideTeamLead') : t('platform.editor.asideSpecialist')}</p>
               </div>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-2 text-xs">
-              <Status label="Status" value={draft.status} tone="text-teal" />
-              <Status label="Tasks today" value={String(draft.dialoguesToday || 0)} />
-              <Status label="Model" value={MODELS.find((m) => m.id === draft.model)?.label ?? 'Free model'} />
-              <Status label="Last test" value="2 min ago" />
+              <Status label={t('platform.editor.stStatus')} value={draft.status} tone="text-teal" />
+              <Status label={t('platform.editor.stTasks')} value={String(draft.dialoguesToday || 0)} />
+              <Status label={t('platform.editor.stModel')} value={MODELS.find((m) => m.id === draft.model)?.label ?? 'Free model'} />
+              <Status label={t('platform.editor.stLastTest')} value={t('platform.editor.neverTested')} />
             </div>
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-              <p className="text-xs font-semibold text-text">What this agent can do</p>
-              <p className="mt-1 line-clamp-4 text-xs leading-relaxed text-muted">{draft.prompt.tasks || draft.purpose || 'Define tasks in the Prompt tab to make this AI Employee useful.'}</p>
+              <p className="text-xs font-semibold text-text">{t('platform.editor.canDo')}</p>
+              <p className="mt-1 line-clamp-4 text-xs leading-relaxed text-muted">{draft.prompt.tasks || draft.purpose || t('platform.editor.canDoFallback')}</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-1.5">
               {(draft.channels.length ? draft.channels : ['test chat']).map((c) => <span key={c} className="rounded-pill border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-muted">{c}</span>)}
             </div>
             <Button onClick={save} disabled={!dirty} fullWidth className="mt-5">
-              <Save size={15} /> {dirty ? 'Save changes' : 'Saved'}
+              <Save size={15} /> {dirty ? t('platform.editor.saveChanges') : t('platform.editor.saved')}
             </Button>
           </div>
 
-          <div className="card rounded-2xl p-5">
-            <p className="mb-3 text-sm font-semibold text-text">Live preview</p>
-            <TestChat agent={draft} />
-          </div>
+          {tab !== 'test' && (
+            <div className="card rounded-2xl p-5">
+              <p className="mb-3 text-sm font-semibold text-text">{t('platform.editor.livePreview')}</p>
+              <TestChat agent={draft} />
+            </div>
+          )}
         </aside>
       </div>
 

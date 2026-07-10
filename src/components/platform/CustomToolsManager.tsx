@@ -12,6 +12,16 @@ interface Tool {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const inputCls = 'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-muted/60 focus:border-violet/50 focus:shadow-glow'
 
+// One-click starting points for "connect your own platform" (LMS/CRM/site): each prefills the
+// HTTP form; the user swaps the demo URL for their real API and pastes their access key.
+const PLATFORM_PRESETS: { key: string; name: string; method: string; url: string; params: string; body?: string }[] = [
+  { key: 'homework', name: 'check_homework', method: 'GET', url: 'https://YOUR-LMS.example.com/api/students/{{student_id}}/homework', params: 'student_id' },
+  { key: 'attendance', name: 'mark_attendance', method: 'POST', url: 'https://YOUR-LMS.example.com/api/attendance', params: 'student_id, lesson_id, present', body: '{"student_id":"{{student_id}}","lesson_id":"{{lesson_id}}","present":"{{present}}"}' },
+  { key: 'student', name: 'student_status', method: 'GET', url: 'https://YOUR-LMS.example.com/api/students/{{student_id}}', params: 'student_id' },
+  { key: 'grade', name: 'set_grade', method: 'POST', url: 'https://YOUR-LMS.example.com/api/grades', params: 'student_id, lesson_id, grade', body: '{"student_id":"{{student_id}}","lesson_id":"{{lesson_id}}","grade":"{{grade}}"}' },
+  { key: 'crm', name: 'find_contact', method: 'GET', url: 'https://YOUR-CRM.example.com/api/contacts?phone={{phone}}', params: 'phone' },
+]
+
 /**
  * "My tools" — the user teaches an agent a NEW skill without code: a plain HTTP endpoint
  * (URL + auth + parameters) or a whole MCP server. Enabled tools become callable inside
@@ -28,6 +38,11 @@ export function CustomToolsManager() {
   const [f, setF] = useState<Record<string, string>>({ method: 'POST', headerName: 'Authorization' })
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }))
   const resetForm = () => { setF({ method: 'POST', headerName: 'Authorization' }); setProbe(null); setMsg(null) }
+  const applyPreset = (p: typeof PLATFORM_PRESETS[number]) => {
+    setProbe(null); setMsg(null)
+    setF({ method: p.method, headerName: 'Authorization', name: p.name, description: t('customTools.preset_' + p.key), url: p.url, params: p.params, bodyTemplate: p.body ?? '' })
+    setMode('http')
+  }
 
   const refresh = async () => {
     if (!supabase) return
@@ -96,6 +111,21 @@ export function CustomToolsManager() {
           </div>
         )}
       </div>
+
+      {/* one-click presets to connect your own platform (LMS/CRM) */}
+      {mode === 'none' && (
+        <div className="mt-4 rounded-2xl border border-cyan/15 bg-cyan/[0.04] p-3.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan">{t('customTools.presetHeading')}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {PLATFORM_PRESETS.map((p) => (
+              <button key={p.key} onClick={() => applyPreset(p)} className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-[12px] text-muted transition hover:border-violet/40 hover:text-text">
+                {t('customTools.preset_' + p.key)}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-fog">{t('customTools.presetHint')}</p>
+        </div>
+      )}
 
       {/* existing tools */}
       {loading ? (

@@ -175,7 +175,12 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
                     {d.content ? `${d.content.replace(/\s+/g, ' ').trim().slice(0, 64)}${d.content.length > 64 ? '…' : ''}` : t('platform.knowledge.src.' + d.source)}
                   </p>
                 </div>
-                <span className="shrink-0 rounded-full bg-teal/15 px-2 py-0.5 text-[10px] font-normal text-teal">{t('platform.knowledge.indexed')}</span>
+                {(() => {
+                  const st = d.status === 'indexed' || d.status === 'error' ? d.status : 'indexing'
+                  const tone = st === 'indexed' ? 'bg-teal/15 text-teal' : st === 'error' ? 'bg-danger/15 text-danger' : 'bg-amber/15 text-amber'
+                  const label = st === 'error' ? t('common.error') : t('platform.knowledge.' + st)
+                  return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-normal ${tone}`}>{label}</span>
+                })()}
                 <button onClick={() => removeDoc(d.id)} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06] hover:text-danger">
                   <Trash2 size={15} />
                 </button>

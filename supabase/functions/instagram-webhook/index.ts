@@ -2,23 +2,29 @@
 // URL form: https://<ref>.supabase.co/functions/v1/instagram-webhook/<channel_id>
 // GET -> Meta verification, POST -> inbound DMs.
 // channel.credentials = { page_token, ig_id }; channel.secret_token = verify token.
+//
+// POST path: verify Meta's signature + ack 200 fast, then EITHER enqueue the body to the durable
+// pgmq queue (IG_QUEUE=1 → the shared lease-serialized, rate-capped worker does the LLM work) OR
+// process inline (legacy waitUntil). The flag makes this a reversible canary; dedup by message id
+// keeps the fast ack safe against Meta redelivery.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { buildReply } from '../_shared/agent.ts'
-import { igSend, verifyMetaSignature } from '../_shared/meta.ts'
+import { processInstagramBody } from '../_shared/igProcess.ts'
+import { verifyMetaSignature } from '../_shared/meta.ts'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
+const CRON_SECRET = Deno.env.get('WATCH_CRON_SECRET') ?? Deno.env.get('CRON_SECRET') ?? ''
 const META_APP_SECRET = Deno.env.get('META_APP_SECRET') ?? ''
-const MAX_MSG = 4000
+const IG_QUEUE = Deno.env.get('IG_QUEUE') === '1'
+const WORKER_URL = `${SUPABASE_URL}/functions/v1/agent-worker`
 
 Deno.serve(async (req) => {
   const url = new URL(req.url)
   const channelId = url.pathname.split('/').filter(Boolean).pop()
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
 
-  const { data: channel } = await db.from('channels').select('*, agents(*)').eq('id', channelId).single()
+  const { data: channel } = await db.from('channels').select('id, secret_token').eq('id', channelId).single()
   if (!channel) return new Response('channel not found', { status: 404 })
 
   if (req.method === 'GET') {
@@ -38,45 +44,20 @@ Deno.serve(async (req) => {
       return new Response('invalid signature', { status: 401 })
     }
     const body = JSON.parse(raw)
-    const agent = channel.agents
-    const creds = channel.credentials ?? {}
 
-    for (const entry of body?.entry ?? []) {
-      for (const ev of entry.messaging ?? []) {
-        const text = ev.message?.text?.slice(0, MAX_MSG)
-        const senderId = ev.sender?.id
-        if (!text || !senderId || ev.message?.is_echo) continue
-
-        let { data: dialogue } = await db
-          .from('dialogues')
-          .select('*')
-          .eq('channel_id', channelId)
-          .eq('external_id', senderId)
-          .maybeSingle()
-        if (!dialogue) {
-          const ins = await db
-            .from('dialogues')
-            .insert({ agent_id: agent.id, channel_id: channelId, channel: 'instagram', external_id: senderId, customer_name: 'Instagram', customer_contact: senderId, status: 'open' })
-            .select('*')
-            .single()
-          dialogue = ins.data
-        }
-
-        await db.from('messages').insert({ dialogue_id: dialogue.id, author: 'customer', content: text })
-        if (dialogue.operator_takeover || agent.status === 'paused') continue
-        if (!OPENROUTER_API_KEY) {
-          await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogue.id)
-          continue
-        }
-
-        const reply = await buildReply(db, OPENROUTER_API_KEY, agent, dialogue.id)
-        if (reply && creds.page_token) {
-          await igSend(creds.page_token, senderId, reply)
-        } else if (!reply) {
-          await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogue.id)
-        }
-      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rt = (globalThis as any).EdgeRuntime
+    if (IG_QUEUE) {
+      // DURABLE QUEUE: persist the whole webhook body as one job, nudge the shared worker, ack now.
+      await db.rpc('q_send', { payload: { kind: 'instagram', channel_id: channelId, body } })
+      const nudge = fetch(WORKER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET }, body: JSON.stringify({ action: 'drain' }) }).then(() => {}).catch(() => {})
+      if (rt?.waitUntil) rt.waitUntil(nudge)
+      return new Response('ok')
     }
+
+    // Legacy: ack-then-process inline in the background.
+    const run = processInstagramBody(db, channelId!, body).catch((e: unknown) => console.error('instagram bg error:', e))
+    if (rt?.waitUntil) rt.waitUntil(run); else await run
     return new Response('ok')
   } catch (e) {
     console.error('instagram webhook error:', e)

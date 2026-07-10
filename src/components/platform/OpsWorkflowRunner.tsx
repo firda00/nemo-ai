@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Check, RotateCcw, AlertTriangle, ClipboardList, BellRing } from 'lucide-react'
+import { ArrowUp, Loader2, Check, RotateCcw, AlertTriangle, ClipboardList, BellRing, Mic } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Markdown } from '../ui/Markdown'
 import { cn } from '../../lib/cn'
@@ -52,6 +52,8 @@ const statusCls = (s?: string) =>
       : s === 'in_progress' ? 'bg-cyan/15 text-cyan'
         : 'bg-white/[0.06] text-muted'
 
+const fileToB64 = (file: File): Promise<string> => new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result)); rd.onerror = rej; rd.readAsDataURL(file) })
+
 export function OpsWorkflowRunner({
   kind,
   departmentId,
@@ -71,7 +73,28 @@ export function OpsWorkflowRunner({
   const [active, setActive] = useState(-1) // cosmetic stepper index
   const [result, setResult] = useState<OpsResult | null>(null)
   const [error, setError] = useState('')
+  const [transcribing, setTranscribing] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+
+  // Upload an audio recording -> storage -> transcribe-file -> drop the transcript into the input.
+  const onAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (e.target) e.target.value = ''
+    if (!file || !supabase) return
+    setError(''); setTranscribing(true)
+    try {
+      const path = `audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
+      const up = await supabase.storage.from('media').upload(path, file, { contentType: file.type || 'audio/mpeg' })
+      let audioUrl = ''
+      if (!up.error) audioUrl = supabase.storage.from('media').getPublicUrl(path).data.publicUrl
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const body: any = audioUrl ? { audio_url: audioUrl, format: file.type } : { audio_b64: await fileToB64(file), format: file.type }
+      const { data } = await supabase.functions.invoke('transcribe-file', { body })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = data as any
+      if (p?.ok && p.transcript) setInput(p.transcript)
+      else setError(p?.message || p?.error || 'Не удалось расшифровать аудио.')
+    } catch { setError('Ошибка загрузки/расшифровки аудио.') } finally { setTranscribing(false) }
+  }
   const labels = STEP_LABELS[kind]
 
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
@@ -132,7 +155,14 @@ export function OpsWorkflowRunner({
           placeholder={kind === 'payment_control' ? 'Student payment rows…' : kind === 'retention_scan' ? t('opsWorkflowRunner.retentionInputPh') : 'Meeting transcript…'}
           className="w-full resize-y bg-transparent px-2 py-2 text-sm text-text outline-none placeholder:text-muted/70"
         />
-        <div className="flex justify-end px-1 pb-1">
+        <div className="flex items-center justify-end gap-2 px-1 pb-1">
+          {kind === 'meeting_to_tasks' && (
+            <label className="mr-auto inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted transition hover:text-text">
+              {transcribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+              {transcribing ? 'Расшифровка…' : 'Загрузить аудио'}
+              <input type="file" accept="audio/*" className="hidden" onChange={onAudio} disabled={transcribing || running} />
+            </label>
+          )}
           <button onClick={run} disabled={running || input.trim().length < 4} className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-medium text-white transition disabled:opacity-40">
             {running ? <Loader2 size={15} className="animate-spin" /> : <ArrowUp size={15} />}
             {kind === 'retention_scan' ? t('opsWorkflowRunner.runRetentionScan') : RUN_LABEL[kind]}

@@ -75,6 +75,11 @@ export interface PlatformAgent {
   voiceEnabled?: boolean
   voiceMode?: 'tts' | 'stt' | 'both'
   voiceId?: string
+  // personal-assistant mode: the agent answers in Telegram AS one individual (not the company)
+  personaMode?: 'business' | 'personal'
+  ownerName?: string
+  // selectable capability bundles (e.g. 'data-analysis') — layered on top of type gating
+  skills?: string[]
   status: AgentStatus
   channels: ChannelType[]
   knowledge: KnowledgeDoc[]
@@ -146,6 +151,7 @@ export interface ModelDef {
   id: string // OpenRouter model id, e.g. openai/gpt-4o-mini
   label: string
   tokenRate: number
+  premium?: boolean // gated to Pro+ plans (server enforces via gateModel); shown with a 💎 badge
 }
 
 export interface ModelProvider {

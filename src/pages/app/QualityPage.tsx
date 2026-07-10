@@ -1,6 +1,8 @@
 import { AlertTriangle, CheckCircle2, Gauge, ShieldCheck } from 'lucide-react'
 import { useI18n } from '../../i18n'
 
+// NOTE: illustrative SAMPLE data — there is no live quality-scoring pipeline behind these yet.
+// The page is clearly labelled as a sample so these numbers are never mistaken for real metrics.
 const checks = [
   ['Factual accuracy', '96%', 'Pass', 'Answer grounded in Company Brain sources.'],
   ['Tone match', '92%', 'Pass', 'Reply follows brand voice and support style.'],
@@ -17,6 +19,10 @@ export default function QualityPage() {
         <p className="mono-label">{t('qualityPage.eyebrow')}</p>
         <h1 className="mt-2 text-3xl font-extrabold text-text">{t('qualityPage.title')}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{t('qualityPage.subtitle')}</p>
+      </div>
+
+      <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber/25 bg-amber/10 px-4 py-2.5 text-[12.5px] leading-relaxed text-amber">
+        <AlertTriangle size={15} className="mt-0.5 shrink-0" /><span>{t('qualityPage.sampleNotice')}</span>
       </div>
 
       <div className="mt-8 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">

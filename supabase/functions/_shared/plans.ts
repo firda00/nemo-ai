@@ -8,21 +8,30 @@ export interface PlanLimit {
   tokens: number       // monthly AI token quota (≈ tokens/4750 team runs)
   teams: number        // max saved teams
   premium: boolean     // access to the premium model (gpt-4o) for manager/steps
-  media: boolean       // media generation allowed
-  mediaMonthly: number // fair-use: max in-platform media generations / month (images etc.)
+  media: boolean       // media generation feature available at all (false = must upgrade)
+  mediaIncluded: boolean // true = generation is INCLUDED on Nemo's keys (no API to connect, "Pro/Max").
+                         // false = BYO tier ("Standard/Plus"): connect your own key, or use the small
+                         // weekly trial below on Nemo's key.
+  mediaTrialWeekly: number // BYO tiers only: free generations / week on Nemo's key before a key is required
+  video: boolean       // VIDEO generation offered on this tier (budgeted feature — Plus/Pro/Max only)
+  mediaMonthly: number // fair-use: max INCLUDED media generations / month (images+video+voice)
   browserMonthly: number // fair-use: max browser-agent tasks / month (included in subscription)
   videoMonthly: number // fair-use: max rendered videos / month (heavier than images — lower cap)
+  competitors: number  // max competitors analyzed in ONE competitor-factory run
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimit> = {
-  free:       { label: 'Free',       price: 0,    tokens: 150_000,     teams: 1,    premium: false, media: false, mediaMonthly: 0,     browserMonthly: 0,     videoMonthly: 0 },
-  starter:    { label: 'Starter',    price: 199,  tokens: 3_000_000,   teams: 5,    premium: false, media: true,  mediaMonthly: 150,   browserMonthly: 50,    videoMonthly: 20 },
-  pro:        { label: 'Pro',        price: 299,  tokens: 10_000_000,  teams: 20,   premium: true,  media: true,  mediaMonthly: 600,   browserMonthly: 200,   videoMonthly: 80 },
-  business:   { label: 'Business',   price: 999,  tokens: 35_000_000,  teams: 60,   premium: true,  media: true,  mediaMonthly: 2500,  browserMonthly: 800,   videoMonthly: 300 },
-  agency:     { label: 'Agency',     price: 1990, tokens: 90_000_000,  teams: 200,  premium: true,  media: true,  mediaMonthly: 8000,  browserMonthly: 3000,  videoMonthly: 1000 },
-  enterprise: { label: 'Enterprise', price: 2990, tokens: 250_000_000, teams: 9999, premium: true,  media: true,  mediaMonthly: 40000, browserMonthly: 15000, videoMonthly: 5000 },
-  // existing beta accounts keep generous access
-  beta:       { label: 'Beta',       price: 0,    tokens: 5_000_000,   teams: 10,   premium: false, media: true,  mediaMonthly: 300,   browserMonthly: 100,   videoMonthly: 40 },
+  // US self-serve ladder (2026). Prices flow to Stripe via inline price_data — no Price IDs to sync.
+  // "Standard/Plus" = BYO tiers (mediaIncluded:false) → connect your own key, or a small weekly
+  // trial on Nemo's key. "Pro/Max" = included (mediaIncluded:true) → no API to connect.
+  free:       { label: 'Free',       price: 0,    tokens: 500_000,     teams: 1,    premium: false, media: false, mediaIncluded: false, mediaTrialWeekly: 0,  video: false, mediaMonthly: 5,     browserMonthly: 0,     videoMonthly: 0,    competitors: 1 },
+  starter:    { label: 'Starter',    price: 59,   tokens: 6_000_000,   teams: 3,    premium: false, media: true,  mediaIncluded: false, mediaTrialWeekly: 5,  video: false, mediaMonthly: 150,   browserMonthly: 50,    videoMonthly: 20,   competitors: 3 },
+  pro:        { label: 'Pro',        price: 249,  tokens: 30_000_000,  teams: 10,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  mediaMonthly: 800,   browserMonthly: 250,   videoMonthly: 100,  competitors: 5 },
+  business:   { label: 'Business',   price: 699,  tokens: 90_000_000,  teams: 30,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  mediaMonthly: 3000,  browserMonthly: 1000,  videoMonthly: 400,  competitors: 8 },
+  agency:     { label: 'Agency',     price: 1990, tokens: 90_000_000,  teams: 200,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  mediaMonthly: 8000,  browserMonthly: 3000,  videoMonthly: 1000, competitors: 12 },
+  enterprise: { label: 'Enterprise', price: 1490, tokens: 300_000_000, teams: 9999, premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  mediaMonthly: 40000, browserMonthly: 15000, videoMonthly: 5000, competitors: 20 },
+  // existing beta accounts keep generous included access
+  beta:       { label: 'Beta',       price: 0,    tokens: 5_000_000,   teams: 10,   premium: false, media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  mediaMonthly: 300,   browserMonthly: 100,   videoMonthly: 40,   competitors: 5 },
 }
 
 export function planOf(p?: string | null): PlanLimit {
@@ -43,6 +52,17 @@ export async function monthlyTokens(admin: any, accountId: string): Promise<numb
 export async function monthlyMedia(admin: any, accountId: string): Promise<number> {
   const start = new Date()
   start.setUTCDate(1); start.setUTCHours(0, 0, 0, 0)
+  const { count } = await admin.from('media_assets').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', start.toISOString())
+  return Number(count) || 0
+}
+
+// this-week in-platform media generations for an account (images+video+voice saved to
+// media_assets). Resets Monday 00:00 UTC. Used for the BYO tiers' small weekly free trial.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function weeklyMedia(admin: any, accountId: string): Promise<number> {
+  const start = new Date()
+  const dow = (start.getUTCDay() + 6) % 7 // 0 = Monday
+  start.setUTCDate(start.getUTCDate() - dow); start.setUTCHours(0, 0, 0, 0)
   const { count } = await admin.from('media_assets').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', start.toISOString())
   return Number(count) || 0
 }

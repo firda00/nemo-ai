@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Navigate } from 'react-router-dom'
 import { Activity, Users, Wrench, CheckCircle2, XCircle, Clock, ChevronDown, Bot, Plug, MessageSquare } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
+import { useAgentStore } from '../../store/useAgentStore'
 
 function Tile({ icon: Icon, n, l, tone }: { icon: typeof Users; n: number | string; l: string; tone: string }) {
   return (
@@ -27,6 +29,8 @@ const runStatus = (s: string) => (s === 'done' ? { c: 'text-teal bg-teal/10', k:
 
 export default function ObservabilityPage() {
   const { t } = useI18n()
+  const isAdmin = useAgentStore((s) => s.isAdmin)
+  const profileResolved = useAgentStore((s) => s.profileResolved)
   const [runs, setRuns] = useState<Run[]>([])
   const [tools, setTools] = useState<ToolRun[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
@@ -72,12 +76,15 @@ export default function ObservabilityPage() {
   const toolOk = tools.filter((t) => t.ok).length
   const connCount = providers.length + channels.filter((c) => c.status === 'connected').length
 
+  // Monitoring is admin-only. Once the profile is resolved, non-admins are redirected home.
+  if (live && profileResolved && !isAdmin) return <Navigate to="/app" replace />
+
   return (
     <div className="container-page max-w-5xl py-8">
       <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Activity size={20} /></span>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text">{t('observabilityPage.title')}</h1>
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet/15 text-violet"><Activity size={20} /></span>
+        <div className="min-w-0">
+          <h1 className="truncate text-2xl font-semibold tracking-tight text-text">{t('observabilityPage.title')}</h1>
           <p className="text-sm text-muted">{t('observabilityPage.subtitle')}</p>
         </div>
       </div>

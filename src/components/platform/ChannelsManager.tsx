@@ -159,25 +159,27 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
           const on = connected.includes(c)
           return (
             <div key={c} className={cn('flex items-center gap-3 rounded-xl border p-3.5 transition', on ? 'border-teal/30 bg-teal/[0.04]' : 'border-ice/10')}>
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: `${meta.color}22`, color: meta.color }}>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: `${meta.color}22`, color: meta.color }}>
                 <meta.Icon size={17} />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-normal text-text">{channelLabel(c, t)}</p>
-                <p className={cn('text-[11px]', on ? 'text-teal' : 'text-muted')}>
-                  {meta.soon ? t('platform.integrations.soon') : on ? t('platform.channels.connected') : t('platform.channels.connect')}
-                </p>
+                <p className="truncate text-sm font-normal text-text">{channelLabel(c, t)}</p>
+                {(on || meta.soon) && (
+                  <p className={cn('truncate text-[11px]', on ? 'text-teal' : 'text-amber')}>
+                    {on ? t('platform.channels.connected') : t('platform.integrations.soon')}
+                  </p>
+                )}
               </div>
               {meta.soon ? (
-                <span className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted">{t('platform.integrations.soon')}</span>
+                <span className="shrink-0 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted">{t('platform.integrations.soon')}</span>
               ) : on ? (
-                <button onClick={() => disconnect(c)} className="rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-danger">
-                  <Unplug size={13} className="mr-1 inline" />
-                  {t('platform.integrations.disconnect')}
+                <button onClick={() => disconnect(c)} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-danger">
+                  <Unplug size={13} />
+                  <span className="hidden sm:inline">{t('platform.integrations.disconnect')}</span>
                 </button>
               ) : (
-                <button onClick={() => open(c)} className="rounded-lg bg-brand px-2.5 py-1.5 text-xs font-medium text-white">
-                  <Plug size={13} className="mr-1 inline" />
+                <button onClick={() => open(c)} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-2.5 py-1.5 text-xs font-medium text-white">
+                  <Plug size={13} />
                   {t('platform.integrations.connect')}
                 </button>
               )}

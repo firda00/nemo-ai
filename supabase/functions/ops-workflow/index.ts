@@ -11,6 +11,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { cleanTitle } from '../_shared/planerkaSheet.ts'
+import { readPlanerkaRoster, matchRoster } from '../_shared/planerkaRoster.ts'
+import { tgSend } from '../_shared/telegram.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -173,19 +176,22 @@ Deno.serve(async (req) => {
       const anRaw = await runStep(
         find('Meeting Analyst'),
         'Meeting Analyst Agent',
-        'You are a meeting analyst. Extract decisions and concrete action items from a transcript.',
-        `Meeting transcript:\n${input}\n\nExtract key decisions and action items with owner, deadline (YYYY-MM-DD if a date is present, else null) and priority. Respond ONLY as JSON: {"decisions":[string],"tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high"}]}.`,
+        'You ANALYZE a meeting — you do not just transcribe it. Distil decisions, risks and priorities, and pull out only real, concrete action items (skip small talk).',
+        `Meeting transcript:\n${input}\n\nANALYZE it (do not dump everything). Return ONLY JSON: {"decisions":[string], "risks":[string], "priorities":[string], "tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high"}]}. ` +
+        `"decisions" = the key decisions actually made. "risks" = blockers/risks raised. "priorities" = what matters most next. "tasks" = ONLY real action items with a clear owner (skip vague chatter). deadline = YYYY-MM-DD if a date was said, else null. Keep everything short and on the language of the transcript.`,
         0.3,
       )
       const analyst = extractJson(anRaw) ?? {}
       const decisions = Array.isArray(analyst.decisions) ? (analyst.decisions as string[]).map(String) : []
+      const risks = Array.isArray(analyst.risks) ? (analyst.risks as string[]).map(String) : []
+      const priorities = Array.isArray(analyst.priorities) ? (analyst.priorities as string[]).map(String) : []
       const rawTasks = Array.isArray(analyst.tasks) ? (analyst.tasks as any[]) : []
 
       const tmRaw = await runStep(
         find('Task Manager'),
         'Task Manager Agent',
         'You are a task manager. Turn action items into a clean, trackable task table.',
-        `Today is ${today}. Raw tasks JSON:\n${JSON.stringify(rawTasks)}\n\nNormalize into a clean task table. Set status: "todo" | "in_progress" | "done" | "overdue" ("overdue" if the deadline is before today). Keep owner, deadline and priority. Respond ONLY as JSON: {"tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high","status":string}]}.`,
+        `Today is ${today}. Raw tasks JSON:\n${JSON.stringify(rawTasks)}\n\nNormalize into a clean task table. Each "title" MUST be a SHORT imperative action phrase (max ~7 words) — NO trailing numbers/enumeration like "1, 2.", NO colon followed by a long explanation. Put any extra context/steps in "details". Set status: "todo" | "in_progress" | "done" | "overdue" ("overdue" if the deadline is before today). Keep owner, deadline and priority. Respond ONLY as JSON: {"tasks":[{"title":string,"details":string|null,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high","status":string}]}.`,
         0.3,
       )
       const normalized = (extractJson(tmRaw)?.tasks as any[]) ?? rawTasks
@@ -194,7 +200,7 @@ Deno.serve(async (req) => {
         find('Report'),
         'Report Agent',
         'You are a manager-report specialist. Write a concise weekly operations report in Markdown.',
-        `Write a short weekly operations report in Markdown.\nDecisions:\n${JSON.stringify(decisions)}\nTasks:\n${JSON.stringify(normalized)}\n\nInclude: decisions, a task summary grouped by owner, overdue/at-risk items, and next-week priorities.`,
+        `Write a short weekly operations report in Markdown.\nDecisions:\n${JSON.stringify(decisions)}\nRisks:\n${JSON.stringify(risks)}\nPriorities:\n${JSON.stringify(priorities)}\nTasks:\n${JSON.stringify(normalized)}\n\nInclude: key decisions, risks/blockers, a task summary grouped by owner, overdue/at-risk items, and next-week priorities.`,
         0.4,
       )
 
@@ -205,23 +211,96 @@ Deno.serve(async (req) => {
         .single()
       const runId = run?.id ?? null
 
+      // Attach the account's Telegram planerka group (if set up) so these meeting tasks are
+      // ALSO remindable — the reminder cron needs a channel + chat to ping.
+      let grpChannel: string | null = null, grpChat: string | null = null
+      try {
+        const { data: gch } = await userDb.from('channels').select('id').eq('type', 'telegram').eq('scope', 'group').order('created_at', { ascending: false }).limit(1).maybeSingle()
+        if (gch?.id) {
+          grpChannel = gch.id
+          const { data: tm } = await userDb.from('telegram_members').select('chat_id').eq('channel_id', gch.id).not('chat_id', 'is', null).limit(1).maybeSingle()
+          grpChat = tm?.chat_id ?? null
+          if (!grpChat) { const { data: pt } = await userDb.from('tasks').select('telegram_chat_id').eq('channel_id', gch.id).not('telegram_chat_id', 'is', null).limit(1).maybeSingle(); grpChat = pt?.telegram_chat_id ?? null }
+        }
+      } catch { /* best effort — no group means these just won't remind via Telegram */ }
+
       const taskRows = (normalized as any[])
         .filter((t) => t && t.title)
         .slice(0, 40)
-        .map((t) => ({
-          department_id: departmentId,
-          run_id: runId,
-          title: String(t.title).slice(0, 300),
-          owner: t.owner ? String(t.owner).slice(0, 120) : null,
-          deadline: validDate(t.deadline),
-          priority: oneOf(t.priority, ['low', 'medium', 'high'], 'medium'),
-          status: oneOf(t.status, ['todo', 'in_progress', 'done', 'overdue'], 'todo'),
-          source: 'meeting',
-        }))
+        .map((t) => {
+          const dl = validDate(t.deadline)
+          return {
+            department_id: departmentId,
+            run_id: runId,
+            title: cleanTitle(t.title) || String(t.title).slice(0, 120),
+            owner: t.owner ? String(t.owner).slice(0, 120) : null,
+            deadline: dl,
+            due_at: dl ? new Date(`${dl}T09:00:00.000Z`).toISOString() : null,
+            channel_id: grpChannel,
+            telegram_chat_id: grpChat,
+            priority: oneOf(t.priority, ['low', 'medium', 'high'], 'medium'),
+            status: oneOf(t.status, ['todo', 'in_progress', 'done', 'overdue'], 'todo'),
+            source: 'meeting',
+          }
+        })
       let task_ids: string[] = []
       if (taskRows.length) {
         const { data: tr } = await userDb.from('tasks').insert(taskRows).select('id')
         task_ids = (tr ?? []).map((x: any) => x.id)
+      }
+
+      // Dispatch: DM each person THEIR tasks privately; fall back to a group @mention for anyone the
+      // bot can't DM yet (they haven't pressed /start). Also post the analysis summary to the group.
+      let dm_sent = 0
+      if (grpChannel && taskRows.length) {
+        try {
+          const { data: ch } = await userDb.from('channels').select('credentials').eq('id', grpChannel).maybeSingle()
+          const botToken = ch?.credentials?.bot_token
+          if (botToken) {
+            const { data: mems } = await userDb.from('telegram_members').select('tg_user_id, username, display_name').eq('channel_id', grpChannel)
+            // the company's OWN connected roster sheet (name/username -> its chat_id) takes priority
+            const roster = await readPlanerkaRoster(admin, accountId)
+            const resolve = (owner: string): { uid?: string; uname?: string } => {
+              const o = String(owner ?? '').toLowerCase().replace(/^@/, '').trim()
+              if (!o) return {}
+              // 1) match against the connected sheet; use its chat_id for the DM when present
+              const rm = matchRoster(roster, owner)
+              if (rm?.chatId) return { uid: rm.chatId, uname: rm.username || undefined }
+              // 2) fall back to members the bot has already seen in the group (pressed /start)
+              for (const m of (mems ?? []) as any[]) {
+                const un = String(m.username ?? '').toLowerCase(), dn = String(m.display_name ?? '').toLowerCase()
+                if ((un && (o === un || o.includes(un) || un.includes(o))) || (dn && (o === dn || dn.includes(o) || o.includes(dn)))) return { uid: m.tg_user_id ? String(m.tg_user_id) : undefined, uname: m.username ?? (rm?.username || undefined) }
+              }
+              // 3) roster match without a chat_id yet — keep the username so the group @mention still tags them
+              if (rm) return { uname: rm.username || undefined }
+              return {}
+            }
+            const byOwner = new Map<string, { lines: string[]; uid?: string; uname?: string }>()
+            for (const t of taskRows) {
+              const owner = t.owner || '—'
+              if (!byOwner.has(owner)) { const r = resolve(owner); byOwner.set(owner, { lines: [], uid: r.uid, uname: r.uname }) }
+              byOwner.get(owner)!.lines.push(t.title + (t.deadline ? ` (до ${t.deadline})` : ''))
+            }
+            const undelivered: string[] = []
+            for (const [owner, g] of byOwner) {
+              const list = g.lines.map((x, i) => `${i + 1}. ${x}`).join('\n')
+              let sent = false
+              if (g.uid) { try { sent = await tgSend(botToken, g.uid, `📋 Ваши задачи с планёрки:\n${list}\n\nОтметьте готовые: напишите боту «готово».`) } catch { sent = false } }
+              if (sent) dm_sent++; else undelivered.push(`${g.uname ? '@' + g.uname : owner}:\n${list}`)
+            }
+            if (grpChat) {
+              const head = ['🧠 Разбор планёрки:',
+                decisions.length ? 'Решения:\n' + decisions.slice(0, 6).map((d) => `• ${d}`).join('\n') : '',
+                risks.length ? 'Риски:\n' + risks.slice(0, 5).map((d) => `• ${d}`).join('\n') : '',
+                priorities.length ? 'Приоритеты:\n' + priorities.slice(0, 5).map((d) => `• ${d}`).join('\n') : '',
+              ].filter(Boolean).join('\n\n')
+              const foot = undelivered.length
+                ? '\n\n⚠️ Не удалось отправить в личку (пусть напишут боту /start):\n' + undelivered.join('\n\n')
+                : (dm_sent ? '\n\n✅ Задачи разосланы каждому в личные сообщения.' : '')
+              await tgSend(botToken, grpChat, head + foot)
+            }
+          }
+        } catch { /* dispatch is best-effort */ }
       }
 
       await charge()

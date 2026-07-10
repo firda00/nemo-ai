@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Languages, Loader2, Sparkles, Copy, Check, Image as ImageIcon, Download, Globe2, Mic } from 'lucide-react'
+import { Languages, Loader2, Sparkles, Copy, Check, Image as ImageIcon, Download, Globe2, Mic, Link2 } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -45,6 +45,8 @@ interface Cell {
 export function MultiLangPanel({ model }: { model?: string }) {
   const { t } = useI18n()
   const [source, setSource] = useState('')
+  const [link, setLink] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
   const [goal, setGoal] = useState('')
   const [langs, setLangs] = useState<Set<string>>(new Set(['ru', 'en', 'uz']))
   const [plats, setPlats] = useState<Set<string>>(new Set(['telegram', 'instagram']))
@@ -69,6 +71,15 @@ export function MultiLangPanel({ model }: { model?: string }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (err || !(data as any)?.ok) return { ok: false, error: err?.message ?? (data as any)?.message ?? (data as any)?.error ?? t('multiLangPanel.errGeneric') }
     return data
+  }
+
+  const pullLink = async () => {
+    if (!link.trim() || linkBusy) return
+    setLinkBusy(true); setError('')
+    const r = await invoke('watch-sources', { action: 'resolve', url: link.trim() })
+    setLinkBusy(false)
+    if (r?.ok && r.source) { setSource(r.source); setLink('') }
+    else setError(r?.error ?? t('multiLangPanel.errLink'))
   }
 
   const run = async () => {
@@ -129,6 +140,18 @@ export function MultiLangPanel({ model }: { model?: string }) {
       </div>
 
       <div className="card mt-4 rounded-2xl p-5">
+        <label className="mb-3 block">
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{t('multiLangPanel.linkLabel')}</span>
+          <div className="flex gap-2">
+            <div className="flex flex-1 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 focus-within:border-violet/50">
+              <Link2 size={15} className="shrink-0 text-fog" />
+              <input value={link} onChange={(e) => setLink(e.target.value)} disabled={linkBusy || running} placeholder={t('multiLangPanel.linkPh')} className="w-full bg-transparent py-2 text-sm text-text outline-none placeholder:text-fog" />
+            </div>
+            <button onClick={pullLink} disabled={linkBusy || running || !link.trim()} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-sm text-muted transition hover:text-text disabled:opacity-40">
+              {linkBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="text-violet" />} {t('multiLangPanel.linkBtn')}
+            </button>
+          </div>
+        </label>
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{t('multiLangPanel.sourceLabel')}</span>
           <textarea value={source} onChange={(e) => setSource(e.target.value)} disabled={running} rows={4} placeholder={t('multiLangPanel.sourcePlaceholder')} className="glass w-full resize-none rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />

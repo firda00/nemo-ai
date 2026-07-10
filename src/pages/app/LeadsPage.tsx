@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ClipboardList, User } from 'lucide-react'
+import { ClipboardList, User, Download } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
@@ -44,6 +44,22 @@ export default function LeadsPage() {
     return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   }
 
+  // Export captured leads to a CSV (all dynamic fields + status + date). BOM so Excel reads Cyrillic.
+  const exportCsv = () => {
+    if (!leads.length) return
+    const fieldKeys = Array.from(new Set(leads.flatMap((l) => Object.keys(l.fields ?? {}))))
+    const headers = [...fieldKeys, 'status', 'created_at']
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const rows = leads.map((l) => [...fieldKeys.map((k) => l.fields?.[k] ?? ''), l.status ?? '', l.created_at ?? ''].map(esc).join(','))
+    const csv = '﻿' + [headers.map(esc).join(','), ...rows].join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `nemo-leads-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="container-page max-w-5xl py-8">
       <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.leadForms')}</h1>
@@ -81,6 +97,11 @@ export default function LeadsPage() {
         <div className="flex items-center gap-2 border-b border-ice/[0.07] px-5 py-3.5">
           <ClipboardList size={16} className="text-violet" />
           <h2 className="font-normal text-text">{t('platform.leads.capturedTitle')}</h2>
+          {leads.length > 0 && (
+            <button onClick={exportCsv} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-[12px] font-medium text-muted transition hover:text-text">
+              <Download size={13} /> {t('platform.leads.exportCsv')}
+            </button>
+          )}
         </div>
         {loading ? (
           <p className="px-5 py-10 text-center text-sm text-muted">{t('common.loading')}</p>

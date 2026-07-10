@@ -1,0 +1,47 @@
+{
+  "suites": [
+    {
+      "name": "entity",
+      "pct": 100,
+      "pass": 11,
+      "total": 11
+    },
+    {
+      "name": "guardrails",
+      "pct": 82,
+      "pass": 9,
+      "total": 11
+    },
+    {
+      "name": "tools",
+      "pct": 100,
+      "pass": 7,
+      "total": 7
+    },
+    {
+      "name": "routing",
+      "pct": 100,
+      "pass": 18,
+      "total": 18
+    },
+    {
+      "name": "routing_ecom",
+      "pct": 100,
+      "pass": 10,
+      "total": 10
+    },
+    {
+      "name": "routing_clinic",
+      "pct": 100,
+      "pass": 10,
+      "total": 10
+    },
+    {
+      "name": "injection",
+      "pct": 89,
+      "pass": 8,
+      "total": 9
+    }
+  ],
+  "overall": 96
+}

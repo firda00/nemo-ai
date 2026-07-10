@@ -3,6 +3,7 @@
 //   POST /functions/v1/generate-avatar  (Bearer jwt)  { text, avatar_id?, voice_id? } -> { ok, job_id, status }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { planOf } from '../_shared/plans.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -18,11 +19,14 @@ Deno.serve(async (req) => {
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
   const { data: { user } } = await userDb.auth.getUser()
   if (!user) return json({ error: 'unauthorized' }, 401)
-  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
+  const { data: prof } = await userDb.from('users').select('account_id, is_admin').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const { data: acc } = await admin.from('accounts').select('plan').eq('id', accountId).single()
+  // avatar video is a budgeted feature — only Plus / Pro / Max tiers (admins exempt)
+  if (!planOf(acc?.plan).video && !prof?.is_admin) return json({ ok: false, code: 'PLAN', message: 'Видео с аватаром доступно на тарифах Плюс, Про и Макс.' }, 200)
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'heygen').maybeSingle()
   const key = keyRow?.api_key
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Подключите HeyGen в разделе «Медиа», чтобы делать видео с аватаром.' }, 200)
@@ -42,7 +46,7 @@ Deno.serve(async (req) => {
           character: { type: 'avatar', avatar_id: avatarId, avatar_style: 'normal' },
           voice: { type: 'text', input_text: text.slice(0, 1500), voice_id: voiceId },
         }],
-        dimension: { width: 1280, height: 720 },
+        dimension: { width: 1920, height: 1080 },
       }),
     })
     const data = await r.json()

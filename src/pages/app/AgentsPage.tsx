@@ -72,10 +72,10 @@ export default function AgentsPage() {
             ) : (
             <div key={a.id} className="card group relative rounded-2xl p-5">
               <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <AgentAvatar color={a.avatarColor} glyph="search" size="lg" />
-                  <div>
-                    <p className="font-normal text-text">{a.name}</p>
+                  <div className="min-w-0">
+                    <p className="truncate font-normal text-text">{a.name}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span className={cn('inline-block rounded-full px-2 py-0.5 text-[10px] font-normal', agentStatusStyle[a.status])}>
                         {t(`platform.agentStatus.${a.status}`)}
@@ -90,8 +90,8 @@ export default function AgentsPage() {
                     </div>
                   </div>
                 </div>
-                <div className="relative">
-                  <button onClick={() => setMenu(menu === a.id ? null : a.id)} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06]">
+                <div className="relative shrink-0">
+                  <button onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={t('common.menu')} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06]">
                     <MoreVertical size={16} />
                   </button>
                   {menu === a.id && (

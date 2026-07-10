@@ -53,7 +53,9 @@ Deno.serve(async (req) => {
   await db.from('channels').delete().eq('agent_id', agentId).eq('type', type)
   const { data: channel, error } = await db
     .from('channels')
-    .insert({ agent_id: agentId, type, credentials: creds, status: 'connected' })
+    // secret_token MUST mirror the Meta verify_token: the WA/IG webhook GET handshake compares the
+    // hub.verify_token against channel.secret_token, so without this Meta verification returns 403.
+    .insert({ agent_id: agentId, type, credentials: creds, secret_token: verify_token ?? null, status: 'connected' })
     .select('id')
     .single()
   if (error || !channel) return json({ error: error?.message ?? 'could not create channel' }, 400)

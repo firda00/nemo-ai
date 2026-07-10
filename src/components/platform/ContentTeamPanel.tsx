@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Sparkles, Share2, FileText, Mail, Megaphone, Users2, Clapperboard } from 'lucide-react'
+import { Sparkles, Share2, FileText, Mail, Megaphone, Users2, Clapperboard, Layers } from 'lucide-react'
 import { AutonomousRunner } from './AutonomousRunner'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -22,9 +22,10 @@ const VIDEO_TEAM = [
 ]
 const VIDEO_HINT = 'Ты — готовая видео-команда Nemo (Стратег, Сценарист, Редактор, SMM). Выдай ГОТОВЫЙ сценарий видео/Reels точно по брифу: хук, сцены с таймкодами, закадровый текст, текст на экране, CTA и идею обложки. На языке брифа.'
 
-type Format = 'social' | 'article' | 'email' | 'ad' | 'video'
+type Format = 'social' | 'carousel' | 'article' | 'email' | 'ad' | 'video'
 const FORMATS: { id: Format; label: string; icon: typeof Share2 }[] = [
   { id: 'social', label: 'Соцсети', icon: Share2 },
+  { id: 'carousel', label: 'Карусель', icon: Layers },
   { id: 'video', label: 'Видео / Reels сценарий', icon: Clapperboard },
   { id: 'article', label: 'Статья / блог', icon: FileText },
   { id: 'email', label: 'Email-рассылка', icon: Mail },
@@ -57,6 +58,7 @@ export function ContentTeamPanel({ model }: { model?: string }) {
   let brief = ''
   if (topicText) {
     if (format === 'social') brief = `Создай контент для соцсетей. Платформа: ${platform}. Количество: ${count}. Тон: ${tone}. Тема: ${topicText}. Для КАЖДОЙ единицы: цепляющий текст/подпись, релевантные хэштеги и короткую идею визуала. На языке темы.`
+    else if (format === 'carousel') brief = `Создай КАРУСЕЛЬ из ${count} слайдов для ${platform}. Тон: ${tone}. Тема: ${topicText}. Для КАЖДОГО слайда выдай: «Слайд N», короткий ЗАГОЛОВОК (крупный текст на слайде, до 6 слов) и 1–2 предложения текста. Слайд 1 — цепляющий хук, последний слайд — призыв к действию (CTA). Для каждого слайда добавь короткую идею визуала. В конце — ПОДПИСЬ к посту (caption) с 5–10 хэштегами. На языке темы.`
     else if (format === 'article') brief = `Напиши статью для блога (${lengthLabel}). Тон: ${tone}. Тема: ${topicText}.${seo.trim() ? ` Ключевое слово для SEO: ${seo.trim()}.` : ''} Выдай: цепляющий заголовок и SEO-вариант, короткий анонс, полный структурированный текст с подзаголовками и выводом. На языке темы.`
     else if (format === 'email') brief = `Напиши email (${emailGoal})${count > 1 ? ` — серия из ${count} писем` : ''}. Тон: ${tone}. Тема/задача: ${topicText}. Для каждого письма: тема, прехедер, тело и призыв к действию. На языке темы.`
     else if (format === 'ad') brief = `Напиши рекламный текст для канала «${adChannel}». Вариантов: ${count}. Тон: ${tone}. Оффер/задача: ${topicText}. Для КАЖДОГО варианта: цепляющий заголовок, короткий текст, призыв к действию и идею креатива. На языке темы.`
@@ -80,6 +82,12 @@ export function ContentTeamPanel({ model }: { model?: string }) {
           <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
             <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">{t('contentTeamPanel.platformLabel')}</p><div className="flex flex-wrap gap-2">{PLATFORMS.map((p) => <button key={p} onClick={() => setPlatform(p)} className={pill(platform === p)}>{p}</button>)}</div></div>
             <Count value={count} onChange={setCount} label={t('contentTeamPanel.countPosts')} />
+          </div>
+        )}
+        {format === 'carousel' && (
+          <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+            <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">{t('contentTeamPanel.platformLabel')}</p><div className="flex flex-wrap gap-2">{PLATFORMS.map((p) => <button key={p} onClick={() => setPlatform(p)} className={pill(platform === p)}>{p}</button>)}</div></div>
+            <Count value={count} onChange={setCount} label={t('contentTeamPanel.countSlides')} />
           </div>
         )}
         {format === 'video' && (

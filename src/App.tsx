@@ -33,6 +33,7 @@ import WaitlistPage from './pages/app/WaitlistPage'
 import CreateAgentPage from './pages/app/CreateAgentPage'
 import TeamDetailPage from './pages/app/TeamDetailPage'
 import AutonomousPage from './pages/app/AutonomousPage'
+import AutomationsPage from './pages/app/AutomationsPage'
 import ContentStudioPage from './pages/app/ContentStudioPage'
 import MarketingStrategyPage from './pages/app/MarketingStrategyPage'
 import AutopostPage from './pages/app/AutopostPage'
@@ -85,6 +86,7 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="autonomous" element={<AutonomousPage />} />
+        <Route path="automations" element={<AutomationsPage />} />
         <Route path="content" element={<ContentStudioPage />} />
         <Route path="marketing" element={<MarketingStrategyPage />} />
         <Route path="autopost" element={<AutopostPage />} />

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Clapperboard, Loader2, Wand2, Film, Image as ImageIcon, Download, X, Check } from 'lucide-react'
+import { Clapperboard, Loader2, Wand2, Film, Image as ImageIcon, Download, X, Check, Mic } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { Button } from '../ui/Button'
@@ -41,6 +41,7 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
   // pick up a Reels script produced by the Autopilot tab, if the user came from there
   const [script, setScript] = useState(() => initialScript || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('nemo:lastReelsScript') || '' : ''))
   const [genImages, setGenImages] = useState(true)
+  const [voice, setVoice] = useState(true)
   const [scenes, setScenes] = useState<Scene[]>([])
   const [phase, setPhase] = useState<Phase>('idle')
   const [note, setNote] = useState('')
@@ -83,10 +84,13 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
     }
 
     setPhase('render'); setNote(t('videoRenderPanel.renderingServer'))
-    const started = await invoke('render-video', { action: 'render', props: { title: title.trim() || undefined, brand: brand.trim() || undefined, accent: '#8B7CF8', scenes: finalScenes } })
+    // narration script → the server synthesizes a voiceover (ElevenLabs) and mixes it in
+    const narration = voice ? (script.trim() || finalScenes.map((s) => s.caption).join('. ')) : ''
+    const started = await invoke('render-video', { action: 'render', voiceText: narration || undefined, props: { title: title.trim() || undefined, brand: brand.trim() || undefined, accent: '#8B7CF8', scenes: finalScenes } })
     if (!started?.ok || !started.job_id) {
       setPhase('error'); setErr(started?.message || started?.error || t('videoRenderPanel.renderStartErr')); return
     }
+    if (started.voiceRequested && !started.voiced) setNote(t('videoRenderPanel.voiceNoKey'))
     // poll status
     const jobId = started.job_id
     for (let i = 0; i < 60; i++) {
@@ -117,6 +121,7 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="secondary" onClick={breakScenes} disabled={busy || script.trim().length < 8}>{phase === 'scenes' ? <><Loader2 size={15} className="animate-spin" /> {t('videoRenderPanel.breakingBtn')}</> : <><Wand2 size={15} /> {t('videoRenderPanel.breakBtn')}</>}</Button>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={genImages} onChange={(e) => setGenImages(e.target.checked)} className="accent-violet" /><ImageIcon size={14} /> {t('videoRenderPanel.imgPerScene')}</label>
+          <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} className="accent-violet" /><Mic size={14} /> {t('videoRenderPanel.voiceover')}</label>
         </div>
       </div>
 

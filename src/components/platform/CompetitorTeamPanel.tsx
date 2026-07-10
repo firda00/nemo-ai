@@ -1,17 +1,20 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Swords, Loader2, Check, ChevronDown, Bot, Users, Sparkles, Save, RotateCcw, MessageSquare, ShieldCheck, Link2, BookOpen } from 'lucide-react'
+import { Swords, Loader2, Check, ChevronDown, Bot, Users, Sparkles, Save, RotateCcw, MessageSquare, ShieldCheck, Link2, BookOpen, Plus, X } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/ustudyTeam'
 import { useI18n } from '../../i18n'
 import { Markdown } from '../ui/Markdown'
 import { cn } from '../../lib/cn'
+import { DocExport } from './DocExport'
 import { QualityBar, DeliveryBar } from './AutonomousRunner'
 
 const live = isSupabaseEnabled
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 const PLATFORMS = ['Instagram', 'Telegram', 'YouTube', 'TikTok'] as const
+// How many competitors one run can analyze, by plan (mirrors _shared/plans.ts competitors).
+const PLAN_COMPETITORS: Record<string, number> = { free: 1, starter: 3, pro: 5, business: 8, agency: 12, enterprise: 20, beta: 5 }
 
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {
@@ -63,11 +66,28 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const accountId = useAgentStore((s) => s.accountId)
 
   const [platform, setPlatform] = useState<string>('Instagram')
   const [ownUrl, setOwnUrl] = useState('')
-  const [compUrl, setCompUrl] = useState('')
+  const [comps, setComps] = useState<string[]>([''])
+  const [cap, setCap] = useState(3)
   const [focus, setFocus] = useState('')
+  const [scoutMsg, setScoutMsg] = useState('')
+
+  // competitor count is plan-gated — read the account plan and set the cap
+  useEffect(() => {
+    if (!live || !supabase || !accountId || accountId === 'demo') return
+    ;(async () => {
+      const { data } = await supabase!.from('accounts').select('plan').eq('id', accountId).maybeSingle()
+      const c = PLAN_COMPETITORS[String((data as { plan?: string } | null)?.plan ?? 'free')] ?? 1
+      setCap(c)
+    })()
+  }, [accountId])
+
+  const addComp = () => setComps((p) => (p.length >= cap ? p : [...p, '']))
+  const setComp = (i: number, v: string) => setComps((p) => p.map((c, idx) => (idx === i ? v : c)))
+  const removeComp = (i: number) => setComps((p) => (p.length <= 1 ? p : p.filter((_, idx) => idx !== i)))
 
   const [running, setRunning] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -95,35 +115,42 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
     setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
 
   const run = async () => {
-    const comp = compUrl.trim()
-    if (!comp || running) return
-    setError(''); setResult(null); setSpecs([]); setIntel(''); setIntelOpen(false)
+    const list = comps.map((c) => c.trim()).filter(Boolean).slice(0, cap)
+    if (!list.length || running) return
+    setError(''); setResult(null); setSpecs([]); setIntel(''); setIntelOpen(false); setScoutMsg('')
     setRunning(true)
     try {
       if (!live || !supabase) {
         setError(t('competitorTeamPanel.errNoLive'))
         return
       }
-      // 1) SCOUT — competitor intel from real page signals
+      // 1) SCOUT — intel for EACH competitor from real page signals
       setPhase('scout')
-      const scout = await call({ action: 'scout', competitor_url: comp, own_url: ownUrl.trim(), platform, goal: focus.trim() })
-      if (!scout?.intel) {
+      const intels: string[] = []
+      for (let i = 0; i < list.length; i++) {
+        setScoutMsg(t('competitorTeamPanel.scoutProgress', { n: i + 1, total: list.length }))
+        const scout = await call({ action: 'scout', competitor_url: list[i], own_url: ownUrl.trim(), platform, goal: focus.trim() })
+        if (scout?.intel) intels.push(`### ${t('competitorTeamPanel.competitorN', { n: i + 1 })}: ${list[i]}\n${String(scout.intel)}`)
+      }
+      setScoutMsg('')
+      if (!intels.length) {
         setError(t('competitorTeamPanel.errScout'))
         return
       }
-      setIntel(scout.intel)
+      const combinedIntel = intels.join('\n\n---\n\n')
+      setIntel(combinedIntel)
 
-      // 2) ARCHITECT — design the team against this intel, with marketing skills
+      // 2) ARCHITECT — design the team against ALL competitors, with marketing skills
       setPhase('architect')
       const m =
-        `Цель: обойти конкурента по контенту на ${platform} и вырастить наш канал.` +
+        `Цель: обойти конкурентов по контенту на ${platform} и вырастить наш канал.` +
         (ownUrl.trim() ? `\nНаш канал: ${ownUrl.trim()}` : '') +
-        `\nКанал конкурента: ${comp}` +
+        `\nКонкуренты (${list.length}): ${list.join(', ')}` +
         (focus.trim() ? `\nФокус клиента: ${focus.trim()}` : '') +
-        `\nКоманда должна выдать: (1) контент-стратегию против этого конкурента, (2) контент-план на 2 недели (день, формат, тема, хук), (3) 3 готовых поста/сценария с хуками и CTA.` +
-        `\n\nРАЗВЕДДАННЫЕ ПО КОНКУРЕНТУ (используй как факты):\n${String(scout.intel).slice(0, 2000)}`
+        `\nКоманда должна выдать: (1) контент-стратегию против ЭТИХ конкурентов — учесть каждого, найти общие слабости и незанятые ниши, (2) контент-план на 2 недели (день, формат, тема, хук), (3) 3 готовых поста/сценария с хуками и CTA.` +
+        `\n\nРАЗВЕДДАННЫЕ ПО КОНКУРЕНТАМ (используй как факты):\n${combinedIntel.slice(0, 4000)}`
       setMission(m)
-      const staff = await call({ action: 'staff', goal: m, niche: `контент-маркетинг, ${platform}`, purpose: 'контент-команда против конкурента', use_skills: true })
+      const staff = await call({ action: 'staff', goal: m, niche: `контент-маркетинг, ${platform}`, purpose: 'контент-команда против конкурентов', use_skills: true })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const created: Spec[] = (staff?.subagents ?? []).map((s: any) => ({
         role: String(s.role ?? ''), name: String(s.name ?? s.role ?? ''),
@@ -202,8 +229,9 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
     if (saving || !specs.length) return
     setSaving(true)
     try {
+      const firstComp = comps.map((c) => c.trim()).filter(Boolean)[0] ?? ''
       const res = await saveDynamicTeam(addAgent, {
-        name: `Контент-команда vs ${compUrl.trim().replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}`,
+        name: `Контент-команда vs ${firstComp.replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}`,
         goal: mission.slice(0, 500),
         specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt })),
       })
@@ -249,20 +277,34 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
             </div>
           </label>
         </div>
-        <label className="mt-3 block">
-          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{t('competitorTeamPanel.labelCompChannel')}</span>
-          <div className="relative">
-            <Swords size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fog" />
-            <input value={compUrl} onChange={(e) => setCompUrl(e.target.value)} disabled={running} placeholder={t('competitorTeamPanel.placeholderCompUrl')} className="glass w-full rounded-xl py-2.5 pl-9 pr-3 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">{t('competitorTeamPanel.labelCompChannels')}</span>
+            <span className="text-[10px] text-fog">{t('competitorTeamPanel.capNote', { cap })}</span>
           </div>
-        </label>
+          <div className="space-y-2">
+            {comps.map((c, i) => (
+              <div key={i} className="relative flex items-center gap-2">
+                <Swords size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fog" />
+                <input value={c} onChange={(e) => setComp(i, e.target.value)} disabled={running} placeholder={t('competitorTeamPanel.placeholderCompUrl')} className="glass w-full rounded-xl py-2.5 pl-9 pr-3 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+                {comps.length > 1 && <button onClick={() => removeComp(i)} disabled={running} className="shrink-0 rounded-lg p-1.5 text-fog hover:text-danger" aria-label={t('competitorTeamPanel.removeCompetitor')}><X size={15} /></button>}
+              </div>
+            ))}
+          </div>
+          {comps.length < cap && (
+            <button onClick={addComp} disabled={running} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-[12px] font-medium text-muted transition hover:text-text disabled:opacity-40">
+              <Plus size={13} /> {t('competitorTeamPanel.addCompetitor')}
+            </button>
+          )}
+        </div>
         <label className="mt-3 block">
           <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{t('competitorTeamPanel.labelFocus')}</span>
           <textarea value={focus} onChange={(e) => setFocus(e.target.value)} disabled={running} rows={2} placeholder={t('competitorTeamPanel.placeholderFocus')} className="glass w-full resize-none rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
         </label>
-        <button onClick={run} disabled={running || compUrl.trim().length < 8} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-40">
+        <button onClick={run} disabled={running || comps.every((c) => c.trim().length < 8)} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition disabled:opacity-40">
           {running ? <Loader2 size={16} className="animate-spin" /> : <Swords size={16} />} {t('competitorTeamPanel.btnRun')}
         </button>
+        {scoutMsg && <p className="mt-3 inline-flex items-center gap-2 text-xs text-muted"><Loader2 size={13} className="animate-spin text-violet" /> {scoutMsg}</p>}
         {error && <p className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>}
       </div>
 
@@ -371,6 +413,7 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
             </button>
           </div>
           <div className="card rounded-2xl p-6"><Markdown content={result} /></div>
+          <DocExport content={result} title={`vs ${comps.map((c) => c.trim()).filter(Boolean)[0] ?? 'competitors'}`} />
           <QualityBar goal={mission} content={result} model={model} lang={lang} onRevised={setResult} />
           <DeliveryBar content={result} />
           <button onClick={saveTeam} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition disabled:opacity-40">

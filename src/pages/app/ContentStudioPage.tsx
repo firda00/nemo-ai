@@ -3,6 +3,7 @@ import { Factory, Target, PenLine, BarChart3, Clapperboard, Cpu, Rocket, Film, S
 import { FactoryAutopilotPanel } from '../../components/platform/FactoryAutopilotPanel'
 import { CompetitorTeamPanel } from '../../components/platform/CompetitorTeamPanel'
 import { MultiLangPanel } from '../../components/platform/MultiLangPanel'
+import { ChannelWatchPanel } from '../../components/platform/ChannelWatchPanel'
 import { MarketingStrategyPanel } from '../../components/platform/MarketingStrategyPanel'
 import { ContentTeamPanel } from '../../components/platform/ContentTeamPanel'
 import { ContentAnalyzePanel } from '../../components/platform/ContentAnalyzePanel'
@@ -85,7 +86,17 @@ export default function ContentStudioPage() {
       <div className="mt-6">
         {tab === 'autopilot' && <FactoryAutopilotPanel model={model} />}
         {tab === 'battle' && <CompetitorTeamPanel model={model} />}
-        {tab === 'multilang' && <MultiLangPanel model={model} />}
+        {tab === 'multilang' && (
+          <div className="space-y-8">
+            <ChannelWatchPanel />
+            <div>
+              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-fog">
+                <span className="h-px flex-1 bg-ice/10" />{t('channelWatch.orManual')}<span className="h-px flex-1 bg-ice/10" />
+              </div>
+              <MultiLangPanel model={model} />
+            </div>
+          </div>
+        )}
         {tab === 'strategy' && <MarketingStrategyPanel model={model} />}
         {tab === 'content' && <ContentTeamPanel model={model} />}
         {tab === 'video' && <VideoRenderPanel model={model} />}
