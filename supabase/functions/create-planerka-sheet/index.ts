@@ -4,7 +4,7 @@
 //   POST /functions/v1/create-planerka-sheet   (Authorization: Bearer <user jwt>)  body { title? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, json } from '../_shared/cors.ts'
-import { googleAccessToken } from '../_shared/google.ts'
+import { extractSheetId, googleAccessToken } from '../_shared/google.ts'
 import { createPlanerkaSheet } from '../_shared/planerkaSheet.ts'
 import { normLang } from '../_shared/planerkaLocale.ts'
 
@@ -32,6 +32,14 @@ Deno.serve(async (req) => {
   const { data: bp } = await db.from('business_profiles').select('report_lang').eq('account_id', accountId).maybeSingle()
   const lang = normLang(bp?.report_lang)
   const body = await req.json().catch(() => ({}))
+  if (body?.action === 'connect_existing') {
+    const sheetId = extractSheetId(String(body?.sheet ?? ''))
+    if (!sheetId) return json({ ok: false, code: 'INVALID_SHEET', error: 'Paste a valid Google Sheets URL or spreadsheet id.' }, 400)
+    const meta = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=spreadsheetId,properties(title)`, { headers: { Authorization: `Bearer ${g.token}` } }).then((r) => r.json()).catch(() => null)
+    if (!meta?.spreadsheetId) return json({ ok: false, code: 'SHEET_NOT_ACCESSIBLE', error: 'The connected Google account cannot access this sheet.' }, 403)
+    await db.from('business_profiles').upsert({ account_id: accountId, tasks_sheet_id: sheetId }, { onConflict: 'account_id' })
+    return json({ ok: true, id: sheetId, title: meta?.properties?.title ?? '', url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, existing: true })
+  }
   const title = (typeof body?.title === 'string' && body.title.trim()) ? body.title.trim().slice(0, 120) : `Planerka — ${new Date().toISOString().slice(0, 10)}`
 
   const made = await createPlanerkaSheet(g.token, lang, title)

@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
   try {
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { Authorization: `Bearer ${orKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: PRIMARY_MODEL, temperature: 0, tools: availableTools, tool_choice: 'auto', messages: [{ role: 'system', content: 'You are an agent that uses connected tools to complete the task. Call the most appropriate tool with correct arguments. If no tool fits, answer briefly.' }, { role: 'user', content: instruction }] }),
+      body: JSON.stringify({ model: PRIMARY_MODEL, temperature: 0, tools: availableTools, tool_choice: 'auto', messages: [{ role: 'system', content: 'You are a universal task agent that uses connected tools to complete the user request. The agent label is context, not a hard limit: perform legitimate cross-domain tasks when the required tool is available. Call the most appropriate tool with correct arguments. If a required integration is missing, explain exactly what is needed instead of inventing a result. Never claim an action happened unless the tool confirms it.' }, { role: 'user', content: instruction }] }),
     }).then((x) => x.json())
     const choice = r?.choices?.[0]?.message
     const call = choice?.tool_calls?.[0]

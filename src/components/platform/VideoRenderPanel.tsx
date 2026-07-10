@@ -35,13 +35,16 @@ function parseScenes(text: string): Scene[] {
 }
 
 export function VideoRenderPanel({ model, initialScript = '' }: { model?: string; initialScript?: string }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const [title, setTitle] = useState('')
   const [brand, setBrand] = useState('')
   // pick up a Reels script produced by the Autopilot tab, if the user came from there
   const [script, setScript] = useState(() => initialScript || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('nemo:lastReelsScript') || '' : ''))
-  const [genImages, setGenImages] = useState(true)
-  const [voice, setVoice] = useState(true)
+  // Natural-first defaults: synthetic images and voices are opt-in because they can make
+  // short videos feel obviously AI-generated. The renderer still creates a polished
+  // caption-led video with an editorial gradient when both options are off.
+  const [genImages, setGenImages] = useState(false)
+  const [voice, setVoice] = useState(false)
   const [scenes, setScenes] = useState<Scene[]>([])
   const [phase, setPhase] = useState<Phase>('idle')
   const [note, setNote] = useState('')
@@ -123,6 +126,9 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={genImages} onChange={(e) => setGenImages(e.target.checked)} className="accent-violet" /><ImageIcon size={14} /> {t('videoRenderPanel.imgPerScene')}</label>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} className="accent-violet" /><Mic size={14} /> {t('videoRenderPanel.voiceover')}</label>
         </div>
+        <p className="rounded-xl border border-teal/15 bg-teal/[0.05] px-3 py-2 text-xs leading-relaxed text-muted">
+          {lang === 'ru' ? 'Естественный режим включён: видео собирается из ваших кадров и текста. AI-картинки и AI-озвучка добавляются только вручную.' : lang === 'uz' ? 'Tabiiy rejim yoqilgan: video sizning kadrlaringiz va matningizdan yig‘iladi. AI rasmlari va ovozi faqat qo‘lda yoqiladi.' : 'Natural mode is on: the video uses your footage and captions. AI visuals and voice are opt-in.'}
+        </p>
       </div>
 
       {scenes.length > 0 && (
@@ -131,7 +137,10 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
           {scenes.map((s, i) => (
             <div key={i} className="flex items-start gap-2">
               <span className="mt-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-violet/15 text-[11px] font-bold text-violet">{i + 1}</span>
-              <input value={s.caption} onChange={(e) => editScene(i, e.target.value)} className="glass flex-1 rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <input value={s.caption} onChange={(e) => editScene(i, e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+                <input value={s.imageUrl ?? ''} onChange={(e) => setScenes((p) => p.map((scene, idx) => idx === i ? { ...scene, imageUrl: e.target.value.trim() || undefined } : scene))} placeholder={lang === 'ru' ? 'Своя фотография: публичная ссылка (необязательно)' : lang === 'uz' ? 'O‘z suratingiz: public havola (ixtiyoriy)' : 'Your photo: public URL (optional)'} className="glass w-full rounded-xl px-3 py-1.5 text-[11px] text-text outline-none placeholder:text-fog focus:border-violet/50" />
+              </div>
               <span className="mt-2 text-[11px] text-fog">{s.durationSec}{t('videoRenderPanel.secShort')}</span>
               <button onClick={() => removeScene(i)} className="mt-1.5 text-fog hover:text-danger"><X size={15} /></button>
             </div>

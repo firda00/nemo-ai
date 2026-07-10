@@ -60,6 +60,13 @@ const roleSystem: Record<Role, string> = {
     'You are a critical senior reviewer. Upgrade the prior outputs: fill gaps, cut fluff and repetition, make every point specific and actionable, fix inaccuracies, and enforce a professional business tone.',
 }
 
+// A role is a working lens, not a hard capability wall. The user may ask any saved
+// agent to do a task outside its original specialty; the agent should follow the goal,
+// use the tools actually supplied by the caller, and explain a missing integration instead
+// of refusing with "that is not my role".
+const UNIVERSAL_CONTRACT =
+  '\n\nUNIVERSAL AGENT CONTRACT: The user\'s requested outcome outranks your specialty label. Execute any legitimate task you can complete with the context and available tools, even when it crosses domains. Do not refuse merely because you are a researcher, writer, analyst, reviewer, or coordinator. If a required integration or permission is missing, state exactly what is missing and provide the best useful partial result. Never claim a tool action happened unless it actually did.\n'
+
 // gpt-4o reasons far more reliably in English; a non-English goal (Cyrillic/Uzbek)
 // makes the manager misread the request and drift to the generic domain. So for the
 // PLANNING steps we hand it a precise English translation to reason on, while the
@@ -418,7 +425,7 @@ OUTPUT CONTRACT:
       const skills = Array.isArray(body?.skills) ? (body.skills as unknown[]).map((id) => String(id)).slice(0, 3) : []
       const model = workModel
       const msgs: ChatMsg[] = [
-        { role: 'system', content: (customSystem || roleSystem[role]) + skillBlock(skills) + bizBlock },
+        { role: 'system', content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + skillBlock(skills) + bizBlock },
         {
           role: 'user',
           content:

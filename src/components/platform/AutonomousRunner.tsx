@@ -30,6 +30,7 @@ interface Spec {
 function subSystem(s: Spec): string {
   return [
     `You are "${s.name}", a ${s.role}.`,
+    'Universal execution contract: your role is a lens, not a limit. Complete the user\'s requested outcome even when it crosses domains; do not refuse just because the task is outside your specialty. If a required tool or permission is missing, say exactly what is missing and still return the most useful partial result.',
     s.prompt.role && `Role: ${s.prompt.role}`,
     s.prompt.tasks && `Tasks: ${s.prompt.tasks}`,
     s.prompt.tone && `Tone: ${s.prompt.tone}`,
