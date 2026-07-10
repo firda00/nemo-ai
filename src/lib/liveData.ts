@@ -11,12 +11,17 @@ function fmt(iso?: string) {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// strict allowlist: internal rows (system_trace etc.) never surface in derived dialogue data
+function isChatRow(m: any): boolean {
+  return (m.message_type ?? 'chat') === 'chat'
+}
+
 function mapMsg(m: any): DialogueMessage {
-  return { id: m.id, author: m.author, content: m.content ?? '', time: fmt(m.created_at) }
+  return { id: m.id, author: m.author, content: m.content ?? '', time: fmt(m.created_at), type: m.message_type ?? 'chat' }
 }
 
 function mapDialogue(row: any): Dialogue {
-  const raw = (row.messages ?? []).slice().sort((a: any, b: any) => (a.created_at < b.created_at ? -1 : 1))
+  const raw = (row.messages ?? []).filter(isChatRow).sort((a: any, b: any) => (a.created_at < b.created_at ? -1 : 1))
   return {
     id: row.id,
     agentId: row.agent_id,
@@ -51,7 +56,7 @@ export interface LiveSummary {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function firstResponseSec(msgs: any[]): number | null {
-  const sorted = msgs.slice().sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+  const sorted = msgs.filter(isChatRow).sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
   for (let i = 0; i < sorted.length; i++) {
     if (sorted[i].author !== 'customer') continue
     const reply = sorted.slice(i + 1).find((m) => m.author === 'agent' || m.author === 'operator')

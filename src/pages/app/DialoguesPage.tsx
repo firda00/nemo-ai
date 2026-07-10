@@ -1,13 +1,41 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search, ArrowLeft, Hand, Bot, Send, X, Info, MessagesSquare, Tag, GitBranch, CheckCircle2 } from 'lucide-react'
+import { Search, ArrowLeft, Hand, Bot, Send, X, Info, MessagesSquare, Tag, GitBranch, CheckCircle2, CornerUpRight, HelpCircle } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { mockDialogues } from '../../data/platform'
 import { channelMeta, channelLabel, dialogueStatusStyle } from '../../lib/platformMeta'
+import { isChatMessage, parseAgentTrace } from '../../lib/agentTrace'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
-import type { ChannelType, Dialogue, DialogueMessage, DialogueStatus } from '../../types/platform'
+import type { AgentTraceStep, ChannelType, Dialogue, DialogueMessage, DialogueStatus } from '../../types/platform'
+
+// per-dialogue trace layout: parsed traces by their row id, plus reply-id -> trace-id links
+interface TraceLayout {
+  byId: Map<string, { steps: AgentTraceStep[]; time: string }>
+  forReply: Map<string, string>
+  attached: Set<string>
+}
+
+// Associate each system_trace row with the reply it explains (via replyMessageId), so cards
+// stay next to their reply even if concurrent turns interleave inserts. Unmatched traces
+// fall back to their own position in the flow.
+function layoutTraces(messages: DialogueMessage[]): TraceLayout {
+  const byId = new Map<string, { steps: AgentTraceStep[]; time: string }>()
+  const forReply = new Map<string, string>()
+  const attached = new Set<string>()
+  for (const m of messages) {
+    if (m.type !== 'system_trace') continue
+    const parsed = parseAgentTrace(m.content)
+    if (!parsed) continue
+    byId.set(m.id, { steps: parsed.steps, time: m.time })
+    if (parsed.replyMessageId && messages.some((x) => x.id === parsed.replyMessageId)) {
+      forReply.set(parsed.replyMessageId, m.id)
+      attached.add(m.id)
+    }
+  }
+  return { byId, forReply, attached }
+}
 
 const live = isSupabaseEnabled
 
@@ -69,12 +97,13 @@ export default function DialoguesPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return dialogues.filter((d) => {
-      const matchQ = !q || d.customerName.toLowerCase().includes(q) || d.customerContact.toLowerCase().includes(q) || d.messages.some((m) => m.content.toLowerCase().includes(q))
+      const matchQ = !q || d.customerName.toLowerCase().includes(q) || d.customerContact.toLowerCase().includes(q) || d.messages.some((m) => isChatMessage(m) && m.content.toLowerCase().includes(q))
       return matchQ && (channelF === 'all' || d.channel === channelF) && (statusF === 'all' || d.status === statusF)
     })
   }, [dialogues, query, channelF, statusF])
 
   const selected = dialogues.find((d) => d.id === selectedId) ?? null
+  const traces = useMemo(() => layoutTraces(selected?.messages ?? []), [selected])
   const agentName = selected
     ? (live ? agentNames[selected.agentId] ?? '—' : getAgent(selected.agentId)?.name ?? '—')
     : '—'
@@ -142,6 +171,8 @@ export default function DialoguesPage() {
               {filtered.map((d) => {
                 const meta = channelMeta[d.channel]
                 const active = d.id === selectedId
+                const chats = d.messages.filter(isChatMessage)
+                const preview = chats[chats.length - 1]?.content
                 return (
                   <li key={d.id}>
                     <button onClick={() => { setSelectedId(d.id); setCustOpen(false) }} className={cn('flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors', active ? 'bg-ice/[0.08]' : 'hover:bg-ice/[0.04]')}>
@@ -153,7 +184,7 @@ export default function DialoguesPage() {
                           <span className="truncate text-sm font-normal text-text">{d.customerName}</span>
                           <span className="shrink-0 text-[10px] text-muted">{d.updatedAt}</span>
                         </span>
-                        <span className="mt-0.5 line-clamp-1 text-xs text-muted">{d.messages[d.messages.length - 1]?.content}</span>
+                        <span className="mt-0.5 line-clamp-1 text-xs text-muted">{preview}</span>
                         <span className="mt-1 flex items-center gap-1.5">
                           <span className={cn('rounded-full px-1.5 py-0.5 text-[9px] font-normal', dialogueStatusStyle[d.status])}>{t(`platform.dialogues.${statusKey[d.status]}`)}</span>
                           {d.unread > 0 && <span className="flex h-4 min-w-4 items-center justify-center rounded-full border border-cobalt/50 px-1 font-mono text-[9px] text-cobalt">{d.unread}</span>}
@@ -192,36 +223,30 @@ export default function DialoguesPage() {
           </header>
 
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
-            <div className="mx-auto mb-4 max-w-2xl rounded-2xl border border-violet/20 bg-violet/10 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="flex items-center gap-2 text-sm font-medium text-text"><GitBranch size={16} className="text-violet" /> Agent Trace</p>
-                <span className="rounded-pill border border-teal/20 bg-teal/10 px-2.5 py-1 text-[10px] font-medium text-teal">Nemo Score 92</span>
-              </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {[
-                  ['Team Leader', 'Intent detected'],
-                  ['Knowledge Agent', 'Found answer source'],
-                  ['Sales Specialist', 'Prepared reply'],
-                ].map(([agent, action]) => (
-                  <div key={agent} className="rounded-xl border border-white/10 bg-bg/50 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-text"><CheckCircle2 size={13} className="text-teal" /> {agent}</p>
-                    <p className="mt-1 text-[11px] text-muted">{action}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
             {selected.messages.map((m) => {
+              // strict allowlist: only 'chat' rows are bubbles; system_trace renders as a
+              // collaboration card, any other/unknown internal type is never shown
+              if (!isChatMessage(m)) {
+                if (m.type !== 'system_trace' || traces.attached.has(m.id)) return null
+                const orphan = traces.byId.get(m.id)
+                return orphan ? <TraceCard key={m.id} steps={orphan.steps} time={orphan.time} /> : null
+              }
               const incoming = m.author === 'customer'
+              const traceId = traces.forReply.get(m.id)
+              const attachedTrace = traceId ? traces.byId.get(traceId) : undefined
               return (
-                <div key={m.id} className={cn('flex', incoming ? 'justify-start' : 'justify-end')}>
-                  <div className="max-w-[75%]">
-                    {!incoming && <p className={cn('mb-0.5 px-1 text-right text-[10px] font-normal', m.author === 'operator' ? 'text-amber' : 'text-violet')}>{m.author === 'operator' ? t('platform.dialogues.you') : agentName}</p>}
-                    <div className={cn('whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed', incoming ? 'glass rounded-tl-md text-text' : m.author === 'operator' ? 'rounded-tr-md border border-orange/40 bg-orange/10 text-text' : 'rounded-tr-md border border-cobalt/40 bg-cobalt/10 text-text')}>
-                      {m.content}
+                <Fragment key={m.id}>
+                  <div className={cn('flex', incoming ? 'justify-start' : 'justify-end')}>
+                    <div className="max-w-[75%]">
+                      {!incoming && <p className={cn('mb-0.5 px-1 text-right text-[10px] font-normal', m.author === 'operator' ? 'text-amber' : 'text-violet')}>{m.author === 'operator' ? t('platform.dialogues.you') : agentName}</p>}
+                      <div className={cn('whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed', incoming ? 'glass rounded-tl-md text-text' : m.author === 'operator' ? 'rounded-tr-md border border-orange/40 bg-orange/10 text-text' : 'rounded-tr-md border border-cobalt/40 bg-cobalt/10 text-text')}>
+                        {m.content}
+                      </div>
+                      <p className={cn('mt-0.5 px-1 text-[10px] text-muted/70', incoming ? 'text-left' : 'text-right')}>{m.time}</p>
                     </div>
-                    <p className={cn('mt-0.5 px-1 text-[10px] text-muted/70', incoming ? 'text-left' : 'text-right')}>{m.time}</p>
                   </div>
-                </div>
+                  {attachedTrace && <TraceCard steps={attachedTrace.steps} time={attachedTrace.time} />}
+                </Fragment>
               )
             })}
           </div>
@@ -317,6 +342,40 @@ function CustomerPanel({ dialogue, agentName, open, onClose }: { dialogue: Dialo
   )
 }
 
+// Real "Thought Trace" (spec §6.4): how the swarm collaborated on one reply, from a persisted
+// system_trace message. Rendered inline in the conversation flow, operator-facing only.
+function TraceCard({ steps, time }: { steps: AgentTraceStep[]; time: string }) {
+  const { t } = useI18n()
+  return (
+    <div className="mx-auto w-full max-w-2xl rounded-2xl border border-violet/20 bg-violet/[0.06] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="flex items-center gap-2 text-xs font-medium text-violet"><GitBranch size={14} /> {t('platform.dialogues.trace')}</p>
+        <span className="text-[10px] text-muted/70">{time}</span>
+      </div>
+      <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+        {steps.map((s, i) => {
+          const Icon = s.kind === 'route' ? CornerUpRight : s.kind === 'lead_decision' ? GitBranch : s.kind === 'unresolved_delegate' ? HelpCircle : s.kind === 'synthesize' ? CheckCircle2 : Bot
+          const title = s.kind === 'route' && s.fromAgentName ? `${s.fromAgentName} → ${s.agentName}` : s.agentName
+          const detail =
+            s.kind === 'route' ? t('platform.dialogues.traceRoute', { conf: Math.round((s.confidence ?? 0) * 100) })
+            : s.kind === 'lead_decision' ? t(s.decision === 'delegate' ? 'platform.dialogues.traceLeadDelegate' : 'platform.dialogues.traceLeadDirect')
+            : s.kind === 'synthesize' ? t('platform.dialogues.traceSynthesize')
+            : s.kind === 'unresolved_delegate' ? t('platform.dialogues.traceUnresolved')
+            : s.task ?? t('platform.dialogues.traceConsult')
+          return (
+            <div key={i} className="rounded-xl border border-ice/[0.07] bg-bg/50 px-3 py-2">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-text">
+                <Icon size={13} className={s.kind === 'unresolved_delegate' ? 'text-amber' : 'text-teal'} /> {title}
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted">{detail}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -339,7 +398,7 @@ function fmtTime(iso?: string) {
 // --- map Supabase rows -> frontend Dialogue shape (live mode) ---
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapMessage(m: any): DialogueMessage {
-  return { id: m.id, author: m.author, content: m.content ?? '', time: fmtTime(m.created_at) }
+  return { id: m.id, author: m.author, content: m.content ?? '', time: fmtTime(m.created_at), type: m.message_type ?? 'chat' }
 }
 
 function mapDialogue(row: any): Dialogue {

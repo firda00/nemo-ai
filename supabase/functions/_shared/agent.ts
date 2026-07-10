@@ -69,6 +69,18 @@ export function gateModel(requested: string | undefined, premiumAllowed: boolean
 // Minimum confidence to hand off to a teammate — below this the current agent answers itself.
 export const ROUTE_CONFIDENCE = 0.6
 
+// AGENT TRACE (spec §6.4 "Thought Trace"): structured, versioned steps describing how agents
+// collaborated on ONE reply. Persisted as a messages row with message_type='system_trace' —
+// operator-facing observability only: never sent to the customer and never fed back into LLM
+// context (all history readers filter to message_type='chat'). Stores only names/ids and short
+// task summaries — never raw specialist output or model reasoning.
+export type TraceStep =
+  | { kind: 'route'; fromAgentId: string | null; fromAgentName: string; agentId: string | null; agentName: string; confidence: number }
+  | { kind: 'lead_decision'; agentId: string | null; agentName: string; decision: 'direct' | 'delegate' }
+  | { kind: 'consult'; agentId: string | null; agentName: string; task: string }
+  | { kind: 'unresolved_delegate'; agentName: string; task: string }
+  | { kind: 'synthesize'; agentId: string | null; agentName: string }
+
 // Dedicated intent ROUTER: a cheap structured pass that picks which teammate should handle the
 // message, WITH a confidence score. Returns { route: exact-name|'self', confidence }. This is
 // measurable (every decision can be logged) and exact-matched — unlike a [[ROUTE:Name]] marker
@@ -245,8 +257,9 @@ async function buildTeamReply(
   knowledge: string,
   bizBlock = '',
   knownLead: Record<string, unknown> = {},
-): Promise<{ text: string; tokens: number }> {
+): Promise<{ text: string; tokens: number; trace: TraceStep[] }> {
   let tokens = 0
+  const trace: TraceStep[] = []
   // inject already-known lead details + today's date so the TEAM path also never re-asks (#5)
   const leadSystem = buildSystemPrompt(agent, knowledge, '', { today: new Date().toISOString().slice(0, 10), knownLead }) + bizBlock + NO_FABRICATION
   const hist: ChatMsg[] = (history ?? []).map((m: any): ChatMsg => ({ role: m.author === 'customer' ? 'user' : 'assistant', content: m.content }))
@@ -258,14 +271,14 @@ async function buildTeamReply(
   const dept = depts?.[0]
   let subs: any[] = []
   if (dept) {
-    const { data } = await db.from('sub_agents').select('role, name, prompt').eq('department_id', dept.id).limit(8)
+    const { data } = await db.from('sub_agents').select('id, role, name, prompt, status').eq('department_id', dept.id).limit(8)
     subs = (data ?? []).filter((s: any) => (s.status ?? 'active') !== 'paused')
   }
 
   // no team yet -> the lead just answers directly
   if (!subs.length) {
     const out = await callOpenRouter({ apiKey, model: agent.model || PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
-    return { text: out.content, tokens: out.tokens }
+    return { text: out.content, tokens: out.tokens, trace }
   }
 
   const roster = subs.map((s: any) => `- ${s.name} (${s.role}): ${s.prompt?.tasks ?? ''}`).join('\n')
@@ -286,11 +299,14 @@ async function buildTeamReply(
   tokens += r1.tokens
   const plan = extractJson(r1.content) ?? {}
   const delegate = Array.isArray(plan.delegate) ? (plan.delegate as any[]).slice(0, MAX_SPECIALISTS) : []
+  // the lead's routing decision is the first trace step — direct answers are traced too
+  const leadName = String(agent.name ?? 'Lead').slice(0, 120)
+  trace.push({ kind: 'lead_decision', agentId: agent.id ?? null, agentName: leadName, decision: delegate.length ? 'delegate' : 'direct' })
 
   if (!delegate.length) {
-    if (typeof plan.answer === 'string' && plan.answer.trim()) return { text: plan.answer.trim(), tokens }
+    if (typeof plan.answer === 'string' && plan.answer.trim()) return { text: plan.answer.trim(), tokens, trace }
     const out = await callOpenRouter({ apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
-    return { text: out.content, tokens: tokens + out.tokens }
+    return { text: out.content, tokens: tokens + out.tokens, trace }
   }
 
   // 2) SPECIALISTS contribute (each with its own saved prompt)
@@ -315,11 +331,17 @@ async function buildTeamReply(
     })
     tokens += rr.tokens
     if (rr.content) contributions.push({ name: sa?.name ?? String(d?.name ?? 'Specialist'), output: rr.content })
+    // trace records WHO was actually consulted; an unmatched delegation is recorded honestly
+    // as unresolved (a generic stand-in answered) — never claimed as a saved agent.
+    const task = String(d?.task ?? '').slice(0, 200)
+    trace.push(sa
+      ? { kind: 'consult', agentId: sa.id ?? null, agentName: String(sa.name).slice(0, 120), task }
+      : { kind: 'unresolved_delegate', agentName: String(d?.name ?? 'Specialist').slice(0, 120), task })
   }
 
   if (!contributions.length) {
     const out = await callOpenRouter({ apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
-    return { text: out.content, tokens: tokens + out.tokens }
+    return { text: out.content, tokens: tokens + out.tokens, trace }
   }
 
   // 3) LEAD synthesizes one customer-facing reply
@@ -338,9 +360,10 @@ async function buildTeamReply(
     ],
   })
   tokens += synth.tokens
+  trace.push({ kind: 'synthesize', agentId: agent.id ?? null, agentName: leadName })
   // Customer-facing: no internal "who contributed" trace — that reads as unprofessional.
   const body = synth.content || contributions.map((c) => c.output).join('\n\n')
-  return { text: body.trim(), tokens }
+  return { text: body.trim(), tokens, trace }
 }
 
 // A single SUB-AGENT running its OWN Telegram bot. It answers in its own persona.
@@ -444,6 +467,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     .from('messages')
     .select('author, content, created_at')
     .eq('dialogue_id', dialogueId)
+    .eq('message_type', 'chat') // strict allowlist — system_trace/internal rows never enter LLM context
     .order('created_at', { ascending: false })
     .limit(20)
   const history = (historyRaw ?? []).slice().reverse()
@@ -491,6 +515,8 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     let replyText = ''
     let tokensUsed = 0
     let modelTag: string = model
+    let traceSteps: TraceStep[] = []
+    let replyAgentId: string | null = agent.id ?? null
 
     // TOOL-USE (ALL agent types, incl. teams): if the account has connected tools and the
     // message asks to DO an action (create Google Sheet/Doc, send email, calendar, CRM),
@@ -509,6 +535,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       replyText = team.text
       tokensUsed = team.tokens
       modelTag = 'team'
+      traceSteps = team.trace
     } else {
       // DYNAMIC ROUTING via a dedicated intent CLASSIFIER (not a marker buried in the reply):
       // pick the right teammate WITH a confidence score BEFORE answering, so routing is measurable
@@ -525,6 +552,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
         tokensUsed += cls.tokens
         if (cls.route.toLowerCase() !== 'self' && cls.confidence >= ROUTE_CONFIDENCE) {
           target = siblings.find((s: any) => String(s.name).trim().toLowerCase() === cls.route.trim().toLowerCase()) ?? null
+          if (target) traceSteps = [{ kind: 'route', fromAgentId: agent.id ?? null, fromAgentName: String(agent.name ?? '').slice(0, 120), agentId: target.id, agentName: String(target.name).slice(0, 120), confidence: cls.confidence }]
         }
         try { await db.from('routing_decisions').insert({ account_id: agent.account_id, dialogue_id: dialogueId, from_agent: agent.id, to_agent: target?.id ?? null, chosen: cls.route, confidence: cls.confidence, resolved: Boolean(target) }) } catch { /* observability best-effort */ }
       }
@@ -532,6 +560,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       if (target) {
         // the chosen teammate (its persona + its knowledge) answers; the dialogue is reassigned
         await db.from('dialogues').update({ agent_id: target.id }).eq('id', dialogueId)
+        replyAgentId = target.id
         const tgt = target.raw
         const tKnow = await retrieveKnowledge(db, tgt.id, String(lastCustomer))
         const tModel = gateModel(tgt.model, premiumAllowed)
@@ -583,7 +612,26 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     }
 
     if (replyText) {
-      await db.from('messages').insert({ dialogue_id: dialogueId, author: 'agent', content: replyText })
+      // agent_id records exactly which agent spoke (team lead / routed teammate / self)
+      const { data: replyRow, error: replyErr } = await db
+        .from('messages')
+        .insert({ dialogue_id: dialogueId, author: 'agent', agent_id: replyAgentId, content: replyText })
+        .select('id')
+        .single()
+      if (replyErr) console.error('reply insert failed:', replyErr)
+      // Trace is best-effort observability: written only after a successful reply insert, and a
+      // trace failure must never turn a valid reply into '' (callers would tell the customer an
+      // operator is needed). supabase-js reports failures via `error`, not by throwing.
+      if (!replyErr && traceSteps.length) {
+        const { error: traceErr } = await db.from('messages').insert({
+          dialogue_id: dialogueId,
+          author: 'agent',
+          agent_id: agent.id ?? null,
+          message_type: 'system_trace',
+          content: JSON.stringify({ version: 1, replyMessageId: replyRow?.id ?? null, steps: traceSteps }),
+        })
+        if (traceErr) console.error('trace insert failed:', traceErr)
+      }
       await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
       if (tokensUsed) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed })
       if (isLearning || personal) {

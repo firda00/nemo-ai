@@ -79,7 +79,7 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
             return { id: row.id, status: 'converted_reply' }
           }
         }
-        const { data: msgs } = await admin.from('messages').select('author, content').eq('dialogue_id', row.dialogue_id).order('created_at', { ascending: false }).limit(10)
+        const { data: msgs } = await admin.from('messages').select('author, content').eq('dialogue_id', row.dialogue_id).eq('message_type', 'chat').order('created_at', { ascending: false }).limit(10)
         history = (msgs ?? []).reverse()
         if (row.channel === 'telegram' && dlg.channel_id) {
           const { data: ch } = await admin.from('channels').select('credentials').eq('id', dlg.channel_id).maybeSingle()

@@ -27,7 +27,7 @@ async function subAgentReply(db: any, agent: any, subId: string, dialogueId: str
   if (!sub || (sub.status && sub.status !== 'active')) return ''
   const { data: acc } = await db.from('accounts').select('token_balance').eq('id', agent.account_id).single()
   if (acc && Number(acc.token_balance) <= 0) return ''
-  const { data: history } = await db.from('messages').select('author, content').eq('dialogue_id', dialogueId).order('created_at', { ascending: false }).limit(20)
+  const { data: history } = await db.from('messages').select('author, content').eq('dialogue_id', dialogueId).eq('message_type', 'chat').order('created_at', { ascending: false }).limit(20)
   const chronological = (history ?? []).slice().reverse()
   const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
   const { text, tokens } = await buildSubAgentReply(db, apiKey, sub, chronological)

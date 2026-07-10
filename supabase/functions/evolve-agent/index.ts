@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
   const diaIds = ((dias ?? []) as Any[]).map((d) => d.id)
   let convo = ''
   if (diaIds.length) {
-    const { data: msgs } = await db.from('messages').select('author, content, created_at').in('dialogue_id', diaIds).order('created_at', { ascending: false }).limit(40)
+    const { data: msgs } = await db.from('messages').select('author, content, created_at').in('dialogue_id', diaIds).eq('message_type', 'chat').order('created_at', { ascending: false }).limit(40)
     convo = ((msgs ?? []) as Any[]).reverse().map((m) => `${m.author}: ${String(m.content ?? '').slice(0, 280)}`).join('\n').slice(0, 4000)
   }
 

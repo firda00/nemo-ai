@@ -115,6 +115,28 @@ export interface DialogueMessage {
   author: DialogueAuthor
   content: string
   time: string
+  /** messages.message_type — only 'chat' (or undefined, for legacy/mock rows) renders as a bubble */
+  type?: string
+}
+
+export type AgentTraceKind = 'route' | 'lead_decision' | 'consult' | 'unresolved_delegate' | 'synthesize'
+
+/** One step of a persisted system_trace message (how agents collaborated on a reply). */
+export interface AgentTraceStep {
+  kind: AgentTraceKind
+  agentName: string
+  agentId?: string | null
+  fromAgentName?: string
+  fromAgentId?: string | null
+  task?: string
+  confidence?: number
+  decision?: 'direct' | 'delegate'
+}
+
+/** Parsed system_trace payload; replyMessageId ties the trace to the reply it explains. */
+export interface AgentTrace {
+  replyMessageId: string | null
+  steps: AgentTraceStep[]
 }
 
 export interface Dialogue {

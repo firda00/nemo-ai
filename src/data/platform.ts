@@ -391,6 +391,22 @@ export const mockDialogues: Dialogue[] = [
       { id: 'm2', author: 'agent', content: 'Albatta! Qaysi yo‘nalish qiziqtiradi — dasturlash, dizayn yoki marketing?', time: '14:30' },
       { id: 'm3', author: 'customer', content: 'Dasturlash', time: '14:31' },
       { id: 'm4', author: 'agent', content: 'Dasturlash kursi oyiga 1 200 000 so‘m. Hozir chegirma ham bor. Batafsil yuboraymi?', time: '14:31' },
+      // demo trace — same shape the runtime persists as messages.message_type='system_trace'
+      {
+        id: 'm4t',
+        author: 'agent',
+        type: 'system_trace',
+        time: '14:31',
+        content: JSON.stringify({
+          version: 1,
+          replyMessageId: 'm4',
+          steps: [
+            { kind: 'lead_decision', agentId: null, agentName: 'Sotuv agenti', decision: 'delegate' },
+            { kind: 'consult', agentId: null, agentName: 'Kurs mutaxassisi', task: 'Dasturlash kursi narxi va chegirmalarini aniqlash' },
+            { kind: 'synthesize', agentId: null, agentName: 'Sotuv agenti' },
+          ],
+        }),
+      },
       { id: 'm5', author: 'customer', content: 'Ha, yuboring', time: '14:32' },
     ],
   },
