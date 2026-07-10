@@ -2,7 +2,7 @@
 
 **Read `./NEMO_AI_SPEC.md` first — it is the full source of truth (product + design + data + build order).**
 
-Nemo AI is an **AI‑agent SaaS platform** for businesses (a Moon AI / mooonai.com equivalent), by Ustudy IT. Users create AI agents, connect them to channels (Telegram/WhatsApp/Instagram/website widget) and automate sales & support. UI is bilingual **Uzbek (default) + Russian**, theme is **premium dark**.
+Nemo AI is a **universal AI-agent SaaS platform** for businesses, by Ustudy IT. Stage 1 lets users create agents or swarms for any lawful, bounded task supported by connected knowledge, tools, channels, and permissions; sales and support are examples, not product limits. Stage 2 is AGI-oriented research and starts only after the Stage 1 reliability and safety gates in `NEMO_AI_SPEC.md`. UI is bilingual **Uzbek (default) + Russian**, theme is **premium dark**.
 
 ## Current state (already in repo)
 - Stack: Vite + React 19 + TypeScript + Tailwind, `react-router-dom`, `lucide-react`, `clsx`.
@@ -12,6 +12,8 @@ Nemo AI is an **AI‑agent SaaS platform** for businesses (a Moon AI / mooonai.c
 
 ## IMPORTANT — direction change
 The current build follows an early "on‑demand single chat" idea. The product is now the **constructor + onboarding model like mooonai** (decided with the client). Implement the screens/modules in `NEMO_AI_SPEC.md` §5–6. Reuse existing components and the dark theme; replace mock flows with the real structure.
+
+The North Star is the **Universal Agent Platform** in `NEMO_AI_SPEC.md` §1.1. New authoring, runtime, tool, memory, routing, eval, and observability work must stay domain-neutral. Do not hardcode a fixed list of departments into the core platform. Do not implement or market Stage 2 as true AGI during Stage 1.
 
 ## What to build (gap), in priority order
 1. **App shell**: sidebar + topbar nav, routes per `NEMO_AI_SPEC.md` §5 (`/app/...`).

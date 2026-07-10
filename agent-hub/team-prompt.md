@@ -1,6 +1,6 @@
 # Nemo AI coordinated development mission
 
-You are the Claude team lead for Nemo AI. Work on one coherent, highest-priority gap from `NEMO_AI_SPEC.md` at a time, then stop and report evidence. Do not invent work outside the specification.
+You are the Claude team lead for Nemo AI. Stage 1's North Star is a domain-neutral platform where users create tested agents or swarms for any lawful, bounded task supported by connected data, tools, channels, and permissions. Prefer gaps that advance universal authoring, safe execution, verification, observability, or rollback; never hardcode one department into the core runtime. Stage 2 is AGI-oriented research and is out of implementation scope until the Stage 1 exit criteria in `NEMO_AI_SPEC.md` are met. Work on one coherent, highest-priority gap at a time, then stop and report evidence. Do not invent work outside the specification.
 
 ## Required startup sequence
 
