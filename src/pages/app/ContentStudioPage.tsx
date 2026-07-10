@@ -9,6 +9,7 @@ import { ContentTeamPanel } from '../../components/platform/ContentTeamPanel'
 import { ContentAnalyzePanel } from '../../components/platform/ContentAnalyzePanel'
 import { VideoRenderPanel } from '../../components/platform/VideoRenderPanel'
 import { MediaConnectPanel } from '../../components/platform/MediaConnectPanel'
+import { CoordinatorAgentPanel } from '../../components/platform/CoordinatorAgentPanel'
 import { MODEL_CATALOG, MODEL_CATEGORIES, DEFAULT_MODEL } from '../../lib/models'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
@@ -42,7 +43,7 @@ export default function ContentStudioPage() {
     { id: 'media', label: t('contentStudioPage.tabMedia'), icon: Clapperboard, hint: t('contentStudioPage.hintMedia') },
   ]
   return (
-    <div className="container-page max-w-4xl py-8">
+    <div className="container-page max-w-7xl py-8">
       <div className="flex flex-wrap items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Factory size={20} /></span>
         <div className="flex-1">
@@ -66,6 +67,14 @@ export default function ContentStudioPage() {
         )}
       </div>
       {tab !== 'media' && <p className="mt-2 text-[11px] text-fog">{t('contentStudioPage.premiumNote')}</p>}
+
+      <div className="mt-6">
+        <CoordinatorAgentPanel
+          mode="content"
+          context={`Content Factory tab: ${tab}. Selected model: ${model}. The owner wants a clear explanation before any publication.`}
+          liveStatus={tab === 'autopilot' ? 'Готов принять бриф. Сначала проверю цель и формат, затем запущу исследование, написание и редакторскую проверку.' : `Открыт этап «${TABS.find((item) => item.id === tab)?.label ?? tab}». Координатор объяснит входные данные и следующий безопасный шаг.`}
+        />
+      </div>
 
       {/* tab bar */}
       <div className="mt-5 flex flex-wrap gap-2">

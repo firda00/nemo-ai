@@ -10,6 +10,8 @@ import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
 import { TelegramBotConnect } from '../../components/platform/TelegramBotConnect'
 import { PlanerkaSheetCard } from '../../components/platform/PlanerkaSheetCard'
 import { PlanerkaMembersCard } from '../../components/platform/PlanerkaMembersCard'
+import { CoordinatorAgentPanel } from '../../components/platform/CoordinatorAgentPanel'
+import { PlannerCommandCenter } from '../../components/platform/PlannerCommandCenter'
 import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustudyTeam'
 import { cn } from '../../lib/cn'
 
@@ -225,6 +227,12 @@ export default function TeamDetailPage() {
 
         {/* RIGHT — live results from the DB */}
         <div className="space-y-6">
+          <CoordinatorAgentPanel
+            mode="planner"
+            context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
+            liveStatus={tasks.some((task) => !task.owner) ? 'Есть задача без владельца. Диспетчер должен назначить ответственного до начала работы.' : 'Планёрка готова: задачи можно распределять, проверять и закрывать только с результатом.'}
+          />
+          <PlannerCommandCenter tasks={tasks} />
           <PlanerkaSheetCard />
           <PlanerkaMembersCard />
           <section className="card rounded-3xl p-6">
