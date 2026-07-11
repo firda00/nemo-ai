@@ -88,8 +88,8 @@ export default function TeamDetailPage() {
 
   // Show operations scenarios (payment/retention/meeting) ONLY for operations-type
   // teams; a content/sales/other team just gets the universal "task the team" runner.
-  const teamBlob = `${team?.purpose ?? ''} ${team?.niche ?? ''} ${dept?.niche ?? ''} ${(dept?.subs ?? []).map((s) => `${s.role} ${s.prompt?.tasks ?? ''}`).join(' ')}`.toLowerCase()
-  const isOps = /оплат|payment|платеж|ученик|студент|student|посещ|attendance|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob)
+  const teamBlob = `${team?.name ?? ''} ${team?.purpose ?? ''} ${team?.niche ?? ''} ${dept?.name ?? ''} ${dept?.niche ?? ''} ${(dept?.subs ?? []).map((s) => `${s.role} ${s.prompt?.tasks ?? ''}`).join(' ')}`.toLowerCase()
+  const isOps = /operations?|ops|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob)
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
@@ -228,14 +228,16 @@ export default function TeamDetailPage() {
         {/* RIGHT — live results from the DB */}
         <div className="space-y-6">
           <CoordinatorAgentPanel
-            mode="planner"
+            mode={isOps ? 'planner' : 'content'}
             context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
-            liveStatus={tasks.some((task) => !task.owner) ? 'Есть задача без владельца. Диспетчер должен назначить ответственного до начала работы.' : 'Планёрка готова: задачи можно распределять, проверять и закрывать только с результатом.'}
+            liveStatus={isOps
+              ? (tasks.some((task) => !task.owner) ? 'Есть задачи без владельца: назначьте ответственного до начала работы.' : 'Планёрка готова: задачи распределяются, проверяются и закрываются с результатом.')
+              : 'Контентный workflow готов: бриф → исследование → черновик → проверка → доставка.'}
           />
-          <PlannerCommandCenter tasks={tasks} />
-          <PlanerkaSheetCard />
-          <PlanerkaMembersCard />
-          <section className="card rounded-3xl p-6">
+          {isOps && <PlannerCommandCenter tasks={tasks} />}
+          {isOps && <PlanerkaSheetCard />}
+          {isOps && <PlanerkaMembersCard />}
+          {isOps && <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><BellRing size={18} className="text-amber" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.adminNotifications')}</h2><span className="ml-auto text-xs text-muted">{notifs.length}</span></div>
             <div className="mt-4 space-y-2">
               {notifs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noNotifications')}</p>}
@@ -250,9 +252,9 @@ export default function TeamDetailPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
 
-          <section className="card rounded-3xl p-6">
+          {isOps && <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><ClipboardList size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.tasksHeading')}</h2><span className="ml-auto text-xs text-muted">{tasks.length}</span></div>
             <div className="mt-4 space-y-2">
               {tasks.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noTasks')}</p>}
@@ -266,7 +268,7 @@ export default function TeamDetailPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
 
           <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
