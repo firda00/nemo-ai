@@ -91,7 +91,8 @@ export default function TeamDetailPage() {
   // Content, sales and store teams keep the universal "task the team" runner.
   const teamBlob = `${team?.name ?? ''} ${team?.purpose ?? ''} ${team?.niche ?? ''} ${dept?.name ?? ''} ${dept?.niche ?? ''} ${(dept?.subs ?? []).map((s) => `${s.role} ${s.prompt?.tasks ?? ''}`).join(' ')}`.toLowerCase()
   const isLogistics = /logistics?|логист|shipment|carrier|доставк|fulfillment|sla monitor/.test(teamBlob)
-  const isOps = isLogistics || /operations?|ops|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob)
+  const isCommerceWorkspace = /marketplace seller team|dropshipping team|online store team/.test(teamBlob)
+  const isOps = isLogistics || (!isCommerceWorkspace && /\boperations?\b|\bops\b|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob))
   const workflowKind: OpsKind = isLogistics ? 'logistics_control' : kind === 'logistics_control' ? 'payment_control' : kind
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
