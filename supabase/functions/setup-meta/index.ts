@@ -7,6 +7,7 @@
 //   instagram credentials: { page_token, ig_id }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
+import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -42,14 +43,21 @@ Deno.serve(async (req) => {
     agentId = agent!.id
   }
 
+  const { data: targetAgent } = await db.from('agents').select('id, niche, risk_tier').eq('id', agentId).maybeSingle()
+  if (!targetAgent) return Response.json({ error: 'agent not found' }, { status: 404 })
+  if (isRegulatedAgent(targetAgent)) {
+    return Response.json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, { status: 403 })
+  }
+
   const verify = (body.verify_token as string) || crypto.randomUUID().replace(/-/g, '')
-  const { data: channel } = await db
+  const { data: channel, error: channelError } = await db
     .from('channels')
     .insert({ agent_id: agentId, type, credentials: body.credentials ?? {}, secret_token: verify, status: 'connected' })
     .select('id')
     .single()
+  if (channelError || !channel) return Response.json({ error: channelError?.message ?? 'could not create channel' }, { status: 400 })
 
-  const webhookUrl = `${SUPABASE_URL}/functions/v1/${type}-webhook/${channel!.id}`
+  const webhookUrl = `${SUPABASE_URL}/functions/v1/${type}-webhook/${channel.id}`
   return Response.json({
     ok: true,
     type,

@@ -66,6 +66,7 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const deleteAgent = useAgentStore((s) => s.deleteAgent)
   const accountId = useAgentStore((s) => s.accountId)
 
   const [platform, setPlatform] = useState<string>('Instagram')
@@ -234,8 +235,9 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
         name: `Контент-команда vs ${firstComp.replace(/^https?:\/\/(www\.)?/, '').slice(0, 32)}`,
         goal: mission.slice(0, 500),
         specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt })),
-      })
-      if (res.agentId) navigate(`/app/teams/${res.agentId}`)
+      }, deleteAgent)
+      if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
+      else setError(res.error ?? 'Could not save the complete team.')
     } finally {
       setSaving(false)
     }

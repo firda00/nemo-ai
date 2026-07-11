@@ -17,6 +17,7 @@ import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { isRegulatedAgent } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -61,6 +62,14 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
     const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
     if (acc?.blocked || Number(acc?.token_balance ?? 0) <= 0) return { id: row.id, status: 'skipped_no_tokens' }
 
+    if (row.agent_id) {
+      const { data: sourceAgent } = await admin.from('agents').select('risk_tier, niche').eq('id', row.agent_id).maybeSingle()
+      if (isRegulatedAgent(sourceAgent)) {
+        await admin.from('follow_ups').update({ status: 'stopped', updated_at: new Date().toISOString() }).eq('id', row.id)
+        return { id: row.id, status: 'stopped_regulated_agent' }
+      }
+    }
+
     // Resolve the send target + (for telegram) the bot token and conversation history.
     let botToken = ''
     let chatId = String(row.target ?? '')
@@ -69,6 +78,11 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
     if (row.dialogue_id) {
       const { data: dlg } = await admin.from('dialogues').select('external_id, channel_id, agent_id, updated_at').eq('id', row.dialogue_id).maybeSingle()
       if (dlg) {
+        const { data: dialogueAgent } = await admin.from('agents').select('risk_tier, niche').eq('id', dlg.agent_id).maybeSingle()
+        if (isRegulatedAgent(dialogueAgent)) {
+          await admin.from('follow_ups').update({ status: 'stopped', updated_at: new Date().toISOString() }).eq('id', row.id)
+          return { id: row.id, status: 'stopped_regulated_agent' }
+        }
         if (!chatId) chatId = String(dlg.external_id ?? '')
         // STOP-ON-REPLY: if the customer wrote after our last message, they're engaged —
         // hand back to the live agent instead of nagging.

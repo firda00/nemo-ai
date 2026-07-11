@@ -71,6 +71,10 @@ export interface PlatformAgent {
   country?: string
   purpose?: string
   niche?: string
+  /** Server-enforced channel safety tier. Regulated agents cannot connect live channels. */
+  riskTier?: 'standard' | 'regulated'
+  /** Immutable catalog identity used by server-side safety classification. */
+  templateKey?: string
   // voice (TTS/STT) — config only for now; synthesis activates with a provider key
   voiceEnabled?: boolean
   voiceMode?: 'tts' | 'stt' | 'both'

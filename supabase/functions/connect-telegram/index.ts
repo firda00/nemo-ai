@@ -7,6 +7,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { tgSetWebhook, tgGetMe } from '../_shared/telegram.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -61,6 +62,15 @@ Deno.serve(async (req) => {
       agentId = a?.id
     }
   }
+
+  const { data: targetAgent } = await db
+    .from('agents')
+    .select('id, niche, risk_tier')
+    .eq('id', agentId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (!targetAgent) return json({ error: 'agent not found' }, 404)
+  if (isRegulatedAgent(targetAgent)) return json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, 403)
 
   const secret = crypto.randomUUID().replace(/-/g, '')
   const { data: channel, error: chErr } = await db

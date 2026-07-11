@@ -6,6 +6,7 @@ export type CommerceTeamKind = 'marketplace' | 'dropshipping' | 'online-store' |
 interface CommerceBlueprint {
   name: string
   goal: string
+  workflowMode: 'generic' | 'logistics'
   specialists: { role: string; name: string; prompt: AgentPrompt }[]
 }
 
@@ -18,6 +19,7 @@ const specialist = (role: string, name: string, tasks: string, rules: string): C
 export const COMMERCE_BLUEPRINTS: Record<CommerceTeamKind, CommerceBlueprint> = {
   marketplace: {
     name: 'Marketplace Seller Team',
+    workflowMode: 'generic',
     goal: 'Analyze supplied marketplace catalog, order, stock and review data, then prepare seller recommendations and reports. WB/Ozon tools are connected separately and remain read-only; all price, stock and order changes require human approval.',
     specialists: [
       specialist('Order Control Agent', 'Order Controller', 'Check new and unfulfilled marketplace orders, deadlines and operational exceptions.', 'Use only connected seller data; never expose order data in public customer channels.'),
@@ -29,6 +31,7 @@ export const COMMERCE_BLUEPRINTS: Record<CommerceTeamKind, CommerceBlueprint> = 
   },
   dropshipping: {
     name: 'Dropshipping Team',
+    workflowMode: 'generic',
     goal: 'Analyze supplied product and supplier data, map SKUs, protect margin, prepare order-routing tasks and control supplier fulfillment. Supplier orders, payments and customer refunds always require human approval.',
     specialists: [
       specialist('Product Research Agent', 'Product Researcher', 'Evaluate supplied demand signals, competition notes and product viability.', 'Cite supplied sources and do not invent sales numbers.'),
@@ -40,6 +43,7 @@ export const COMMERCE_BLUEPRINTS: Record<CommerceTeamKind, CommerceBlueprint> = 
   },
   'online-store': {
     name: 'Online Store Team',
+    workflowMode: 'generic',
     goal: 'Analyze supplied online-store data for product consultation, lead qualification, order control, follow-up, content and management reporting. Store connectors are configured separately; payments, refunds and fulfillment changes require approval.',
     specialists: [
       specialist('Product and Sales Consultant', 'Product Consultant', 'Answer product questions from the connected knowledge/catalog and qualify intent.', 'Never invent stock, price or delivery terms.'),
@@ -51,6 +55,7 @@ export const COMMERCE_BLUEPRINTS: Record<CommerceTeamKind, CommerceBlueprint> = 
   },
   logistics: {
     name: 'Logistics Control Team',
+    workflowMode: 'logistics',
     goal: 'Manual analysis beta for supplied order/tracking rows: parse source facts, detect stale scans and SLA risk, create owner/deadline tasks, draft carrier and customer messages, and report unresolved exceptions. There is no live carrier sync; external actions require human approval.',
     specialists: [
       specialist('Shipment Tracking Agent', 'Tracking Agent', 'Normalize shipment rows, last events, ETA and current delivery state.', 'Never invent a tracking event, location or delivery status.'),

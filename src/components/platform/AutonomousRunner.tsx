@@ -72,6 +72,7 @@ export function AutonomousRunner({
   const { t, lang } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const deleteAgent = useAgentStore((s) => s.deleteAgent)
   const [goal, setGoal] = useState(defaultGoal)
   const [running, setRunning] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'architect' | 'team' | 'review' | 'synth'>('idle')
@@ -213,8 +214,9 @@ export function AutonomousRunner({
         name: `Team: ${goal.trim().slice(0, 40)}`,
         goal: goal.trim(),
         specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt })),
-      })
-      if (res.agentId) navigate(`/app/teams/${res.agentId}`)
+      }, deleteAgent)
+      if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
+      else setError(res.error ?? 'Could not save the complete team.')
     } finally {
       setSaving(false)
     }

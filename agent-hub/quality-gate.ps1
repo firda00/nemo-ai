@@ -11,6 +11,7 @@ $steps = @(
   @{ Name = 'Agent capability contracts'; Command = { npm run test:contracts } },
   @{ Name = 'Autopost and funnel contracts'; Command = { npm run test:autopost } },
   @{ Name = 'Commerce and logistics contracts'; Command = { npm run test:commerce } },
+  @{ Name = 'Industry team safety contracts'; Command = { npm run test:industries } },
   @{ Name = 'Logistics parser behavior'; Command = { npm run test:logistics-behavior } },
   @{ Name = 'Auth and trace RLS contracts'; Command = { npm run test:auth-contracts } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },

@@ -90,10 +90,39 @@ export default function TeamDetailPage() {
   // Show operational workflows only for teams that were created for that work.
   // Content, sales and store teams keep the universal "task the team" runner.
   const teamBlob = `${team?.name ?? ''} ${team?.purpose ?? ''} ${team?.niche ?? ''} ${dept?.name ?? ''} ${dept?.niche ?? ''} ${(dept?.subs ?? []).map((s) => `${s.role} ${s.prompt?.tasks ?? ''}`).join(' ')}`.toLowerCase()
-  const isLogistics = /logistics?|логист|shipment|carrier|доставк|fulfillment|sla monitor/.test(teamBlob)
+  const explicitWorkflowMode = teamBlob.match(/nemo-workflow:(generic|operations|logistics)/)?.[1]
+  const isRegulated = team?.riskTier === 'regulated' || /nemo-risk:regulated/.test(teamBlob)
+  const isLogistics = explicitWorkflowMode === 'logistics' || (!explicitWorkflowMode && /logistics?|логист|shipment|carrier|доставк|fulfillment|sla monitor/.test(teamBlob))
   const isCommerceWorkspace = /marketplace seller team|dropshipping team|online store team/.test(teamBlob)
-  const isOps = isLogistics || (!isCommerceWorkspace && /\boperations?\b|\bops\b|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob))
+  const isOps = isLogistics
+    || explicitWorkflowMode === 'operations'
+    || (!explicitWorkflowMode && !isCommerceWorkspace && /\boperations?\b|\bops\b|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob))
   const workflowKind: OpsKind = isLogistics ? 'logistics_control' : kind === 'logistics_control' ? 'payment_control' : kind
+  const safetyCopy = lang === 'ru' ? {
+    badge: 'Безопасная бета · только Nemo',
+    specialist: 'Только Nemo',
+    notice: 'Безопасная бета: используйте обезличенные или минимально необходимые данные, проверяйте каждый результат и оставляйте решения уполномоченному специалисту. Для этой команды Nemo пока не предоставляет обязательную очередь согласований.',
+    blockedTitle: 'Подключение внешних каналов заблокировано в этой бета-версии',
+    blockedBody: 'Тестируйте команду только внутри Nemo на нечувствительных или обезличенных данных. Telegram можно будет включить после реализации и проверки обязательного согласования, аудита и защиты данных.',
+    status: 'Безопасная бета: команда работает только внутри Nemo. Проверьте результат; решения и внешние действия остаются за уполномоченным специалистом.',
+    generalStatus: 'Команда готова к внутренней задаче: дайте факты и критерий результата, затем проверьте итог перед внешним действием.',
+  } : lang === 'uz' ? {
+    badge: 'Xavfsiz beta · faqat Nemo',
+    specialist: 'Faqat Nemo',
+    notice: 'Xavfsiz beta: shaxssizlantirilgan yoki minimal zarur ma’lumotlardan foydalaning, har bir natijani tekshiring va qarorlarni vakolatli mutaxassisga qoldiring. Nemo bu jamoa uchun hali majburiy tasdiqlash navbatini bermaydi.',
+    blockedTitle: 'Bu beta-versiyada tashqi kanallarni ulash bloklangan',
+    blockedBody: 'Jamoani faqat Nemo ichida maxfiy bo‘lmagan yoki shaxssizlantirilgan ma’lumotlarda sinang. Telegram majburiy tasdiqlash, audit va ma’lumotlarni himoya qilish nazoratlari joriy etilib tekshirilgandan keyin yoqiladi.',
+    status: 'Xavfsiz beta: jamoa faqat Nemo ichida ishlaydi. Natijani tekshiring; qarorlar va tashqi harakatlar vakolatli mutaxassisda qoladi.',
+    generalStatus: 'Jamoa ichki vazifaga tayyor: faktlar va natija mezonini bering, so‘ng tashqi harakatdan oldin yakunni tekshiring.',
+  } : {
+    badge: 'Safety beta · Nemo only',
+    specialist: 'Nemo only',
+    notice: 'Safety beta: use de-identified or minimum necessary data, review every result, and keep decisions with an authorized professional. Nemo does not yet provide an enforced approval queue for this team.',
+    blockedTitle: 'Live channel connection is blocked in this beta',
+    blockedBody: 'Test this team only inside Nemo with non-sensitive or de-identified data. Telegram can be enabled after enforced approval, audit and data-protection controls are implemented and verified.',
+    status: 'Safety beta: this team runs only inside Nemo. Review the result; decisions and external actions remain with an authorized professional.',
+    generalStatus: 'The team is ready for an internal task: provide facts and acceptance criteria, then review the result before any external action.',
+  }
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
@@ -109,6 +138,7 @@ export default function TeamDetailPage() {
         <div className="flex flex-wrap gap-2">
           <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">{team?.status || 'active'}</span>
           <span className="rounded-pill border border-violet/20 bg-violet/10 px-3 py-1 text-xs text-violet">{dept ? t('teamDetailPage.specialistAgents', { n: dept.subs.length }) : t('teamDetailPage.noTeamStructure')}</span>
+          {isRegulated && <span className="rounded-pill border border-amber/25 bg-amber/10 px-3 py-1 text-xs text-amber">{safetyCopy.badge}</span>}
         </div>
       </div>
 
@@ -126,7 +156,9 @@ export default function TeamDetailPage() {
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${color}22`, color }}><Bot size={14} /></span>
                     <span className="min-w-0 flex-1 truncate text-sm text-text">{sa.name}</span>
                     <span className="hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] sm:inline" style={{ background: `${color}1a`, color }}>{sa.role}</span>
-                    <TelegramBotConnect compact target={{ sub_agent_id: sa.id }} connected={subBots.has(sa.id)} onConnected={() => setSubBots((prev) => new Set(prev).add(sa.id))} />
+                    {isRegulated
+                      ? <span className="shrink-0 rounded-pill border border-amber/20 bg-amber/10 px-2 py-0.5 text-[10px] text-amber">{safetyCopy.specialist}</span>
+                      : <TelegramBotConnect compact target={{ sub_agent_id: sa.id }} connected={subBots.has(sa.id)} onConnected={() => setSubBots((prev) => new Set(prev).add(sa.id))} />}
                   </div>
                 )
               })}
@@ -138,6 +170,11 @@ export default function TeamDetailPage() {
           <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><PlayCircle size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.taskToTeamTitle')}</h2></div>
             <p className="mt-1.5 text-sm text-muted">{t('teamDetailPage.taskToTeamDesc')}</p>
+            {isRegulated && (
+              <p className="mt-3 rounded-xl border border-amber/25 bg-amber/[0.07] p-3 text-xs leading-relaxed text-amber">
+                {safetyCopy.notice}
+              </p>
+            )}
             <div className="mt-4">
               <AutonomousRunner
                 key={dept?.id ?? 'team'}
@@ -190,6 +227,13 @@ export default function TeamDetailPage() {
               <p className="mt-2 text-sm leading-relaxed text-muted">{t('teamDetailPage.telegramBotsDesc')}</p>
             </div>
 
+            {isRegulated ? (
+              <div className="rounded-2xl border border-amber/30 bg-amber/[0.07] p-4">
+                <p className="text-sm font-semibold text-text">{safetyCopy.blockedTitle}</p>
+                <p className="mt-2 text-[13px] leading-relaxed text-muted">{safetyCopy.blockedBody}</p>
+              </div>
+            ) : (
+              <>
             {/* PRIMARY — one master bot / one token runs the whole team. This is the "start here". */}
             <div className="rounded-2xl border border-violet/25 bg-violet/[0.05] p-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -234,19 +278,23 @@ export default function TeamDetailPage() {
                 </p>
               </div>
             </details>
+              </>
+            )}
           </section>
         </div>
 
         {/* RIGHT — live results from the DB */}
         <div className="space-y-6">
           <CoordinatorAgentPanel
-            mode={isOps ? 'planner' : 'content'}
+            mode={isOps ? 'planner' : 'general'}
             context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
             liveStatus={isLogistics
               ? (tasks.some((task) => !task.owner) ? 'Есть логистические исключения без владельца: назначьте ответственного.' : 'Ручной анализ логистики готов: вставьте CSV отправлений. Живой трекинг перевозчиков пока не подключён, сообщения не отправляются автоматически.')
               : isOps
               ? (tasks.some((task) => !task.owner) ? 'Есть задачи без владельца: назначьте ответственного до начала работы.' : 'Планёрка готова: задачи распределяются, проверяются и закрываются с результатом.')
-              : 'Контентный workflow готов: бриф → исследование → черновик → проверка → доставка.'}
+              : isRegulated
+              ? safetyCopy.status
+              : safetyCopy.generalStatus}
           />
           {isOps && !isLogistics && <PlannerCommandCenter tasks={tasks} />}
           {isOps && !isLogistics && <PlanerkaSheetCard />}

@@ -3,6 +3,7 @@
 // dialogue upsert, agent reply, and send. Signature is verified at the webhook before enqueue.
 import { buildReply } from './agent.ts'
 import { waSend } from './meta.ts'
+import { isRegulatedAgent } from './riskPolicy.ts'
 
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const MAX_MSG = 4000
@@ -13,6 +14,10 @@ export async function processWhatsAppBody(db: any, channelId: string, body: any)
   if (!channel) return
   const agent = channel.agents
   const creds = channel.credentials ?? {}
+  if (isRegulatedAgent(agent)) {
+    await db.from('channels').update({ status: 'safety_blocked' }).eq('id', channelId)
+    return
+  }
 
   for (const entry of body?.entry ?? []) {
     for (const change of entry.changes ?? []) {

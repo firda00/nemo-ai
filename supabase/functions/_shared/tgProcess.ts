@@ -7,6 +7,7 @@ import { tgSend } from './telegram.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { transcribeAudio } from './transcribe.ts'
+import { isRegulatedAgent } from './riskPolicy.ts'
 
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const MAX_MSG = 4000
@@ -64,6 +65,10 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   const botToken = channel.credentials?.bot_token
   const botUsername = channel.credentials?.username ?? ''
   const agent = channel.agents
+  if (isRegulatedAgent(agent)) {
+    await db.from('channels').update({ status: 'safety_blocked' }).eq('id', channelId)
+    return
+  }
 
   let text = msg.text ? String(msg.text).slice(0, MAX_MSG) : (msg.caption ? String(msg.caption).slice(0, MAX_MSG) : '')
   const voice = msg.voice ?? msg.audio

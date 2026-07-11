@@ -9,6 +9,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { buildReply } from '../_shared/agent.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
+import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -30,6 +31,10 @@ Deno.serve(async (req) => {
     const { data: channel } = await db.from('channels').select('*, agents(*)').eq('id', channelId).eq('type', 'widget').maybeSingle() as { data: any }
     if (!channel || !channel.agents) return json({ error: 'widget not found' }, 404)
     const agent = channel.agents
+    if (isRegulatedAgent(agent)) {
+      await db.from('channels').update({ status: 'safety_blocked' }).eq('id', channelId)
+      return json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, 403)
+    }
 
     // one dialogue per widget session
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

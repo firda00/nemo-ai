@@ -13,6 +13,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { tgSetWebhook, tgGetMe } from '../_shared/telegram.ts'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
+import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -59,6 +60,12 @@ Deno.serve(async (req) => {
       .select('id')
       .single()
     agentId = agent!.id
+  }
+
+  const { data: targetAgent } = await db.from('agents').select('id, niche, risk_tier').eq('id', agentId).maybeSingle()
+  if (!targetAgent) return Response.json({ error: 'agent not found' }, { status: 404 })
+  if (isRegulatedAgent(targetAgent)) {
+    return Response.json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, { status: 403 })
   }
 
   // create the channel row with a fresh webhook secret
