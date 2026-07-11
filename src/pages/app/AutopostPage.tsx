@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Send, Loader2, CalendarClock, Trash2, CheckCircle2, XCircle, Clock, Info, Camera, Share2, KeyRound, Unplug, ExternalLink, Hash, MessageCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
@@ -39,7 +39,7 @@ function ConnectedChip({ t, label, onDisc }: { t: (k: string, v?: Record<string,
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function AutopostPage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [platform, setPlatform] = useState<Platform>('telegram')
   const [bots, setBots] = useState<Bot[]>([])
   const [botId, setBotId] = useState('')
@@ -52,7 +52,8 @@ export default function AutopostPage() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   // connection state per platform
-  const [social, setSocial] = useState<{ meta: { connected: boolean; label?: string }; twitter: { connected: boolean; label?: string }; reddit: { connected: boolean; label?: string; subreddit?: string } }>({ meta: { connected: false }, twitter: { connected: false }, reddit: { connected: false } })
+  const [social, setSocial] = useState<{ meta: { connected: boolean; label?: string; page_id?: string | null; ig_user_id?: string | null }; twitter: { connected: boolean; label?: string }; reddit: { connected: boolean; label?: string; subreddit?: string } }>({ meta: { connected: false }, twitter: { connected: false }, reddit: { connected: false } })
+  const [loadError, setLoadError] = useState('')
   const [cBusy, setCBusy] = useState(false); const [cMsg, setCMsg] = useState<{ ok: boolean; text: string } | null>(null)
   // meta form
   const [mToken, setMToken] = useState(''); const [mPage, setMPage] = useState(''); const [mIg, setMIg] = useState('')
@@ -61,17 +62,20 @@ export default function AutopostPage() {
   // reddit form
   const [rd, setRd] = useState({ client_id: '', client_secret: '', username: '', password: '', subreddit: '' })
 
-  const loadPosts = async () => {
+  const loadPosts = useCallback(async () => {
     if (!supabase) return
-    const { data } = await supabase.functions.invoke('autopost', { body: { action: 'list' } })
-    const p = data as { posts?: Post[] } | null; if (p?.posts) setPosts(p.posts)
-  }
-  const loadSocial = async () => {
+    const { data, error } = await supabase.functions.invoke('autopost', { body: { action: 'list' } })
+    const p = data as { ok?: boolean; posts?: Post[]; error?: string } | null
+    if (error || !p?.ok) { setLoadError(p?.error ?? error?.message ?? t('autopostPage.genericError')); return }
+    setPosts(p.posts ?? []); setLoadError('')
+  }, [t])
+  const loadSocial = useCallback(async () => {
     if (!supabase) return
-    const { data } = await supabase.functions.invoke('connect-social', { body: { action: 'status' } })
+    const { data, error } = await supabase.functions.invoke('connect-social', { body: { action: 'status' } })
     const p = data as any
+    if (error || !p?.ok) { setLoadError(p?.error ?? error?.message ?? t('autopostPage.genericError')); return }
     if (p) setSocial({ meta: p.meta ?? { connected: Boolean(p.connected), label: p.label }, twitter: p.twitter ?? { connected: false }, reddit: p.reddit ?? { connected: false } })
-  }
+  }, [t])
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
     ;(async () => {
@@ -83,7 +87,7 @@ export default function AutopostPage() {
       } catch { /* ignore */ }
       setLoading(false)
     })()
-  }, [])
+  }, [loadPosts, loadSocial, t])
 
   const connect = async (payload: any, okText: string) => {
     if (!supabase || cBusy) return
@@ -98,33 +102,65 @@ export default function AutopostPage() {
   const disconnect = async (p: Platform) => {
     if (!supabase) return
     const key = p === 'facebook' || p === 'instagram' ? 'meta' : p
-    await supabase.functions.invoke('connect-social', { body: { action: 'disconnect', platform: key } }); await loadSocial()
+    const { data, error } = await supabase.functions.invoke('connect-social', { body: { action: 'disconnect', platform: key } })
+    if (error || !(data as { ok?: boolean } | null)?.ok) setCMsg({ ok: false, text: error?.message ?? t('autopostPage.genericError') })
+    else await loadSocial()
+  }
+
+  const postPayload = (action: 'schedule' | 'send_now') => {
+    const payload: any = { action, platform, content: content.trim() }
+    if (action === 'schedule') payload.scheduled_at = when ? new Date(when).toISOString() : ''
+    if (platform === 'telegram') { payload.channel_id = botId || null; payload.target_chat = target.trim() }
+    if (platform === 'reddit' && target.trim()) payload.target_chat = target.trim()
+    if (mediaUrl.trim() && (platform === 'facebook' || platform === 'instagram')) payload.media_url = mediaUrl.trim()
+    return payload
   }
 
   const schedule = async () => {
     if (!supabase || busy) return
     setBusy(true); setMsg(null)
     try {
-      const payload: any = { action: 'schedule', platform, content: content.trim(), scheduled_at: when ? new Date(when).toISOString() : '' }
-      if (platform === 'telegram') { payload.channel_id = botId || null; payload.target_chat = target.trim() }
-      if (platform === 'reddit' && target.trim()) payload.target_chat = target.trim() // subreddit override
-      if (mediaUrl.trim() && (platform === 'facebook' || platform === 'instagram')) payload.media_url = mediaUrl.trim()
-      const { data } = await supabase.functions.invoke('autopost', { body: payload })
+      const { data, error } = await supabase.functions.invoke('autopost', { body: postPayload('schedule') })
       const p = data as { ok?: boolean; error?: string } | null
-      if (!p?.ok) { setMsg({ ok: false, text: p?.error ?? t('autopostPage.scheduleFailed') }); return }
+      if (error || !p?.ok) { setMsg({ ok: false, text: p?.error ?? error?.message ?? t('autopostPage.scheduleFailed') }); return }
       setMsg({ ok: true, text: t('autopostPage.postScheduled') }); setContent(''); setMediaUrl(''); setWhen('')
       await loadPosts()
     } catch { setMsg({ ok: false, text: t('autopostPage.genericError') }) } finally { setBusy(false) }
   }
-  const cancel = async (id: string) => { if (!supabase) return; await supabase.functions.invoke('autopost', { body: { action: 'cancel', id } }); await loadPosts() }
-  const fmt = (iso: string) => { try { return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) } catch { return iso } }
+  const sendNow = async () => {
+    if (!supabase || busy) return
+    setBusy(true); setMsg(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('autopost', { body: postPayload('send_now') })
+      const p = data as { ok?: boolean; error?: string } | null
+      if (error || !p?.ok) { setMsg({ ok: false, text: p?.error ?? error?.message ?? t('autopostPage.genericError') }); return }
+      setMsg({ ok: true, text: 'Публикация отправлена.' }); setContent(''); setMediaUrl(''); await loadPosts()
+    } catch { setMsg({ ok: false, text: t('autopostPage.genericError') }) } finally { setBusy(false) }
+  }
+  const cancel = async (id: string) => {
+    if (!supabase) return
+    const { data, error } = await supabase.functions.invoke('autopost', { body: { action: 'cancel', id } })
+    if (error || !(data as { ok?: boolean } | null)?.ok) setLoadError((data as { error?: string } | null)?.error ?? error?.message ?? t('autopostPage.genericError'))
+    await loadPosts()
+  }
+  const fmt = (iso: string) => { try { return new Date(iso).toLocaleString(lang === 'ru' ? 'ru-RU' : lang === 'uz' ? 'uz-UZ' : 'en-US', { dateStyle: 'short', timeStyle: 'short' }) } catch { return iso } }
 
   const isMeta = platform === 'facebook' || platform === 'instagram'
-  const ready = platform === 'telegram' ? target.trim().length > 0
-    : isMeta ? social.meta.connected
+  const ready = platform === 'telegram' ? target.trim().length > 0 && Boolean(botId)
+    : platform === 'facebook' ? social.meta.connected && Boolean(social.meta.page_id)
+      : platform === 'instagram' ? social.meta.connected && Boolean(social.meta.ig_user_id)
       : platform === 'twitter' ? social.twitter.connected
         : platform === 'reddit' ? social.reddit.connected : false
-  const canSchedule = content.trim().length >= 2 && !!when && ready && (platform === 'instagram' ? mediaUrl.trim().length > 0 : true)
+  const contentValid = content.trim().length >= 2 && (platform !== 'twitter' || content.length <= 280)
+  const mediaValid = platform !== 'instagram' || mediaUrl.trim().length > 0
+  const canSend = contentValid && ready && mediaValid
+  const canSchedule = canSend && Boolean(when)
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const guide = lang === 'ru'
+    ? ['1. Подключите канал', '2. Подготовьте и проверьте пост', '3. Отправьте сейчас или выберите время']
+    : lang === 'uz'
+      ? ['1. Kanalni ulang', '2. Postni tayyorlang va tekshiring', '3. Hozir yuboring yoki vaqtni tanlang']
+      : ['1. Connect a channel', '2. Prepare and review the post', '3. Send now or choose a time']
 
   return (
     <div className="container-page max-w-4xl py-8">
@@ -135,6 +171,16 @@ export default function AutopostPage() {
           <p className="text-sm text-muted">{t('autopostPage.subtitle')}</p>
         </div>
       </div>
+
+      <div className="mt-5 grid gap-2 sm:grid-cols-3">
+        {guide.map((step, i) => <div key={step} className={cn('rounded-xl border px-3 py-2 text-xs', i === 0 && ready ? 'border-teal/25 bg-teal/[0.06] text-teal' : 'border-ice/10 bg-white/[0.02] text-muted')}>{step}</div>)}
+      </div>
+      {loadError && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-danger/10 px-3 py-2 text-xs text-danger">
+          <span>{loadError}</span>
+          <button onClick={() => void Promise.all([loadPosts(), loadSocial()])} className="rounded-lg border border-danger/20 px-2 py-1">Retry</button>
+        </div>
+      )}
 
       <div className="mt-5"><FanoutComposer onQueued={loadPosts} /></div>
 
@@ -262,9 +308,12 @@ export default function AutopostPage() {
               </label>
             )}
             <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-1.5"><span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('autopostPage.whenPublish')}</span><input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="glass rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" /></label>
+              <label className="space-y-1.5"><span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('autopostPage.whenPublish')}</span><input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="glass rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" /><span className="block text-[10px] text-fog">{timezone}</span></label>
+              <Button variant="outline" onClick={sendNow} disabled={busy || !canSend}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} {lang === 'ru' ? 'Отправить сейчас' : lang === 'uz' ? 'Hozir yuborish' : 'Send now'}</Button>
               <Button onClick={schedule} disabled={busy || !canSchedule}>{busy ? <Loader2 size={15} className="animate-spin" /> : <CalendarClock size={15} />} {t('autopostPage.schedule')}</Button>
             </div>
+            {!ready && <p className="text-[11px] text-amber">{lang === 'ru' ? 'Сначала подключите выбранную платформу и укажите получателя.' : lang === 'uz' ? 'Avval platformani ulang va qabul qiluvchini kiriting.' : 'Connect the selected platform and choose a destination first.'}</p>}
+            {platform === 'twitter' && content.length > 280 && <p className="text-[11px] text-danger">{content.length}/280</p>}
             {msg && <p className={cn('rounded-lg px-3 py-2 text-xs', msg.ok ? 'bg-teal/10 text-teal' : 'bg-danger/10 text-danger')}>{msg.text}</p>}
           </div>
         </>

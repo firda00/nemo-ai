@@ -6,8 +6,17 @@ import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
 
 export default function AutonomousPage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [mode, setMode] = useState<'team' | 'single'>('team')
+  const [starterGoal, setStarterGoal] = useState(() => {
+    try {
+      const raw = localStorage.getItem('nemo-selected-template')
+      if (!raw) return ''
+      localStorage.removeItem('nemo-selected-template')
+      const parsed = JSON.parse(raw) as { goal?: string; teamName?: string }
+      return [parsed.teamName, parsed.goal].filter(Boolean).join(': ')
+    } catch { return '' }
+  })
   const isTeam = mode === 'team'
 
   const examples = isTeam
@@ -25,6 +34,15 @@ export default function AutonomousPage() {
         { icon: Send, cls: 'text-cyan', label: t('autonomousPage.chipSingle2') },
         { icon: Repeat, cls: 'text-teal', label: t('autonomousPage.chipSingle3') },
       ]
+
+  const departmentPresets = [
+    { id: 'sales', name: lang === 'ru' ? 'Продажи' : lang === 'uz' ? 'Sotuv' : 'Sales', roles: 'Qualifier · Follow-up · CRM · Report', goal: lang === 'ru' ? 'Создай отдел продаж: квалифицируй лидов, отвечай на возражения, делай follow-up, обновляй CRM и готовь отчёт руководителю.' : lang === 'uz' ? 'Leadlarni saralash, eʼtirozlarga javob berish, follow-up, CRM va rahbar hisoboti uchun sotuv jamoasini yarat.' : 'Create a sales team for lead qualification, objections, follow-up, CRM updates and manager reporting.' },
+    { id: 'support', name: lang === 'ru' ? 'Поддержка' : lang === 'uz' ? 'Yordam' : 'Support', roles: 'Triage · Knowledge · SLA · Escalation', goal: lang === 'ru' ? 'Создай отдел поддержки: классифицируй обращения, отвечай по базе знаний, контролируй SLA и передавай сложные случаи оператору.' : lang === 'uz' ? 'Murojaatlarni saralash, bilim bazasidan javob berish, SLA nazorati va operatorga eskalatsiya uchun yordam jamoasini yarat.' : 'Create a support team for triage, knowledge answers, SLA control and human escalation.' },
+    { id: 'content', name: lang === 'ru' ? 'Контент' : lang === 'uz' ? 'Kontent' : 'Content', roles: 'Strategy · Research · Copy · Review', goal: lang === 'ru' ? 'Создай контент-отдел: стратегия, исследование, контент-план, тексты, сценарии и проверка качества перед публикацией.' : lang === 'uz' ? 'Strategiya, tadqiqot, kontent-reja, matn, ssenariy va sifat tekshiruvi uchun kontent jamoasini yarat.' : 'Create a content team for strategy, research, planning, copy, scripts and quality review.' },
+    { id: 'operations', name: lang === 'ru' ? 'Операции' : lang === 'uz' ? 'Operatsiyalar' : 'Operations', roles: 'Meetings · Tasks · Reminders · QA', goal: lang === 'ru' ? 'Создай операционный отдел: разбирай встречи, назначай задачи и дедлайны, напоминай исполнителям и проверяй результат.' : lang === 'uz' ? 'Yigʻilishlarni tahlil qilish, vazifa va deadline berish, eslatish va natijani tekshirish uchun operatsion jamoa yarat.' : 'Create an operations team for meeting analysis, task assignment, deadlines, reminders and QA.' },
+    { id: 'hr', name: 'HR', roles: 'Screening · Interviews · Onboarding', goal: lang === 'ru' ? 'Создай HR-отдел: первичный скрининг кандидатов, расписание интервью, onboarding и ответы на типовые HR-вопросы.' : lang === 'uz' ? 'Nomzodlarni saralash, intervyu rejalash, onboarding va HR savollari uchun HR jamoasini yarat.' : 'Create an HR team for candidate screening, interview scheduling, onboarding and HR FAQs.' },
+    { id: 'analytics', name: lang === 'ru' ? 'Аналитика' : lang === 'uz' ? 'Analitika' : 'Analytics', roles: 'Data · BI · Anomalies · Reports', goal: lang === 'ru' ? 'Создай аналитический отдел: собирай показатели, находи отклонения и готовь понятные управленческие отчёты.' : lang === 'uz' ? 'Koʻrsatkichlarni yigʻish, ogʻishlarni topish va boshqaruv hisobotlari uchun analitika jamoasini yarat.' : 'Create an analytics team to collect metrics, detect anomalies and prepare management reports.' },
+  ]
 
   return (
     <div className="container-page max-w-4xl py-8">
@@ -63,14 +81,28 @@ export default function AutonomousPage() {
       </div>
 
       <div className="mt-6">
-        {isTeam ? <AutonomousRunner /> : <SingleAgentRunner />}
+        {isTeam ? <AutonomousRunner key={starterGoal || 'blank-team'} defaultGoal={starterGoal} /> : <SingleAgentRunner />}
       </div>
+
+      {isTeam && (
+        <div className="mt-8">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Выберите отдел — роли подставятся автоматически' : lang === 'uz' ? 'Boʻlimni tanlang — rollar avtomatik tanlanadi' : 'Choose a department — roles are selected automatically'}</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {departmentPresets.map((p) => (
+              <button key={p.id} onClick={() => { setStarterGoal(p.goal); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left transition hover:border-violet/35 hover:bg-violet/[0.04]">
+                <span className="text-sm font-semibold text-text">{p.name}</span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-muted">{p.roles}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-8">
         <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{t('autonomousPage.examplesLabel')}</p>
         <div className="grid gap-2 sm:grid-cols-2">
           {examples.map((e) => (
-            <div key={e} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-sm leading-relaxed text-muted">{e}</div>
+            <button key={e} onClick={() => isTeam && setStarterGoal(e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
           ))}
         </div>
       </div>

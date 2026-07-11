@@ -24,6 +24,8 @@ import {
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
+  MessageSquare,
+  UserRoundSearch,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -100,6 +102,9 @@ export function AppLayout() {
     { title: t('appLayout.groupResults'), items: [
       // Monitoring (system/site health) is an admin-only view.
       ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
+      { to: '/app/dialogues', label: t('platform.nav.dialogues'), icon: MessageSquare },
+      { to: '/app/lead-forms', label: t('platform.nav.leadForms'), icon: UserRoundSearch },
+      { to: '/app/analytics', label: t('platform.nav.analytics'), icon: BarChart3 },
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
       { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
       { to: '/app/results', label: t('mvp.sidebar.results'), icon: ClipboardList },

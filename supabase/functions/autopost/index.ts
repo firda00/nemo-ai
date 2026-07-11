@@ -62,9 +62,8 @@ Deno.serve(async (req) => {
     const secret = req.headers.get('x-cron-secret')
     const auth = req.headers.get('Authorization') ?? ''
     if (!CRON_SECRET || (secret !== CRON_SECRET && auth !== `Bearer ${SERVICE_ROLE}`)) return new Response('forbidden', { status: 403 })
-    const nowIso = new Date().toISOString()
-    const { data: due } = await admin.from('scheduled_posts')
-      .select('id, account_id, channel_id, target_chat, content, media_url, platform').eq('status', 'scheduled').lte('scheduled_at', nowIso).limit(50)
+    const { data: due, error: claimError } = await admin.rpc('claim_due_scheduled_posts', { p_limit: 50 })
+    if (claimError) return json({ ok: false, error: `claim failed: ${claimError.message}` }, 500)
     if (!due?.length) return json({ ok: true, posted: 0 })
     // telegram bot tokens per channel
     const ids = [...new Set(due.filter((p) => (p.platform ?? 'telegram') === 'telegram').map((p) => p.channel_id).filter(Boolean))]
@@ -82,8 +81,13 @@ Deno.serve(async (req) => {
       socialCache.set(key, data ?? null); return data ?? null
     }
     const loadMeta = (acc: string) => loadSocial(acc, 'meta')
-    const setStatus = (id: string, ok: boolean, err?: string) =>
-      admin.from('scheduled_posts').update(ok ? { status: 'posted', posted_at: new Date().toISOString() } : { status: 'failed', error: String(err ?? '').slice(0, 300) }).eq('id', id)
+    const setStatus = async (id: string, ok: boolean, err?: string) => {
+      const patch = ok
+        ? { status: 'posted', posted_at: new Date().toISOString(), claimed_at: null, error: null }
+        : { status: 'failed', claimed_at: null, error: String(err ?? '').slice(0, 300) }
+      const { error } = await admin.from('scheduled_posts').update(patch).eq('id', id).eq('status', 'processing')
+      return !error
+    }
 
     let posted = 0
     for (const p of due) {
@@ -136,16 +140,18 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   if (action === 'list') {
-    const { data } = await admin.from('scheduled_posts')
+    const { data, error } = await admin.from('scheduled_posts')
       .select('id, target_chat, content, scheduled_at, status, posted_at, error, channel_id, platform')
       .eq('account_id', accountId).order('scheduled_at', { ascending: false }).limit(50)
+    if (error) return json({ ok: false, error: error.message }, 500)
     return json({ ok: true, posts: data ?? [] })
   }
 
   if (action === 'cancel') {
     const id = String(body?.id ?? '')
-    await admin.from('scheduled_posts').update({ status: 'canceled' }).eq('id', id).eq('account_id', accountId).eq('status', 'scheduled')
-    return json({ ok: true })
+    const { data, error } = await admin.from('scheduled_posts').update({ status: 'canceled' }).eq('id', id).eq('account_id', accountId).eq('status', 'scheduled').select('id')
+    if (error) return json({ ok: false, error: error.message }, 500)
+    return data?.length ? json({ ok: true }) : json({ ok: false, error: 'Публикация уже обработана или не найдена.' }, 200)
   }
 
   if (action === 'schedule') {
@@ -156,16 +162,27 @@ Deno.serve(async (req) => {
     const mediaUrl = String(body?.media_url ?? '').trim() || null
     const when = String(body?.scheduled_at ?? '').trim()
     if (platform === 'telegram' && !target) return json({ ok: false, error: 'Укажите канал-получатель (@username канала).' }, 200)
+    if (platform === 'telegram' && !channelId) return json({ ok: false, error: 'Сначала подключите и выберите Telegram-бота.' }, 200)
     if (platform === 'instagram' && !mediaUrl) return json({ ok: false, error: 'Instagram требует картинку — вставьте ссылку на изображение (media_url).' }, 200)
     if (content.length < 2) return json({ ok: false, error: 'Пустой текст поста.' }, 200)
+    if (platform === 'twitter' && content.length > 280) return json({ ok: false, error: 'Для X текст должен быть не длиннее 280 символов.' }, 200)
     const ts = Date.parse(when)
     if (isNaN(ts)) return json({ ok: false, error: 'Некорректные дата/время.' }, 200)
     // verify the chosen bot belongs to this account (channels scope via agents.account_id)
     if (channelId) {
-      const { data: ch } = await admin.from('channels').select('agent_id').eq('id', channelId).maybeSingle()
+      const { data: ch } = await admin.from('channels').select('agent_id, credentials').eq('id', channelId).maybeSingle()
       const agentId = ch?.agent_id
       const { data: ag } = agentId ? await admin.from('agents').select('account_id').eq('id', agentId).maybeSingle() : { data: null }
       if (!ag || ag.account_id !== accountId) return json({ ok: false, error: 'Бот не найден в вашем аккаунте.' }, 200)
+      if (!ch?.credentials?.bot_token) return json({ ok: false, error: 'У выбранного Telegram-бота нет токена. Подключите его заново.' }, 200)
+    } else {
+      const key = platform === 'facebook' || platform === 'instagram' ? 'meta' : platform
+      const { data: social, error: socialError } = await admin.from('social_accounts').select('page_id, ig_user_id, credentials').eq('account_id', accountId).eq('platform', key).maybeSingle()
+      if (socialError) return json({ ok: false, error: socialError.message }, 500)
+      if (!social) return json({ ok: false, error: `Сначала подключите ${platform}.` }, 200)
+      if (platform === 'facebook' && !social.page_id) return json({ ok: false, error: 'Facebook подключён без Page ID.' }, 200)
+      if (platform === 'instagram' && !social.ig_user_id) return json({ ok: false, error: 'Instagram подключён без IG User ID.' }, 200)
+      if ((platform === 'twitter' || platform === 'reddit') && !social.credentials) return json({ ok: false, error: `У ${platform} отсутствуют ключи подключения.` }, 200)
     }
     const { data, error } = await admin.from('scheduled_posts')
       .insert({ account_id: accountId, channel_id: channelId, target_chat: target || null, content, media_url: mediaUrl, platform, scheduled_at: new Date(ts).toISOString() })
@@ -257,12 +274,20 @@ Deno.serve(async (req) => {
       const targetChat = String(tg?.target_chat ?? '').trim() || null
       if (platform === 'telegram') {
         if (!targetChat) return json({ ok: false, error: 'Для Telegram укажите канал-получатель (@channel).' }, 200)
-        if (channelId) {
-          const { data: ch } = await admin.from('channels').select('agent_id').eq('id', channelId).maybeSingle()
-          const { data: ag } = ch?.agent_id ? await admin.from('agents').select('account_id').eq('id', ch.agent_id).maybeSingle() : { data: null }
-          if (!ag || ag.account_id !== accountId) return json({ ok: false, error: 'Telegram-бот не найден в вашем аккаунте.' }, 200)
-        }
-      } else { channelId = null }
+        if (!channelId) return json({ ok: false, error: 'Выберите подключённого Telegram-бота.' }, 200)
+        const { data: ch } = await admin.from('channels').select('agent_id, credentials').eq('id', channelId).maybeSingle()
+        const { data: ag } = ch?.agent_id ? await admin.from('agents').select('account_id').eq('id', ch.agent_id).maybeSingle() : { data: null }
+        if (!ag || ag.account_id !== accountId) return json({ ok: false, error: 'Telegram-бот не найден в вашем аккаунте.' }, 200)
+        if (!ch?.credentials?.bot_token) return json({ ok: false, error: 'У Telegram-бота нет токена.' }, 200)
+      } else {
+        channelId = null
+        const key = platform === 'facebook' || platform === 'instagram' ? 'meta' : platform
+        const { data: social } = await admin.from('social_accounts').select('page_id, ig_user_id, credentials').eq('account_id', accountId).eq('platform', key).maybeSingle()
+        if (!social) return json({ ok: false, error: `Сначала подключите ${platform}.` }, 200)
+        if (platform === 'facebook' && !social.page_id) return json({ ok: false, error: 'Facebook подключён без Page ID.' }, 200)
+        if (platform === 'instagram' && !social.ig_user_id) return json({ ok: false, error: 'Instagram подключён без IG User ID.' }, 200)
+        if ((platform === 'twitter' || platform === 'reddit') && !social.credentials) return json({ ok: false, error: `У ${platform} отсутствуют ключи подключения.` }, 200)
+      }
       norm.push({ platform, channel_id: channelId, target_chat: targetChat })
     }
 

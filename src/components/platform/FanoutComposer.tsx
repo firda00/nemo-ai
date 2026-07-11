@@ -7,7 +7,7 @@ import { cn } from '../../lib/cn'
 interface Bot { id: string }
 const LANGS: { code: string; label: string }[] = [
   { code: 'uz', label: 'Oʻzbek' }, { code: 'ru', label: 'Русский' }, { code: 'en', label: 'English' },
-  { code: 'kk', label: 'Qazaqşa' }, { code: 'tr', label: 'Türkçe' }, { code: 'ar', label: 'العربية' },
+  { code: 'kk', label: 'Қазақша' }, { code: 'tr', label: 'Türkçe' }, { code: 'ar', label: 'العربية' },
 ]
 const CAP = 20
 
@@ -42,7 +42,8 @@ export function FanoutComposer({ onQueued }: { onQueued?: () => void }) {
         setBots(list); if (list[0]) setBotId(list[0].id)
         const { data } = await supabase!.functions.invoke('connect-social', { body: { action: 'status' } })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setMetaOn(Boolean((data as any)?.connected))
+        const status = data as any
+        setMetaOn(Boolean(status?.meta?.connected ?? status?.connected))
       } catch { /* ignore */ }
     })()
   }, [])
@@ -57,7 +58,7 @@ export function FanoutComposer({ onQueued }: { onQueued?: () => void }) {
   const targetsCount = (tgOn ? 1 : 0) + (fbOn ? 1 : 0) + (igOn ? 1 : 0)
   const langCount = Math.max(1, langs.size)
   const willPost = Math.min(CAP, langCount * targetsCount)
-  const canPost = content.trim().length >= 2 && targetsCount > 0 && (!tgOn || tgChannel.trim().length > 0) && (!igOn || mediaUrl.trim().length > 0)
+  const canPost = content.trim().length >= 2 && targetsCount > 0 && (!tgOn || (tgChannel.trim().length > 0 && Boolean(botId))) && (!igOn || mediaUrl.trim().length > 0)
 
   const publish = async () => {
     if (!supabase || busy || !canPost) return
@@ -134,6 +135,7 @@ export function FanoutComposer({ onQueued }: { onQueued?: () => void }) {
           )}
         </div>
       )}
+      {tgOn && bots.length === 0 && <p className="mt-2 text-[11px] text-amber">Подключите Telegram-бота в AI Teams — без него публикация не отправится.</p>}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />

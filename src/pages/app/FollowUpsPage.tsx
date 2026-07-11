@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Repeat, Loader2, Send, Mail, Play, Square, Sparkles, Clock, CheckCircle2, XCircle, MessageSquare } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -11,13 +12,20 @@ interface FollowUp {
   channel: 'telegram' | 'email'
   target: string | null
   goal: string
-  status: 'active' | 'done' | 'stopped' | 'converted'
+  status: 'active' | 'processing' | 'done' | 'stopped' | 'converted'
   step: number
   max_steps: number
   next_run_at: string
   last_sent_at: string | null
   last_message: string | null
   created_at: string
+}
+
+interface DialogueOption {
+  id: string
+  customer_name: string | null
+  external_id: string | null
+  updated_at: string
 }
 
 const CADENCE_PRESETS: { id: string; hours: number[] }[] = [
@@ -28,19 +36,24 @@ const CADENCE_PRESETS: { id: string; hours: number[] }[] = [
 
 const STATUS_META: Record<FollowUp['status'], { cls: string; icon: typeof Clock }> = {
   active: { cls: 'text-violet bg-violet/10', icon: Clock },
+  processing: { cls: 'text-cyan bg-cyan/10', icon: Clock },
   done: { cls: 'text-muted bg-white/5', icon: CheckCircle2 },
   stopped: { cls: 'text-danger bg-danger/10', icon: XCircle },
   converted: { cls: 'text-teal bg-teal/10', icon: MessageSquare },
 }
 
 export default function FollowUpsPage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const [params] = useSearchParams()
   const [items, setItems] = useState<FollowUp[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [running, setRunning] = useState(false)
   const [runNote, setRunNote] = useState('')
+  const [dialogues, setDialogues] = useState<DialogueOption[]>([])
+  const [dialogueId, setDialogueId] = useState(() => params.get('dialogue') ?? '')
+  const leadId = params.get('lead') ?? ''
 
   const [channel, setChannel] = useState<'telegram' | 'email'>('telegram')
   const [target, setTarget] = useState('')
@@ -64,6 +77,11 @@ export default function FollowUpsPage() {
     setLoading(false)
   }, [t])
   const load = useCallback(async () => { apply(await call({ action: 'list' })) }, [call, apply])
+  const loadDialogues = useCallback(async () => {
+    if (!supabase) return
+    const { data } = await supabase.from('dialogues').select('id, customer_name, external_id, updated_at').eq('channel', 'telegram').order('updated_at', { ascending: false }).limit(50)
+    setDialogues((data ?? []) as DialogueOption[])
+  }, [])
 
   // Fetch on mount inside an async callback (setState runs after the await, the
   // pattern the react-hooks rule allows), with a cleanup guard against unmount.
@@ -71,19 +89,20 @@ export default function FollowUpsPage() {
     let alive = true
     ;(async () => {
       const r = await call({ action: 'list' })
-      if (alive) apply(r)
+      if (alive) { apply(r); await loadDialogues() }
     })()
     return () => { alive = false }
-  }, [call, apply])
+  }, [call, apply, loadDialogues])
 
   const create = async () => {
     if (busy) return
-    if (!target.trim()) { setError(channel === 'telegram' ? t('followUpsPage.errNeedChatId') : t('followUpsPage.errNeedEmail')); return }
+    if (!target.trim() && !dialogueId) { setError(channel === 'telegram' ? t('followUpsPage.errNeedChatId') : t('followUpsPage.errNeedEmail')); return }
     if (goal.trim().length < 3) { setError(t('followUpsPage.errNeedGoal')); return }
     setBusy(true); setError('')
     const preset = CADENCE_PRESETS.find((p) => p.id === cadenceId) ?? CADENCE_PRESETS[1]
-    const r = await call({ action: 'enqueue', channel, target: target.trim(), goal: goal.trim(), cadence_hours: preset.hours, max_steps: preset.hours.length })
-    if (r?.ok) { setTarget(''); setGoal(''); await load() }
+    const selected = dialogues.find((d) => d.id === dialogueId)
+    const r = await call({ action: 'enqueue', channel, target: target.trim() || selected?.external_id || '', dialogue_id: dialogueId || undefined, lead_id: leadId || undefined, goal: goal.trim(), cadence_hours: preset.hours, max_steps: preset.hours.length })
+    if (r?.ok) { setTarget(''); setGoal(''); setDialogueId(''); await load() }
     else setError(r?.error ?? t('followUpsPage.errCreate'))
     setBusy(false)
   }
@@ -95,6 +114,8 @@ export default function FollowUpsPage() {
 
   const runNow = async () => {
     if (running) return
+    const confirmed = window.confirm(lang === 'ru' ? 'Отправить следующее сообщение всем активным воронкам сейчас?' : lang === 'uz' ? 'Barcha faol voronkalarga keyingi xabarni hozir yuborilsinmi?' : 'Send the next message for every active funnel now?')
+    if (!confirmed) return
     setRunning(true); setRunNote('')
     const r = await call({ action: 'run_mine', force: true })
     if (r?.ok) { setRunNote(t('followUpsPage.processedNow', { count: r.processed }) + (r.results ?? []).map((x: { status: string }) => x.status).join(', ')) }
@@ -125,6 +146,15 @@ export default function FollowUpsPage() {
         )}
       </div>
 
+      <div className="mt-5 grid gap-2 sm:grid-cols-4">
+        {(lang === 'ru'
+          ? ['1. Выберите диалог', '2. Укажите цель', '3. Агент отправляет касания', '4. Ответ останавливает серию']
+          : lang === 'uz'
+            ? ['1. Dialogni tanlang', '2. Maqsadni kiriting', '3. Agent xabar yuboradi', '4. Javob seriyani toʻxtatadi']
+            : ['1. Choose a dialogue', '2. Set the goal', '3. Agent sends touches', '4. A reply stops the sequence']
+        ).map((step) => <div key={step} className="rounded-xl border border-ice/10 bg-white/[0.02] px-3 py-2 text-xs text-muted">{step}</div>)}
+      </div>
+
       {/* create */}
       <div className="card mt-6 rounded-2xl p-5">
         <p className="mb-3 text-sm font-medium text-text">{t('followUpsPage.newFunnel')}</p>
@@ -136,10 +166,21 @@ export default function FollowUpsPage() {
             <Mail size={15} /> Email
           </button>
         </div>
+        {channel === 'telegram' && dialogues.length > 0 && (
+          <label className="mt-3 block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{lang === 'ru' ? 'Клиентский диалог' : lang === 'uz' ? 'Mijoz dialogi' : 'Customer dialogue'}</span>
+            <select value={dialogueId} onChange={(e) => { const id = e.target.value; setDialogueId(id); const d = dialogues.find((x) => x.id === id); setTarget(d?.external_id ?? '') }} className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none focus:border-violet/50">
+              <option value="" className="bg-panel">{lang === 'ru' ? 'Выберите диалог — рекомендуется' : lang === 'uz' ? 'Dialogni tanlang — tavsiya etiladi' : 'Choose a dialogue — recommended'}</option>
+              {dialogues.map((d) => <option key={d.id} value={d.id} className="bg-panel">{d.customer_name || d.external_id || d.id}</option>)}
+            </select>
+            <span className="mt-1 block text-[11px] text-teal">{lang === 'ru' ? 'Так воронка автоматически остановится, когда клиент ответит.' : lang === 'uz' ? 'Shunda mijoz javob berganda voronka avtomatik toʻxtaydi.' : 'This lets the funnel stop automatically when the customer replies.'}</span>
+          </label>
+        )}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{channel === 'telegram' ? t('followUpsPage.chatIdLabel') : t('followUpsPage.emailLabel')}</span>
-            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={channel === 'telegram' ? '123456789' : 'client@example.com'} className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+            <input value={target} onChange={(e) => { setTarget(e.target.value); if (channel === 'telegram') setDialogueId('') }} placeholder={channel === 'telegram' ? '123456789' : 'client@example.com'} className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+            {channel === 'telegram' && !dialogueId && <span className="mt-1 block text-[10px] text-amber">{lang === 'ru' ? 'Ручной chat_id не позволяет надёжно определить ответ клиента.' : lang === 'uz' ? 'Qoʻlda kiritilgan chat_id mijoz javobini ishonchli aniqlamaydi.' : 'A manual chat_id cannot reliably detect the customer reply.'}</span>}
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">{t('followUpsPage.cadenceLabel')}</span>
@@ -177,7 +218,7 @@ export default function FollowUpsPage() {
               return (
                 <div key={it.id} className="card rounded-2xl p-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium', sm.cls)}><sm.icon size={12} /> {t(`followUpsPage.status_${it.status}`)}</span>
+                    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium', sm.cls)}><sm.icon size={12} /> {it.status === 'processing' ? (lang === 'ru' ? 'Выполняется' : lang === 'uz' ? 'Bajarilmoqda' : 'Processing') : t(`followUpsPage.status_${it.status}`)}</span>
                     <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-muted">{it.channel === 'telegram' ? <Send size={11} /> : <Mail size={11} />} {it.target || t('followUpsPage.dialogFallback')}</span>
                     <span className="text-[11px] text-fog">{t('followUpsPage.touch', { step: it.step, max: it.max_steps })}</span>
                     <span className="ml-auto text-[11px] text-fog">{it.status === 'active' ? t('followUpsPage.nextLabel', { time: fmt(it.next_run_at) }) : t('followUpsPage.lastLabel', { time: fmt(it.last_sent_at) })}</span>

@@ -145,10 +145,11 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
     // Advance: schedule the next step or finish the sequence
     const nextStep = (row.step ?? 0) + 1
     const now = new Date()
-    const patch: Record<string, unknown> = { step: nextStep, last_sent_at: now.toISOString(), last_message: text.slice(0, 1000), updated_at: now.toISOString() }
+    const patch: Record<string, unknown> = { step: nextStep, last_sent_at: now.toISOString(), last_message: text.slice(0, 1000), claimed_at: null, updated_at: now.toISOString() }
     if (nextStep >= row.max_steps) {
       patch.status = 'done'
     } else {
+      patch.status = 'active'
       const cadence: number[] = Array.isArray(row.cadence_hours) ? row.cadence_hours : [24, 72, 168]
       const hrs = Number(cadence[nextStep] ?? cadence[cadence.length - 1] ?? 72)
       patch.next_run_at = new Date(now.getTime() + hrs * 3600 * 1000).toISOString()
@@ -170,8 +171,8 @@ Deno.serve(async (req) => {
   const cronSecret = req.headers.get('x-cron-secret')
   if (cronSecret && CRON_SECRET && cronSecret === CRON_SECRET) {
     if (action !== 'run_due') return json({ error: 'cron can only run_due' }, 400)
-    const nowIso = new Date().toISOString()
-    const { data: due } = await admin.from('follow_ups').select('*').eq('status', 'active').lte('next_run_at', nowIso).order('next_run_at', { ascending: true }).limit(50)
+    const { data: due, error } = await admin.rpc('claim_due_follow_ups', { p_limit: 50 })
+    if (error) return json({ ok: false, error: error.message }, 500)
     const results = []
     for (const row of due ?? []) results.push(await processOne(admin, row))
     return json({ ok: true, processed: results.length, results })
@@ -223,7 +224,12 @@ Deno.serve(async (req) => {
     const q = admin.from('follow_ups').select('*').eq('account_id', accountId).eq('status', 'active')
     const { data: rows } = body.force ? await q.limit(20) : await q.lte('next_run_at', new Date().toISOString()).limit(20)
     const results = []
-    for (const row of rows ?? []) results.push(await processOne(admin, row))
+    for (const row of rows ?? []) {
+      const { data: claimed } = await admin.from('follow_ups')
+        .update({ status: 'processing', claimed_at: new Date().toISOString(), attempt_count: Number(row.attempt_count ?? 0) + 1, updated_at: new Date().toISOString() })
+        .eq('id', row.id).eq('account_id', accountId).eq('status', 'active').select('*').maybeSingle()
+      if (claimed) results.push(await processOne(admin, claimed))
+    }
     return json({ ok: true, processed: results.length, results })
   }
 

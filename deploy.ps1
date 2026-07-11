@@ -15,6 +15,9 @@ function Apply-Migration($path) {
   Write-Host "  migration: $([IO.Path]::GetFileName($path))" -ForegroundColor DarkCyan
   # Read as UTF-8 + serialize via .NET (PS 5.1 ConvertTo-Json mangles non-ASCII SQL).
   $sql = [IO.File]::ReadAllText($path)
+  Apply-Sql $sql
+}
+function Apply-Sql($sql) {
   $body = $jsonSer.Serialize(@{ query = $sql })
   Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/database/query" -Method Post -Headers $hdr -Body $body | Out-Null
 }
@@ -29,23 +32,61 @@ if ($orLine) {
   Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/secrets" -Method Post -Headers $hdr -Body $secretBody | Out-Null
   Write-Host "     OpenRouter key set." -ForegroundColor Green
 }
+$cronLine = Get-Content .secrets.local | Select-String '^CRON_SECRET='
+if ($cronLine) {
+  $cronValue = $cronLine.ToString().Split('=', 2)[1].Trim()
+  $cronSecretBody = ConvertTo-Json @(
+    @{ name = 'CRON_SECRET'; value = $cronValue },
+    @{ name = 'FOLLOWUP_CRON_SECRET'; value = $cronValue }
+  )
+  Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/secrets" -Method Post -Headers $hdr -Body $cronSecretBody | Out-Null
+}
 
 Write-Host "1/3  Applying DB migrations..." -ForegroundColor Cyan
-Apply-Migration .\supabase\migrations\20260702120000_security_hardening.sql
-Apply-Migration .\supabase\migrations\20260703090000_ops_workflows.sql
+# Historical migrations are already applied and some are intentionally not
+# repeatable. Deployment only applies the current idempotent repair migration.
+Apply-Migration .\supabase\migrations\20260711150000_autopost_repair.sql
+
+if ($cronLine) {
+  $safeCron = $cronValue.Replace("'", "''")
+  $cronSql = @'
+create extension if not exists pg_cron;
+create extension if not exists pg_net with schema extensions;
+select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes');
+select cron.schedule(
+  'nemo-autopost-every-minute',
+  '* * * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/autopost',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{"action":"run_due"}'::jsonb
+    );$$
+);
+select cron.schedule(
+  'nemo-follow-up-every-five-minutes',
+  '*/5 * * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/follow-up',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{"action":"run_due"}'::jsonb
+    );$$
+);
+'@
+  Apply-Sql ($cronSql.Replace('__REF__', $ref).Replace('__SECRET__', $safeCron))
+}
 Write-Host "     migrations applied." -ForegroundColor Green
 
 $failed = @()
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
-foreach ($fn in 'whatsapp-webhook','instagram-webhook','stripe-webhook','telegram-webhook') {
+foreach ($fn in 'whatsapp-webhook','instagram-webhook','stripe-webhook','telegram-webhook','autopost','follow-up') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','orchestrate','research-agent','test-agent') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','orchestrate','research-agent','test-agent','connect-social') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
@@ -53,7 +94,7 @@ foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','orchestr
 
 # Verify the two previously-missing functions now respond (not 404)
 Write-Host "`nVerifying..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','ops-workflow') {
+foreach ($fn in 'backend-status','ops-workflow','autopost','follow-up','connect-social') {
   $code = -1
   try { $r = Invoke-WebRequest -Uri "https://$ref.supabase.co/functions/v1/$fn" -Method Options -UseBasicParsing -TimeoutSec 10; $code = $r.StatusCode } catch { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } }
   $ok = ($code -ne 404 -and $code -ne -1)

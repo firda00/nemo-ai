@@ -33,7 +33,8 @@ Deno.serve(async (req) => {
   const platform = String(body?.platform ?? 'meta')
 
   if (action === 'status') {
-    const { data: rows } = await admin.from('social_accounts').select('platform, page_id, ig_user_id, label, credentials').eq('account_id', accountId)
+    const { data: rows, error } = await admin.from('social_accounts').select('platform, page_id, ig_user_id, label, credentials').eq('account_id', accountId)
+    if (error) return json({ ok: false, error: error.message }, 500)
     const by = (p: string) => (rows ?? []).find((r: any) => r.platform === p)
     const meta = by('meta'), tw = by('twitter'), rd = by('reddit')
     return json({
@@ -47,7 +48,8 @@ Deno.serve(async (req) => {
 
   if (action === 'disconnect') {
     const p = ['meta', 'twitter', 'reddit'].includes(platform) ? platform : 'meta'
-    await admin.from('social_accounts').delete().eq('account_id', accountId).eq('platform', p)
+    const { error } = await admin.from('social_accounts').delete().eq('account_id', accountId).eq('platform', p)
+    if (error) return json({ ok: false, error: error.message }, 500)
     return json({ ok: true, connected: false })
   }
 
@@ -63,7 +65,8 @@ Deno.serve(async (req) => {
       if (Object.values(keys).some((v) => v.length < 10)) return json({ ok: false, error: 'Заполните все 4 ключа X (API Key/Secret, Access Token/Secret).' }, 200)
       const v = await twitterVerify(keys)
       if (!v.ok) return json({ ok: false, error: v.error ?? 'X отклонил ключи.' }, 200)
-      await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'twitter', credentials: keys, label: v.username ? '@' + v.username : null }, { onConflict: 'account_id,platform' })
+      const { error } = await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'twitter', credentials: keys, label: v.username ? '@' + v.username : null }, { onConflict: 'account_id,platform' })
+      if (error) return json({ ok: false, error: error.message }, 500)
       return json({ ok: true, connected: true, label: v.username ? '@' + v.username : null })
     }
 
@@ -79,7 +82,8 @@ Deno.serve(async (req) => {
       if (!keys.client_id || !keys.client_secret || !keys.username || !keys.password) return json({ ok: false, error: 'Заполните client_id, client_secret, логин и пароль Reddit.' }, 200)
       const v = await redditVerify(keys)
       if (!v.ok) return json({ ok: false, error: v.error ?? 'Reddit отклонил.' }, 200)
-      await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'reddit', credentials: keys, label: keys.username }, { onConflict: 'account_id,platform' })
+      const { error } = await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'reddit', credentials: keys, label: keys.username }, { onConflict: 'account_id,platform' })
+      if (error) return json({ ok: false, error: error.message }, 500)
       return json({ ok: true, connected: true, label: keys.username, subreddit: keys.subreddit ?? null })
     }
 
@@ -92,7 +96,8 @@ Deno.serve(async (req) => {
     try {
       const me = await fetch(`https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${encodeURIComponent(token)}`).then((r) => r.json())
       if (me?.error) return json({ ok: false, error: me.error?.message ?? 'Meta отклонила токен.' }, 200)
-      await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'meta', access_token: token, page_id: pageId, ig_user_id: igUserId || null, label: me?.name ?? null }, { onConflict: 'account_id,platform' })
+      const { error } = await admin.from('social_accounts').upsert({ account_id: accountId, platform: 'meta', access_token: token, page_id: pageId, ig_user_id: igUserId || null, label: me?.name ?? null }, { onConflict: 'account_id,platform' })
+      if (error) return json({ ok: false, error: error.message }, 500)
       return json({ ok: true, connected: true, page_id: pageId, ig_user_id: igUserId || null, label: me?.name ?? null })
     } catch {
       return json({ ok: false, error: 'Не удалось проверить токен (сеть).' }, 502)

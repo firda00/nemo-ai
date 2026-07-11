@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ClipboardList, User, Download } from 'lucide-react'
+import { ClipboardList, User, Download, Repeat } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
@@ -12,6 +12,7 @@ const live = isSupabaseEnabled
 
 interface Lead {
   id: string
+  dialogue_id?: string | null
   fields: Record<string, string>
   status: string
   created_at: string
@@ -112,10 +113,11 @@ export default function LeadsPage() {
         ) : (
           <ul className="divide-y divide-ice/[0.05]">
             {leads.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+              <li key={l.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
                 <span className="truncate text-text">{l.fields?.name ?? l.fields?.Ism ?? '—'}</span>
                 <span className="truncate text-muted">{l.fields?.phone ?? l.fields?.Telefon ?? ''}</span>
                 <span className="shrink-0 text-[11px] text-muted">{fmtDate(l.created_at)}</span>
+                {l.dialogue_id && <Link to={`/app/followups?dialogue=${encodeURIComponent(l.dialogue_id)}&lead=${encodeURIComponent(l.id)}`} className="inline-flex items-center gap-1 rounded-lg border border-violet/20 px-2 py-1 text-[11px] text-violet hover:bg-violet/10"><Repeat size={11} /> {t('appLayout.navFollowups')}</Link>}
               </li>
             ))}
           </ul>
