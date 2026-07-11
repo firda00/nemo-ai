@@ -139,6 +139,7 @@ export async function createUstudyOperationsTeam(
 export async function saveDynamicTeam(
   addAgent: (a: PlatformAgent) => Promise<{ id?: string; error?: string }>,
   opts: { name: string; goal: string; specialists: { role: string; name: string; prompt: AgentPrompt }[] },
+  deleteAgent?: (id: string) => Promise<{ error?: string }>,
 ): Promise<SeedResult> {
   const base = blankAgent()
   const agent: PlatformAgent = {
@@ -161,13 +162,33 @@ export async function saveDynamicTeam(
   if (res.error || !res.id) return { agentId: '', error: res.error ?? 'could not create team agent' }
   const agentId = res.id
   if (!isSupabaseEnabled || !supabase) return { agentId }
+  const db = supabase
+  const rollback = async (departmentId?: string) => {
+    const errors: string[] = []
+    if (departmentId) {
+      const { error } = await db.from('departments').delete().eq('id', departmentId)
+      if (error) errors.push(`department cleanup: ${error.message}`)
+    }
+    if (deleteAgent) {
+      const error = (await deleteAgent(agentId)).error
+      if (error) errors.push(`agent cleanup: ${error}`)
+    } else {
+      const { error } = await db.from('agents').delete().eq('id', agentId)
+      if (error) errors.push(`agent cleanup: ${error.message}`)
+    }
+    return errors.length ? errors.join('; ') : undefined
+  }
 
   const { data: dep, error: depErr } = await supabase
     .from('departments')
     .insert({ main_agent_id: agentId, name: (opts.name || 'AI Team').slice(0, 60), niche: opts.goal.slice(0, 60) })
     .select('id')
     .single()
-  if (depErr || !dep) return { agentId, error: depErr?.message ?? 'could not create department' }
+  if (depErr || !dep) {
+    const cause = depErr?.message ?? 'could not create department'
+    const rollbackError = await rollback()
+    return { agentId: rollbackError ? agentId : '', error: rollbackError ? `${cause}; rollback failed: ${rollbackError}` : cause }
+  }
 
   const rows = opts.specialists.slice(0, 6).map((s) => ({
     department_id: dep.id,
@@ -178,7 +199,10 @@ export async function saveDynamicTeam(
     status: 'active',
   }))
   const { error: subErr } = await supabase.from('sub_agents').insert(rows)
-  if (subErr) return { agentId, departmentId: dep.id, error: subErr.message }
+  if (subErr) {
+    const rollbackError = await rollback(dep.id)
+    return { agentId: rollbackError ? agentId : '', departmentId: rollbackError ? dep.id : undefined, error: rollbackError ? `${subErr.message}; rollback failed: ${rollbackError}` : subErr.message }
+  }
   return { agentId, departmentId: dep.id }
 }
 

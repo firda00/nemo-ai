@@ -46,6 +46,22 @@ Write-Host "1/3  Applying DB migrations..." -ForegroundColor Cyan
 # Historical migrations are already applied and some are intentionally not
 # repeatable. Deployment only applies the current idempotent repair migration.
 Apply-Migration .\supabase\migrations\20260711150000_autopost_repair.sql
+Apply-Migration .\supabase\migrations\20260711160000_logistics_workflow.sql
+
+$schemaCheckSql = @'
+select
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'subject_key') as subject_key,
+  to_regclass('public.tasks_logistics_exception_open_uidx') is not null as task_unique_index,
+  to_regprocedure('public.reserve_logistics_credits(uuid,bigint)') is not null as reserve_rpc,
+  to_regprocedure('public.finalize_logistics_credits(uuid,bigint,bigint)') is not null as finalize_rpc;
+'@
+$schemaCheckBody = $jsonSer.Serialize(@{ query = $schemaCheckSql })
+$schemaCheck = Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/database/query" -Method Post -Headers $hdr -Body $schemaCheckBody
+$schemaRow = @($schemaCheck)[0]
+if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc) {
+  throw 'Logistics schema verification failed after migration.'
+}
+Write-Host '     logistics schema and billing RPCs verified.' -ForegroundColor Green
 
 if ($cronLine) {
   $safeCron = $cronValue.Replace("'", "''")
@@ -86,7 +102,7 @@ foreach ($fn in 'whatsapp-webhook','instagram-webhook','stripe-webhook','telegra
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','orchestrate','research-agent','test-agent','connect-social') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','connect-social') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
@@ -94,7 +110,7 @@ foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','orchestr
 
 # Verify the two previously-missing functions now respond (not 404)
 Write-Host "`nVerifying..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','ops-workflow','autopost','follow-up','connect-social') {
+foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','connect-social') {
   $code = -1
   try { $r = Invoke-WebRequest -Uri "https://$ref.supabase.co/functions/v1/$fn" -Method Options -UseBasicParsing -TimeoutSec 10; $code = $r.StatusCode } catch { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } }
   $ok = ($code -ne 404 -and $code -ne -1)

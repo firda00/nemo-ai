@@ -67,6 +67,10 @@ verify_jwt = true
 [functions.ops-workflow]
 verify_jwt = true
 
+# Read-only/manual shipment analysis -> SLA risks, tasks and approval-only drafts.
+[functions.logistics-workflow]
+verify_jwt = true
+
 # Auto follow-up / nurture sequences. PUBLIC so a cron can call run_due; the cron
 # path is gated by the x-cron-secret header (FOLLOWUP_CRON_SECRET), user actions
 # still require a Bearer JWT (checked inside the function).

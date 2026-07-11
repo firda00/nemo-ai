@@ -56,7 +56,7 @@ try {
   })
 
   const publicRoutes = ['/', '/demo', '/pitch', '/auth']
-  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations']
+  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates']
 
   async function checkRoute(route) {
     const response = await page.goto(baseUrl + route, { waitUntil: 'networkidle0', timeout: 30_000 })

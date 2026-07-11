@@ -1,16 +1,33 @@
 import { useState } from 'react'
-import { ArrowRight, Bot, Building2, GraduationCap, HeartPulse, Home, Loader2, ShoppingBag, Utensils } from 'lucide-react'
+import { ArrowRight, Bot, Building2, GraduationCap, HeartPulse, Home, Loader2, ShoppingBag, Utensils, Truck, Store, PackageSearch, Boxes } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { useI18n } from '../../i18n'
 import { useNavigate } from 'react-router-dom'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
 import { createUstudyOperationsTeam } from '../../lib/ustudyTeam'
+import { createCommerceTeam, type CommerceTeamKind } from '../../lib/commerceTeams'
 
-const templates = [
+interface TeamTemplate {
+  kind: 'agent' | 'team'
+  icon: typeof Bot
+  title: string
+  market: string
+  setup: string
+  agents: number
+  tools: string[]
+  desc: string
+  commerceKey?: CommerceTeamKind
+}
+
+const templates: TeamTemplate[] = [
   { kind: 'agent', icon: Bot, title: 'Course Consultant', market: 'Single Agent', setup: '3 min', agents: 1, tools: ['test chat', 'knowledge'], desc: 'Standalone course consultant that recommends courses and collects student next actions.' },
   { kind: 'team', icon: GraduationCap, title: 'Sales Team', market: 'Education sales', setup: '6 min', agents: 5, tools: ['qualification', 'follow-up', 'crm rows'], desc: 'Student leads, follow-ups, CRM-ready rows and daily sales report for IT Academy.' },
   { kind: 'team', icon: Building2, title: 'Operations Team', market: 'Education operations', setup: '8 min', agents: 6, tools: ['payments', 'admin escalation', 'meeting analysis', 'task management', 'reports'], desc: 'Routine admin and operations automation: payment reminders, admin escalation, meeting-to-tasks, weekly follow-up and manager reports.' },
+  { kind: 'team', icon: PackageSearch, title: 'Marketplace Seller Team', market: 'Wildberries / Ozon', setup: '7 min', agents: 6, tools: ['seller data analysis', 'listing drafts', 'pricing advice', 'seller report'], desc: 'Create an AI seller team for data you provide. WB/Ozon connections are configured separately and remain read-only; marketplace writes are not automated.', commerceKey: 'marketplace' },
+  { kind: 'team', icon: Boxes, title: 'Dropshipping Team', market: 'Dropshipping', setup: '8 min', agents: 6, tools: ['supplied product data', 'supplier comparison', 'SKU mapping', 'fulfillment tasks'], desc: 'Analyze supplied products and suppliers, protect margin and prepare fulfillment tasks. It never purchases from a supplier automatically.', commerceKey: 'dropshipping' },
+  { kind: 'team', icon: Store, title: 'Online Store Team', market: 'E-commerce', setup: '7 min', agents: 6, tools: ['sales', 'CRM', 'follow-up', 'uploaded orders', 'content'], desc: 'Create a team for product consultation, leads, supplied order analysis, follow-up and reporting. Store connectors are configured separately.', commerceKey: 'online-store' },
+  { kind: 'team', icon: Truck, title: 'Logistics Control Team', market: 'Manual logistics beta', setup: '8 min', agents: 6, tools: ['CSV shipment analysis', 'SLA rules', 'exceptions', 'saved tasks', 'message drafts'], desc: 'Paste shipment rows to detect delays and stale scans, save responsible tasks and prepare drafts. Live carrier tracking and automatic sending are not connected.', commerceKey: 'logistics' },
   { kind: 'team', icon: Building2, title: 'Education Admin Team', market: 'Education ops', setup: '8 min', agents: 6, tools: ['attendance', 'payments', 'risk report'], desc: 'Attendance, payment reminders, student risk, mentor quality and daily education admin report.' },
   { kind: 'team', icon: ShoppingBag, title: 'Content Team', market: 'Marketing', setup: '7 min', agents: 5, tools: ['telegram', 'instagram', 'campaigns'], desc: 'Telegram/Instagram posts, course marketing ideas, content calendar and campaign briefs.' },
   { kind: 'team', icon: HeartPulse, title: 'Student Support Team', market: 'Support', setup: '7 min', agents: 4, tools: ['faq', 'handoff', 'summary'], desc: 'Student questions, FAQ responses, issue triage and human handoff summaries.' },
@@ -22,10 +39,11 @@ export default function MarketplacePage() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const deleteAgent = useAgentStore((s) => s.deleteAgent)
   const toast = useToast()
   const [seeding, setSeeding] = useState('')
 
-  const applyTemplate = async (tpl: (typeof templates)[number]) => {
+  const applyTemplate = async (tpl: TeamTemplate) => {
     if (tpl.kind === 'agent') {
       localStorage.setItem('nemo-selected-agent-template', JSON.stringify({
         name: tpl.title,
@@ -44,6 +62,14 @@ export default function MarketplacePage() {
       setSeeding('')
       if (res.agentId) navigate(`/app/teams/${res.agentId}`)
       else toast(res.error ?? 'Could not create team', 'error')
+      return
+    }
+    if (tpl.commerceKey) {
+      setSeeding(tpl.title)
+      const res = await createCommerceTeam(tpl.commerceKey, addAgent, deleteAgent)
+      setSeeding('')
+      if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
+      else toast(res.error ?? 'Could not create the complete team', 'error')
       return
     }
     const market = tpl.market.toLowerCase()
@@ -75,7 +101,7 @@ export default function MarketplacePage() {
           <div key={tpl.title} className="card flex flex-col rounded-3xl p-6">
             <div className="flex items-start justify-between gap-3">
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet/15 text-violet"><tpl.icon size={22} /></span>
-              <span className="rounded-pill border border-amber/25 bg-amber/10 px-3 py-1 text-xs font-medium text-amber">{tpl.kind === 'agent' ? 'Single agent' : 'Demo template'}</span>
+              <span className="rounded-pill border border-amber/25 bg-amber/10 px-3 py-1 text-xs font-medium text-amber">{tpl.kind === 'agent' ? 'Single agent' : tpl.commerceKey === 'logistics' ? 'Manual analysis beta' : tpl.commerceKey ? 'Data / connector required' : tpl.title === 'Operations Team' ? 'Production team' : 'AI blueprint'}</span>
             </div>
             <h2 className="mt-5 text-xl font-bold text-text">{tpl.title}</h2>
             <p className="mt-1 text-xs uppercase tracking-[0.14em] text-muted">{tpl.market} · {tpl.agents} {t('marketplacePage.agents')}</p>

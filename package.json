@@ -13,6 +13,9 @@
     "test:ui": "node agent-hub/site-smoke.mjs",
     "test:trace-ui": "node agent-hub/trace-ui-smoke.mjs",
     "test:autopost": "node agent-hub/autopost-contracts.mjs",
+    "test:commerce": "node agent-hub/commerce-logistics-contracts.mjs",
+    "test:logistics-behavior": "node agent-hub/logistics-behavior.mjs",
+    "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview"
   },

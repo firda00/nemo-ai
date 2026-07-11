@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2 } from 'lucide-react'
+import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -13,6 +13,7 @@ import { PlanerkaMembersCard } from '../../components/platform/PlanerkaMembersCa
 import { CoordinatorAgentPanel } from '../../components/platform/CoordinatorAgentPanel'
 import { PlannerCommandCenter } from '../../components/platform/PlannerCommandCenter'
 import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustudyTeam'
+import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
 
 interface Sub { id: string; role: string; name: string; prompt: { role?: string; tasks?: string } }
@@ -86,10 +87,12 @@ export default function TeamDetailPage() {
   const teamName = team?.name || dept?.name || 'Operations Team'
   const goal = team?.purpose || 'Automate routine operations: payments, admin escalation, meetings-to-tasks and manager reports.'
 
-  // Show operations scenarios (payment/retention/meeting) ONLY for operations-type
-  // teams; a content/sales/other team just gets the universal "task the team" runner.
+  // Show operational workflows only for teams that were created for that work.
+  // Content, sales and store teams keep the universal "task the team" runner.
   const teamBlob = `${team?.name ?? ''} ${team?.purpose ?? ''} ${team?.niche ?? ''} ${dept?.name ?? ''} ${dept?.niche ?? ''} ${(dept?.subs ?? []).map((s) => `${s.role} ${s.prompt?.tasks ?? ''}`).join(' ')}`.toLowerCase()
-  const isOps = /operations?|ops|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob)
+  const isLogistics = /logistics?|логист|shipment|carrier|доставк|fulfillment|sla monitor/.test(teamBlob)
+  const isOps = isLogistics || /operations?|ops|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob)
+  const workflowKind: OpsKind = isLogistics ? 'logistics_control' : kind === 'logistics_control' ? 'payment_control' : kind
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
@@ -149,22 +152,30 @@ export default function TeamDetailPage() {
             <section className="card rounded-3xl p-6">
               <div className="flex items-center gap-2"><PlayCircle size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.opsScenariosTitle')}</h2></div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button onClick={() => setKind('retention_scan')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', kind === 'retention_scan' ? 'border-danger/40 bg-danger/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                  <BellRing size={15} /> {t('teamDetailPage.churnBtn')}
-                </button>
-                <button onClick={() => setKind('payment_control')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', kind === 'payment_control' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                  <Wallet size={15} /> {t('teamDetailPage.paymentControl')}
-                </button>
-                <button onClick={() => setKind('meeting_to_tasks')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', kind === 'meeting_to_tasks' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                  <ListChecks size={15} /> {t('teamDetailPage.meetingToTasks')}
-                </button>
+                {isLogistics ? (
+                  <button onClick={() => setKind('logistics_control')} className="inline-flex items-center gap-1.5 rounded-xl border border-cyan/40 bg-cyan/10 px-3 py-2 text-sm text-text">
+                    <Truck size={15} /> Manual logistics analysis (beta)
+                  </button>
+                ) : (
+                  <>
+                    <button onClick={() => setKind('retention_scan')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'retention_scan' ? 'border-danger/40 bg-danger/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
+                      <BellRing size={15} /> {t('teamDetailPage.churnBtn')}
+                    </button>
+                    <button onClick={() => setKind('payment_control')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'payment_control' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
+                      <Wallet size={15} /> {t('teamDetailPage.paymentControl')}
+                    </button>
+                    <button onClick={() => setKind('meeting_to_tasks')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'meeting_to_tasks' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
+                      <ListChecks size={15} /> {t('teamDetailPage.meetingToTasks')}
+                    </button>
+                  </>
+                )}
               </div>
               <div className="mt-4">
                 <OpsWorkflowRunner
-                  key={kind}
-                  kind={kind}
+                  key={workflowKind}
+                  kind={workflowKind}
                   departmentId={dept?.id}
-                  sampleInput={kind === 'retention_scan' ? SAMPLE_RETENTION : kind === 'payment_control' ? SAMPLE_PAYMENT : SAMPLE_MEETING}
+                  sampleInput={workflowKind === 'logistics_control' ? SAMPLE_LOGISTICS : workflowKind === 'retention_scan' ? SAMPLE_RETENTION : workflowKind === 'payment_control' ? SAMPLE_PAYMENT : SAMPLE_MEETING}
                   lang={lang}
                   onDone={() => dept && loadResults(dept.id)}
                 />
@@ -230,13 +241,15 @@ export default function TeamDetailPage() {
           <CoordinatorAgentPanel
             mode={isOps ? 'planner' : 'content'}
             context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
-            liveStatus={isOps
+            liveStatus={isLogistics
+              ? (tasks.some((task) => !task.owner) ? 'Есть логистические исключения без владельца: назначьте ответственного.' : 'Ручной анализ логистики готов: вставьте CSV отправлений. Живой трекинг перевозчиков пока не подключён, сообщения не отправляются автоматически.')
+              : isOps
               ? (tasks.some((task) => !task.owner) ? 'Есть задачи без владельца: назначьте ответственного до начала работы.' : 'Планёрка готова: задачи распределяются, проверяются и закрываются с результатом.')
               : 'Контентный workflow готов: бриф → исследование → черновик → проверка → доставка.'}
           />
-          {isOps && <PlannerCommandCenter tasks={tasks} />}
-          {isOps && <PlanerkaSheetCard />}
-          {isOps && <PlanerkaMembersCard />}
+          {isOps && !isLogistics && <PlannerCommandCenter tasks={tasks} />}
+          {isOps && !isLogistics && <PlanerkaSheetCard />}
+          {isOps && !isLogistics && <PlanerkaMembersCard />}
           {isOps && <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><BellRing size={18} className="text-amber" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.adminNotifications')}</h2><span className="ml-auto text-xs text-muted">{notifs.length}</span></div>
             <div className="mt-4 space-y-2">

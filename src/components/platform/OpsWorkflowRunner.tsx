@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Check, RotateCcw, AlertTriangle, ClipboardList, BellRing, Mic } from 'lucide-react'
+import { ArrowUp, Loader2, Check, RotateCcw, AlertTriangle, ClipboardList, BellRing, Mic, Truck, ShieldAlert } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Markdown } from '../ui/Markdown'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 
-export type OpsKind = 'payment_control' | 'meeting_to_tasks' | 'retention_scan'
+export type OpsKind = 'payment_control' | 'meeting_to_tasks' | 'retention_scan' | 'logistics_control'
 
 interface Reminder { student?: string; course?: string; amount?: string; due?: string; risk?: string; message?: string }
 interface Escalation { admin?: string; student?: string; risk?: string; action?: string; note?: string }
 interface Task { title?: string; owner?: string; deadline?: string | null; priority?: string; status?: string }
 interface Student { name?: string; contact?: string; status?: string; reason?: string; message?: string | null }
+interface Shipment { order_id?: string; customer?: string | null; carrier?: string | null; status?: string; promised_date?: string | null; last_event_at?: string | null; sla_status?: string; delay_hours?: number; severity?: string; exception_type?: string | null; recommended_action?: string | null }
+interface ApprovalDraft { order_id?: string; draft?: string; requires_approval?: boolean }
 interface OpsResult {
   ok?: boolean
+  code?: string
+  message?: string
   run_id?: string
   reminders?: Reminder[]
   escalations?: Escalation[]
@@ -21,18 +25,27 @@ interface OpsResult {
   students?: Student[]
   flagged?: Student[]
   summary?: string
+  shipments?: Shipment[]
+  exceptions?: Shipment[]
+  client_messages?: ApprovalDraft[]
+  carrier_cases?: ApprovalDraft[]
+  steps?: { query: string; findings: string }[]
+  warnings?: string[]
+  recovered_task_ids?: string[]
 }
 
 const STEP_LABELS: Record<OpsKind, string[]> = {
   payment_control: ['Payment Reminder Agent', 'Admin Control Agent', 'Report Agent'],
   meeting_to_tasks: ['Meeting Analyst Agent', 'Task Manager Agent', 'Report Agent'],
   retention_scan: ['Retention Specialist', 'Report Agent'],
+  logistics_control: ['Shipment parser', 'SLA rules engine', 'Exception Triage Agent', 'Logistics Report Agent'],
 }
 
 const RUN_LABEL: Record<OpsKind, string> = {
   payment_control: 'Run Payment Control',
   meeting_to_tasks: 'Run Meeting to Tasks',
   retention_scan: 'Run Retention Scan',
+  logistics_control: 'Run Logistics Control',
 }
 
 const retStatusCls = (s?: string) =>
@@ -107,7 +120,7 @@ export function OpsWorkflowRunner({
       else setError(p?.message || p?.error || 'Не удалось расшифровать аудио.')
     } catch { setError('Ошибка загрузки/расшифровки аудио.') } finally { setTranscribing(false) }
   }
-  const labels = STEP_LABELS[kind]
+  const labels = kind === 'logistics_control' && result?.steps?.length ? result.steps.map((step) => step.query) : STEP_LABELS[kind]
 
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
 
@@ -118,11 +131,13 @@ export function OpsWorkflowRunner({
     setResult(null)
     setRunning(true)
     setActive(0)
-    // cosmetic progress while the single server call runs all 3 specialists
+    // Legacy operations workflows use a lightweight progress estimate. Logistics
+    // stays on the first stage until the backend returns its real saved trace.
     timers.current.forEach(clearTimeout)
-    timers.current = [
+    timers.current = kind === 'logistics_control' ? [] : [
       setTimeout(() => setActive(1), 3500),
       setTimeout(() => setActive(2), 7000),
+      setTimeout(() => setActive(3), 10500),
     ]
 
     try {
@@ -130,12 +145,13 @@ export function OpsWorkflowRunner({
         setError('Live backend is required to run this workflow (sign in + tokens).')
         return
       }
-      const { data, error: err } = await supabase.functions.invoke('ops-workflow', {
-        body: { action: kind, department_id: departmentId, input: text, lang },
+      const functionName = kind === 'logistics_control' ? 'logistics-workflow' : 'ops-workflow'
+      const { data, error: err } = await supabase.functions.invoke(functionName, {
+        body: { action: kind, department_id: departmentId, input: text, lang, ...(kind === 'logistics_control' ? { source: 'manual' } : {}) },
       })
       const payload = data as OpsResult | null
       if (err || !payload?.ok) {
-        setError('Workflow failed — check sign-in, token balance and OpenRouter credits.')
+        setError(payload?.message?.slice(0, 300) || 'Workflow failed — check sign-in, token balance and OpenRouter credits.')
         return
       }
       setActive(labels.length)
@@ -162,11 +178,12 @@ export function OpsWorkflowRunner({
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          rows={kind === 'meeting_to_tasks' ? 4 : 3}
+          rows={kind === 'logistics_control' ? 7 : kind === 'meeting_to_tasks' ? 4 : 3}
           disabled={running}
-          placeholder={kind === 'payment_control' ? 'Student payment rows…' : kind === 'retention_scan' ? t('opsWorkflowRunner.retentionInputPh') : 'Meeting transcript…'}
+          placeholder={kind === 'payment_control' ? 'Student payment rows…' : kind === 'retention_scan' ? t('opsWorkflowRunner.retentionInputPh') : kind === 'logistics_control' ? 'order_id, customer, carrier, status, promised_date, last_event_at, owner…' : 'Meeting transcript…'}
           className="w-full resize-y bg-transparent px-2 py-2 text-sm text-text outline-none placeholder:text-muted/70"
         />
+        {kind === 'logistics_control' && <p className="px-2 pb-1 text-[10px] text-muted">Manual CSV beta · up to 40 rows · ISO dates · Asia/Tashkent SLA · requires 50 available credits, charges actual use · no carrier sync or automatic sending</p>}
         <div className="flex items-center justify-end gap-2 px-1 pb-1">
           {kind === 'meeting_to_tasks' && (
             <label className="mr-auto inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted transition hover:text-text">
@@ -279,6 +296,78 @@ export function OpsWorkflowRunner({
                 )
               })()}
             </div>
+          )}
+
+          {kind === 'logistics_control' && (
+            <>
+              {!!result.warnings?.length && (
+                <div className="rounded-2xl border border-amber/25 bg-amber/[0.06] p-4">
+                  <p className="flex items-center gap-2 text-sm font-medium text-amber"><AlertTriangle size={15} /> Input warnings · {result.warnings.length}</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-[12px] leading-relaxed text-muted">{result.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>
+                </div>
+              )}
+              {!!result.recovered_task_ids?.length && <p className="rounded-xl border border-teal/20 bg-teal/[0.06] px-3 py-2 text-xs text-teal">Delivered status confirmed · {result.recovered_task_ids.length} old logistics task(s) closed by the recovery rule.</p>}
+              <div className="card rounded-2xl p-4">
+                <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><Truck size={15} className="text-cyan" /> Shipment control · {result.shipments?.length ?? 0}</p>
+                <div className="space-y-2">
+                  {(result.shipments ?? []).map((s, i) => (
+                    <div key={`${s.order_id}-${i}`} className="rounded-xl border border-ice/[0.07] p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold text-text">{s.order_id}</span>
+                        {s.customer && <span className="text-xs text-muted">{s.customer}</span>}
+                        {s.carrier && <span className="text-xs text-cyan">{s.carrier}</span>}
+                        <span className={cn('ml-auto rounded-full border px-2 py-0.5 text-[10px]', s.sla_status === 'breached' ? 'border-danger/25 bg-danger/10 text-danger' : s.sla_status === 'at_risk' ? 'border-amber/25 bg-amber/10 text-amber' : s.sla_status === 'needs_data' ? 'border-violet/25 bg-violet/10 text-violet' : 'border-teal/25 bg-teal/10 text-teal')}>{s.sla_status ?? 'needs_data'}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-muted">
+                        <span>{s.status ?? 'pending'}</span>
+                        {s.promised_date && <span>deadline {s.promised_date}</span>}
+                        {!!s.delay_hours && <span className="text-danger">+{s.delay_hours}h</span>}
+                        {s.exception_type && <span>{s.exception_type}</span>}
+                      </div>
+                      {s.recommended_action && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{s.recommended_action}</p>}
+                    </div>
+                  ))}
+                  {!result.shipments?.length && <p className="rounded-xl border border-dashed border-ice/10 p-4 text-center text-xs text-muted">No valid shipment rows found.</p>}
+                </div>
+              </div>
+
+              {!!result.client_messages?.length && (
+                <div className="card rounded-2xl border border-amber/20 p-4">
+                  <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><ShieldAlert size={15} className="text-amber" /> Customer message drafts · review before sending</p>
+                  <div className="space-y-2">
+                    {result.client_messages.map((m, i) => (
+                      <div key={`${m.order_id}-${i}`} className="rounded-xl border border-amber/15 bg-amber/[0.04] p-3">
+                        <p className="text-[11px] font-semibold text-amber">{m.order_id}</p>
+                        <p className="mt-1 text-[13px] leading-relaxed text-text">{m.draft}</p>
+                        <p className="mt-2 text-[10px] uppercase tracking-wide text-muted">Draft only · review and send manually</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!!result.carrier_cases?.length && (
+                <div className="card rounded-2xl border border-violet/20 p-4">
+                  <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><Truck size={15} className="text-violet" /> Carrier case drafts · review before submitting</p>
+                  <div className="space-y-2">
+                    {result.carrier_cases.map((m, i) => (
+                      <div key={`${m.order_id}-${i}`} className="rounded-xl border border-violet/15 bg-violet/[0.04] p-3">
+                        <p className="text-[11px] font-semibold text-violet">{m.order_id}</p>
+                        <p className="mt-1 text-[13px] leading-relaxed text-text">{m.draft}</p>
+                        <p className="mt-2 text-[10px] uppercase tracking-wide text-muted">Draft only · no carrier API call was made</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!!result.tasks?.length && (
+                <div className="card rounded-2xl p-4">
+                  <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text"><ClipboardList size={15} className="text-cyan" /> Open logistics tasks · {result.tasks.length}</p>
+                  <div className="space-y-2">{result.tasks.map((tk, i) => <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-ice/[0.07] p-3"><span className="min-w-0 flex-1 text-sm text-text">{tk.title}</span>{tk.owner && <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-muted">{tk.owner}</span>}{tk.deadline && <span className="text-[11px] text-muted">{tk.deadline}</span>}<span className={cn('rounded-full border px-2 py-0.5 text-[10px]', riskCls(tk.priority))}>{tk.priority ?? 'medium'}</span></div>)}</div>
+                </div>
+              )}
+            </>
           )}
 
           {kind === 'meeting_to_tasks' && (
