@@ -53,6 +53,15 @@ const statusCls = (s?: string) =>
         : 'bg-white/[0.06] text-muted'
 
 const fileToB64 = (file: File): Promise<string> => new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result)); rd.onerror = rej; rd.readAsDataURL(file) })
+const MAX_AUDIO_SECONDS = 2 * 60 * 60
+const readAudioDuration = (file: File): Promise<number> => new Promise((resolve) => {
+  const url = URL.createObjectURL(file)
+  const audio = document.createElement('audio')
+  audio.preload = 'metadata'
+  audio.onloadedmetadata = () => { const d = Number(audio.duration); URL.revokeObjectURL(url); resolve(Number.isFinite(d) ? d : 0) }
+  audio.onerror = () => { URL.revokeObjectURL(url); resolve(0) }
+  audio.src = url
+})
 
 export function OpsWorkflowRunner({
   kind,
@@ -82,12 +91,15 @@ export function OpsWorkflowRunner({
     if (!file || !supabase) return
     setError(''); setTranscribing(true)
     try {
+      if (file.size > 180 * 1024 * 1024) { setError('Аудио больше 180 МБ. Сожмите запись или экспортируйте MP3/AAC.'); return }
+      const duration = await readAudioDuration(file)
+      if (duration > MAX_AUDIO_SECONDS) { setError('Максимальная длина записи — 2 часа (120 минут).'); return }
       const path = `audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
       const up = await supabase.storage.from('media').upload(path, file, { contentType: file.type || 'audio/mpeg' })
       let audioUrl = ''
       if (!up.error) audioUrl = supabase.storage.from('media').getPublicUrl(path).data.publicUrl
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const body: any = audioUrl ? { audio_url: audioUrl, format: file.type } : { audio_b64: await fileToB64(file), format: file.type }
+      const body: any = audioUrl ? { audio_url: audioUrl, format: file.type, language: lang || 'auto' } : { audio_b64: await fileToB64(file), format: file.type, language: lang || 'auto' }
       const { data } = await supabase.functions.invoke('transcribe-file', { body })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const p = data as any
@@ -160,6 +172,7 @@ export function OpsWorkflowRunner({
             <label className="mr-auto inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted transition hover:text-text">
               {transcribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
               {transcribing ? 'Расшифровка…' : 'Загрузить аудио'}
+              <span className="text-[10px] text-muted/70">до 120 минут · 20 языков</span>
               <input type="file" accept="audio/*" className="hidden" onChange={onAudio} disabled={transcribing || running} />
             </label>
           )}

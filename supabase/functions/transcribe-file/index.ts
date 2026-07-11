@@ -15,9 +15,11 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
-const MAX_BYTES = 60 * 1024 * 1024 // safety cap for edge-function memory
+// 2 hours is feasible for compressed meeting audio. Keep a generous byte cap so
+// 128kbps recordings (~115 MB) work while an unbounded upload cannot exhaust the edge.
+const MAX_BYTES = 180 * 1024 * 1024
 
-async function geminiTranscribe(bytes: Uint8Array, mime: string): Promise<{ text: string; error?: string }> {
+async function geminiTranscribe(bytes: Uint8Array, mime: string, languageHint = 'auto'): Promise<{ text: string; error?: string }> {
   try {
     // 1) upload the file to the Gemini File API (raw single-shot upload)
     const up = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${GEMINI_API_KEY}`, {
@@ -29,7 +31,7 @@ async function geminiTranscribe(bytes: Uint8Array, mime: string): Promise<{ text
     // 2) transcribe with gemini-2.5-flash (handles long audio)
     const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ file_data: { mime_type: mime, file_uri: fileUri } }, { text: 'Transcribe this audio VERBATIM in its original language (Uzbek/Russian/English etc.). Output ONLY the transcription text.' }] }] }),
+      body: JSON.stringify({ contents: [{ parts: [{ file_data: { mime_type: mime, file_uri: fileUri } }, { text: `Transcribe this meeting audio verbatim. Detect and understand mixed speech in Russian, English, Uzbek, Kazakh, Kyrgyz, Tajik, Turkmen, Turkish, Arabic, Persian, Hindi, Urdu, Chinese, Japanese, Korean, German, French, Spanish, Italian and Portuguese. Preserve the original language, distinguish speakers when possible, and keep meaningful timestamps or speaker changes. Do not summarize and do not translate. Language hint: ${languageHint}. Output ONLY the transcription.` }] }] }),
     })
     const gj = await gen.json().catch(() => ({}))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,6 +56,7 @@ Deno.serve(async (req) => {
   const audioUrl = String(body?.audio_url ?? '').trim()
   const audioB64 = String(body?.audio_b64 ?? '').trim()
   let mime = String(body?.format ?? '').trim()
+  const languageHint = String(body?.language ?? 'auto').trim().slice(0, 40)
 
   // load the audio bytes (from a URL or inline base64)
   let bytes: Uint8Array | null = null
@@ -76,7 +79,7 @@ Deno.serve(async (req) => {
   // transcribe: Gemini File API for long audio, else OpenRouter inline (short clips)
   let transcript = '', engine = ''
   if (GEMINI_API_KEY) {
-    const g = await geminiTranscribe(bytes, mime)
+    const g = await geminiTranscribe(bytes, mime, languageHint)
     if (g.text) { transcript = g.text; engine = 'gemini-file' }
   }
   if (!transcript) {

@@ -11,7 +11,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsHeaders, json } from '../_shared/cors.ts'
-import { cleanTitle } from '../_shared/planerkaSheet.ts'
+import { buildTaskRow, cleanTitle, STATUS } from '../_shared/planerkaSheet.ts'
+import { googleAccessToken, sheetsAppend } from '../_shared/google.ts'
 import { readPlanerkaRoster, matchRoster } from '../_shared/planerkaRoster.ts'
 import { tgSend } from '../_shared/telegram.ts'
 
@@ -249,6 +250,43 @@ Deno.serve(async (req) => {
         task_ids = (tr ?? []).map((x: any) => x.id)
       }
 
+      // Keep the user's connected planerka sheet as the source of truth. This only
+      // appends the newly extracted tasks; it never creates a replacement sheet.
+      let sheet_written = 0
+      try {
+        const { data: profile } = await admin.from('business_profiles').select('tasks_sheet_id').eq('account_id', accountId).maybeSingle()
+        const sheetId = String(profile?.tasks_sheet_id ?? '').trim()
+        const sheetLang = ['uz', 'ru', 'en'].includes(lang) ? lang as 'uz' | 'ru' | 'en' : 'en'
+        if (sheetId) {
+          const g = await googleAccessToken(admin, accountId)
+          if (g.token) {
+            for (const t of taskRows) {
+              const sheetStatus = t.status === 'done' ? STATUS[sheetLang].done : t.status === 'in_progress' ? STATUS[sheetLang].inProgress : STATUS[sheetLang].new
+              const ok = await sheetsAppend(g.token, sheetId, buildTaskRow(sheetLang, {
+                title: t.title,
+                person: t.owner ?? '',
+                deadline: t.deadline ?? '',
+                taskType: 'meeting',
+                status: sheetStatus,
+                details: String((normalized as any[]).find((raw) => cleanTitle(raw?.title) === t.title)?.details ?? ''),
+              }))
+              if (ok) sheet_written++
+            }
+          }
+        }
+      } catch { /* sheet sync is best-effort; DB tasks remain authoritative */ }
+
+      // Persist the resolved owner's Telegram chat ID on each task so the reminder
+      // cron can follow up with the individual, not only the group chat.
+      try {
+        const roster = await readPlanerkaRoster(admin, accountId)
+        for (let i = 0; i < taskRows.length; i++) {
+          const owner = taskRows[i].owner
+          const chatId = owner ? matchRoster(roster, owner)?.chatId : undefined
+          if (chatId && task_ids[i]) await admin.from('tasks').update({ telegram_chat_id: chatId }).eq('id', task_ids[i])
+        }
+      } catch { /* roster sync is best-effort */ }
+
       // Dispatch: DM each person THEIR tasks privately; fall back to a group @mention for anyone the
       // bot can't DM yet (they haven't pressed /start). Also post the analysis summary to the group.
       let dm_sent = 0
@@ -304,7 +342,7 @@ Deno.serve(async (req) => {
       }
 
       await charge()
-      return json({ ok: true, run_id: runId, decisions, tasks: taskRows, task_ids })
+      return json({ ok: true, run_id: runId, decisions, tasks: taskRows, task_ids, sheet_written, dm_sent })
     }
 
     // retention_scan — detect students who stopped attending / didn't pay next month
