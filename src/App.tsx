@@ -42,6 +42,7 @@ import LibraryPage from './pages/app/LibraryPage'
 import IntegrationsToolsPage from './pages/app/IntegrationsToolsPage'
 import FollowUpsPage from './pages/app/FollowUpsPage'
 import ObservabilityPage from './pages/app/ObservabilityPage'
+import EmailAssistantPage from './pages/app/EmailAssistantPage'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthed, loading, live } = useAuth()
@@ -118,6 +119,7 @@ export default function App() {
         <Route path="research" element={<ResearchPage />} />
         <Route path="dialogues" element={<DialoguesPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="email-assistant" element={<EmailAssistantPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="integrations" element={<IntegrationsPage />} />

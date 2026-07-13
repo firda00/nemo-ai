@@ -50,6 +50,7 @@ Apply-Migration .\supabase\migrations\20260711160000_logistics_workflow.sql
 Apply-Migration .\supabase\migrations\20260711200000_industry_risk_policy.sql
 Apply-Migration .\supabase\migrations\20260711210000_channel_safe_read_columns.sql
 Apply-Migration .\supabase\migrations\20260713120000_governed_agent_evolution.sql
+Apply-Migration .\supabase\migrations\20260713150000_product_intelligence.sql
 
 $schemaCheckSql = @'
 select
@@ -193,14 +194,14 @@ Write-Host "     migrations applied." -ForegroundColor Green
 $failed = @()
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
-foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent') {
+foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent','google-oauth') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send','google-tools') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }

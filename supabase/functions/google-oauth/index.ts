@@ -25,6 +25,8 @@ const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-oauth/callback`
 const SCOPES = [
   'openid', 'email', 'profile',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.compose',
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/documents',

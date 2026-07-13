@@ -26,6 +26,7 @@ import {
   PanelLeftOpen,
   MessageSquare,
   UserRoundSearch,
+  Mail,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -34,6 +35,8 @@ import { Logo } from '../ui/Logo'
 import { LanguageToggle } from '../ui/LanguageToggle'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
+import { FeedbackWidget } from '../platform/FeedbackWidget'
+import { featureEnabled, trackEvent } from '../../lib/telemetry'
 
 export function AppLayout() {
   const { t } = useI18n()
@@ -45,6 +48,8 @@ export function AppLayout() {
   const hydrate = useAgentStore((s) => s.hydrate)
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [emailEnabled, setEmailEnabled] = useState(true)
+  const [feedbackEnabled, setFeedbackEnabled] = useState(true)
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('nemo.sidebar') === 'collapsed' } catch { return false }
@@ -79,6 +84,16 @@ export function AppLayout() {
     hydrate()
   }, [hydrate])
 
+  useEffect(() => {
+    if (isAuthed) void trackEvent('page_view')
+  }, [location.pathname, isAuthed])
+
+  useEffect(() => {
+    if (!isAuthed) return
+    void featureEnabled('email_assistant', user?.id).then(setEmailEnabled)
+    void featureEnabled('feedback_agent', user?.id).then(setFeedbackEnabled)
+  }, [isAuthed, user?.id])
+
   // Grouped nav — a few labeled sections instead of one long flat list, so the
   // sidebar is scannable (fixes the "too complex" feeling).
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
@@ -103,6 +118,7 @@ export function AppLayout() {
       // Monitoring (system/site health) is an admin-only view.
       ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
       { to: '/app/dialogues', label: t('platform.nav.dialogues'), icon: MessageSquare },
+      ...(emailEnabled ? [{ to: '/app/email-assistant', label: 'Email Assistant', icon: Mail }] : []),
       { to: '/app/lead-forms', label: t('platform.nav.leadForms'), icon: UserRoundSearch },
       { to: '/app/analytics', label: t('platform.nav.analytics'), icon: BarChart3 },
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
@@ -252,6 +268,7 @@ export function AppLayout() {
             <Outlet />
           </div>
         </main>
+        {isAuthed && feedbackEnabled && <FeedbackWidget />}
       </div>
     </div>
   )

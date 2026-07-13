@@ -3,6 +3,7 @@ import { seedAgents } from '../data/platform'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
 import type { AgentColor } from '../types'
 import type { PlatformAgent } from '../types/platform'
+import { trackEvent } from '../lib/telemetry'
 
 let counter = 100
 export const newAgentId = () => `ag_${++counter}`
@@ -247,6 +248,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     }
     const real = mapAgent(data)
     set((s) => ({ agents: s.agents.map((x) => (x.id === a.id ? real : x)) }))
+    void trackEvent('agent_created', { type: real.type, status: real.status })
     return { id: real.id }
   },
 
