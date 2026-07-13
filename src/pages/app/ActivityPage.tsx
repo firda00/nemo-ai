@@ -13,25 +13,35 @@ export default function ActivityPage() {
   const { t } = useI18n()
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(isSupabaseEnabled)
+  const [error, setError] = useState(false)
+  const [runPage, setRunPage] = useState(0)
+  const runPageSize = 5
 
   const load = async () => {
     if (!supabase) return
     setLoading(true)
-    try { const { data: d } = await supabase.functions.invoke('activity', { body: {} }); if ((d as any)?.ok) setData(d) } catch { /* ignore */ }
+    setError(false)
+    try {
+      const { data: d, error: invokeError } = await supabase.functions.invoke('activity', { body: {} })
+      if (invokeError || !(d as any)?.ok) throw invokeError ?? new Error('invalid activity response')
+      setData(d)
+    } catch { setError(true) }
     setLoading(false)
   }
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
     let active = true
-    supabase.functions.invoke('activity', { body: {} }).then(({ data: result }) => {
-      if (active && (result as any)?.ok) setData(result)
-    }).catch(() => {}).finally(() => { if (active) setLoading(false) })
+    supabase.functions.invoke('activity', { body: {} }).then(({ data: result, error: invokeError }) => {
+      if (invokeError || !(result as any)?.ok) throw invokeError ?? new Error('invalid activity response')
+      if (active) setData(result)
+    }).catch(() => { if (active) setError(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
 
   const s = data?.summary
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) } catch { return iso } }
   const kfmt = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
+  const pagedRuns = data?.runs?.slice(runPage * runPageSize, (runPage + 1) * runPageSize) ?? []
 
   return (
     <div className="container-page max-w-6xl py-8">
@@ -48,8 +58,11 @@ export default function ActivityPage() {
 
       {loading ? (
         <div className="card mt-5 flex items-center gap-2 rounded-3xl p-6 text-sm text-muted"><Loader2 size={15} className="animate-spin" /> {t('common.loading')}</div>
-      ) : !data ? (
-        <div className="card mt-5 rounded-3xl p-6 text-sm text-muted">{t('activityPage.signInHint')}</div>
+      ) : error || !data ? (
+        <div className="card mt-5 flex items-center justify-between gap-3 rounded-3xl border-danger/25 p-6 text-sm text-danger">
+          <span>{error ? t('common.error') : t('activityPage.signInHint')}</span>
+          {error && <button onClick={load} className="rounded-lg border border-danger/30 px-3 py-1.5 text-xs hover:bg-danger/10">{t('common.retry')}</button>}
+        </div>
       ) : (
         <>
           {/* KPIs */}
@@ -66,9 +79,16 @@ export default function ActivityPage() {
           <div className="mt-6 grid gap-5 lg:grid-cols-2">
             {/* team runs */}
             <Section icon={PlayCircle} title={t('activityPage.sectionRuns')}>
-              {data.runs.length ? data.runs.map((r: any, i: number) => (
+              {data.runs.length ? pagedRuns.map((r: any, i: number) => (
                 <Row key={i} title={r.task} sub={`${fmt(r.created_at)}${r.tokens ? ` ${t('activityPage.tokensSuffix', { count: kfmt(r.tokens) })}` : ''}`} badge={r.kind || 'run'} status={r.status} />
               )) : <Empty text={t('activityPage.emptyRuns')} />}
+              {data.runs.length > runPageSize && (
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button aria-label="Previous activity page" onClick={() => setRunPage((p) => Math.max(0, p - 1))} disabled={runPage === 0} className="rounded-lg border border-ice/10 px-2.5 py-1 text-xs text-muted disabled:opacity-40">←</button>
+                  <span className="text-[11px] text-muted">{runPage + 1}/{Math.ceil(data.runs.length / runPageSize)}</span>
+                  <button aria-label="Next activity page" onClick={() => setRunPage((p) => Math.min(Math.ceil(data.runs.length / runPageSize) - 1, p + 1))} disabled={(runPage + 1) * runPageSize >= data.runs.length} className="rounded-lg border border-ice/10 px-2.5 py-1 text-xs text-muted disabled:opacity-40">→</button>
+                </div>
+              )}
             </Section>
 
             {/* tasks */}

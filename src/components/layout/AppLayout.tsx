@@ -50,6 +50,7 @@ export function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [emailEnabled, setEmailEnabled] = useState(true)
   const [feedbackEnabled, setFeedbackEnabled] = useState(true)
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('nemo.sidebar') === 'collapsed' } catch { return false }
@@ -83,6 +84,17 @@ export function AppLayout() {
   useEffect(() => {
     hydrate()
   }, [hydrate])
+
+  useEffect(() => {
+    const onOnline = () => setOnline(true)
+    const onOffline = () => setOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [])
 
   useEffect(() => {
     if (isAuthed) void trackEvent('page_view')
@@ -216,6 +228,11 @@ export function AppLayout() {
       )}
 
       <div className={cn('flex min-w-0 flex-1 flex-col', !collapsed && 'lg:pl-[var(--sb)]')}>
+        {!online && (
+          <div role="status" className="sticky top-0 z-50 border-b border-amber/30 bg-amber/15 px-4 py-2 text-center text-xs font-medium text-amber">
+            {t('common.offline')}
+          </div>
+        )}
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/[0.07] bg-bg/80 px-4 backdrop-blur sm:px-6">
           <div className="flex items-center gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>

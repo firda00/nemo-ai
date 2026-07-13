@@ -9,6 +9,7 @@ import { AreaChart, BarList } from '../../components/ui/Chart'
 import { cn } from '../../lib/cn'
 import type { LucideIcon } from 'lucide-react'
 import type { ChannelType } from '../../types/platform'
+import { Skeleton } from '../../components/ui/Skeleton'
 
 function Metric({ icon: Icon, label, value, tone }: { icon: LucideIcon; label: string; value: string; tone: string }) {
   return (
@@ -28,9 +29,10 @@ export default function AnalyticsPage() {
   const m = analytics.metrics
   const live = isSupabaseEnabled
   const [summary, setSummary] = useState<LiveSummary | null>(null)
+  const [loadingSummary, setLoadingSummary] = useState(live)
   const [product, setProduct] = useState({ events: 0, feedback: 0, errors: 0, emailDrafts: 0 })
   useEffect(() => {
-    if (live) fetchLiveSummary().then(setSummary)
+    if (live) fetchLiveSummary().then(setSummary).finally(() => setLoadingSummary(false))
   }, [live])
   useEffect(() => {
     if (!live || !supabase) return
@@ -95,13 +97,19 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Metric icon={MessagesSquare} label={t('platform.analytics.mDialogues')} value={vDialogues} tone="bg-violet/15 text-violet" />
-        <Metric icon={Clock} label={t('platform.analytics.mResp')} value={vResp} tone="bg-blue/15 text-blue" />
-        <Metric icon={CheckCircle2} label={t('platform.analytics.mResolved')} value={vResolved} tone="bg-teal/15 text-teal" />
-        <Metric icon={UserPlus} label={t('platform.analytics.mLead')} value={vLead} tone="bg-cyan/15 text-cyan" />
-        <Metric icon={fifthIcon} label={fifthLabel} value={fifthValue} tone="bg-amber/15 text-amber" />
-      </div>
+      {loadingSummary ? (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label={t('common.loading')}>
+          {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32 rounded-2xl" />)}
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <Metric icon={MessagesSquare} label={t('platform.analytics.mDialogues')} value={vDialogues} tone="bg-violet/15 text-violet" />
+          <Metric icon={Clock} label={t('platform.analytics.mResp')} value={vResp} tone="bg-blue/15 text-blue" />
+          <Metric icon={CheckCircle2} label={t('platform.analytics.mResolved')} value={vResolved} tone="bg-teal/15 text-teal" />
+          <Metric icon={UserPlus} label={t('platform.analytics.mLead')} value={vLead} tone="bg-cyan/15 text-cyan" />
+          <Metric icon={fifthIcon} label={fifthLabel} value={fifthValue} tone="bg-amber/15 text-amber" />
+        </div>
+      )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-3">
         <section className="card rounded-2xl p-5 lg:col-span-2">

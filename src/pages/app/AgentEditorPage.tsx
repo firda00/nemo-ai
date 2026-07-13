@@ -107,6 +107,9 @@ export default function AgentEditorPage() {
     setDraft((d) => (d ? { ...d, prompt: { ...d.prompt, ...patch } } : d))
 
   const save = async () => {
+    if (!draft.name.trim()) { toast('Agent name is required.', 'error'); return }
+    if (draft.leadForm.enabled && !draft.leadForm.trigger.trim()) { toast('Lead trigger is required when the lead form is enabled.', 'error'); return }
+    if (draft.leadForm.enabled && draft.leadForm.fields.some((field) => !field.label.trim())) { toast('Every lead field needs a label.', 'error'); return }
     const { error } = await updateAgent(draft.id, draft)
     if (error) toast(error, 'error')
     else toast(t('platform.editor.saved'))
@@ -171,7 +174,7 @@ export default function AgentEditorPage() {
           {tab === 'general' && (
             <Card>
               <Field label={t('platform.onboarding.name')}>
-                <input value={draft.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} placeholder={t('platform.onboarding.namePh')} />
+                <input value={draft.name} onChange={(e) => set({ name: e.target.value })} maxLength={120} className={inputCls} placeholder={t('platform.onboarding.namePh')} />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <TimezoneField value={draft.timezone} onChange={(v) => set({ timezone: v })} />
@@ -408,7 +411,7 @@ export default function AgentEditorPage() {
                   </div>
                   <ul className="space-y-2">
                     {draft.leadForm.fields.map((f) => (
-                      <li key={f.id} className="flex items-center gap-2">
+                      <li key={f.id} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                         <input
                           value={f.label}
                           onChange={(e) => set({ leadForm: { ...draft.leadForm, fields: draft.leadForm.fields.map((x) => (x.id === f.id ? { ...x, label: e.target.value } : x)) } })}
@@ -423,6 +426,10 @@ export default function AgentEditorPage() {
                           <option value="phone" className="bg-panel">phone</option>
                           <option value="select" className="bg-panel">select</option>
                         </select>
+                        <label className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted">
+                          <input type="checkbox" checked={f.required} onChange={(e) => set({ leadForm: { ...draft.leadForm, fields: draft.leadForm.fields.map((x) => (x.id === f.id ? { ...x, required: e.target.checked } : x)) } })} className="accent-violet" />
+                          Required
+                        </label>
                         <button onClick={() => set({ leadForm: { ...draft.leadForm, fields: draft.leadForm.fields.filter((x) => x.id !== f.id) } })} className="rounded-lg p-2 text-muted hover:bg-ice/[0.06] hover:text-danger">
                           <Trash2 size={15} />
                         </button>

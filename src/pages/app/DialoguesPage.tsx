@@ -67,6 +67,8 @@ export default function DialoguesPage() {
   const [statusF, setStatusF] = useState<DialogueStatus | 'all'>('all')
   const [custOpen, setCustOpen] = useState(false)
   const [reply, setReply] = useState('')
+  const [resolving, setResolving] = useState(false)
+  const messageEndRef = useRef<HTMLDivElement | null>(null)
 
   // live mode: load dialogues + messages from Supabase, refresh on realtime events.
   // Loads are SERIALIZED (one in flight; overlapping triggers queue exactly one
@@ -81,19 +83,47 @@ export default function DialoguesPage() {
     loadBusy.current = true
     do {
       loadQueued.current = false
-      const { data, error } = await supabase
+      const dialogueResult = await supabase
         .from('dialogues')
-        .select('*, messages(*, agents(name)), agents(name)')
+        .select('*')
         .order('updated_at', { ascending: false })
-      if (error) {
+        .limit(200)
+      if (dialogueResult.error) {
         // keep whatever is already on screen and say so, instead of rendering
         // a fake-empty inbox (the 7s safety poll retries on its own)
         setLoading(false)
         setLoadError(true)
         continue
       }
+      // Do not depend on nested PostgREST relationships here. Older production
+      // schemas do not expose messages.agent_id -> agents in the schema cache,
+      // which made the former nested select fail the whole inbox with HTTP 400.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rows = (data ?? []) as any[]
+      const dialogueRows = (dialogueResult.data ?? []) as any[]
+      const dialogueIds = dialogueRows.map((row) => row.id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let messageRows: any[] = []
+      if (dialogueIds.length) {
+        const messageResult = await supabase.from('messages').select('*').in('dialogue_id', dialogueIds).order('created_at', { ascending: true })
+        if (messageResult.error) { setLoading(false); setLoadError(true); continue }
+        messageRows = (messageResult.data ?? []) as any[]
+      }
+      const agentIds = Array.from(new Set([...dialogueRows.map((row) => row.agent_id), ...messageRows.map((row) => row.agent_id)].filter(Boolean))) as string[]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let agentRows: any[] = []
+      if (agentIds.length) {
+        const agentResult = await supabase.from('agents').select('id, name').in('id', agentIds)
+        if (agentResult.error) { setLoading(false); setLoadError(true); continue }
+        agentRows = (agentResult.data ?? []) as any[]
+      }
+      const namesById = new Map(agentRows.map((row) => [row.id, row.name]))
+      const messagesByDialogue = new Map<string, any[]>()
+      for (const message of messageRows) {
+        const list = messagesByDialogue.get(message.dialogue_id) ?? []
+        list.push({ ...message, agents: message.agent_id ? { name: namesById.get(message.agent_id) ?? null } : null })
+        messagesByDialogue.set(message.dialogue_id, list)
+      }
+      const rows = dialogueRows.map((row) => ({ ...row, agents: { name: namesById.get(row.agent_id) ?? null }, messages: messagesByDialogue.get(row.id) ?? [] }))
       setDialogues(rows.map(mapDialogue))
       const names: Record<string, string> = {}
       for (const r of rows) if (r.agents?.name) names[r.agent_id] = r.agents.name
@@ -137,6 +167,10 @@ export default function DialoguesPage() {
   const setSelected = (patch: Partial<Dialogue>) =>
     setDialogues((ds) => ds.map((d) => (d.id === selectedId ? { ...d, ...patch } : d)))
 
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [selectedId, selected?.messages.length])
+
   const toggleTakeover = async () => {
     if (!selected) return
     const next = !selected.operatorTakeover
@@ -147,6 +181,24 @@ export default function DialoguesPage() {
         .update({ operator_takeover: next, status: next ? 'needs_operator' : 'open' })
         .eq('id', selected.id)
     }
+  }
+
+  const resolveDialogue = async () => {
+    if (!selected || resolving) return
+    const id = selected.id
+    const previous = selected
+    setResolving(true)
+    setDialogues((rows) => rows.map((d) => d.id === id ? { ...d, status: 'resolved', operatorTakeover: false } : d))
+    setSelectedId(null)
+    if (live && supabase) {
+      const { error } = await supabase.from('dialogues').update({ status: 'resolved', operator_takeover: false }).eq('id', id)
+      if (error) {
+        setDialogues((rows) => rows.map((d) => d.id === id ? previous : d))
+        setSelectedId(id)
+        toast(t('platform.dialogues.resolveError'), 'error')
+      }
+    }
+    setResolving(false)
   }
 
   const sendReply = async () => {
@@ -260,6 +312,9 @@ export default function DialoguesPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={resolveDialogue} disabled={resolving || selected.status === 'resolved'} className="inline-flex items-center gap-1.5 rounded-lg border border-teal/30 bg-teal/10 px-3 py-1.5 text-xs font-normal text-teal transition-colors hover:bg-teal/15 disabled:cursor-not-allowed disabled:opacity-45">
+                <CheckCircle2 size={14} /> {t('platform.dialogues.resolve')}
+              </button>
               <button onClick={toggleTakeover} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-normal transition-colors', selected.operatorTakeover ? 'bg-amber/15 text-amber' : 'glass text-text hover:bg-ice/[0.09]')}>
                 <Hand size={14} /> {selected.operatorTakeover ? t('platform.dialogues.handBack') : t('platform.dialogues.takeover')}
               </button>
@@ -299,6 +354,7 @@ export default function DialoguesPage() {
                 </Fragment>
               )
             })}
+            <div ref={messageEndRef} aria-hidden="true" />
           </div>
 
           {/* operator composer */}

@@ -19,6 +19,7 @@ export function ConnectAIModel() {
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const keyValid = /^sk-or-v1-[A-Za-z0-9_-]{20,}$/.test(key.trim())
 
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
@@ -33,7 +34,7 @@ export function ConnectAIModel() {
   }, [])
 
   const connect = async () => {
-    if (!supabase || key.trim().length < 20 || busy) return
+    if (!supabase || !keyValid || busy) return
     setBusy(true); setMsg(null)
     try {
       const { data } = await supabase.functions.invoke('connect-model', { body: { action: 'connect', api_key: key.trim() } })
@@ -91,10 +92,11 @@ export function ConnectAIModel() {
               placeholder="sk-or-v1-..."
               className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-muted focus:border-violet/50"
             />
-            <Button onClick={connect} disabled={busy || key.trim().length < 20}>
+            <Button onClick={connect} disabled={busy || !keyValid}>
               {busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><KeyRound size={15} /> {t('connectAIModel.connect')}</>}
             </Button>
           </div>
+          {key.length > 0 && !keyValid && <p className="mt-2 text-xs text-danger">OpenRouter key must start with sk-or-v1- and contain the full key.</p>}
         </>
       )}
 

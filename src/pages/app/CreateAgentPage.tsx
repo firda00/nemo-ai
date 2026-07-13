@@ -132,6 +132,8 @@ export default function CreateAgentPage() {
 
   const save = async () => {
     setError('')
+    if (!name.trim()) { setError('Agent name is required.'); return }
+    if (name.trim().length > 120) { setError('Agent name must be 120 characters or fewer.'); return }
     const result = await addAgent(draft)
     if (result.error) {
       setError(result.error)
@@ -174,7 +176,7 @@ export default function CreateAgentPage() {
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-1.5"><span className="text-xs text-muted">Agent name</span><input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></label>
+            <label className="min-w-0 space-y-1.5"><span className="text-xs text-muted">Agent name</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} className={fieldCls} /><span className="block text-right text-[10px] text-muted">{name.length}/120</span></label>
             <label className="space-y-1.5"><span className="text-xs text-muted">Agent type</span><select value={type} onChange={(e) => applyType(e.target.value as AgentKind)} className={fieldCls}>{agentTypes.map((item) => <option key={item.label} value={item.value}>{item.label}</option>)}</select></label>
             <label className="space-y-1.5"><span className="text-xs text-muted">Language</span><select value={language} onChange={(e) => setLanguage(e.target.value as AgentLang)} className={fieldCls}><option value="auto">Auto</option><option value="en">English</option><option value="ru">Russian</option><option value="uz">Uzbek</option></select></label>
             <label className="space-y-1.5"><span className="text-xs text-muted">Model</span><select value={model} onChange={(e) => setModel(e.target.value)} className={fieldCls}>{MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>

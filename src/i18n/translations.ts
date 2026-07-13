@@ -15,6 +15,7 @@ const uz = {
     saved: 'Saqlandi',
     cancel: 'Bekor qilish',
     close: 'Yopish',
+    offline: 'Internet aloqasi yo‘q. Ma’lumotlar qayta ulanmaguncha yangilanmaydi.',
     enabled: 'Yoqilgan',
     disabled: 'O‘chirilgan',
     beta: 'Beta',
@@ -895,6 +896,8 @@ const uz = {
       loadError: 'Suhbatlarni yuklab bo‘lmadi. Ulanishni tekshirib, qayta urinib ko‘ring.',
       sendError: 'Xabar yuborilmadi. Qayta urinib ko‘ring.',
       sendNotDelivered: 'Xabar saqlandi, lekin mijozga yetkazilmadi. Kanal ulanishini tekshiring.',
+      resolve: 'Yakunlash',
+      resolveError: 'Suhbatni yakunlab bo‘lmadi. Qayta urinib ko‘ring.',
     },
     analytics: {
       subtitle: 'Suhbatlar va samaradorlik tahlili',
@@ -941,6 +944,7 @@ const ru: typeof uz = {
     saved: 'Сохранено',
     cancel: 'Отмена',
     close: 'Закрыть',
+    offline: 'Нет подключения к интернету. Данные обновятся после восстановления связи.',
     enabled: 'Включён',
     disabled: 'Выключен',
     beta: 'Бета',
@@ -1821,6 +1825,8 @@ const ru: typeof uz = {
       loadError: 'Не удалось загрузить диалоги. Проверьте подключение и попробуйте ещё раз.',
       sendError: 'Сообщение не отправлено. Попробуйте ещё раз.',
       sendNotDelivered: 'Сообщение сохранено, но не доставлено клиенту. Проверьте подключение канала.',
+      resolve: 'Решено',
+      resolveError: 'Не удалось завершить диалог. Попробуйте ещё раз.',
     },
     analytics: {
       subtitle: 'Анализ диалогов и эффективности',
@@ -1878,7 +1884,7 @@ function deepMerge<T>(base: T, over: unknown): T {
 
 const enOverride: DeepPartial<typeof uz> = {
   common: {
-    brand: 'Nemo AI', loading: 'Loading…', error: 'Something went wrong', retry: 'Retry', search: 'Search',
+    brand: 'Nemo AI', loading: 'Loading…', error: 'Something went wrong', retry: 'Retry', search: 'Search', offline: 'You are offline. Data will refresh after the connection returns.',
     save: 'Save', saved: 'Saved', cancel: 'Cancel', close: 'Close', enabled: 'Enabled', disabled: 'Disabled',
     beta: 'Beta', soon: 'Soon', optional: 'optional', menu: 'Menu', language: 'Language',
   },
@@ -2244,6 +2250,8 @@ const enOverride: DeepPartial<typeof uz> = {
       loadError: 'Couldn’t load dialogues. Check the connection and retry.',
       sendError: 'Message not sent. Please try again.',
       sendNotDelivered: 'Message saved but not delivered to the customer. Check the channel connection.',
+      resolve: 'Resolve',
+      resolveError: 'Could not resolve the dialogue. Please try again.',
     },
     analytics: {
       subtitle: 'Conversation and performance analytics', r7: '7 days', r14: '14 days', r30: '30 days',

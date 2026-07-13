@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Archive, Loader2, ChevronDown, FileText, ImageIcon, Music2, RefreshCw } from 'lucide-react'
+import { Archive, ChevronDown, FileText, ImageIcon, Music2, RefreshCw } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { Markdown } from '../../components/ui/Markdown'
 import { modelLabel } from '../../lib/models'
 import { cn } from '../../lib/cn'
+import { SkeletonRow } from '../../components/ui/Skeleton'
 
 /**
  * Library — a saved history of everything the AI created: every team run (content,
@@ -53,7 +54,7 @@ export default function LibraryPage() {
       </div>
 
       {loading ? (
-        <div className="card mt-4 flex items-center gap-2 rounded-3xl p-6 text-sm text-muted"><Loader2 size={15} className="animate-spin" /> {t('common.loading')}</div>
+        <div className="mt-4 space-y-2" aria-label={t('common.loading')}>{[0, 1, 2].map((i) => <SkeletonRow key={i} />)}</div>
       ) : tab === 'runs' ? (
         <div className="mt-4 space-y-2">
           {runs.length === 0 ? (
