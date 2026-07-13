@@ -26,12 +26,16 @@ export function TelegramBotConnect({
   hint?: string
   onConnected?: (bot: string) => void
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [open, setOpen] = useState(!compact)
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [done, setDone] = useState(Boolean(connected))
+  const [editing, setEditing] = useState(false)
+  const active = done || Boolean(connected)
+  const connectedText = lang === 'ru' ? 'Бот подключён. Токен безопасно сохранён.' : lang === 'uz' ? 'Bot ulangan. Token xavfsiz saqlandi.' : 'Bot connected. The token is stored securely.'
+  const changeText = lang === 'ru' ? 'Заменить токен' : lang === 'uz' ? 'Tokenni almashtirish' : 'Replace token'
 
   const connect = async () => {
     if (!supabase || token.trim().length < 20 || busy) return
@@ -41,7 +45,7 @@ export function TelegramBotConnect({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const p = data as any
       if (error || !p?.ok) { setMsg({ ok: false, text: (p?.error as string) || t('telegramBotConnect.errConnect') }); return }
-      setDone(true); setMsg({ ok: true, text: t('telegramBotConnect.connectedMsg', { bot: p.bot }) }); setToken(''); onConnected?.(p.bot as string)
+      setDone(true); setEditing(false); setMsg({ ok: true, text: t('telegramBotConnect.connectedMsg', { bot: p.bot }) }); setToken(''); onConnected?.(p.bot as string)
     } catch { setMsg({ ok: false, text: t('telegramBotConnect.errGeneric') }) } finally { setBusy(false) }
   }
 
@@ -49,20 +53,32 @@ export function TelegramBotConnect({
     return (
       <button
         onClick={() => setOpen(true)}
-        className={cn('shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition', done ? 'border-teal/30 text-teal' : 'border-ice/12 text-muted hover:text-text')}
+        className={cn('shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition', active ? 'border-teal/30 text-teal' : 'border-ice/12 text-muted hover:text-text')}
       >
-        {done ? <><CheckCircle2 size={12} /> {t('telegramBotConnect.botLabel')}</> : <><Send size={12} /> {t('telegramBotConnect.botLabel')}</>}
+        {active ? <><CheckCircle2 size={12} /> {t('telegramBotConnect.botLabel')}</> : <><Send size={12} /> {t('telegramBotConnect.botLabel')}</>}
       </button>
+    )
+  }
+
+  if (active && !editing) {
+    return (
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2 rounded-xl border border-teal/25 bg-teal/[0.07] px-3 py-2 text-sm text-teal">
+          <CheckCircle2 size={16} className="shrink-0" />
+          <span>{connectedText}</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => { setEditing(true); setMsg(null) }}>{changeText}</Button>
+      </div>
     )
   }
 
   return (
     <div className="w-full">
-      {(hint || compact) && (
+      {(hint || compact || active) && (
         <div className="flex items-start justify-between gap-2">
           {hint ? <p className="text-[12px] leading-relaxed text-muted">{hint}</p> : <span />}
-          {compact && (
-            <button onClick={() => { setOpen(false); setMsg(null); setToken('') }} className="shrink-0 rounded-lg p-1 text-muted hover:bg-white/5 hover:text-text" title={t('telegramBotConnect.collapse')} aria-label={t('telegramBotConnect.collapse')}>
+          {(compact || active) && (
+            <button onClick={() => { setOpen(false); setEditing(false); setMsg(null); setToken('') }} className="shrink-0 rounded-lg p-1 text-muted hover:bg-white/5 hover:text-text" title={t('telegramBotConnect.collapse')} aria-label={t('telegramBotConnect.collapse')}>
               <X size={15} />
             </button>
           )}
@@ -77,7 +93,7 @@ export function TelegramBotConnect({
           className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-muted focus:border-violet/50"
         />
         <Button onClick={connect} disabled={busy || token.trim().length < 20}>
-          {busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Send size={15} /> {done ? t('telegramBotConnect.reconnect') : t('telegramBotConnect.connect')}</>}
+          {busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Send size={15} /> {active ? t('telegramBotConnect.reconnect') : t('telegramBotConnect.connect')}</>}
         </Button>
       </div>
       {msg && <p className={cn('mt-2 rounded-lg px-3 py-2 text-xs', msg.ok ? 'bg-teal/10 text-teal' : 'bg-danger/10 text-danger')}>{msg.text}</p>}

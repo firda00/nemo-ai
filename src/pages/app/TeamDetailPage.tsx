@@ -75,6 +75,15 @@ export default function TeamDetailPage() {
     }
     let on = true
     ;(async () => {
+      // Load saved channel state before the optional department structure. A
+      // team without a department can still own a master Telegram bot.
+      const { data: chs } = await supabase!.from('channels').select('sub_agent_id, scope').eq('agent_id', id).eq('type', 'telegram').eq('status', 'connected')
+      if (on) {
+        const list = (chs ?? []) as { sub_agent_id: string | null; scope: string | null }[]
+        setSubBots(new Set(list.filter((c) => c.sub_agent_id).map((c) => c.sub_agent_id as string)))
+        setGroupConnected(list.some((c) => c.scope === 'group'))
+        setTgConnected(list.some((c) => !c.sub_agent_id && c.scope !== 'group'))
+      }
       const { data: depts } = await supabase!.from('departments').select('*').eq('main_agent_id', id).order('created_at', { ascending: false }).limit(1)
       const d = depts?.[0]
       if (!d) {
@@ -85,13 +94,6 @@ export default function TeamDetailPage() {
       if (!on) return
       setDept({ id: d.id, name: d.name, niche: d.niche ?? undefined, subs: (subs ?? []) as Sub[] })
       setLoading(false)
-      const { data: chs } = await supabase!.from('channels').select('sub_agent_id, scope').eq('agent_id', id).eq('type', 'telegram')
-      if (on) {
-        const list = (chs ?? []) as { sub_agent_id: string | null; scope: string | null }[]
-        setSubBots(new Set(list.filter((c) => c.sub_agent_id).map((c) => c.sub_agent_id as string)))
-        setGroupConnected(list.some((c) => c.scope === 'group'))
-        setTgConnected(list.some((c) => !c.sub_agent_id && c.scope !== 'group'))
-      }
       await loadResults(d.id)
     })()
     return () => { on = false }
