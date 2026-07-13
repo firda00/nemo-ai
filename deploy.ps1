@@ -49,6 +49,7 @@ Apply-Migration .\supabase\migrations\20260711150000_autopost_repair.sql
 Apply-Migration .\supabase\migrations\20260711160000_logistics_workflow.sql
 Apply-Migration .\supabase\migrations\20260711200000_industry_risk_policy.sql
 Apply-Migration .\supabase\migrations\20260711210000_channel_safe_read_columns.sql
+Apply-Migration .\supabase\migrations\20260713120000_governed_agent_evolution.sql
 
 $schemaCheckSql = @'
 select
@@ -59,6 +60,8 @@ select
   exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agents' and column_name = 'risk_tier') as risk_tier,
   exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agents' and column_name = 'template_key') as template_key,
   exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'channels' and column_name = 'quarantined_credentials') as quarantined_credentials,
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agent_evolutions' and column_name = 'auto_applied')
+    and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agent_evolutions' and column_name = 'rolled_back_at') as governed_evolution,
   has_column_privilege('authenticated', 'public.channels', 'sub_agent_id', 'select')
     and has_column_privilege('authenticated', 'public.channels', 'scope', 'select')
     and has_column_privilege('authenticated', 'public.channels', 'label', 'select') as safe_channel_metadata,
@@ -84,10 +87,10 @@ select
 $schemaCheckBody = $jsonSer.Serialize(@{ query = $schemaCheckSql })
 $schemaCheck = Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/database/query" -Method Post -Headers $hdr -Body $schemaCheckBody
 $schemaRow = @($schemaCheck)[0]
-if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard) {
+if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.governed_evolution -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard) {
   throw 'Schema verification failed after migrations.'
 }
-Write-Host '     logistics, billing, safe channel metadata and regulated-channel schema verified.' -ForegroundColor Green
+Write-Host '     logistics, billing, governed evolution, safe channel metadata and regulated-channel schema verified.' -ForegroundColor Green
 
 $riskProbeSql = @'
 do $risk_probe$
@@ -154,7 +157,7 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes');
+select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily');
 select cron.schedule(
   'nemo-autopost-every-minute',
   '* * * * *',
@@ -173,6 +176,15 @@ select cron.schedule(
       body := '{"action":"run_due"}'::jsonb
     );$$
 );
+select cron.schedule(
+  'nemo-agent-evolution-daily',
+  '17 3 * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/evolve-agent',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{"action":"auto-run"}'::jsonb
+    );$$
+);
 '@
   Apply-Sql ($cronSql.Replace('__REF__', $ref).Replace('__SECRET__', $safeCron))
 }
@@ -181,14 +193,14 @@ Write-Host "     migrations applied." -ForegroundColor Green
 $failed = @()
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
-foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up') {
+foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','evolve-agent','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
@@ -196,7 +208,7 @@ foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistic
 
 # Verify the two previously-missing functions now respond (not 404)
 Write-Host "`nVerifying..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','setup-telegram','setup-meta') {
+foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','evolve-agent','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','setup-telegram','setup-meta') {
   $code = -1
   $responseBody = ''
   $isInboundWebhook = $fn -in @('telegram-webhook','whatsapp-webhook','instagram-webhook')

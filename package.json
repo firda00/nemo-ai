@@ -20,6 +20,8 @@
     "test:integrations": "node agent-hub/integration-contracts.mjs",
     "test:integrations-live": "node agent-hub/configured-integrations-health.mjs",
     "test:legacy-teams": "node agent-hub/legacy-team-contracts.mjs",
+    "test:evolution": "node agent-hub/evolution-contracts.mjs",
+    "test:evolution-live": "node agent-hub/evolution-live-smoke.mjs",
     "test:logistics-behavior": "node agent-hub/logistics-behavior.mjs",
     "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
