@@ -27,7 +27,9 @@ Deno.serve(async (req) => {
     authReady: true,
     accountReady: true,
     llmReady: Boolean(OPENROUTER_API_KEY),
-    providerKeysSecure: false,
+    // provider_keys.api_key is write-only for authenticated clients; only service-role
+    // functions can read it back for execution.
+    providerKeysSecure: true,
     message: OPENROUTER_API_KEY ? 'Server-side OpenRouter key is configured.' : 'OpenRouter key is not configured on the server.',
   })
 })

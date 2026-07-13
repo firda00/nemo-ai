@@ -188,7 +188,7 @@ foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','connect-social','connect-telegram','connect-channel','operator-send') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','evolve-agent','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }

@@ -50,6 +50,80 @@ function subSystem(sa: any, fallback: string): string {
 const oneOf = (v: unknown, allowed: string[], def: string) => (allowed.includes(String(v)) ? String(v) : def)
 const validDate = (d: unknown): string | null => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null)
 
+// A two-hour transcript is much larger than one model prompt. Keep the full
+// input, split it into bounded overlapping windows, analyze every window, then
+// reduce the structured results. The constants cap both provider cost and DB
+// side effects while still covering the final words of a 240k-character input.
+const MEETING_INPUT_MAX_CHARS = 240_000
+const MEETING_CHUNK_CHARS = 22_000
+const MEETING_CHUNK_OVERLAP = 400
+const MEETING_MAX_CHUNKS = 12
+const MEETING_TASKS_PER_CHUNK = 12
+const MEETING_FINAL_TASK_LIMIT = 40
+const MEETING_NORMALIZE_BATCH = 20
+
+function splitMeetingTranscript(input: string): string[] {
+  if (input.length <= MEETING_CHUNK_CHARS) return [input]
+  const chunks: string[] = []
+  let start = 0
+  while (start < input.length && chunks.length < MEETING_MAX_CHUNKS) {
+    let end = Math.min(input.length, start + MEETING_CHUNK_CHARS)
+    if (end < input.length) {
+      // Prefer a sentence/paragraph boundary near the end without shrinking a
+      // chunk enough to leave the tail uncovered by the 12-window hard cap.
+      const floor = start + Math.floor(MEETING_CHUNK_CHARS * 0.95)
+      const window = input.slice(floor, end)
+      const candidates = [window.lastIndexOf('\n\n'), window.lastIndexOf('\n'), window.lastIndexOf('. '), window.lastIndexOf('? '), window.lastIndexOf('! ')]
+      const boundary = Math.max(...candidates)
+      if (boundary >= 0) end = floor + boundary + 1
+    }
+    const chunk = input.slice(start, end).trim()
+    if (chunk) chunks.push(chunk)
+    if (end >= input.length) break
+    start = Math.max(start + 1, end - MEETING_CHUNK_OVERLAP)
+  }
+  if (start < input.length && chunks.length === MEETING_MAX_CHUNKS) {
+    const coveredTail = chunks[chunks.length - 1]
+    if (!coveredTail.includes(input.slice(-Math.min(100, input.length)).trim())) throw new Error('MEETING_CHUNK_LIMIT_EXCEEDED')
+  }
+  return chunks
+}
+
+function uniqueText(values: unknown[], limit = 40): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+    const key = text.toLocaleLowerCase()
+    if (!text || seen.has(key)) continue
+    seen.add(key)
+    result.push(text.slice(0, 500))
+    if (result.length >= limit) break
+  }
+  return result
+}
+
+function taskKey(task: any): string {
+  return [cleanTitle(task?.title).toLocaleLowerCase(), String(task?.owner ?? '').trim().toLocaleLowerCase(), String(task?.deadline ?? '')].join('|')
+}
+
+function roundRobinTaskCandidates(groups: any[][], limit: number): any[] {
+  const selected: any[] = []
+  const seen = new Set<string>()
+  const maxDepth = Math.max(0, ...groups.map((group) => group.length))
+  for (let depth = 0; depth < maxDepth && selected.length < limit; depth++) {
+    for (let chunkIndex = 0; chunkIndex < groups.length && selected.length < limit; chunkIndex++) {
+      const task = groups[chunkIndex]?.[depth]
+      if (!task?.title) continue
+      const key = taskKey(task)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      selected.push({ ...task, source_chunk: chunkIndex + 1 })
+    }
+  }
+  return selected
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   const authHeader = req.headers.get('Authorization')
@@ -94,18 +168,20 @@ Deno.serve(async (req) => {
 
   let totalTokens = 0
   const trace: { query: string; findings: string }[] = []
-  const runStep = async (sa: any, roleName: string, fallbackSystem: string, userContent: string, temperature = 0.4): Promise<string> => {
+  const runStep = async (sa: any, roleName: string, fallbackSystem: string, userContent: string, temperature = 0.4, maxTokens = 900): Promise<string> => {
     const messages: ChatMsg[] = [
       { role: 'system', content: `${subSystem(sa, fallbackSystem)}\n${langRule}` },
       { role: 'user', content: userContent },
     ]
-    const r = await callOpenRouter({ apiKey: orKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages, temperature, maxTokens: 900 })
+    const r = await callOpenRouter({ apiKey: orKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages, temperature, maxTokens })
     totalTokens += r.tokens
     trace.push({ query: roleName, findings: r.content })
     return r.content
   }
+  let charged = false
   const charge = async () => {
-    if (!totalTokens) return
+    if (charged || !totalTokens) return
+    charged = true
     await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: 'ops-workflow' })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: totalTokens })
   }
@@ -171,31 +247,77 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'meeting_to_tasks') {
-      const input = String(body?.input ?? '').trim().slice(0, 8000)
+      const input = String(body?.input ?? '').trim()
       if (input.length < 4) return json({ error: 'input required' }, 400)
+      if (input.length > MEETING_INPUT_MAX_CHARS) {
+        return json({
+          ok: false,
+          code: 'INPUT_TOO_LARGE',
+          message: `Расшифровка содержит ${input.length} символов и превышает явный лимит ${MEETING_INPUT_MAX_CHARS}. Текст не был обрезан: разделите встречу на части.`,
+        }, 200)
+      }
 
-      const anRaw = await runStep(
-        find('Meeting Analyst'),
-        'Meeting Analyst Agent',
-        'You ANALYZE a meeting — you do not just transcribe it. Distil decisions, risks and priorities, and pull out only real, concrete action items (skip small talk).',
-        `Meeting transcript:\n${input}\n\nANALYZE it (do not dump everything). Return ONLY JSON: {"decisions":[string], "risks":[string], "priorities":[string], "tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high"}]}. ` +
-        `"decisions" = the key decisions actually made. "risks" = blockers/risks raised. "priorities" = what matters most next. "tasks" = ONLY real action items with a clear owner (skip vague chatter). deadline = YYYY-MM-DD if a date was said, else null. Keep everything short and on the language of the transcript.`,
-        0.3,
-      )
-      const analyst = extractJson(anRaw) ?? {}
-      const decisions = Array.isArray(analyst.decisions) ? (analyst.decisions as string[]).map(String) : []
-      const risks = Array.isArray(analyst.risks) ? (analyst.risks as string[]).map(String) : []
-      const priorities = Array.isArray(analyst.priorities) ? (analyst.priorities as string[]).map(String) : []
-      const rawTasks = Array.isArray(analyst.tasks) ? (analyst.tasks as any[]) : []
+      const chunks = splitMeetingTranscript(input)
+      const chunkAnalyses: Record<string, unknown>[] = []
+      for (let i = 0; i < chunks.length; i++) {
+        const anRaw = await runStep(
+          find('Meeting Analyst'),
+          `Meeting Analyst Agent ${i + 1}/${chunks.length}`,
+          'You ANALYZE one ordered chunk of a meeting transcript. Extract only facts and action items that are present in this chunk; never invent missing owners or dates.',
+          `Today is ${today}. This is transcript chunk ${i + 1} of ${chunks.length}. Overlap with an adjacent chunk is possible, so keep exact wording useful for later deduplication.\n\n${chunks[i]}\n\n` +
+            `Return ONLY JSON: {"decisions":[string],"risks":[string],"priorities":[string],"tasks":[{"title":string,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high"}]}. ` +
+            `Extract at most ${MEETING_TASKS_PER_CHUNK} concrete tasks. A task must be a real action item; preserve the stated owner. Resolve a spoken relative date against today when possible, otherwise deadline is null. Keep all text in the transcript's language.`,
+          0.2,
+          1200,
+        )
+        chunkAnalyses.push(extractJson(anRaw) ?? {})
+      }
 
-      const tmRaw = await runStep(
-        find('Task Manager'),
-        'Task Manager Agent',
-        'You are a task manager. Turn action items into a clean, trackable task table.',
-        `Today is ${today}. Raw tasks JSON:\n${JSON.stringify(rawTasks)}\n\nNormalize into a clean task table. Each "title" MUST be a SHORT imperative action phrase (max ~7 words) — NO trailing numbers/enumeration like "1, 2.", NO colon followed by a long explanation. Put any extra context/steps in "details". Set status: "todo" | "in_progress" | "done" | "overdue" ("overdue" if the deadline is before today). Keep owner, deadline and priority. Respond ONLY as JSON: {"tasks":[{"title":string,"details":string|null,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high","status":string}]}.`,
-        0.3,
-      )
-      const normalized = (extractJson(tmRaw)?.tasks as any[]) ?? rawTasks
+      const decisions = uniqueText(chunkAnalyses.flatMap((analysis) => Array.isArray(analysis.decisions) ? analysis.decisions : []))
+      const risks = uniqueText(chunkAnalyses.flatMap((analysis) => Array.isArray(analysis.risks) ? analysis.risks : []))
+      const priorities = uniqueText(chunkAnalyses.flatMap((analysis) => Array.isArray(analysis.priorities) ? analysis.priorities : []))
+      const taskGroups = chunkAnalyses.map((analysis) => Array.isArray(analysis.tasks)
+        ? (analysis.tasks as any[]).filter((task) => task?.title).slice(0, MEETING_TASKS_PER_CHUNK)
+        : [])
+      const distinctTaskCandidates = new Set(taskGroups.flat().map(taskKey).filter(Boolean)).size
+      // Round-robin selection prevents the first chunks from consuming the whole
+      // side-effect limit before tasks from the end of the meeting are considered.
+      const rawTasks = roundRobinTaskCandidates(taskGroups, MEETING_FINAL_TASK_LIMIT)
+      const taskLimitReached = distinctTaskCandidates > rawTasks.length
+
+      const normalized: any[] = []
+      for (let offset = 0; offset < rawTasks.length; offset += MEETING_NORMALIZE_BATCH) {
+        const batch = rawTasks.slice(offset, offset + MEETING_NORMALIZE_BATCH).map((task, index) => ({ ...task, source_index: offset + index }))
+        const tmRaw = await runStep(
+          find('Task Manager'),
+          `Task Manager Agent ${Math.floor(offset / MEETING_NORMALIZE_BATCH) + 1}/${Math.ceil(rawTasks.length / MEETING_NORMALIZE_BATCH)}`,
+          'You are a task manager. Normalize every supplied action item into a clean, trackable task without dropping or merging source items.',
+          `Today is ${today}. Raw tasks JSON:\n${JSON.stringify(batch)}\n\n` +
+            `Return exactly one item for every source_index and preserve source_index. Each title must be a short imperative phrase (about 7 words); put context in details. Keep the stated owner and valid deadline. Set status to "todo", "in_progress", "done", or "overdue". ` +
+            `Respond ONLY as JSON: {"tasks":[{"source_index":number,"title":string,"details":string|null,"owner":string,"deadline":string|null,"priority":"low"|"medium"|"high","status":"todo"|"in_progress"|"done"|"overdue"}]}.`,
+          0.2,
+          1600,
+        )
+        const parsed = (extractJson(tmRaw)?.tasks as any[]) ?? []
+        const bySource = new Map<number, any>()
+        for (const task of parsed) {
+          const sourceIndex = Number(task?.source_index)
+          if (Number.isInteger(sourceIndex)) bySource.set(sourceIndex, task)
+        }
+        for (const source of batch) {
+          const task = bySource.get(source.source_index) ?? {}
+          normalized.push({
+            ...source,
+            ...task,
+            title: cleanTitle(task.title || source.title),
+            details: task.details == null ? null : String(task.details).slice(0, 2000),
+            owner: String(task.owner ?? source.owner ?? '').slice(0, 120),
+            deadline: validDate(task.deadline) ?? validDate(source.deadline),
+            priority: oneOf(task.priority ?? source.priority, ['low', 'medium', 'high'], 'medium'),
+            status: oneOf(task.status, ['todo', 'in_progress', 'done', 'overdue'], 'todo'),
+          })
+        }
+      }
 
       const summary = await runStep(
         find('Report'),
@@ -203,6 +325,7 @@ Deno.serve(async (req) => {
         'You are a manager-report specialist. Write a concise weekly operations report in Markdown.',
         `Write a short weekly operations report in Markdown.\nDecisions:\n${JSON.stringify(decisions)}\nRisks:\n${JSON.stringify(risks)}\nPriorities:\n${JSON.stringify(priorities)}\nTasks:\n${JSON.stringify(normalized)}\n\nInclude: key decisions, risks/blockers, a task summary grouped by owner, overdue/at-risk items, and next-week priorities.`,
         0.4,
+        1000,
       )
 
       const { data: run } = await userDb
@@ -342,7 +465,25 @@ Deno.serve(async (req) => {
       }
 
       await charge()
-      return json({ ok: true, run_id: runId, decisions, tasks: taskRows, task_ids, sheet_written, dm_sent })
+      return json({
+        ok: true,
+        run_id: runId,
+        decisions,
+        risks,
+        priorities,
+        tasks: taskRows,
+        task_ids,
+        sheet_written,
+        dm_sent,
+        summary,
+        analysis: {
+          input_chars: input.length,
+          chunks: chunks.length,
+          task_candidates: distinctTaskCandidates,
+          task_limit: MEETING_FINAL_TASK_LIMIT,
+          task_limit_reached: taskLimitReached,
+        },
+      })
     }
 
     // retention_scan — detect students who stopped attending / didn't pay next month
@@ -401,6 +542,7 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown action' }, 400)
   } catch (e) {
     console.error('ops-workflow error:', e)
+    await charge().catch(() => undefined)
     return json({ error: 'ops_failed', detail: String(e) }, 502)
   }
 })

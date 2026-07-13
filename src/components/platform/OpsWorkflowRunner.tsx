@@ -32,6 +32,7 @@ interface OpsResult {
   steps?: { query: string; findings: string }[]
   warnings?: string[]
   recovered_task_ids?: string[]
+  analysis?: { input_chars?: number; chunks?: number; task_candidates?: number; task_limit?: number; task_limit_reached?: boolean }
 }
 
 const STEP_LABELS: Record<OpsKind, string[]> = {
@@ -65,8 +66,13 @@ const statusCls = (s?: string) =>
       : s === 'in_progress' ? 'bg-cyan/15 text-cyan'
         : 'bg-white/[0.06] text-muted'
 
-const fileToB64 = (file: File): Promise<string> => new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result)); rd.onerror = rej; rd.readAsDataURL(file) })
 const MAX_AUDIO_SECONDS = 2 * 60 * 60
+const fileToB64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '')
+  reader.onerror = () => reject(new Error('Unable to read audio file'))
+  reader.readAsDataURL(file)
+})
 const readAudioDuration = (file: File): Promise<number> => new Promise((resolve) => {
   const url = URL.createObjectURL(file)
   const audio = document.createElement('audio')
@@ -107,12 +113,18 @@ export function OpsWorkflowRunner({
       if (file.size > 180 * 1024 * 1024) { setError('Аудио больше 180 МБ. Сожмите запись или экспортируйте MP3/AAC.'); return }
       const duration = await readAudioDuration(file)
       if (duration > MAX_AUDIO_SECONDS) { setError('Максимальная длина записи — 2 часа (120 минут).'); return }
-      const path = `audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { setError('Войдите в Nemo, чтобы загрузить аудиозапись.'); return }
+      const path = `${user.id}/audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
       const up = await supabase.storage.from('media').upload(path, file, { contentType: file.type || 'audio/mpeg' })
-      let audioUrl = ''
-      if (!up.error) audioUrl = supabase.storage.from('media').getPublicUrl(path).data.publicUrl
+      if (up.error && file.size > 12 * 1024 * 1024) {
+        setError('Не удалось безопасно загрузить длинную запись. Попробуйте ещё раз или используйте MP3/AAC.')
+        return
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const body: any = audioUrl ? { audio_url: audioUrl, format: file.type, language: lang || 'auto' } : { audio_b64: await fileToB64(file), format: file.type, language: lang || 'auto' }
+      const body: any = !up.error
+        ? { storage_path: path, format: file.type, language: lang || 'auto' }
+        : { audio_b64: await fileToB64(file), format: file.type, language: lang || 'auto' }
       const { data } = await supabase.functions.invoke('transcribe-file', { body })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const p = data as any

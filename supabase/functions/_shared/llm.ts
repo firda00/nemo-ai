@@ -2,6 +2,7 @@
 // One API, many models — the model id is chosen per agent (agents.model),
 // e.g. "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-...".
 import { roleSkillBlock } from './skills.ts'
+import { selectedSkillBlock } from './capabilitySkills.ts'
 
 export interface ChatMsg {
   role: 'system' | 'user' | 'assistant'
@@ -118,6 +119,7 @@ interface PromptAgent {
   niche?: string
   persona_mode?: string // 'business' (default) | 'personal'
   owner_name?: string   // for personal mode: the person this assistant speaks as / for
+  skills?: string[]
 }
 
 // Default runtime guardrail — role-bound scope + system-prompt-leak defense. Added to EVERY
@@ -182,6 +184,7 @@ export function buildSystemPrompt(agent: PromptAgent | null | undefined, knowled
       p.tasks ? `What you help with: ${p.tasks}` : '',
       p.tone ? `Tone of voice: ${p.tone}` : '',
       p.rules ? `Rules you MUST follow: ${p.rules}` : '',
+      selectedSkillBlock(agent?.skills),
       langRule,
       PERSONAL_GUARD,
       knowledge
@@ -206,6 +209,7 @@ export function buildSystemPrompt(agent: PromptAgent | null | undefined, knowled
     // Persona embodiment: if the agent's role matches a known profession, inject how that
     // professional actually thinks/works so the agent inhabits the role (no-op if no match).
     roleSkillBlock(p.role ?? '', `${p.tasks ?? ''} ${agent?.name ?? ''}`),
+    selectedSkillBlock(agent?.skills),
     langRule,
     SCOPE_GUARD,
     collect,

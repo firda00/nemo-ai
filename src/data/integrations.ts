@@ -36,8 +36,10 @@ export const INT_REGIONS: IntRegion[] = ['uz', 'ru', 'us', 'eu', 'mena', 'africa
 export const INTEGRATIONS: CatalogItem[] = [
   // messengers
   { id: 'telegram', name: 'Telegram', category: 'messenger', regions: ['uz', 'ru', 'global'], status: 'live' },
-  { id: 'whatsapp', name: 'WhatsApp', category: 'messenger', regions: ['global'], status: 'live' },
-  { id: 'instagram', name: 'Instagram', category: 'messenger', regions: ['global'], status: 'live' },
+  // The webhook implementation exists, but production must have META_APP_SECRET before
+  // signatures can be verified. Keep these unavailable instead of advertising a dead channel.
+  { id: 'whatsapp', name: 'WhatsApp', category: 'messenger', regions: ['global'], status: 'soon' },
+  { id: 'instagram', name: 'Instagram', category: 'messenger', regions: ['global'], status: 'soon' },
   { id: 'widget', name: 'Website widget', category: 'messenger', regions: ['global'], status: 'live' },
   { id: 'messenger', name: 'Facebook Messenger', category: 'messenger', regions: ['global'], status: 'soon' },
   { id: 'viber', name: 'Viber', category: 'messenger', regions: ['ru', 'uz', 'eu'], status: 'soon' },

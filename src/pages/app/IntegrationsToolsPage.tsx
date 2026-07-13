@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react'
-import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag, Sparkles, Search, CalendarClock } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag, Sparkles, Clock } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
 import { CustomToolsManager } from '../../components/platform/CustomToolsManager'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
+import { AGENT_SKILLS } from '../../data/agentSkills'
 
 /**
  * Integrations — connect a third-party service once; it becomes a TOOL the AI agent can
  * use (e.g. GitHub for developers, a CRM for sales). Keys are stored server-only
  * (write-only) via connect-provider. Tool execution during a run is wired per integration.
  */
-interface Integ { id: string; icon: typeof Code2; color: string; title: string; category: string; what: string; steps: string[]; link: string; placeholder: string }
+interface Integ { id: string; icon: typeof Code2; color: string; title: string; category: string; what: string; steps: string[]; link: string; placeholder: string; implemented?: boolean }
 const INTEGRATIONS: Integ[] = [
   { id: 'github', icon: Code2, color: '#8B7CF8', category: 'Разработка', title: 'GitHub', what: 'githubWhat', placeholder: 'ghp_… (Personal Access Token)', link: 'https://github.com/settings/tokens',
     steps: ['githubS1', 'githubS2', 'githubS3'] },
@@ -31,7 +32,7 @@ const INTEGRATIONS: Integ[] = [
     steps: ['slackS1', 'slackS2', 'slackS3'] },
   { id: 'bland', icon: Phone, color: '#5B7CF6', category: 'Звонки', title: 'Bland.ai', what: 'blandWhat', placeholder: 'Bland API key', link: 'https://app.bland.ai',
     steps: ['blandS1', 'blandS2', 'blandS3'] },
-  { id: 'vapi', icon: Phone, color: '#13C5B4', category: 'Звонки', title: 'Vapi', what: 'vapiWhat', placeholder: 'Vapi API key', link: 'https://dashboard.vapi.ai',
+  { id: 'vapi', icon: Phone, color: '#13C5B4', category: 'Звонки', title: 'Vapi', what: 'vapiWhat', placeholder: 'Vapi API key', link: 'https://dashboard.vapi.ai', implemented: false,
     steps: ['vapiS1', 'vapiS2', 'vapiS3'] },
   { id: 'hyperbrowser', icon: Globe, color: '#22D3EE', category: 'Браузер-агент', title: 'Hyperbrowser', what: 'hyperbrowserWhat', placeholder: 'Hyperbrowser API key (optional)', link: 'https://app.hyperbrowser.ai',
     steps: ['hyperbrowserS1', 'hyperbrowserS2', 'hyperbrowserS3'] },
@@ -40,22 +41,22 @@ const INTEGRATIONS: Integ[] = [
     steps: ['elevenlabsS1', 'elevenlabsS2', 'elevenlabsS3'] },
   { id: 'heygen', icon: Video, color: '#5B7CF6', category: 'Медиа · голос · видео', title: 'HeyGen', what: 'heygenWhat', placeholder: 'HeyGen API key', link: 'https://app.heygen.com/settings',
     steps: ['heygenS1', 'heygenS2', 'heygenS3'] },
-  { id: 'did', icon: Video, color: '#22D3EE', category: 'Медиа · голос · видео', title: 'D-ID', what: 'didWhat', placeholder: 'D-ID API key', link: 'https://studio.d-id.com/account-settings',
+  { id: 'did', icon: Video, color: '#22D3EE', category: 'Медиа · голос · видео', title: 'D-ID', what: 'didWhat', placeholder: 'D-ID API key', link: 'https://studio.d-id.com/account-settings', implemented: false,
     steps: ['didS1', 'didS2', 'didS3'] },
-  { id: 'synthesia', icon: Video, color: '#F4A640', category: 'Медиа · голос · видео', title: 'Synthesia', what: 'synthesiaWhat', placeholder: 'Synthesia API key', link: 'https://www.synthesia.io',
+  { id: 'synthesia', icon: Video, color: '#F4A640', category: 'Медиа · голос · видео', title: 'Synthesia', what: 'synthesiaWhat', placeholder: 'Synthesia API key', link: 'https://www.synthesia.io', implemented: false,
     steps: ['synthesiaS1', 'synthesiaS2', 'synthesiaS3'] },
   { id: 'replicate', icon: ImageIcon, color: '#8B7CF8', category: 'Медиа · голос · видео', title: 'Replicate', what: 'replicateWhat', placeholder: 'r8_… (Replicate token)', link: 'https://replicate.com/account/api-tokens',
     steps: ['replicateS1', 'replicateS2', 'replicateS3'] },
-  { id: 'stability', icon: ImageIcon, color: '#13C5B4', category: 'Медиа · голос · видео', title: 'Stability AI', what: 'stabilityWhat', placeholder: 'sk-… (Stability key)', link: 'https://platform.stability.ai/account/keys',
+  { id: 'stability', icon: ImageIcon, color: '#13C5B4', category: 'Медиа · голос · видео', title: 'Stability AI', what: 'stabilityWhat', placeholder: 'sk-… (Stability key)', link: 'https://platform.stability.ai/account/keys', implemented: false,
     steps: ['stabilityS1', 'stabilityS2', 'stabilityS3'] },
   // Маркетплейсы (API продавца → данные для маркетплейс-агента)
-  { id: 'uzum', icon: ShoppingBag, color: '#7000FF', category: 'Маркетплейсы', title: 'Uzum Market', what: 'uzumWhat', placeholder: 'Uzum Seller API key', link: 'https://seller.uzum.uz',
+  { id: 'uzum', icon: ShoppingBag, color: '#7000FF', category: 'Маркетплейсы', title: 'Uzum Market', what: 'uzumWhat', placeholder: 'Uzum Seller API key', link: 'https://seller.uzum.uz', implemented: false,
     steps: ['uzumS1', 'uzumS2', 'uzumS3'] },
   { id: 'wildberries', icon: ShoppingBag, color: '#CB11AB', category: 'Маркетплейсы', title: 'Wildberries', what: 'wildberriesWhat', placeholder: 'WB API token', link: 'https://seller.wildberries.ru',
     steps: ['wildberriesS1', 'wildberriesS2', 'wildberriesS3'] },
   { id: 'ozon', icon: ShoppingBag, color: '#005BFF', category: 'Маркетплейсы', title: 'Ozon', what: 'ozonWhat', placeholder: 'Ozon Api-Key', link: 'https://seller.ozon.ru',
     steps: ['ozonS1', 'ozonS2', 'ozonS3'] },
-  { id: 'kaspi', icon: ShoppingBag, color: '#F14635', category: 'Маркетплейсы', title: 'Kaspi', what: 'kaspiWhat', placeholder: 'Kaspi API token', link: 'https://kaspi.kz/merchantcabinet',
+  { id: 'kaspi', icon: ShoppingBag, color: '#F14635', category: 'Маркетплейсы', title: 'Kaspi', what: 'kaspiWhat', placeholder: 'Kaspi API token', link: 'https://kaspi.kz/merchantcabinet', implemented: false,
     steps: ['kaspiS1', 'kaspiS2', 'kaspiS3'] },
   { id: 'airtable', icon: FileText, color: '#FCB400', category: 'Продуктивность', title: 'Airtable', what: 'airtableWhat', placeholder: 'pat… (Airtable token)', link: 'https://airtable.com/create/tokens',
     steps: ['airtableS1', 'airtableS2', 'airtableS3'] },
@@ -75,16 +76,10 @@ const CAT_LABEL: Record<string, string> = {
 // Placeholders that need translation (the rest are Latin-only token formats, left as-is).
 const PH_KEY: Record<string, string> = { stripe: 'stripePh', amocrm: 'amocrmPh', bitrix24: 'bitrix24Ph', hyperbrowser: 'hyperbrowserPh' }
 
-// Built-in AI skills — keyless capability bundles a user toggles per agent (no setup).
-const SKILLS: { id: string; icon: typeof Sparkles; color: string }[] = [
-  { id: 'data-analysis', icon: Sparkles, color: '#8B7CF8' },
-  { id: 'web-research', icon: Search, color: '#22D3EE' },
-  { id: 'scheduling', icon: CalendarClock, color: '#F4A640' },
-]
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export default function IntegrationsToolsPage() {
   const { t } = useI18n()
+  const [searchParams] = useSearchParams()
   const [connected, setConnected] = useState<string[]>([])
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [keyIn, setKeyIn] = useState<Record<string, string>>({})
@@ -112,9 +107,16 @@ export default function IntegrationsToolsPage() {
     if (p?.connected) setConnected(p.connected)
   }
   useEffect(() => { if (!isSupabaseEnabled || !supabase) return; (async () => { try { await refresh() } catch { /* ignore */ } setLoading(false) })() }, [])
+  useEffect(() => {
+    if (loading) return
+    const id = searchParams.get('integration')
+    if (!id) return
+    window.setTimeout(() => document.getElementById(`integration-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50)
+  }, [loading, searchParams])
 
   const connect = async (id: string) => {
     if (!supabase || busy) return
+    if (INTEGRATIONS.find((item) => item.id === id)?.implemented === false) return
     setBusy(id); setMsg((m) => ({ ...m, [id]: undefined as any }))
     try {
       const { data } = await supabase.functions.invoke('connect-provider', { body: { action: 'connect', provider: id, api_key: (keyIn[id] ?? '').trim() } })
@@ -179,8 +181,8 @@ export default function IntegrationsToolsPage() {
       <div className="card mt-4 rounded-3xl p-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={15} className="text-violet" /> {t('agentEdit.skillsCatalogTitle')}</h3>
         <p className="mt-1 text-[12px] text-muted">{t('agentEdit.skillsCatalogDesc')}</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          {SKILLS.map((s) => (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {AGENT_SKILLS.map((s) => (
             <div key={s.id} className="rounded-2xl border border-ice/10 bg-black/20 p-3.5">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${s.color}22`, color: s.color }}><s.icon size={16} /></span>
               <p className="mt-2 text-[13px] font-semibold text-text">{t(`agentEdit.skill_${s.id}`)}</p>
@@ -249,13 +251,15 @@ export default function IntegrationsToolsPage() {
                 const on = connected.includes(it.id)
                 const m = msg[it.id]
                 return (
-                  <div key={it.id} className="card rounded-3xl p-5">
+                  <div id={`integration-${it.id}`} key={it.id} className="card scroll-mt-24 rounded-3xl p-5">
                     <div className="flex items-center gap-2">
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: `${it.color}22`, color: it.color }}><it.icon size={18} /></span>
                       <h3 className="flex-1 text-sm font-bold text-text">{it.title}</h3>
                       {on
                         ? <span className="inline-flex items-center gap-1 rounded-pill bg-teal/10 px-2 py-0.5 text-[10px] text-teal"><CheckCircle2 size={11} /> {t('integrationsToolsPage.badgeConnected')}</span>
-                        : <span className="rounded-pill bg-white/[0.05] px-2 py-0.5 text-[10px] text-muted">{t('integrationsToolsPage.badgeTool')}</span>}
+                        : it.implemented === false
+                          ? <span className="inline-flex items-center gap-1 rounded-pill bg-amber/10 px-2 py-0.5 text-[10px] text-amber"><Clock size={11} /> {t('platform.integrations.soon')}</span>
+                          : <span className="rounded-pill bg-white/[0.05] px-2 py-0.5 text-[10px] text-muted">{t('integrationsToolsPage.badgeTool')}</span>}
                     </div>
                     <p className="mt-3 text-[13px] text-muted">{t(`integrationsToolsPage.${it.what}`)}</p>
                     {on ? (
@@ -263,6 +267,8 @@ export default function IntegrationsToolsPage() {
                         <span className="inline-flex items-center gap-1.5 rounded-xl border border-teal/20 bg-teal/[0.06] px-3 py-1.5 text-xs text-text"><KeyRound size={13} className="text-teal" /> {t('integrationsToolsPage.connectedChip')}</span>
                         <Button size="sm" variant="ghost" onClick={() => disconnect(it.id)} disabled={busy === it.id}>{busy === it.id ? <Loader2 size={13} className="animate-spin" /> : <Unplug size={13} />} {t('integrationsToolsPage.disconnect')}</Button>
                       </div>
+                    ) : it.implemented === false ? (
+                      <p className="mt-3 rounded-xl border border-amber/20 bg-amber/[0.06] px-3 py-2 text-[12px] leading-relaxed text-amber">{t('integrationsToolsPage.runtimeNotReady')}</p>
                     ) : (
                       <>
                         <ol className="mt-3 space-y-1 text-[12px] text-muted">{it.steps.map((s, i) => <li key={i} className="flex gap-2"><span className="text-violet">{i + 1}.</span> {t(`integrationsToolsPage.${s}`)}</li>)}</ol>

@@ -151,6 +151,12 @@ export function useAgentChat(agent?: PlatformAgent) {
                 temperature: agent.temperature,
                 prompt: agent.prompt,
                 default_lang: agent.language,
+                type: agent.type,
+                skills: agent.skills ?? [],
+                country: agent.country,
+                niche: agent.niche,
+                persona_mode: agent.personaMode,
+                owner_name: agent.ownerName,
               },
               agent_id: agent.id,
               // persist the test dialogue only for a SAVED agent (real UUID), so it

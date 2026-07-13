@@ -7,7 +7,6 @@ import {
   Camera,
   Globe,
   Building2,
-  Briefcase,
   Calendar,
   Phone,
   ShoppingBag,
@@ -60,7 +59,7 @@ interface IntegrationDef {
   fields?: FieldDef[]
 }
 
-const WIDGET_SNIPPET = '<script src="https://cdn.nemo.ai/widget.js" data-agent="ag_demo" async></script>'
+const widgetSnippet = (channelId: string) => `<script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="${channelId}" async></script>`
 
 const statusStyle: Record<IntegrationStatus, string> = {
   connected: 'bg-teal/10 text-teal',
@@ -116,12 +115,24 @@ const NAME_I18N: Record<string, string> = {
   synthesia: 'dataUi.intSynthesia',
 }
 
+const GOOGLE_IDS = ['google', 'gmail', 'gsheets', 'gdocs'] as const
+const CHANNEL_IDS = ['telegram', 'instagram', 'whatsapp', 'widget'] as const
+const PROVIDER_UI_TO_KEY: Record<string, string> = {
+  github: 'github',
+  slack: 'slack',
+  browser: 'hyperbrowser',
+  hubspot: 'hubspot',
+  amocrm: 'amocrm',
+  bitrix24: 'bitrix24',
+}
+
 export default function IntegrationsPage() {
   const { t } = useI18n()
   const toast = useToast()
   const status = useIntegrationStore((s) => s.status)
   const connect = useIntegrationStore((s) => s.connect)
   const disconnect = useIntegrationStore((s) => s.disconnect)
+  const setError = useIntegrationStore((s) => s.setError)
 
   const [active, setActive] = useState<IntegrationDef | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -131,7 +142,7 @@ export default function IntegrationsPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null)
   // for Meta channels (Instagram/WhatsApp): the account's agents + the webhook result to paste into Meta
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
-  const [connResult, setConnResult] = useState<{ webhook?: string; verify_token?: string } | null>(null)
+  const [connResult, setConnResult] = useState<{ channel_id?: string; webhook?: string; verify_token?: string } | null>(null)
 
   // filters
   const [query, setQuery] = useState('')
@@ -170,8 +181,6 @@ export default function IntegrationsPage() {
       ],
     },
     widget: { id: 'widget', name: t('platform.channels.widget'), icon: Globe, color: '#22D3EE', method: 'widget' },
-    amocrm: { id: 'amocrm', name: 'amoCRM', icon: Building2, color: '#3CB6E3', method: 'oauth' },
-    bitrix24: { id: 'bitrix24', name: 'Bitrix24', icon: Briefcase, color: '#2FB5F0', method: 'oauth' },
     google: { id: 'google', name: 'Google', icon: Calendar, color: '#EA4335', method: 'oauth' },
   }
 
@@ -219,18 +228,20 @@ export default function IntegrationsPage() {
       finishConnect(def.id)
       return
     }
-    // Instagram / WhatsApp — real per-agent connect (connect-channel), returns webhook + verify token
-    if (isSupabaseEnabled && supabase && (def.id === 'instagram' || def.id === 'whatsapp')) {
+    // Instagram / WhatsApp / widget — real per-agent connection persisted by the backend.
+    if (isSupabaseEnabled && supabase && (def.id === 'instagram' || def.id === 'whatsapp' || def.id === 'widget')) {
       if (!form.agent_id) { toast(t('igConnect.pickAgent')); return }
       setBusy(true)
       const credentials = def.id === 'instagram'
         ? { page_token: form.page_token, ig_id: form.ig_id }
-        : { phone_number_id: form.phone_number_id, token: form.token }
+        : def.id === 'whatsapp'
+          ? { phone_number_id: form.phone_number_id, token: form.token }
+          : {}
       const { data, error } = await supabase.functions.invoke('connect-channel', { body: { agent_id: form.agent_id, type: def.id, credentials } })
       setBusy(false)
-      const p = data as { ok?: boolean; webhook?: string; verify_token?: string; error?: string } | null
+      const p = data as { ok?: boolean; channel_id?: string; webhook?: string; verify_token?: string; error?: string } | null
       if (error || !p?.ok) { toast(p?.error ?? error?.message ?? t('platform.integrations.statusError')); return }
-      setConnResult({ webhook: p.webhook, verify_token: p.verify_token })
+      setConnResult({ channel_id: p.channel_id, webhook: p.webhook, verify_token: p.verify_token })
       connect(def.id)
       toast(t('platform.integrations.connectedMsg'))
       return
@@ -242,9 +253,16 @@ export default function IntegrationsPage() {
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
     ;(async () => {
+      // Clear all cached/demo state first. Only records returned by the backend become connected.
+      for (const item of INTEGRATIONS) if (item.status === 'live') disconnect(item.id)
       try {
         const { data } = await supabase!.functions.invoke('google-oauth', { body: { action: 'status' } })
-        if ((data as { connected?: boolean } | null)?.connected) connect('google')
+        if ((data as { connected?: boolean } | null)?.connected) for (const id of GOOGLE_IDS) connect(id)
+      } catch { /* ignore */ }
+      try {
+        const { data } = await supabase!.functions.invoke('connect-provider', { body: { action: 'status' } })
+        const providers = new Set(((data as { connected?: string[] } | null)?.connected ?? []).map(String))
+        for (const [uiId, provider] of Object.entries(PROVIDER_UI_TO_KEY)) if (providers.has(provider)) connect(uiId)
       } catch { /* ignore */ }
       try {
         const { data: ags } = await supabase!.from('agents').select('id, name').order('created_at', { ascending: true })
@@ -252,13 +270,17 @@ export default function IntegrationsPage() {
       } catch { /* ignore */ }
       try {
         // reflect REAL connected channels (telegram/instagram/whatsapp/widget) from the backend
-        const { data: chs } = await supabase!.from('channels').select('type')
-        const types = new Set(((chs as { type: string }[]) ?? []).map((c) => c.type))
-        for (const ty of ['telegram', 'instagram', 'whatsapp', 'widget']) if (types.has(ty)) connect(ty)
+        const { data: chs } = await supabase!.from('channels').select('type, status')
+        const rows = (chs as { type: string; status: string }[]) ?? []
+        for (const ty of CHANNEL_IDS) {
+          const matches = rows.filter((row) => row.type === ty)
+          if (matches.some((row) => row.status === 'connected')) connect(ty)
+          else if (matches.length) setError(ty)
+        }
       } catch { /* ignore */ }
     })()
     const p = new URLSearchParams(window.location.search).get('google')
-    if (p === 'connected') { connect('google'); toast(t('integrationsPage.googleConnected')) }
+    if (p === 'connected') { for (const id of GOOGLE_IDS) connect(id); toast(t('integrationsPage.googleConnected')) }
     else if (p) toast(t('integrationsPage.googleFailed'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -275,19 +297,47 @@ export default function IntegrationsPage() {
       setBusy(false)
       return
     }
-    window.setTimeout(() => finishConnect(id), 900)
+    setBusy(false)
+    toast(t('platform.integrations.statusError'))
   }
 
   const copySnippet = () => {
-    navigator.clipboard?.writeText(WIDGET_SNIPPET)
+    if (!connResult?.channel_id) return
+    navigator.clipboard?.writeText(widgetSnippet(connResult.channel_id))
     setCopied(true)
     toast(t('platform.integrations.copied'))
   }
 
-  const needsAgent = active?.id === 'instagram' || active?.id === 'whatsapp'
+  const needsAgent = active?.id === 'instagram' || active?.id === 'whatsapp' || active?.id === 'widget'
   const tokenReady = active?.fields
     ? active.fields.every((f) => (form[f.key] ?? '').trim().length > 0) && (!needsAgent || Boolean(form.agent_id))
     : false
+
+  const disconnectReal = async (id: string) => {
+    if (!supabase || !isSupabaseEnabled) return
+    setBusy(true)
+    try {
+      if ((GOOGLE_IDS as readonly string[]).includes(id)) {
+        const { data, error } = await supabase.functions.invoke('google-oauth', { body: { action: 'disconnect' } })
+        if (error || !(data as { ok?: boolean } | null)?.ok) throw new Error(error?.message || 'google disconnect failed')
+        for (const googleId of GOOGLE_IDS) disconnect(googleId)
+      } else if (PROVIDER_UI_TO_KEY[id]) {
+        const { data, error } = await supabase.functions.invoke('connect-provider', { body: { action: 'disconnect', provider: PROVIDER_UI_TO_KEY[id] } })
+        if (error || !(data as { ok?: boolean } | null)?.ok) throw new Error(error?.message || 'provider disconnect failed')
+        disconnect(id)
+      } else if ((CHANNEL_IDS as readonly string[]).includes(id)) {
+        const { error } = await supabase.from('channels').delete().eq('type', id)
+        if (error) throw error
+        disconnect(id)
+      }
+      toast(t('platform.integrations.disconnectedMsg'))
+    } catch {
+      toast(t('platform.integrations.statusError'))
+    } finally {
+      setBusy(false)
+      setConfirmId(null)
+    }
+  }
 
   return (
     <div className="container-page max-w-6xl py-8">
@@ -375,9 +425,10 @@ export default function IntegrationsPage() {
       ) : (
         <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((it) => {
-            const def = CONNECTABLE[it.id]
-            const Icon = def?.icon ?? CAT_META[it.category].Icon
-            const color = def?.color ?? CAT_META[it.category].color
+            const directDef = CONNECTABLE[it.id]
+            const connectDef = directDef ?? ((GOOGLE_IDS as readonly string[]).includes(it.id) ? CONNECTABLE.google : undefined)
+            const Icon = directDef?.icon ?? CAT_META[it.category].Icon
+            const color = directDef?.color ?? CAT_META[it.category].color
             const st = status[it.id] ?? 'disconnected'
             const isOn = it.status === 'live' && st === 'connected'
             const isErr = it.status === 'live' && st === 'error'
@@ -394,7 +445,7 @@ export default function IntegrationsPage() {
                   ) : (
                     <span className={cn('inline-flex items-center gap-1.5 rounded-pill px-2.5 py-0.5 text-[11px] font-medium', statusStyle[st])}>
                       <span className={cn('h-1.5 w-1.5 rounded-full', isOn ? 'bg-teal' : isErr ? 'bg-danger' : 'bg-midnight/60')} />
-                      {isOn ? t('platform.integrations.statusConnected') : isErr ? t('platform.integrations.statusError') : t('platform.integrations.statusDisconnected')}
+                      {isOn ? (PROVIDER_UI_TO_KEY[it.id] ? t('integrationsToolsPage.badgeConnected') : t('platform.integrations.statusConnected')) : isErr ? t('platform.integrations.statusError') : t('platform.integrations.statusDisconnected')}
                     </span>
                   )}
                 </div>
@@ -420,19 +471,25 @@ export default function IntegrationsPage() {
                     </Button>
                   ) : isOn ? (
                     <>
-                      <Button size="sm" variant="subtle" onClick={() => toast(t('platform.integrations.testOk'))}>
-                        <RefreshCw size={14} /> {t('platform.integrations.test')}
-                      </Button>
+                      {(PROVIDER_UI_TO_KEY[it.id] || (GOOGLE_IDS as readonly string[]).includes(it.id)) && (
+                        <Link to={`/app/tools?integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
+                          <Wrench size={14} /> {t('platform.integrations.test')}
+                        </Link>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => setConfirmId(it.id)}>
                         <Unplug size={14} /> {t('platform.integrations.disconnect')}
                       </Button>
                     </>
                   ) : (
-                    def && (
-                      <Button size="sm" onClick={() => openConnect(def)}>
+                    connectDef ? (
+                      <Button size="sm" onClick={() => openConnect(connectDef)}>
                         <Plug size={14} /> {isErr ? t('platform.integrations.reconnect') : t('platform.integrations.connect')}
                       </Button>
-                    )
+                    ) : PROVIDER_UI_TO_KEY[it.id] ? (
+                      <Link to={`/app/tools?integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:brightness-110">
+                        <Plug size={14} /> {t('platform.integrations.connect')}
+                      </Link>
+                    ) : null
                   )}
                 </div>
               </div>
@@ -470,21 +527,22 @@ export default function IntegrationsPage() {
             </div>
 
             <div className="mt-5 space-y-4">
+              {!connResult && needsAgent && (
+                <label className="block space-y-1.5">
+                  <span className="block text-xs text-muted">{t('igConnect.agentLabel')}</span>
+                  <select
+                    value={form.agent_id ?? ''}
+                    onChange={(e) => setForm((s) => ({ ...s, agent_id: e.target.value }))}
+                    className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none focus:border-cobalt/50 focus:shadow-glow"
+                  >
+                    {agents.length === 0 && <option value="">{t('igConnect.noAgents')}</option>}
+                    {agents.map((a) => <option key={a.id} value={a.id} className="bg-panel">{a.name}</option>)}
+                  </select>
+                </label>
+              )}
+
               {active.method === 'token' && !connResult && (
                 <>
-                  {needsAgent && (
-                    <label className="block space-y-1.5">
-                      <span className="block text-xs text-muted">{t('igConnect.agentLabel')}</span>
-                      <select
-                        value={form.agent_id ?? ''}
-                        onChange={(e) => setForm((s) => ({ ...s, agent_id: e.target.value }))}
-                        className="glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none focus:border-cobalt/50 focus:shadow-glow"
-                      >
-                        {agents.length === 0 && <option value="">{t('igConnect.noAgents')}</option>}
-                        {agents.map((a) => <option key={a.id} value={a.id} className="bg-panel">{a.name}</option>)}
-                      </select>
-                    </label>
-                  )}
                   {active.fields?.map((f) => (
                     <label key={f.key} className="block space-y-1.5">
                       <span className="block text-xs text-muted">{f.label}</span>
@@ -500,7 +558,7 @@ export default function IntegrationsPage() {
               )}
 
               {/* Meta webhook result — paste into the Meta App to finish */}
-              {connResult && (
+              {connResult && active.id !== 'widget' && (
                 <div className="space-y-3">
                   <p className="flex items-center gap-1.5 text-sm font-medium text-teal"><Check size={15} /> {t('igConnect.webhookTitle')}</p>
                   <div className="space-y-1.5">
@@ -532,10 +590,14 @@ export default function IntegrationsPage() {
               {active.method === 'widget' && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted">{t('platform.integrations.widgetNote')}</p>
-                  <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{WIDGET_SNIPPET}</pre>
-                  <button onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
-                    {copied ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied ? t('platform.integrations.copied') : t('platform.integrations.copy')}
-                  </button>
+                  {connResult?.channel_id && (
+                    <>
+                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet(connResult.channel_id)}</pre>
+                      <button onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
+                        {copied ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied ? t('platform.integrations.copied') : t('platform.integrations.copy')}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -555,7 +617,7 @@ export default function IntegrationsPage() {
                       {busy ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />} {t('platform.integrations.authorize')}
                     </Button>
                   ) : (
-                    <Button size="sm" onClick={() => submitConnect(active)} disabled={busy || (active.method === 'token' && !tokenReady)}>
+                    <Button size="sm" onClick={() => submitConnect(active)} disabled={busy || (needsAgent && !form.agent_id) || (active.method === 'token' && !tokenReady)}>
                       <Plug size={14} /> {busy ? '…' : t('platform.integrations.connect')}
                     </Button>
                   )}
@@ -573,13 +635,7 @@ export default function IntegrationsPage() {
         confirmLabel={t('platform.integrations.disconnect')}
         cancelLabel={t('common.cancel')}
         danger
-        onConfirm={() => {
-          if (confirmId) {
-            disconnect(confirmId)
-            toast(t('platform.integrations.disconnectedMsg'))
-          }
-          setConfirmId(null)
-        }}
+        onConfirm={() => { if (confirmId) void disconnectReal(confirmId) }}
         onCancel={() => setConfirmId(null)}
       />
     </div>

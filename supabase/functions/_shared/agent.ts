@@ -79,6 +79,9 @@ export type TraceStep =
   | { kind: 'lead_decision'; agentId: string | null; agentName: string; decision: 'direct' | 'delegate' }
   | { kind: 'consult'; agentId: string | null; agentName: string; task: string }
   | { kind: 'unresolved_delegate'; agentName: string; task: string }
+  | { kind: 'peer_review'; agentId: string | null; agentName: string; reviewerAgentId: string | null; reviewerAgentName: string; round: 'initial' | 'after_revision'; approved: boolean; score: number; issueCount: number }
+  | { kind: 'revise'; agentId: string | null; agentName: string; reviewerAgentId: string | null; reviewerAgentName: string; round: 1 }
+  | { kind: 'human_review'; agentId: string | null; agentName: string; reason: string }
   | { kind: 'synthesize'; agentId: string | null; agentName: string }
 
 // Dedicated intent ROUTER: a cheap structured pass that picks which teammate should handle the
@@ -208,7 +211,15 @@ async function notifyEscalation(db: any, agent: any, lastCustomer: string, reaso
 }
 
 const RATE_LIMIT_PER_MIN = 20
+// A team may have many saved specialists, but a single request gets at most three relevant
+// delegates and one peer-review revision. These hard caps keep channel latency/cost bounded and prevent an
+// agent-review-agent recursion loop.
 const MAX_SPECIALISTS = 3
+const MAX_PEER_REVISIONS = 1
+const TEAM_SAFETY_GUARD =
+  '\nSafety and human-control contract: preserve every approval limit in the team and specialist instructions. ' +
+  'Never claim an external action, booking, payment, refund, contract, price change, consequential decision, or regulated decision happened without a confirmed tool result or authorized human. ' +
+  'Medical, legal, hiring, insurance, accounting, payment, safety, and other consequential decisions stay with an authorized human. If the requested result cannot satisfy these rules, require human review instead of weakening the rule.'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function extractJson(text: string): Record<string, unknown> | null {
@@ -265,7 +276,7 @@ async function buildTeamReply(
   knowledge: string,
   bizBlock = '',
   knownLead: Record<string, unknown> = {},
-): Promise<{ text: string; tokens: number; trace: TraceStep[] }> {
+): Promise<{ text: string; tokens: number; trace: TraceStep[]; humanReviewReason?: string }> {
   let tokens = 0
   const trace: TraceStep[] = []
   // inject already-known lead details + today's date so the TEAM path also never re-asks (#5)
@@ -289,7 +300,10 @@ async function buildTeamReply(
     return { text: out.content, tokens: out.tokens, trace }
   }
 
-  const roster = subs.map((s: any) => `- ${s.name} (${s.role}): ${s.prompt?.tasks ?? ''}`).join('\n')
+  // A saved industry team may have several specialists. The lead can select at most three
+  // relevant saved teammates; it can never invent or recursively recruit a new teammate.
+  const activeSubs = subs.slice(0, MAX_SPECIALISTS)
+  const roster = activeSubs.map((s: any) => `- ${s.name} (${s.role}): ${s.prompt?.tasks ?? ''}`).join('\n')
 
   // 1) LEAD routes: answer directly for simple messages, else delegate to specialists
   const routeMsgs: ChatMsg[] = [
@@ -297,8 +311,9 @@ async function buildTeamReply(
       role: 'system',
       content:
         `${leadSystem}\n\nYou lead this team:\n${roster}\n\n` +
-        'Decide how to handle the customer\'s latest message. If it is a simple greeting or you can answer alone, answer directly. ' +
-        'Otherwise delegate to 1-3 relevant specialists. Respond ONLY as JSON: ' +
+        'Decide how to handle the customer\'s latest message. Answer directly ONLY for a greeting, acknowledgement, or genuinely trivial question. ' +
+        'For every substantive request, delegate concrete, non-overlapping work to one to three relevant saved specialists. ' +
+        'Do not recruit or name anyone outside the saved roster. Respond ONLY as JSON: ' +
         '{"answer": string|null, "delegate": [{"name": string, "task": string}]}. ' + LANG_HINT,
     },
     ...hist,
@@ -317,42 +332,163 @@ async function buildTeamReply(
     return { text: out.content, tokens: tokens + out.tokens, trace }
   }
 
-  // 2) SPECIALISTS contribute (each with its own saved prompt)
-  const contributions: { name: string; output: string }[] = []
+  // 2) Only the lead-selected saved specialists contribute. This keeps a normal customer
+  // exchange fast and affordable while preserving a real peer review on substantive work.
+  const plannedTasks = new Map<string, string>()
   for (const d of delegate) {
-    const nm = String(d?.name ?? '').toLowerCase()
-    // exact name first; fall back to substring ONLY if it's unambiguous (exactly one match) —
-    // a blind includes() could mis-resolve e.g. "Sales" onto "Sales Support".
-    let sa = subs.find((s: any) => String(s.name).toLowerCase() === nm)
-    if (!sa && nm) { const m = subs.filter((s: any) => String(s.name).toLowerCase().includes(nm)); if (m.length === 1) sa = m[0] }
-    const p = sa?.prompt ?? {}
-    const sys = (sa
-      ? `You are "${sa.name}", a ${sa.role}. ${p.role ?? ''} Tasks: ${p.tasks ?? ''}. Rules: ${p.rules ?? ''}`
-        + roleSkillBlock(String(sa.role ?? ''), `${p.role ?? ''} ${p.tasks ?? ''}`)
-      : `You are a specialist named ${d?.name ?? 'Specialist'}.`) + bizBlock
-    const rr = await callOpenRouter({
-      apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.4, maxTokens: 550,
-      messages: [
-        { role: 'system', content: `${sys}\n${LANG_HINT}` },
-        { role: 'user', content: `Customer said: "${lastUser}"\n\nYour task from the team lead: ${d?.task ?? 'help with the request'}\n\nGive a concrete, specific, professional contribution the lead can use directly. No filler.` },
-      ],
-    })
-    tokens += rr.tokens
-    if (rr.content) contributions.push({ name: sa?.name ?? String(d?.name ?? 'Specialist'), output: rr.content })
-    // trace records WHO was actually consulted; an unmatched delegation is recorded honestly
-    // as unresolved (a generic stand-in answered) — never claimed as a saved agent.
-    const task = String(d?.task ?? '').slice(0, 200)
-    trace.push(sa
-      ? { kind: 'consult', agentId: sa.id ?? null, agentName: String(sa.name).slice(0, 120), task }
-      : { kind: 'unresolved_delegate', agentName: String(d?.name ?? 'Specialist').slice(0, 120), task })
+    const nm = String(d?.name ?? '').trim().toLowerCase()
+    const sa = activeSubs.find((s: any) => String(s.name).trim().toLowerCase() === nm)
+    if (sa) plannedTasks.set(String(sa.id), String(d?.task ?? '').trim().slice(0, 500))
   }
-
-  if (!contributions.length) {
-    const out = await callOpenRouter({ apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
+  const specialistSystem = (sa: any) => {
+    const p = sa?.prompt ?? {}
+    return `You are "${sa.name}", a ${sa.role}. ${p.role ?? ''} Tasks: ${p.tasks ?? ''}. Rules: ${p.rules ?? ''}` +
+      roleSkillBlock(String(sa.role ?? ''), `${p.role ?? ''} ${p.tasks ?? ''}`) + bizBlock + NO_FABRICATION + TEAM_SAFETY_GUARD
+  }
+  const assignments = activeSubs
+    .filter((sa: any) => plannedTasks.has(String(sa.id)))
+    .map((sa: any) => ({ sa, task: plannedTasks.get(String(sa.id)) as string }))
+  if (!assignments.length) {
+    const out = await callOpenRouter({
+      apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL,
+      messages: [{ role: 'system', content: `${leadSystem}${TEAM_SAFETY_GUARD}` }, ...hist],
+      temperature: temp, maxTokens: 700,
+    })
     return { text: out.content, tokens: tokens + out.tokens, trace }
   }
+  const executed = await Promise.all(assignments.map(async ({ sa, task }) => {
+    try {
+      const rr = await callOpenRouter({
+        apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.35, maxTokens: 520,
+        messages: [
+          { role: 'system', content: `${specialistSystem(sa)}\n${LANG_HINT}` },
+          { role: 'user', content: `Customer said: "${lastUser}"\n\nYour task from the team lead: ${task}\n\nGive a concrete, specific contribution the lead can use directly. No filler. Do not perform or claim external actions.` },
+        ],
+      })
+      return { sa, task, output: String(rr.content ?? '').trim(), tokens: rr.tokens ?? 0 }
+    } catch {
+      return { sa, task, output: '', tokens: 0 }
+    }
+  }))
+  tokens += executed.reduce((sum, item) => sum + item.tokens, 0)
+  for (const item of executed) trace.push({
+    kind: 'consult', agentId: item.sa.id ?? null, agentName: String(item.sa.name).slice(0, 120), task: item.task.slice(0, 200),
+  })
 
-  // 3) LEAD synthesizes one customer-facing reply
+  type PeerVerdict = { approved: boolean; score: number; issues: string[]; fix: string; requiresHuman: boolean; tokens: number }
+  type Contribution = { sa: any; task: string; output: string; reviewer: any; verdict?: PeerVerdict; revised: boolean }
+  const contributions: Contribution[] = executed.map((item, index) => ({
+    sa: item.sa,
+    task: item.task,
+    output: item.output,
+    reviewer: executed.length > 1 ? executed[(index + 1) % executed.length].sa : agent,
+    revised: false,
+  }))
+
+  const reviewContribution = async (item: Contribution): Promise<PeerVerdict> => {
+    if (!item.output) return { approved: false, score: 0, issues: ['The specialist produced no usable output.'], fix: 'Produce the requested contribution from the supplied facts.', requiresHuman: false, tokens: 0 }
+    const reviewer = item.reviewer
+    const rp = reviewer?.prompt ?? {}
+    const reviewerSystem = reviewer === agent
+      ? `${leadSystem}\nYou are performing a bounded quality review of one specialist contribution.`
+      : `You are "${reviewer.name}", a ${reviewer.role}. ${rp.role ?? ''} Rules: ${rp.rules ?? ''}` +
+        roleSkillBlock(String(reviewer.role ?? ''), `${rp.role ?? ''} ${rp.tasks ?? ''}`) + bizBlock + TEAM_SAFETY_GUARD
+    try {
+      const rr = await callOpenRouter({
+        apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.1, maxTokens: 300,
+        responseFormat: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: `${reviewerSystem}\nPeer-review the work against the customer's request, the author's assigned task, factual grounding, and every human-approval/safety limit. ` +
+              'Reject fabricated facts or claims that an external action happened. Never weaken a rule that reserves a consequential decision or action for an authorized human. ' +
+              'Set requires_human:true when the requested result itself needs an authorized person, protected data, missing evidence, or a consequential regulated decision; ordinary writing defects should instead get a concrete fix. ' +
+              'Return ONLY JSON: {"approved":boolean,"score":0-100,"issues":[string],"fix":string,"requires_human":boolean}. Approve only when it is ready and safe to use.',
+          },
+          { role: 'user', content: `CUSTOMER REQUEST:\n${String(lastUser).slice(0, 2500)}\n\nAUTHOR (${item.sa.role}) TASK:\n${item.task}\n\nWORK TO REVIEW:\n${item.output.slice(0, 5000)}` },
+        ],
+      })
+      const parsed = extractJson(rr.content)
+      if (!parsed) return { approved: false, score: 0, issues: ['Peer review did not return a valid verdict.'], fix: 'Re-check the contribution against the request and safety rules.', requiresHuman: false, tokens: rr.tokens ?? 0 }
+      const score = Math.max(0, Math.min(100, Number(parsed.score) || 0))
+      const issues = Array.isArray(parsed.issues) ? (parsed.issues as unknown[]).map(String).filter(Boolean).slice(0, 6) : []
+      const requiresHuman = Boolean(parsed.requires_human)
+      const approved = Boolean(parsed.approved) && score >= 70 && issues.length === 0 && !requiresHuman
+      return { approved, score, issues, fix: String(parsed.fix ?? '').slice(0, 700), requiresHuman, tokens: rr.tokens ?? 0 }
+    } catch {
+      return { approved: false, score: 0, issues: ['Peer review could not be completed.'], fix: 'A human must verify this contribution.', requiresHuman: true, tokens: 0 }
+    }
+  }
+
+  // 3) MUTUAL REVIEW. Every contribution is checked by the next saved specialist (round-robin).
+  // Rejected ordinary quality issues get exactly one author revision and one re-check.
+  const initialReviews = await Promise.all(contributions.map(reviewContribution))
+  for (let i = 0; i < contributions.length; i++) {
+    contributions[i].verdict = initialReviews[i]
+    tokens += initialReviews[i].tokens
+    trace.push({
+      kind: 'peer_review', agentId: contributions[i].sa.id ?? null, agentName: String(contributions[i].sa.name).slice(0, 120),
+      reviewerAgentId: contributions[i].reviewer?.id ?? null, reviewerAgentName: String(contributions[i].reviewer?.name ?? leadName).slice(0, 120),
+      round: 'initial', approved: initialReviews[i].approved, score: initialReviews[i].score, issueCount: initialReviews[i].issues.length,
+    })
+  }
+
+  const revisionCandidates = contributions.filter((item) => !item.verdict?.approved && !item.verdict?.requiresHuman).slice(0, MAX_SPECIALISTS)
+  if (MAX_PEER_REVISIONS > 0 && revisionCandidates.length) {
+    const revisions = await Promise.all(revisionCandidates.map(async (item) => {
+      const verdict = item.verdict as PeerVerdict
+      try {
+        const rr = await callOpenRouter({
+          apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.25, maxTokens: 520,
+          messages: [
+            { role: 'system', content: `${specialistSystem(item.sa)}\nRevise your own contribution once. Preserve every safety and human-approval limit. ${LANG_HINT}` },
+            { role: 'user', content: `CUSTOMER REQUEST:\n${String(lastUser).slice(0, 2200)}\n\nYOUR ASSIGNED TASK:\n${item.task}\n\nYOUR PREVIOUS WORK:\n${item.output.slice(0, 4000)}\n\nPEER ISSUES:\n${verdict.issues.join('\n')}\n\nREQUIRED FIX:\n${verdict.fix}\n\nReturn the complete corrected contribution only.` },
+          ],
+        })
+        return { item, output: String(rr.content ?? '').trim(), tokens: rr.tokens ?? 0 }
+      } catch {
+        return { item, output: '', tokens: 0 }
+      }
+    }))
+    for (const revision of revisions) {
+      tokens += revision.tokens
+      if (!revision.output) continue
+      revision.item.output = revision.output
+      revision.item.revised = true
+      trace.push({
+        kind: 'revise', agentId: revision.item.sa.id ?? null, agentName: String(revision.item.sa.name).slice(0, 120),
+        reviewerAgentId: revision.item.reviewer?.id ?? null, reviewerAgentName: String(revision.item.reviewer?.name ?? leadName).slice(0, 120), round: 1,
+      })
+    }
+
+    const revisedItems = revisionCandidates.filter((item) => item.revised)
+    const secondReviews = await Promise.all(revisedItems.map(reviewContribution))
+    for (let i = 0; i < revisedItems.length; i++) {
+      revisedItems[i].verdict = secondReviews[i]
+      tokens += secondReviews[i].tokens
+      trace.push({
+        kind: 'peer_review', agentId: revisedItems[i].sa.id ?? null, agentName: String(revisedItems[i].sa.name).slice(0, 120),
+        reviewerAgentId: revisedItems[i].reviewer?.id ?? null, reviewerAgentName: String(revisedItems[i].reviewer?.name ?? leadName).slice(0, 120),
+        round: 'after_revision', approved: secondReviews[i].approved, score: secondReviews[i].score, issueCount: secondReviews[i].issues.length,
+      })
+    }
+  }
+
+  // Fail closed: if any teammate still cannot approve its peer after the single revision, do not
+  // synthesize a polished-looking answer from rejected work. Hand the dialogue to a human.
+  const rejected = contributions.filter((item) => !item.verdict?.approved)
+  if (rejected.length) {
+    const reasons = rejected.map((item) => {
+      const reason = item.verdict?.requiresHuman
+        ? (item.verdict?.issues[0] || 'Authorized human review is required.')
+        : (item.verdict?.issues[0] || 'Peer review did not approve the contribution after one revision.')
+      trace.push({ kind: 'human_review', agentId: item.sa.id ?? null, agentName: String(item.sa.name).slice(0, 120), reason: reason.slice(0, 200) })
+      return `${item.sa.name}: ${reason}`
+    })
+    return { text: '', tokens, trace, humanReviewReason: reasons.join('; ').slice(0, 500) }
+  }
+
+  // 4) LEAD synthesizes one customer-facing reply from peer-approved contributions only.
   const synth = await callOpenRouter({
     apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.5, maxTokens: 900,
     messages: [
@@ -360,11 +496,12 @@ async function buildTeamReply(
         role: 'system',
         content:
           `${leadSystem}\n\nYou are the team lead replying to a real customer on behalf of the business. ` +
-          'Merge your specialists\' input into ONE clear, warm, professional reply that directly answers the customer and moves the conversation forward. ' +
+          'Merge your peer-approved specialists\' input into ONE clear, warm, professional reply that directly answers the customer and moves the conversation forward. ' +
           'Be concrete and helpful; keep a natural human tone. Never mention internal steps, specialists, JSON, or that you are an AI team. ' +
-          `${LANG_HINT}`,
+          'Preserve every human-approval and safety limit; do not turn a draft, request, recommendation, or pending decision into a confirmed action. ' +
+          `${LANG_HINT}${TEAM_SAFETY_GUARD}`,
       },
-      { role: 'user', content: `Customer: "${lastUser}"\n\nSpecialist input (internal — do not quote):\n${contributions.map((c) => `[${c.name}]: ${c.output}`).join('\n\n')}\n\nWrite the final reply to the customer.` },
+      { role: 'user', content: `Customer: "${lastUser}"\n\nPeer-approved specialist input (internal — do not quote):\n${contributions.map((c) => `[${c.sa.name}]: ${c.output}`).join('\n\n')}\n\nWrite the final reply to the customer.` },
     ],
   })
   tokens += synth.tokens
@@ -544,6 +681,26 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       tokensUsed = team.tokens
       modelTag = 'team'
       traceSteps = team.trace
+      // A peer-review failure is a real human handoff, not a hidden warning followed by an
+      // unapproved answer. Persist the trace even though no agent reply is emitted; the channel
+      // caller will send its existing graceful operator-handoff message.
+      if (team.humanReviewReason) {
+        await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
+        await notifyEscalation(db, agent, String(lastCustomer), team.humanReviewReason)
+        if (traceSteps.length) {
+          const { error: traceErr } = await db.from('messages').insert({
+            dialogue_id: dialogueId,
+            author: 'agent',
+            agent_id: agent.id ?? null,
+            message_type: 'system_trace',
+            content: JSON.stringify({ version: 2, replyMessageId: null, escalated: true, steps: traceSteps }),
+          })
+          if (traceErr) console.error('escalation trace insert failed:', traceErr)
+        }
+        await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
+        if (tokensUsed) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed })
+        return ''
+      }
     } else {
       // DYNAMIC ROUTING via a dedicated intent CLASSIFIER (not a marker buried in the reply):
       // pick the right teammate WITH a confidence score BEFORE answering, so routing is measurable
@@ -636,7 +793,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
           author: 'agent',
           agent_id: agent.id ?? null,
           message_type: 'system_trace',
-          content: JSON.stringify({ version: 1, replyMessageId: replyRow?.id ?? null, steps: traceSteps }),
+          content: JSON.stringify({ version: 2, replyMessageId: replyRow?.id ?? null, steps: traceSteps }),
         })
         if (traceErr) console.error('trace insert failed:', traceErr)
       }

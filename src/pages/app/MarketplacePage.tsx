@@ -33,6 +33,7 @@ import { useToast } from '../../components/ui/Toast'
 import { createUstudyOperationsTeam } from '../../lib/ustudyTeam'
 import { createCommerceTeam, type CommerceTeamKind } from '../../lib/commerceTeams'
 import { createIndustryTeam, type IndustryTeamKind } from '../../lib/industryTeams'
+import type { LegacyMarketplaceTeamKind } from '../../lib/legacyMarketplaceTeams'
 
 type TemplateCategory = 'all' | 'tourism' | 'sales' | 'commerce' | 'services' | 'operations' | 'people' | 'regulated'
 type CopyLang = 'ru' | 'uz' | 'en'
@@ -51,6 +52,7 @@ interface TeamTemplate {
   badge?: string
   commerceKey?: CommerceTeamKind
   industryKey?: IndustryTeamKind
+  legacyKey?: LegacyMarketplaceTeamKind
 }
 
 const templates: TeamTemplate[] = [
@@ -67,16 +69,16 @@ const templates: TeamTemplate[] = [
   { kind: 'team', icon: Scale, title: 'Legal Office Coordination Team', market: 'Legal operations', setup: '10 min', agents: 6, category: 'regulated', badge: 'Safety beta · Nemo only', tools: ['matter intake', 'documents', 'research drafts', 'deadlines', 'matter report'], desc: 'Organizes matters, documents, sources and deadlines for lawyer review. It does not give final legal advice or file, sign or settle; live channels are blocked in this beta.', industryKey: 'legal-office' },
   { kind: 'team', icon: ShieldCheck, title: 'Insurance Operations Team', market: 'Insurance operations', setup: '9 min', agents: 6, category: 'regulated', badge: 'Safety beta · Nemo only', tools: ['policy FAQ', 'claim intake', 'documents', 'status follow-up', 'SLA report'], desc: 'Coordinates policy and claim administration from verified records. Coverage, underwriting, denial and payout remain human decisions; live channels are blocked in this beta.', industryKey: 'insurance-operations' },
   { kind: 'agent', icon: Bot, title: 'Course Consultant', market: 'Single Agent', setup: '3 min', agents: 1, category: 'sales', tools: ['test chat', 'knowledge'], desc: 'Standalone course consultant that recommends courses and collects student next actions.' },
-  { kind: 'team', icon: GraduationCap, title: 'Sales Team', market: 'Education sales', setup: '6 min', agents: 5, category: 'sales', tools: ['qualification', 'follow-up', 'crm rows'], desc: 'Student leads, follow-ups, CRM-ready rows and daily sales report for IT Academy.' },
+  { kind: 'team', icon: GraduationCap, title: 'Sales Team', market: 'Education sales', setup: '6 min', agents: 5, category: 'sales', tools: ['qualification', 'follow-up', 'crm rows'], desc: 'Student leads, follow-ups, CRM-ready rows and daily sales report for IT Academy.', legacyKey: 'sales' },
   { kind: 'team', icon: Building2, title: 'Operations Team', market: 'Education operations', setup: '8 min', agents: 7, category: 'operations', badge: 'Production team', tools: ['payments', 'admin escalation', 'meeting analysis', 'task management', 'reports'], desc: 'Routine admin and operations automation: payment reminders, admin escalation, meeting-to-tasks, weekly follow-up and manager reports.' },
   { kind: 'team', icon: PackageSearch, title: 'Marketplace Seller Team', market: 'Wildberries / Ozon', setup: '7 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['seller data analysis', 'listing drafts', 'pricing advice', 'seller report'], desc: 'Create an AI seller team for data you provide. WB/Ozon connections are configured separately and remain read-only; marketplace writes are not automated.', commerceKey: 'marketplace' },
   { kind: 'team', icon: Boxes, title: 'Dropshipping Team', market: 'Dropshipping', setup: '8 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['supplied product data', 'supplier comparison', 'SKU mapping', 'fulfillment tasks'], desc: 'Analyze supplied products and suppliers, protect margin and prepare fulfillment tasks. It never purchases from a supplier automatically.', commerceKey: 'dropshipping' },
   { kind: 'team', icon: Store, title: 'Online Store Team', market: 'E-commerce', setup: '7 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['sales', 'CRM', 'follow-up', 'uploaded orders', 'content'], desc: 'Create a team for product consultation, leads, supplied order analysis, follow-up and reporting. Store connectors are configured separately.', commerceKey: 'online-store' },
   { kind: 'team', icon: Truck, title: 'Logistics Control Team', market: 'Manual logistics beta', setup: '8 min', agents: 6, category: 'operations', badge: 'Manual analysis beta', tools: ['CSV shipment analysis', 'SLA rules', 'exceptions', 'saved tasks', 'message drafts'], desc: 'Paste shipment rows to detect delays and stale scans, save responsible tasks and prepare drafts. Live carrier tracking and automatic sending are not connected.', commerceKey: 'logistics' },
-  { kind: 'team', icon: Building2, title: 'Education Admin Team', market: 'Education ops', setup: '8 min', agents: 6, category: 'operations', tools: ['attendance', 'payments', 'risk report'], desc: 'Attendance, payment reminders, student risk, mentor quality and daily education admin report.' },
-  { kind: 'team', icon: ShoppingBag, title: 'Content Team', market: 'Marketing', setup: '7 min', agents: 5, category: 'services', tools: ['telegram', 'instagram', 'campaigns'], desc: 'Telegram/Instagram posts, course marketing ideas, content calendar and campaign briefs.' },
-  { kind: 'team', icon: HeartPulse, title: 'Student Support Team', market: 'Support', setup: '7 min', agents: 4, category: 'services', tools: ['faq', 'handoff', 'summary'], desc: 'Student questions, FAQ responses, issue triage and human handoff summaries.' },
-  { kind: 'team', icon: Utensils, title: 'Custom Team', market: 'Custom workflow', setup: '5 min', agents: 4, category: 'services', tools: ['custom', 'trace', 'results'], desc: 'Describe any repeatable workflow and configure Team Lead plus Specialist Agents.' },
+  { kind: 'team', icon: Building2, title: 'Education Admin Team', market: 'Education ops', setup: '8 min', agents: 6, category: 'operations', tools: ['attendance', 'payments', 'risk report'], desc: 'Attendance, payment reminders, student risk, mentor quality and daily education admin report.', legacyKey: 'education-admin' },
+  { kind: 'team', icon: ShoppingBag, title: 'Content Team', market: 'Marketing', setup: '7 min', agents: 5, category: 'services', tools: ['telegram', 'instagram', 'campaigns'], desc: 'Telegram/Instagram posts, course marketing ideas, content calendar and campaign briefs.', legacyKey: 'content' },
+  { kind: 'team', icon: HeartPulse, title: 'Student Support Team', market: 'Support', setup: '7 min', agents: 4, category: 'services', tools: ['faq', 'handoff', 'summary'], desc: 'Student questions, FAQ responses, issue triage and human handoff summaries.', legacyKey: 'student-support' },
+  { kind: 'team', icon: Utensils, title: 'Custom Team', market: 'Custom workflow', setup: '5 min', agents: 4, category: 'services', tools: ['custom', 'trace', 'results'], desc: 'Describe any repeatable workflow and configure Team Lead plus Specialist Agents.', legacyKey: 'custom' },
 ]
 
 const categories: Array<{ id: TemplateCategory; label: string }> = [
@@ -247,11 +249,15 @@ export default function MarketplacePage() {
       }
       return
     }
-    const market = tpl.market.toLowerCase()
-    const type = market.includes('admin') || market.includes('ops') ? 'education-admin' : market.includes('sales') || market.includes('education') ? 'sales' : market.includes('support') ? 'support' : market.includes('marketing') ? 'content' : 'custom'
+    if (!tpl.legacyKey) {
+      toast('This team template is not configured yet', 'error')
+      return
+    }
+    const type = tpl.legacyKey === 'student-support' ? 'support' : tpl.legacyKey
     localStorage.setItem('nemo-selected-template', JSON.stringify({
       teamName: tpl.title,
       teamType: type,
+      legacyKey: tpl.legacyKey,
       goal: tpl.desc,
       tools: tpl.tools,
       template: tpl.title,

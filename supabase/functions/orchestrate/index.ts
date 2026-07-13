@@ -6,7 +6,8 @@
 //   action 'staff' { goal, use_skills? }             -> { subagents:[{role,name,skills,prompt}] }
 //   action 'step'  { goal, role, task, context, skills? } -> { output, sources }   (one sub-agent)
 //   action 'review'{ goal, work, author_role }       -> { approved, score, issues, fix }  (peer QA)
-//   action 'synth' { goal, steps:[{role,task,output}], sources } -> { id, result }  (+ saves run)
+//   action 'synth' { goal, department_id?, steps:[{role,task,output,review?}], sources }
+//                  -> { id, result, status }  (+ saves a durable team run)
 // Authenticated; each action is token-guarded + usage-accounted.
 //
 //   POST /functions/v1/orchestrate   (Authorization: Bearer <user jwt>)
@@ -32,6 +33,8 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 // get gpt-4o; the free tier stays on the cheap primary model. Steps default cheap.
 const PREMIUM_MODEL = Deno.env.get('MANAGER_MODEL') ?? 'openai/gpt-4o'
 const MAX_STEPS = 4
+const MAX_SYNTH_STEPS = 5
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // plan (+ admin) -> which models this account gets. Premium tiers (planOf().premium)
 // get gpt-4o for the manager AND the sub-agent steps; free/starter stay on the cheap model.
@@ -480,10 +483,36 @@ OUTPUT CONTRACT:
 
     if (action === 'synth') {
       const goal = String(body?.goal ?? '').trim()
-      const steps = Array.isArray(body?.steps) ? (body.steps as { role: string; task: string; output: string; sources?: string[] }[]) : []
+      type SynthStep = {
+        role: string
+        task: string
+        output: string
+        sources?: string[]
+        reviewedBy?: string
+        review?: { approved?: boolean; score?: number; issues?: string[]; fix?: string } | null
+        revised?: boolean
+        revisions?: number
+        needsHumanReview?: boolean
+      }
+      const steps = Array.isArray(body?.steps) ? (body.steps as SynthStep[]).slice(0, MAX_SYNTH_STEPS) : []
       const sources = Array.isArray(body?.sources) ? (body.sources as string[]) : []
       const lang = String(body?.lang ?? '').trim()
       const langRule = lang && LANG_NAME[lang] ? `Write the ENTIRE deliverable in ${LANG_NAME[lang]}.` : 'Write in the SAME language as the goal.'
+      // A team page may attach the run to its saved department. Validate through the user's
+      // RLS-scoped client so a caller cannot attach traces to another account's department.
+      const requestedDepartmentId = String(body?.department_id ?? '').trim()
+      let departmentId: string | null = null
+      if (requestedDepartmentId) {
+        if (!UUID_RE.test(requestedDepartmentId)) return json({ error: 'invalid_department_id' }, 400)
+        const { data: ownedDepartment, error: departmentError } = await userDb
+          .from('departments')
+          .select('id')
+          .eq('id', requestedDepartmentId)
+          .maybeSingle()
+        if (departmentError || !ownedDepartment?.id) return json({ error: 'department_not_found' }, 403)
+        departmentId = ownedDepartment.id
+      }
+      const needsHumanReview = steps.some((step) => Boolean(step.needsHumanReview))
       const enBrief = await englishBrief(orKey, goal)
       const msgs: ChatMsg[] = [
         {
@@ -494,6 +523,7 @@ OUTPUT CONTRACT:
             'Produce the COMPLETE, ready-to-use deliverable the request asks for: every concrete artifact — action steps, ready-to-send message drafts addressed to the specific people/audience described, lists, real numbers — fully written out. ' +
             'Format as clean professional Markdown: a title, a 2-3 sentence executive summary, the result in sections, and a short "Next steps" list. ' +
             'Your team prepared some notes (below the request). Use them ONLY where they directly help; if they are generic or off-topic, ignore them and write the deliverable yourself. Do NOT let the notes pull you off the exact request. ' +
+            'A note marked HUMAN REVIEW REQUIRED is not approved evidence: label the affected decision/action as pending authorized human review, and never convert it into a confirmed action, recommendation, filing, payment, booking, legal/medical/HR/insurance conclusion, or external message. ' +
             'No meta-commentary, no "as an AI", no mention of internal steps, sub-agents or JSON. End with a Sources list only if sources exist. ' +
             `${langRule} Do not invent facts — if something is unknown, state the assumption in one line.${bizBlock}`,
         },
@@ -502,20 +532,38 @@ OUTPUT CONTRACT:
           content:
             `CLIENT'S REQUEST — this is exactly what you MUST deliver, in full:\n${goal}${enBrief ? `\n(In English, for precise understanding: ${enBrief})` : ''}\n\n` +
             `Reference notes from the team (use ONLY the parts relevant to the request above; ignore anything off-topic or generic):\n` +
-            `${steps.map((s) => `## ${s.role}: ${s.task}\n${s.output || '(no output)'}`).join('\n\n')}\n\n` +
+            `${steps.map((s) => `## ${s.role}: ${s.task}${s.needsHumanReview ? ' [HUMAN REVIEW REQUIRED]' : ''}\n${s.output || '(no output)'}`).join('\n\n')}\n\n` +
             `${sources.length ? `Sources:\n${sources.join('\n')}\n\n` : ''}` +
             `Now write the complete, ready-to-use deliverable that fulfils the client's request exactly (including any message drafts, lists or steps it asked for).`,
         },
       ]
       const r = await callOpenRouter({ apiKey: orKey, model: managerModel, messages: msgs, temperature: 0.4, maxTokens: 1900, fallbackModel: PRIMARY_MODEL })
       await account(r.tokens)
-      const stepRows = steps.map((s) => ({ query: `${s.role}: ${s.task}`, findings: s.output, sources: s.sources ?? [] }))
-      const { data: run } = await userDb
+      const stepRows = steps.map((s) => ({
+        query: `${String(s.role ?? '').slice(0, 120)}: ${String(s.task ?? '').slice(0, 500)}`,
+        findings: String(s.output ?? '').slice(0, 12_000),
+        sources: Array.isArray(s.sources) ? s.sources.map(String).slice(0, 12) : [],
+        review: {
+          reviewed_by: String(s.reviewedBy ?? '').slice(0, 120),
+          approved: Boolean(s.review?.approved),
+          score: Math.max(0, Math.min(100, Number(s.review?.score) || 0)),
+          issues: Array.isArray(s.review?.issues) ? s.review.issues.map(String).slice(0, 8) : [],
+          revised: Boolean(s.revised),
+          revisions: Math.max(0, Math.min(1, Number(s.revisions) || 0)),
+          needs_human_review: Boolean(s.needsHumanReview),
+        },
+      }))
+      const runStatus = needsHumanReview ? 'needs_review' : 'done'
+      const { data: run, error: runError } = await userDb
         .from('research_runs')
-        .insert({ task: goal, status: 'done', report: r.content, sources, steps: stepRows, model: managerModel })
+        .insert({ task: goal, status: runStatus, kind: 'team_run', department_id: departmentId, report: r.content, sources, steps: stepRows, model: managerModel })
         .select('id')
         .single()
-      return json({ ok: true, id: run?.id, result: r.content })
+      if (runError || !run?.id) {
+        console.error('team run persistence failed:', runError)
+        return json({ ok: false, error: 'run_persist_failed' }, 500)
+      }
+      return json({ ok: true, id: run.id, result: r.content, status: runStatus, needsHumanReview, department_id: departmentId })
     }
 
     return json({ error: 'unknown action' }, 400)

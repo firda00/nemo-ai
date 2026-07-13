@@ -20,7 +20,20 @@ interface Sub { id: string; role: string; name: string; prompt: { role?: string;
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
 interface Task { id: string; title: string; owner?: string; deadline?: string; priority?: string; status?: string }
 interface Notif { id: string; title: string; body?: string; risk?: string; target?: string; created_at: string }
-interface Run { id: string; task: string; kind: string; report?: string; steps?: { query: string; findings: string }[]; created_at: string }
+interface RunStep {
+  query: string
+  findings: string
+  review?: {
+    reviewed_by?: string
+    approved?: boolean
+    score?: number
+    issues?: string[]
+    revised?: boolean
+    revisions?: number
+    needs_human_review?: boolean
+  }
+}
+interface Run { id: string; task: string; kind: string; status?: string; report?: string; steps?: RunStep[]; created_at: string }
 
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 const riskCls = (r?: string) => (r === 'high' ? 'bg-danger/15 text-danger' : r === 'medium' ? 'bg-amber/15 text-amber' : 'bg-teal/15 text-teal')
@@ -48,7 +61,7 @@ export default function TeamDetailPage() {
     const [{ data: t }, { data: n }, { data: r }] = await Promise.all([
       supabase.from('tasks').select('*').eq('department_id', deptId).order('created_at', { ascending: false }).limit(40),
       supabase.from('notifications').select('*').eq('department_id', deptId).order('created_at', { ascending: false }).limit(20),
-      supabase.from('research_runs').select('id, task, kind, report, steps, created_at').eq('department_id', deptId).order('created_at', { ascending: false }).limit(10),
+      supabase.from('research_runs').select('id, task, kind, status, report, steps, created_at').eq('department_id', deptId).order('created_at', { ascending: false }).limit(10),
     ])
     setTasks((t ?? []) as Task[])
     setNotifs((n ?? []) as Notif[])
@@ -181,6 +194,8 @@ export default function TeamDetailPage() {
                 presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, prompt: s.prompt }))}
                 contextHint={goal}
                 placeholder={t('teamDetailPage.taskToTeamPlaceholder')}
+                departmentId={dept?.id}
+                onRunSaved={() => dept ? loadResults(dept.id) : undefined}
               />
             </div>
           </section>
@@ -342,6 +357,7 @@ export default function TeamDetailPage() {
                   <div key={run.id} className="rounded-xl border border-ice/[0.07]">
                     <button onClick={() => setOpenRun(isOpen ? null : run.id)} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left">
                       <span className="rounded-full bg-violet/10 px-2 py-0.5 text-[10px] text-violet">{run.kind}</span>
+                      {run.status === 'needs_review' && <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
                       <span className="min-w-0 flex-1 truncate text-sm text-text">{run.task}</span>
                       <span className="shrink-0 text-[11px] text-muted">{new Date(run.created_at).toLocaleString()}</span>
                       <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
@@ -351,6 +367,13 @@ export default function TeamDetailPage() {
                         {(run.steps ?? []).map((s, i) => (
                           <div key={i} className="rounded-lg bg-white/[0.02] p-2.5">
                             <p className="mb-1 text-[11px] font-medium text-cyan">{s.query}</p>
+                            {s.review && (s.review.reviewed_by || s.review.needs_human_review) && (
+                              <p className={cn('mb-1.5 text-[10.5px]', s.review.needs_human_review ? 'text-amber' : s.review.approved ? 'text-teal' : 'text-muted')}>
+                                {s.review.reviewed_by ? `Peer: ${s.review.reviewed_by} / ${s.review.score ?? 0}/100` : 'Peer review'}
+                                {s.review.revised ? ` / revised ${s.review.revisions ?? 1}x` : ''}
+                                {s.review.needs_human_review ? ' / human review required' : ''}
+                              </p>
+                            )}
                             <div className="text-[12px] text-muted"><Markdown content={(s.findings || '—').slice(0, 1200)} /></div>
                           </div>
                         ))}

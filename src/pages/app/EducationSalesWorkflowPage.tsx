@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertCircle, CheckCircle2, Copy, Download, Loader2, Play, Plus, Save, Table2 } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
-import { blankAgent, useAgentStore } from '../../store/useAgentStore'
+import { useAgentStore } from '../../store/useAgentStore'
 import { supabase } from '../../lib/supabase'
 import { useBackendStatus } from '../../hooks/useBackendStatus'
+import { createLegacyMarketplaceTeam, LEGACY_MARKETPLACE_TEAM_BLUEPRINTS, teamTypeToLegacyMarketplaceKind } from '../../lib/legacyMarketplaceTeams'
 
 type LeadStatus = 'hot' | 'warm' | 'cold'
 type TeamType = 'sales' | 'support' | 'content' | 'education-admin' | 'custom'
@@ -94,14 +95,12 @@ const operationsSteps: RunStep[] = [
 
 function suggestAgents(type: TeamType, goal: string): AgentDef[] {
   const lead = { name: 'Team Lead Agent', role: 'Team Lead Agent', desc: `Routes work, checks quality, and owns the goal: ${goal || 'business workflow automation'}.` }
-  const map: Record<TeamType, AgentDef[]> = {
-    sales: [lead, { name: 'Lead Qualifier', role: 'Specialist Agent', desc: 'Scores leads by intent, urgency, budget and fit.' }, { name: 'Follow-up Agent', role: 'Specialist Agent', desc: 'Writes personalized messages for each lead.' }, { name: 'CRM Agent', role: 'Specialist Agent', desc: 'Formats CRM-ready rows and manager next steps.' }, { name: 'Report Agent', role: 'Specialist Agent', desc: 'Summarizes daily sales activity and priorities.' }],
-    support: [lead, { name: 'FAQ Specialist', role: 'Specialist Agent', desc: 'Answers common questions from knowledge base.' }, { name: 'Issue Triage Agent', role: 'Specialist Agent', desc: 'Classifies issues by urgency and category.' }, { name: 'Escalation Agent', role: 'Specialist Agent', desc: 'Prepares human handoff when needed.' }, { name: 'Support Reporter', role: 'Specialist Agent', desc: 'Summarizes support load and recurring problems.' }],
-    content: [lead, { name: 'Research Agent', role: 'Specialist Agent', desc: 'Finds angles, trends and customer pain points.' }, { name: 'Copywriter Agent', role: 'Specialist Agent', desc: 'Writes posts, scripts, emails and offers.' }, { name: 'Creative Brief Agent', role: 'Specialist Agent', desc: 'Creates image/video prompts and asset briefs.' }, { name: 'Publishing Agent', role: 'Specialist Agent', desc: 'Prepares schedule, channels and checklist.' }],
-    'education-admin': [lead, { name: 'Admissions Agent', role: 'Specialist Agent', desc: 'Matches students to course and schedule.' }, { name: 'Parent Follow-up Agent', role: 'Specialist Agent', desc: 'Writes clear parent/student replies.' }, { name: 'Schedule Agent', role: 'Specialist Agent', desc: 'Checks preferred time and next available group.' }, { name: 'Admin Report Agent', role: 'Specialist Agent', desc: 'Summarizes admissions tasks for managers.' }],
-    custom: [lead, { name: 'Analysis Agent', role: 'Specialist Agent', desc: 'Understands inputs and extracts key fields.' }, { name: 'Action Agent', role: 'Specialist Agent', desc: 'Generates recommended actions.' }, { name: 'Operations Agent', role: 'Specialist Agent', desc: 'Formats output for internal workflow.' }, { name: 'Report Agent', role: 'Specialist Agent', desc: 'Summarizes results and next steps.' }],
-  }
-  return map[type]
+  const blueprint = LEGACY_MARKETPLACE_TEAM_BLUEPRINTS[teamTypeToLegacyMarketplaceKind(type)]
+  return [lead, ...blueprint.specialists.map((item) => ({
+    name: item.name,
+    role: item.role,
+    desc: item.prompt.tasks,
+  }))]
 }
 
 function toTeamAgentDraft(agent: AgentDef): TeamAgentDraft {
@@ -218,6 +217,7 @@ export default function EducationSalesWorkflowPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const deleteAgent = useAgentStore((s) => s.deleteAgent)
   const backend = useBackendStatus()
   const [wizardStep, setWizardStep] = useState(1)
   const [teamType, setTeamType] = useState<TeamType>('sales')
@@ -227,6 +227,8 @@ export default function EducationSalesWorkflowPage() {
   const [leads, setLeads] = useState(() => localStorage.getItem('nemo-workflow-input') || sampleLeads)
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
   const [running, setRunning] = useState(false)
+  const [creatingTeam, setCreatingTeam] = useState(false)
+  const [createTeamError, setCreateTeamError] = useState('')
   const [backendError, setBackendError] = useState('')
   const [savedReport, setSavedReport] = useState(false)
   const [crmClicked, setCrmClicked] = useState(false)
@@ -299,16 +301,72 @@ export default function EducationSalesWorkflowPage() {
   }
 
   const createTeam = async () => {
-    const base = blankAgent()
-    const activeAgents = teamAgents.filter((agent) => agent.status === 'active')
-    const res = await addAgent({ ...base, name: teamName, type: 'workflow', role: 'Team Lead Agent', niche: teamTypes.find((t) => t.id === teamType)?.title, purpose: goal, status: 'active', channels: ['telegram', 'widget'], prompt: { role: `You are the Team Lead Agent for ${teamName}.`, tasks: `${goal}\n\nSpecialist agents: ${activeAgents.slice(1).map((a) => `${a.name}: ${a.prompt}`).join('\n')}.`, tone: 'Clear, practical, business-focused.', rules: 'Do not fake integrations. Mark CRM/Sheets as coming soon unless connected. Always produce manager next actions.' }, leadForm: { enabled: teamType === 'sales' || teamType === 'education-admin', trigger: 'when a customer asks about price, schedule, course, product or consultation', destination: 'table', fields: [{ id: 'name', label: 'Name', type: 'text', required: true }, { id: 'phone', label: 'Phone', type: 'phone', required: true }, { id: 'interest', label: 'Interest', type: 'text', required: true }, { id: 'next', label: 'Next action', type: 'text', required: false }] } })
-    const id = res.id || `team_${Date.now()}`
-    localStorage.setItem('nemo-current-team-id', id)
-    localStorage.setItem('nemo-team-name', teamName)
-    localStorage.setItem('nemo-team-goal', goal)
-    localStorage.setItem(`nemo-team-blueprint:${id}`, JSON.stringify({ teamName, teamType, goal, agents: teamAgents, savedAt: new Date().toISOString() }))
-    setCreatedId(id)
-    navigate(`/app/teams/${id}`)
+    if (creatingTeam) return
+    const lead = teamAgents[0]
+    const activeSpecialists = teamAgents.slice(1).filter((agent) => agent.status === 'active')
+    if (!teamName.trim() || !goal.trim()) {
+      setCreateTeamError('Team name and goal are required')
+      return
+    }
+    if (!lead || lead.status !== 'active') {
+      setCreateTeamError('The Team Lead must stay active')
+      return
+    }
+    if (!activeSpecialists.length) {
+      setCreateTeamError('Keep at least one active specialist in addition to the Team Lead')
+      return
+    }
+
+    setCreatingTeam(true)
+    setCreateTeamError('')
+    try {
+      const res = await createLegacyMarketplaceTeam(
+        teamTypeToLegacyMarketplaceKind(teamType),
+        addAgent,
+        deleteAgent,
+        {
+          name: teamName,
+          goal,
+          lead: {
+            role: lead.role,
+            model: lead.model,
+            prompt: {
+              role: lead.role.trim() || `Team Lead Agent for ${teamName}`,
+              tasks: `${lead.prompt.trim()}\n\nGoal: ${goal}\n\nCoordinate these specialists:\n${activeSpecialists.map((agent) => `${agent.name}: ${agent.prompt}`).join('\n')}`,
+              tone: 'Clear, practical, business-focused.',
+              rules: 'Delegate work, verify every output, and never fake integrations or external actions. Require human approval for irreversible or consequential actions.',
+            },
+          },
+          specialists: activeSpecialists.map((agent) => ({
+            name: agent.name,
+            role: agent.role,
+            model: agent.model,
+            status: agent.status,
+            prompt: {
+              role: agent.role,
+              tasks: agent.prompt,
+              tone: 'Professional, concise, helpful.',
+              rules: 'Use only supplied or tool-confirmed facts. Never claim an external action succeeded without a confirmed tool result. Escalate uncertainty and consequential decisions to a human.',
+            },
+          })),
+        },
+      )
+      if (res.error || !res.agentId || !res.departmentId) {
+        setCreateTeamError(res.error ?? 'Could not create the complete team')
+        return
+      }
+
+      localStorage.setItem('nemo-current-team-id', res.agentId)
+      localStorage.setItem('nemo-team-name', teamName)
+      localStorage.setItem('nemo-team-goal', goal)
+      localStorage.setItem(`nemo-team-blueprint:${res.agentId}`, JSON.stringify({ teamName, teamType, goal, agents: teamAgents, departmentId: res.departmentId, savedAt: new Date().toISOString() }))
+      setCreatedId(res.agentId)
+      navigate(`/app/teams/${res.agentId}`)
+    } catch (error) {
+      setCreateTeamError(error instanceof Error ? error.message : 'Could not create the complete team')
+    } finally {
+      setCreatingTeam(false)
+    }
   }
 
   const activeRunSteps = workflowType === 'lead-qualification' ? runStepsTemplate : operationsSteps
@@ -508,7 +566,27 @@ export default function EducationSalesWorkflowPage() {
                 <Button onClick={() => setWizardStep(4)} className="mt-5">Continue</Button>
               </div>
             )}
-            {wizardStep === 4 && <div><h2 className="text-xl font-bold text-text">Confirm and create</h2><div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4"><p className="font-semibold text-text">{teamName}</p><p className="mt-1 text-sm text-muted">{goal}</p><p className="mt-3 text-xs text-muted">{teamAgents.filter((a) => a.status === 'active').length} active AI employees: Team Lead Agent + Specialist Agents</p></div><Button onClick={createTeam} fullWidth className="mt-5"><Plus size={16} /> Create Team</Button>{createdId && <p className="mt-3 flex items-center gap-2 text-xs text-teal"><CheckCircle2 size={14} /> Team saved. You can run a workflow now.</p>}</div>}
+            {wizardStep === 4 && (
+              <div>
+                <h2 className="text-xl font-bold text-text">Confirm and create</h2>
+                <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <p className="font-semibold text-text">{teamName}</p>
+                  <p className="mt-1 text-sm text-muted">{goal}</p>
+                  <p className="mt-3 text-xs text-muted">{teamAgents.filter((a) => a.status === 'active').length} active AI employees: Team Lead Agent + Specialist Agents</p>
+                </div>
+                {createTeamError && (
+                  <div className="mt-4 rounded-2xl border border-danger/25 bg-danger/10 p-4">
+                    <p className="flex items-center gap-2 text-sm font-semibold text-danger"><AlertCircle size={16} /> Team was not saved</p>
+                    <p className="mt-1 text-xs text-muted">{createTeamError}</p>
+                  </div>
+                )}
+                <Button onClick={createTeam} disabled={creatingTeam} fullWidth className="mt-5">
+                  {creatingTeam ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                  {creatingTeam ? 'Creating complete team...' : 'Create Team'}
+                </Button>
+                {createdId && <p className="mt-3 flex items-center gap-2 text-xs text-teal"><CheckCircle2 size={14} /> Team saved. You can run a workflow now.</p>}
+              </div>
+            )}
           </div>
         </div>
       )}

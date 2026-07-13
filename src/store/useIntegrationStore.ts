@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-// Connection state for account-level integrations (channels + CRM/ERP).
-// Frontend prototype: status is simulated in-memory (no real webhooks/OAuth).
+// UI cache for account-level integrations. It is hydrated from the backend on every
+// Integrations page mount; never seed a demo connection because that looks like a real key.
 export type IntegrationStatus = 'connected' | 'error' | 'disconnected'
 
 interface IntegrationStore {
@@ -11,11 +11,10 @@ interface IntegrationStore {
   setError: (id: string) => void
 }
 
-// Seed a realistic mix so the page shows connected + available states.
 const seed: Record<string, IntegrationStatus> = {
-  telegram: 'connected',
-  widget: 'connected',
-  amocrm: 'connected',
+  telegram: 'disconnected',
+  widget: 'disconnected',
+  amocrm: 'disconnected',
   whatsapp: 'disconnected',
   instagram: 'disconnected',
   bitrix24: 'disconnected',

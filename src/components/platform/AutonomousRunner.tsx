@@ -59,6 +59,8 @@ export function AutonomousRunner({
   placeholder,
   model,
   postActions,
+  departmentId,
+  onRunSaved,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -68,6 +70,10 @@ export function AutonomousRunner({
   model?: string
   // show the "AI makes the visual" + "send to Telegram" delivery bar under the result
   postActions?: boolean
+  // Saved team runs are attached to this department so their result + peer-review trace
+  // remain visible after a reload of the team page.
+  departmentId?: string
+  onRunSaved?: () => void | Promise<void>
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -102,6 +108,7 @@ export function AutonomousRunner({
     setError('')
     setResult(null)
     setSpecs([])
+    setEscalatedCount(0)
     setRunning(true)
     try {
       if (!live || !supabase) {
@@ -194,12 +201,28 @@ export function AutonomousRunner({
 
       // 4) MANAGER synthesizes the final deliverable (from the peer-reviewed outputs)
       setPhase('synth')
-      const synth = await call({ action: 'synth', goal: g, steps: done.map((d) => ({ role: d.role, task: d.prompt.tasks, output: d.output, needsHumanReview: Boolean(d.escalated) })), sources: [] })
+      const synth = await call({
+        action: 'synth',
+        goal: g,
+        ...(departmentId ? { department_id: departmentId } : {}),
+        steps: done.map((d) => ({
+          role: d.role,
+          task: d.prompt.tasks,
+          output: d.output,
+          reviewedBy: d.reviewedBy,
+          review: d.review,
+          revised: Boolean(d.revised),
+          revisions: d.revisions ?? 0,
+          needsHumanReview: Boolean(d.escalated),
+        })),
+        sources: [],
+      })
       if (!synth) {
         setError('Final synthesis failed — check token balance.')
         return
       }
       setResult(synth.result)
+      if (synth.id && onRunSaved) await onRunSaved()
     } finally {
       setRunning(false)
       setPhase('idle')

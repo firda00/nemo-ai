@@ -173,11 +173,13 @@ export async function saveDynamicTeam(
   opts: {
     name: string
     goal: string
-    specialists: { role: string; name: string; prompt: AgentPrompt }[]
+    specialists: { role: string; name: string; prompt: AgentPrompt; model?: string; status?: 'active' | 'inactive' }[]
     workflowMode?: 'generic' | 'operations' | 'logistics'
     niche?: string
     riskTier?: 'standard' | 'regulated'
     templateKey?: string
+    lead?: { role?: string; prompt?: AgentPrompt; model?: string }
+    leadForm?: PlatformAgent['leadForm']
   },
   deleteAgent?: DeleteAgent,
 ): Promise<SeedResult> {
@@ -192,27 +194,38 @@ export async function saveDynamicTeam(
     ...base,
     name: (opts.name || 'AI Team').slice(0, 60),
     type: 'workflow',
-    role: 'Team lead',
+    role: opts.lead?.role?.trim() || 'Team lead',
     niche: nicheWithMarkers(120),
     riskTier: opts.riskTier ?? 'standard',
     templateKey: opts.templateKey,
     purpose: opts.goal.slice(0, 500),
-    model: OPS_MODEL,
+    model: opts.lead?.model?.trim() || OPS_MODEL,
     status: 'active',
     channels: [],
-    prompt: {
+    prompt: opts.lead?.prompt ?? {
       role: 'Team lead coordinating specialists to achieve the goal.',
       tasks: opts.goal.slice(0, 700),
       tone: 'Professional, concise.',
       rules: 'Delegate to specialists, verify quality, and follow every safety limit in the goal. Never invent facts or claim an external action succeeded without a confirmed tool result. Payments, refunds, contracts, bookings, consequential decisions, and irreversible changes require human approval.',
     },
+    leadForm: opts.leadForm ?? base.leadForm,
   }
-  const res = await addAgent(agent)
+  let res: { id?: string; error?: string }
+  try {
+    res = await addAgent(agent)
+  } catch (error) {
+    return { agentId: '', error: error instanceof Error ? error.message : 'could not create team agent' }
+  }
   if (res.error || !res.id) return { agentId: '', error: res.error ?? 'could not create team agent' }
   const agentId = res.id
   const cleanupLead = async (cause: string): Promise<SeedResult> => {
     if (!deleteAgent) return { agentId, error: `${cause}; rollback unavailable: deleteAgent callback is required` }
-    const cleanupError = (await deleteAgent(agentId)).error
+    let cleanupError: string | undefined
+    try {
+      cleanupError = (await deleteAgent(agentId)).error
+    } catch (error) {
+      cleanupError = error instanceof Error ? error.message : 'unknown agent cleanup error'
+    }
     return cleanupError
       ? { agentId, error: `${cause}; rollback failed: agent cleanup: ${cleanupError}` }
       : { agentId: '', error: cause }
@@ -227,8 +240,12 @@ export async function saveDynamicTeam(
       if (error) errors.push(`department cleanup: ${error.message}`)
     }
     if (deleteAgent) {
-      const error = (await deleteAgent(agentId)).error
-      if (error) errors.push(`agent cleanup: ${error}`)
+      try {
+        const error = (await deleteAgent(agentId)).error
+        if (error) errors.push(`agent cleanup: ${error}`)
+      } catch (error) {
+        errors.push(`agent cleanup: ${error instanceof Error ? error.message : 'unknown error'}`)
+      }
     } else {
       const { error } = await db.from('agents').delete().eq('id', agentId)
       if (error) errors.push(`agent cleanup: ${error.message}`)
@@ -256,8 +273,8 @@ export async function saveDynamicTeam(
     role: s.role,
     name: s.name,
     prompt: s.prompt,
-    model: OPS_MODEL,
-    status: 'active',
+    model: s.model?.trim() || OPS_MODEL,
+    status: s.status === 'inactive' ? 'inactive' : 'active',
   }))
   const { error: subErr } = await supabase.from('sub_agents').insert(rows)
   if (subErr) {

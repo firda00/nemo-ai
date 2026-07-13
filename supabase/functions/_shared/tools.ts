@@ -9,6 +9,9 @@ import { wbProducts, wbOrders, ozonProducts, ozonOrders } from './marketplace.ts
 import { amoCreateLead } from './amocrm.ts'
 import { safeFetch } from './net.ts'
 import { buildCustomSpecs, execCustomTool, type CustomToolRow } from './customTools.ts'
+import { SKILL_TOOLS } from './capabilitySkills.ts'
+
+export { SKILL_TOOLS } from './capabilitySkills.ts'
 
 const NEMO_HB_KEY = Deno.env.get('HYPERBROWSER_API_KEY') ?? ''
 // Code sandbox lives on the VPS worker (same host/secret as the video renderer).
@@ -340,16 +343,6 @@ async function execAnyTool(
  * the next action, and it ends with a short natural-language reply. Returns { ran:true, result }
  * if any tool executed, { ran:false } if none were needed, or null if no tools are connected.
  */
-// SELECTABLE AGENT SKILLS — capability bundles a user can switch on per agent. A skill only
-// UNLOCKS keyless tools (code sandbox / web) that agent-type gating wouldn't otherwise grant;
-// it is layered ON TOP of the type + connected-provider gates (it can never re-enable a
-// CUSTOMER_DENY tool or a tool whose provider key isn't connected).
-export const SKILL_TOOLS: Record<string, string[]> = {
-  'data-analysis': ['run_code', 'web_search', 'read_webpage'], // «сам анализирует данные»: считает, парсит, ищет факты
-  'web-research': ['web_search', 'read_webpage'],
-  'scheduling': ['book_appointment'],
-}
-
 export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string, tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string }, skills?: string[]): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
   const { data: keysRows } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
@@ -393,7 +386,9 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
     ...Object.entries(TOOLS).filter(([name, t]) => keyByProvider[t.provider] && !(customerFacing && CUSTOMER_DENY.has(name))).map(([, t]) => t.spec),
     ...(googleConnected ? Object.entries(GOOGLE_TOOLS).filter(([name]) => !(customerFacing && name === 'gmail_send')).map(([, v]) => v) : []),
     ...alwaysSpecs,
-    ...customSpecs,
+    // Custom HTTP/MCP tools are account-defined and may write anywhere. Until per-agent
+    // bindings + approval policies exist, never expose them to untrusted public-channel agents.
+    ...(customerFacing ? [] : customSpecs),
   ]
   if (!specs.length) return null // nothing connected + no web scope -> normal conversational reply
 

@@ -24,6 +24,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
+import { AGENT_SKILLS, MAX_AGENT_SKILLS } from '../../data/agentSkills'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
 import { MODELS, COUNTRIES, NICHES, VOICES } from '../../data/platform'
@@ -297,17 +298,24 @@ export default function AgentEditorPage() {
               <div className="border-t border-ice/10 pt-4">
                 <p className="flex items-center gap-1.5 text-sm font-normal text-text"><Sparkles size={15} className="text-violet" /> {t('agentEdit.skillsTitle')}</p>
                 <p className="mb-3 mt-1 text-[11px] text-muted">{t('agentEdit.skillsHint')}</p>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {(['data-analysis', 'web-research', 'scheduling'] as const).map((sk) => {
+                <div className="mb-2 flex items-center justify-between text-[10px] text-fog">
+                  <span>{t('agentEdit.skillsSafety')}</span>
+                  <span>{(draft.skills ?? []).length}/{MAX_AGENT_SKILLS}</span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {AGENT_SKILLS.map((skill) => {
+                    const sk = skill.id
                     const on = (draft.skills ?? []).includes(sk)
+                    const limitReached = !on && (draft.skills ?? []).length >= MAX_AGENT_SKILLS
                     return (
                       <button
                         key={sk}
                         onClick={() => set({ skills: on ? (draft.skills ?? []).filter((x) => x !== sk) : [...(draft.skills ?? []), sk] })}
-                        className={cn('rounded-xl border px-3 py-2.5 text-left transition', on ? 'border-violet/60 bg-violet/10' : 'border-ice/10 hover:border-ice/25')}
+                        disabled={limitReached}
+                        className={cn('rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40', on ? 'border-violet/60 bg-violet/10' : 'border-ice/10 hover:border-ice/25')}
                       >
                         <span className="flex items-center justify-between text-sm font-medium text-text">
-                          {t(`agentEdit.skill_${sk}`)}
+                          <span className="flex items-center gap-1.5"><skill.icon size={14} style={{ color: skill.color }} /> {t(`agentEdit.skill_${sk}`)}</span>
                           {on && <Check size={14} className="text-violet" />}
                         </span>
                         <span className="mt-0.5 block text-[11px] text-muted">{t(`agentEdit.skill_${sk}Desc`)}</span>
