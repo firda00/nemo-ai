@@ -3,7 +3,7 @@
 // service role to read the Google token + save tasks_sheet_id. No group bot required.
 //   POST /functions/v1/create-planerka-sheet   (Authorization: Bearer <user jwt>)  body { title? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { extractSheetId, googleAccessToken } from '../_shared/google.ts'
 import { createPlanerkaSheet } from '../_shared/planerkaSheet.ts'
 import { normLang } from '../_shared/planerkaLocale.ts'
@@ -13,7 +13,8 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
 

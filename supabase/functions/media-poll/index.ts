@@ -3,7 +3,8 @@
 //   • USER (Bearer jwt): { action:'status', job_id }  — check one job now
 //   • CRON (x-cron-secret): { action:'run_due' }       — sweep all processing jobs
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -14,7 +15,7 @@ const NEMO_REPLICATE_KEY = Deno.env.get('REPLICATE_API_KEY') ?? '' // "included"
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function keyFor(admin: any, accountId: string, provider: string): Promise<string | null> {
   const { data } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', provider).maybeSingle()
-  if (data?.api_key) return data.api_key
+  if (data?.api_key) return await openSecret(data.api_key)
   // No own key → the job was created on Nemo's included/trial key; poll it with the same key.
   // (resolveMediaAccess picks BYO-first at creation, so "has own key" matches "created on own key".)
   if (provider === 'replicate' && NEMO_REPLICATE_KEY) return NEMO_REPLICATE_KEY
@@ -55,7 +56,8 @@ async function pollJob(admin: any, job: any): Promise<any> {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')

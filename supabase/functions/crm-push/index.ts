@@ -5,14 +5,15 @@
 //   POST /functions/v1/crm-push   (Authorization: Bearer <user jwt>)
 //   body { "webhook_url": "https://...", "lead": { ... }, "provider"?: "bitrix24"|"amocrm"|"google" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { safeFetch } from '../_shared/net.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)

@@ -16,7 +16,7 @@ import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { planOf, monthlyTokens } from '../_shared/plans.ts'
 import { modelDef } from '../_shared/models.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { MARKETING_SKILLS, skillCatalog, skillBlock } from '../_shared/marketingSkills.ts'
 import { safeFetch } from '../_shared/net.ts'
 
@@ -161,7 +161,8 @@ async function loadBusinessContext(admin: any, accountId: string): Promise<strin
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })

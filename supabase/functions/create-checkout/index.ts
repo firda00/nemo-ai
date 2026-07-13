@@ -6,7 +6,7 @@
 //   body { "package": "starter" | "pro" | "business" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { PLAN_LIMITS } from '../_shared/plans.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -32,7 +32,8 @@ function form(params: Record<string, string>): string {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)

@@ -6,6 +6,7 @@
 import { callOpenRouter, buildSystemPrompt, estimateCostUsd, SCOPE_GUARD, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from './llm.ts'
 import { planOf } from './plans.ts'
 import { loadMemory, saveMemory } from './memory.ts'
+import { openSecret } from './secretBox.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { retrieveKnowledge } from './knowledge.ts'
 import { amoCreateLead } from './amocrm.ts'
@@ -120,7 +121,7 @@ export async function classifyRoute(apiKey: string, text: string, self: any, sib
 async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>): Promise<string | null> {
   try {
     const { data: keys } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId).in('provider', ['bitrix24', 'hubspot', 'amocrm'])
-    const byP: Record<string, string> = {}; for (const k of (keys ?? []) as any[]) byP[k.provider] = k.api_key
+    const byP: Record<string, string> = {}; for (const k of (keys ?? []) as any[]) byP[k.provider] = await openSecret(k.api_key)
     const name = String(lead.name ?? '').slice(0, 120), phone = String(lead.phone ?? ''), email = String(lead.email ?? ''), note = String(lead.request ?? lead.budget ?? '')
     if (byP.amocrm && byP.amocrm.includes('|')) {
       const [sub, token] = byP.amocrm.split('|')
@@ -627,7 +628,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
   // remembers its owner across chats
   const isLearning = agent.type === 'learning'
   const personal = agent.persona_mode === 'personal'
-  const memory = (isLearning || personal) ? await loadMemory(db, agent.id) : ''
+  const memory = (isLearning || personal) ? await loadMemory(db, agent.id, dialogueId) : ''
 
   try {
     // use the account's own OpenRouter key if they set one, else Nemo's shared key

@@ -4,7 +4,7 @@ import { useI18n } from '../../i18n'
 import { useToast } from '../ui/Toast'
 import { Button } from '../ui/Button'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
-import { extractText, KNOWLEDGE_ACCEPT } from '../../lib/extractText'
+import { extractText, KNOWLEDGE_ACCEPT, MAX_KNOWLEDGE_FILE_BYTES } from '../../lib/extractText'
 import { cn } from '../../lib/cn'
 
 type Source = 'file' | 'faq' | 'link'
@@ -91,6 +91,10 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
     try {
       for (const file of Array.from(files)) {
         try {
+          if (file.size > MAX_KNOWLEDGE_FILE_BYTES) {
+            toast(`Файл слишком большой. Максимум ${Math.round(MAX_KNOWLEDGE_FILE_BYTES / 1024 / 1024)} МБ.`)
+            continue
+          }
           const content = await extractText(file)
           if (!content.trim()) {
             toast(t('platform.knowledge.extractError'))

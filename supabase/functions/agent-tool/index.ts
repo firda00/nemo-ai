@@ -8,7 +8,9 @@ import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { PRIMARY_MODEL } from '../_shared/llm.ts'
 import { runBrowserTask, looksAbusive } from '../_shared/browser.ts'
 import { googleAccessToken } from '../_shared/google.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { redactText, redactValue } from '../_shared/redact.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -116,7 +118,8 @@ async function execGoogle(name: string, args: any, token: string, email: string)
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -134,7 +137,7 @@ Deno.serve(async (req) => {
   // which integrations are connected -> which tools are available
   const { data: keysRows } = await admin.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
-  for (const r of keysRows ?? []) keyByProvider[r.provider] = r.api_key
+  for (const r of keysRows ?? []) keyByProvider[r.provider] = await openSecret(r.api_key)
   // Google is connected via OAuth (google_accounts), not an api key
   const { data: gRow } = await admin.from('google_accounts').select('refresh_token').eq('account_id', accountId).maybeSingle()
   const googleConnected = Boolean(gRow?.refresh_token)
@@ -160,14 +163,14 @@ Deno.serve(async (req) => {
       const gt = await googleToken(admin, accountId)
       if (!gt.token) return json({ ok: false, error: 'Google не подключён.' }, 200)
       const out = await execGoogle(name, args, gt.token, gt.email ?? '')
-      await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: out.result.slice(0, 1000), ok: out.ok })
+      await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
       return json({ ok: out.ok, tool: name, args, result: out.result })
     }
     const def = TOOLS[name]
     const toolKey = def && def.provider === 'hyperbrowser' ? (keyByProvider['hyperbrowser'] || NEMO_HB_KEY) : (def ? keyByProvider[def.provider] : '')
     if (!def || !toolKey) return json({ ok: false, error: 'Инструмент недоступен.' }, 200)
     const out = await execTool(name, args, toolKey)
-    await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: out.result.slice(0, 1000), ok: out.ok })
+    await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
     return json({ ok: out.ok, tool: name, args, result: out.result })
   } catch (e) {
     return json({ ok: false, error: `Ошибка: ${String(e).slice(0, 200)}` }, 502)

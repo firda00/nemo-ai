@@ -5,7 +5,7 @@
 //     { action:'search', agent_id, query, k? }       -> { ok, results:[{content,similarity}] }  (for testing)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { chunkText, embedText } from '../_shared/knowledge.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -13,7 +13,8 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? 'index')

@@ -2,7 +2,7 @@
 // records a media_job (processing); media-poll finalizes it into the Library when ready.
 //   POST /functions/v1/generate-video  (Bearer jwt)  { prompt, model? } -> { ok, job_id, status }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
 
@@ -13,7 +13,8 @@ const NEMO_REPLICATE_KEY = Deno.env.get('REPLICATE_API_KEY') ?? '' // Nemo's own
 const DEFAULT_MODEL = 'minimax/video-01' // text-to-video
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })

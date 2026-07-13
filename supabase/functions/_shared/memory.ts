@@ -6,12 +6,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /** Recent memory lines for an agent, newest last, joined for the prompt. */
-export async function loadMemory(db: any, agentId: string, limit = 8): Promise<string> {
+export async function loadMemory(db: any, agentId: string, dialogueId: string | null = null, limit = 8): Promise<string> {
   if (!agentId) return ''
-  const { data } = await db
+  let query = db
     .from('agent_memory')
     .select('summary, created_at')
     .eq('agent_id', agentId)
+  query = dialogueId ? query.eq('dialogue_id', dialogueId) : query.is('dialogue_id', null)
+  const { data } = await query
     .order('created_at', { ascending: false })
     .limit(limit)
   const rows = (data ?? []) as { summary: string }[]
@@ -31,7 +33,7 @@ export async function saveMemory(
   dialogueId: string | null,
   userText: string,
 ): Promise<void> {
-  const summary = String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+  const summary = redactSensitiveText(String(userText ?? '')).replace(/\s+/g, ' ').trim().slice(0, 240)
   if (!agentId || summary.length < 4) return
   await db.from('agent_memory').insert({
     account_id: accountId,
@@ -39,5 +41,12 @@ export async function saveMemory(
     dialogue_id: dialogueId,
     summary,
   })
+}
+
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(/\b(?:\d[ -]*?){13,19}\b/g, '[CARD REDACTED]')
+    .replace(/\b(?:password|passwd|пароль|парол|cvv|cvc|pin)\s*[:=]\s*\S+/gi, '$1: [REDACTED]')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|ghp_[A-Za-z0-9]{20,})\b/g, '[TOKEN REDACTED]')
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

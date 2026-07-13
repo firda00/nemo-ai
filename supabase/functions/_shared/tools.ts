@@ -10,6 +10,8 @@ import { amoCreateLead } from './amocrm.ts'
 import { safeFetch } from './net.ts'
 import { buildCustomSpecs, execCustomTool, type CustomToolRow } from './customTools.ts'
 import { SKILL_TOOLS } from './capabilitySkills.ts'
+import { redactText, redactValue } from './redact.ts'
+import { openSecret } from './secretBox.ts'
 
 export { SKILL_TOOLS } from './capabilitySkills.ts'
 
@@ -346,7 +348,7 @@ async function execAnyTool(
 export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string, tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string }, skills?: string[]): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
   const { data: keysRows } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
-  for (const r of keysRows ?? []) keyByProvider[r.provider] = r.api_key
+  for (const r of keysRows ?? []) keyByProvider[r.provider] = await openSecret(r.api_key)
   const { data: gRow } = await db.from('google_accounts').select('refresh_token').eq('account_id', accountId).maybeSingle()
   const googleConnected = Boolean(gRow?.refresh_token)
   // In an auto reply we only offer tools the account explicitly connected (a key), so the
@@ -447,7 +449,7 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
         const missing = required.filter((k) => { const v = (args as any)?.[k]; return v == null || (typeof v === 'string' && !v.trim()) })
         if (missing.length) {
           const msg = `Cannot call ${name}: missing required argument(s): ${missing.join(', ')}. Ask the customer for them, do not call the tool without them.`
-          await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: msg, ok: false })
+          await db.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(msg), ok: false })
           msgs.push({ role: 'tool', tool_call_id: c.id, name, content: msg })
           ranAny = true; lastTool = name; lastResult = msg
           continue
@@ -457,7 +459,7 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
         ranAny = true
         lastTool = name
         lastResult = out.result
-        await db.from('tool_runs').insert({ account_id: accountId, tool: name, args, result: String(out.result).slice(0, 1000), ok: out.ok })
+        await db.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
         msgs.push({ role: 'tool', tool_call_id: c.id, name, content: String(out.result).slice(0, 2000) })
       }
     }

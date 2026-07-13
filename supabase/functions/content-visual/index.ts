@@ -9,7 +9,8 @@ import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
 import { nemoImage, uploadImage, imgModelDef } from '../_shared/media.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -28,7 +29,8 @@ const SIZES: Record<string, { openai: string; hint: string }> = {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -94,7 +96,7 @@ Deno.serve(async (req) => {
   if (nemo.image) image = nemo.image
   else {
     const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
-    const key = keyRow?.api_key
+    const key = await openSecret(keyRow?.api_key)
     if (key) {
       try {
         const r = await fetch('https://api.openai.com/v1/images/generations', {

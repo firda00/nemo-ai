@@ -18,6 +18,7 @@ $steps = @(
   @{ Name = 'Integration truthfulness contracts'; Command = { npm run test:integrations } },
   @{ Name = 'Logistics parser behavior'; Command = { npm run test:logistics-behavior } },
   @{ Name = 'Auth and trace RLS contracts'; Command = { npm run test:auth-contracts } },
+  @{ Name = 'Thirty-point security contracts'; Command = { npm run test:security } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
   @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } }
 )

@@ -2,7 +2,8 @@
 // script. Records a media_job (processing); media-poll finalizes it into the Library.
 //   POST /functions/v1/generate-avatar  (Bearer jwt)  { text, avatar_id?, voice_id? } -> { ok, job_id, status }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 import { planOf } from '../_shared/plans.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -13,7 +14,8 @@ const DEFAULT_AVATAR = 'Daisy-inskirt-20220818'
 const DEFAULT_VOICE = '2d5b0e6cf36f460aa7fc47e3eee4ba54'
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -28,7 +30,7 @@ Deno.serve(async (req) => {
   // avatar video is a budgeted feature — only Plus / Pro / Max tiers (admins exempt)
   if (!planOf(acc?.plan).video && !prof?.is_admin) return json({ ok: false, code: 'PLAN', message: 'Видео с аватаром доступно на тарифах Плюс, Про и Макс.' }, 200)
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'heygen').maybeSingle()
-  const key = keyRow?.api_key
+  const key = await openSecret(keyRow?.api_key)
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Подключите HeyGen в разделе «Медиа», чтобы делать видео с аватаром.' }, 200)
 
   const body = await req.json().catch(() => ({}))

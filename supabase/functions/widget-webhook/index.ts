@@ -8,7 +8,7 @@
 //   body { message, session_id }  ->  { ok, reply, status }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { buildReply } from '../_shared/agent.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -18,7 +18,8 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const WAIT = 'Секунду, оператор скоро подключится.'
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
   try {
     const channelId = new URL(req.url).pathname.split('/').filter(Boolean).pop() ?? ''

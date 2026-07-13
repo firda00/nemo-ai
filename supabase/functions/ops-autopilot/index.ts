@@ -5,7 +5,7 @@
 // runs its own operations.
 //   POST /functions/v1/ops-autopilot   (header: x-cron-secret: <CRON_SECRET>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
@@ -25,7 +25,8 @@ const norm = (v: unknown) => { const s = String(v ?? '').toLowerCase(); return s
 function extractJson(text: string): Any { const s = text.indexOf('{'); const e = text.lastIndexOf('}'); if (s === -1 || e === -1) return null; try { return JSON.parse(text.slice(s, e + 1)) } catch { return null } }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const secret = req.headers.get('x-cron-secret')
   const auth = req.headers.get('Authorization') ?? ''
   if (!CRON_SECRET || (secret !== CRON_SECRET && auth !== `Bearer ${SERVICE_ROLE}`)) return new Response('forbidden', { status: 403 })

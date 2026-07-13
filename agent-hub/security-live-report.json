@@ -1,0 +1,71 @@
+{
+  "generated_at": "2026-07-13T10:38:37.615Z",
+  "failed": 0,
+  "report": [
+    {
+      "name": "RLS blocks foreign agent by direct ID",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "RLS blocks foreign RAG document by direct ID",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "RLS blocks foreign CRM/business sheet by account ID",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "New provider credential is AES-GCM encrypted at rest",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browser role cannot select provider secrets",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Foreign operator takeover is denied",
+      "ok": true,
+      "detail": "HTTP 404"
+    },
+    {
+      "name": "Non-admin direct admin API is denied",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "Tampered JWT is denied",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "Foreign browser origin is denied",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "Concurrent zero-balance reservations cannot overspend",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Oversized RAG payload is rejected by database",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Agent creation burst is rate-limited",
+      "ok": true,
+      "detail": "29 accepted before block"
+    },
+    {
+      "name": "Deleting account cascades provider/OAuth secrets",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

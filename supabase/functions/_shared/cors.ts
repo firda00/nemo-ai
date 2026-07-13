@@ -5,6 +5,32 @@ export const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+const PROD_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
+
+function originAllowed(origin: string): boolean {
+  if (!origin) return true // server-to-server clients do not send Origin
+  const configured = [Deno.env.get('APP_URL'), Deno.env.get('SITE_URL'), PROD_ORIGIN]
+    .filter(Boolean)
+    .map((v) => String(v).replace(/\/$/, ''))
+  if (configured.includes(origin.replace(/\/$/, ''))) return true
+  try {
+    const url = new URL(origin)
+    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  } catch {
+    return false
+  }
+}
+
+/** Reject browser preflights from untrusted origins before the function runs. */
+export function corsPreflight(req: Request): Response | null {
+  if (req.method !== 'OPTIONS') return null
+  const origin = req.headers.get('origin') ?? ''
+  if (!originAllowed(origin)) return new Response('forbidden origin', { status: 403 })
+  return new Response('ok', {
+    headers: { ...corsHeaders, ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}) },
+  })
+}
+
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,

@@ -16,7 +16,7 @@ import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { tgSend } from '../_shared/telegram.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -176,7 +176,8 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')

@@ -4,7 +4,7 @@
 // the missed-day count). Language per business_profiles.report_lang. Visible accountability.
 //   POST /functions/v1/weekly-report   (header: x-cron-secret: <CRON_SECRET>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { L, normLang, type Lang } from '../_shared/planerkaLocale.ts'
 
@@ -17,7 +17,8 @@ type Any = any
 const isFreeTier = (p?: string) => !p || ['free', 'beta', ''].includes(String(p))
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const secret = req.headers.get('x-cron-secret')
   const auth = req.headers.get('Authorization') ?? ''
   if (!CRON_SECRET || (secret !== CRON_SECRET && auth !== `Bearer ${SERVICE_ROLE}`)) {

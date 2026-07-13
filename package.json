@@ -10,6 +10,8 @@
     "test": "tsc -b && eslint .",
     "test:contracts": "node agent-hub/validate-agent-contracts.mjs",
     "test:auth-contracts": "node agent-hub/auth-rls-contracts.mjs",
+    "test:security": "node agent-hub/security-contracts.mjs",
+    "test:security-live": "node agent-hub/security-live-smoke.mjs",
     "test:ui": "node agent-hub/site-smoke.mjs",
     "test:trace-ui": "node agent-hub/trace-ui-smoke.mjs",
     "test:autopost": "node agent-hub/autopost-contracts.mjs",

@@ -4,7 +4,7 @@
 // (each extra day late shows as "overdue N days"). Language per business_profiles.report_lang.
 //   POST /functions/v1/morning-brief   (header: x-cron-secret: <CRON_SECRET>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { L, normLang, fmtDate, overdueDays, type Lang } from '../_shared/planerkaLocale.ts'
 
@@ -34,7 +34,8 @@ async function sendLong(token: string, chatId: string, text: string): Promise<bo
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const secret = req.headers.get('x-cron-secret')
   const auth = req.headers.get('Authorization') ?? ''
   if (!CRON_SECRET || (secret !== CRON_SECRET && auth !== `Bearer ${SERVICE_ROLE}`)) {

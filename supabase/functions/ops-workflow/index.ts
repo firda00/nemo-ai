@@ -10,7 +10,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { buildTaskRow, cleanTitle, STATUS } from '../_shared/planerkaSheet.ts'
 import { googleAccessToken, sheetsAppend } from '../_shared/google.ts'
 import { readPlanerkaRoster, matchRoster } from '../_shared/planerkaRoster.ts'
@@ -125,7 +125,8 @@ function roundRobinTaskCandidates(groups: any[][], limit: number): any[] {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })

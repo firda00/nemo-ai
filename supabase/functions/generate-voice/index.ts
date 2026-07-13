@@ -2,7 +2,7 @@
 // returns the audio inline and saves it to the Library (media_assets, kind='audio').
 //   POST /functions/v1/generate-voice  (Bearer jwt)  { text, voice_id? } -> { ok, audio }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { elevenTTS, openaiTTS, uploadAudio } from '../_shared/media.ts'
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
@@ -16,7 +16,8 @@ const NEMO_OPENAI_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const DEFAULT_VOICE = '21m00Tcm4TlvDq8ikWAM' // ElevenLabs "Rachel" (multilingual)
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })

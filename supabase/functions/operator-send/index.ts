@@ -7,7 +7,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { tgSend } from '../_shared/telegram.ts'
 import { igSend, waSend } from '../_shared/meta.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -15,7 +15,8 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)

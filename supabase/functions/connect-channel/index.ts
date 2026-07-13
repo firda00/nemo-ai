@@ -7,7 +7,7 @@
 //   POST /functions/v1/connect-channel   (Authorization: Bearer <user jwt>)
 //   body { "agent_id": "uuid", "type": "whatsapp"|"instagram"|"widget", "credentials": {...} }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -16,7 +16,8 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const TYPES = new Set(['whatsapp', 'instagram', 'widget'])
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)

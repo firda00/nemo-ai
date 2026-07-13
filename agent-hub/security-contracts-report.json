@@ -1,0 +1,187 @@
+{
+  "generated_at": "2026-07-13T10:39:16.122Z",
+  "failed": 0,
+  "partial": 1,
+  "rows": [
+    {
+      "id": 1,
+      "name": "Cross-account CRM/RLS",
+      "state": "PASS",
+      "detail": "tenant policies bind rows to current_account_id"
+    },
+    {
+      "id": 2,
+      "name": "Account deletion cascades secrets",
+      "state": "PASS",
+      "detail": "provider and Google rows cascade with account deletion"
+    },
+    {
+      "id": 3,
+      "name": "Foreign RAG access",
+      "state": "PASS",
+      "detail": "documents are tenant-scoped and vector RPC is service-only"
+    },
+    {
+      "id": 4,
+      "name": "Expired/tampered JWT",
+      "state": "PASS",
+      "detail": "Edge Functions validate JWT with Supabase Auth"
+    },
+    {
+      "id": 5,
+      "name": "Atomic zero-balance race",
+      "state": "PASS",
+      "detail": "balance never becomes negative; reservations lock the account row"
+    },
+    {
+      "id": 6,
+      "name": "Unauthorized human takeover",
+      "state": "PASS",
+      "detail": "caller JWT and RLS-owned dialogue are both required"
+    },
+    {
+      "id": 7,
+      "name": "System prompt extraction",
+      "state": "PASS",
+      "detail": "guard is injected into business and personal agents"
+    },
+    {
+      "id": 8,
+      "name": "Knowledge SQL injection",
+      "state": "PASS",
+      "detail": "query uses typed RPC parameters, not SQL strings"
+    },
+    {
+      "id": 9,
+      "name": "Agent/company XSS",
+      "state": "PASS",
+      "detail": "React renders user labels as escaped text"
+    },
+    {
+      "id": 10,
+      "name": "Provider-key encryption at rest",
+      "state": "PASS",
+      "detail": "AES-256-GCM at application layer plus RLS/default-deny"
+    },
+    {
+      "id": 11,
+      "name": "Agent creation rate limit",
+      "state": "PASS",
+      "detail": "per-account creation bursts are serialized and capped"
+    },
+    {
+      "id": 12,
+      "name": "Provider 429 retry",
+      "state": "PASS",
+      "detail": "bounded retry, jitter and circuit breaker are present"
+    },
+    {
+      "id": 13,
+      "name": "Voice balance limit",
+      "state": "PASS",
+      "detail": "blocked/zero-balance accounts cannot start paid calls"
+    },
+    {
+      "id": 14,
+      "name": "Forged Stripe webhook",
+      "state": "PASS",
+      "detail": "signature, timestamp and event id are verified"
+    },
+    {
+      "id": 15,
+      "name": "Lead memory isolation",
+      "state": "PASS",
+      "detail": "memory is scoped to one dialogue/lead"
+    },
+    {
+      "id": 16,
+      "name": "Malicious knowledge file",
+      "state": "PASS",
+      "detail": "allowlist plus database content bound"
+    },
+    {
+      "id": 17,
+      "name": "500 MB upload limit",
+      "state": "PASS",
+      "detail": "browser rejects above 20 MB; DB rejects oversized extracted content"
+    },
+    {
+      "id": 18,
+      "name": "Loop injection",
+      "state": "PASS",
+      "detail": "orchestrator/tool execution has a bounded step count"
+    },
+    {
+      "id": 19,
+      "name": "PII masking",
+      "state": "PASS",
+      "detail": "agent never repeats secrets and durable memory redacts common PII"
+    },
+    {
+      "id": 20,
+      "name": "Malformed authorization headers",
+      "state": "PASS",
+      "detail": "invalid headers fail before privileged work"
+    },
+    {
+      "id": 21,
+      "name": "Forged Telegram/WhatsApp webhook",
+      "state": "PASS",
+      "detail": "Telegram secret and Meta HMAC are mandatory"
+    },
+    {
+      "id": 22,
+      "name": "Voice phone validation",
+      "state": "PASS",
+      "detail": "strict E.164 format is required"
+    },
+    {
+      "id": 23,
+      "name": "CORS foreign origin",
+      "state": "PASS",
+      "detail": "all browser Edge Functions use the shared preflight allowlist"
+    },
+    {
+      "id": 24,
+      "name": "Plan/payment bypass",
+      "state": "PASS",
+      "detail": "plan writes are admin-only and checkout credit requires paid Stripe state"
+    },
+    {
+      "id": 25,
+      "name": "Secrets in logs/traces",
+      "state": "PASS",
+      "detail": "tool arguments/results and durable memory are redacted before persistence"
+    },
+    {
+      "id": 26,
+      "name": "Direct admin URL",
+      "state": "PASS",
+      "detail": "UI and API independently deny non-admin users"
+    },
+    {
+      "id": 27,
+      "name": "Revoked Google OAuth",
+      "state": "PASS",
+      "detail": "revoked credentials are removed while Nemo login remains independent"
+    },
+    {
+      "id": 28,
+      "name": "Takeover metadata spoofing",
+      "state": "PASS",
+      "detail": "delivery channel and agent are loaded from owned database rows"
+    },
+    {
+      "id": 29,
+      "name": "Concurrent CRM subagents",
+      "state": "PARTIAL",
+      "detail": "tenant isolation exists; same-row last-write conflict detection is not implemented"
+    },
+    {
+      "id": 30,
+      "name": "Empty/broken knowledge JSON",
+      "state": "PASS",
+      "detail": "invalid bodies are bounded and rejected without raw SQL"
+    }
+  ]
+}

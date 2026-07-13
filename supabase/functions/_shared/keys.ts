@@ -5,6 +5,7 @@
 // by anon/authenticated (only Edge Functions can read the secret).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { openSecret } from './secretBox.ts'
 export async function resolveOpenRouterKey(admin: any, accountId: string | null | undefined, fallback: string): Promise<string> {
   if (!accountId) return fallback
   try {
@@ -15,7 +16,7 @@ export async function resolveOpenRouterKey(admin: any, accountId: string | null 
       .eq('provider', 'openrouter')
       .maybeSingle()
     const k = data?.api_key
-    return typeof k === 'string' && k.trim() ? k.trim() : fallback
+    return typeof k === 'string' && k.trim() ? (await openSecret(k)).trim() : fallback
   } catch {
     return fallback
   }

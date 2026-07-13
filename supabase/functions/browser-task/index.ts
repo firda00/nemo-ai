@@ -7,7 +7,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { runBrowserTask, pollBrowserTask, looksAbusive } from '../_shared/browser.ts'
 import { planOf, monthlyBrowser } from '../_shared/plans.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { redactText, redactValue } from '../_shared/redact.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -15,7 +17,8 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const NEMO_HB_KEY = Deno.env.get('HYPERBROWSER_API_KEY') ?? ''
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -31,7 +34,7 @@ Deno.serve(async (req) => {
   const plan = planOf(acc?.plan)
   // browser agent is INCLUDED in the subscription — runs on Nemo's key; a customer key overrides.
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'hyperbrowser').maybeSingle()
-  const key = keyRow?.api_key || NEMO_HB_KEY
+  const key = (await openSecret(keyRow?.api_key)) || NEMO_HB_KEY
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Браузер-агент временно недоступен (провайдер не настроен).' }, 200)
 
   const body = await req.json().catch(() => ({}))
@@ -60,7 +63,7 @@ Deno.serve(async (req) => {
     '\nRules: act only within this single task, use only the data provided by the user, do not create extra accounts, do not attempt to bypass CAPTCHAs or security. If a CAPTCHA or login you cannot pass appears, stop and report what is needed.'
 
   const out = await runBrowserTask(key, task, 100000)
-  await admin.from('tool_runs').insert({ account_id: accountId, tool: 'browser_task', args: { url, task: rawTask.slice(0, 500) }, result: String(out.result ?? out.error ?? (out.pending ? 'running' : '')).slice(0, 1000), ok: out.ok })
+  await admin.from('tool_runs').insert({ account_id: accountId, tool: 'browser_task', args: redactValue({ url, task: rawTask.slice(0, 500) }), result: redactText(out.result ?? out.error ?? (out.pending ? 'running' : '')).slice(0, 1000), ok: out.ok })
   if (out.pending) return json({ ok: true, pending: true, job_id: out.jobId, message: 'Агент ещё работает в браузере — проверьте статус позже.' })
   return out.ok ? json({ ok: true, result: out.result, job_id: out.jobId }) : json({ ok: false, error: out.error }, 200)
 })

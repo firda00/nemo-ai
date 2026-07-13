@@ -4,7 +4,8 @@
 //   POST /functions/v1/connect-provider  (Bearer jwt)
 //   { action:'connect', provider, api_key } | { action:'status' } | { action:'disconnect', provider }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { sealSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -51,7 +52,8 @@ const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> =
 const provider_def = (id: string) => (Object.prototype.hasOwnProperty.call(PROVIDERS, id) ? PROVIDERS[id] : undefined)
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -85,7 +87,7 @@ Deno.serve(async (req) => {
     const def = provider_def(provider)
     if (!def) return json({ ok: false, error: 'Неизвестный провайдер.' }, 200)
     if (!def.ok(key)) return json({ ok: false, error: `Ключ выглядит некорректно для ${def.label}.` }, 200)
-    await admin.from('provider_keys').upsert({ account_id: accountId, provider, api_key: key }, { onConflict: 'account_id,provider' })
+    await admin.from('provider_keys').upsert({ account_id: accountId, provider, api_key: await sealSecret(key) }, { onConflict: 'account_id,provider' })
     return json({ ok: true, connected: true, provider, label: def.label })
   }
 

@@ -4,7 +4,7 @@
 // Storage URLs are never fetched directly: only files uploaded under the
 // authenticated user's own media/<user-id>/audio/ prefix are accepted.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { transcribeAudioDetailed } from '../_shared/transcribe.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 
@@ -126,7 +126,8 @@ async function geminiTranscribe(bytes: Uint8Array, mime: string, languageHint = 
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
 

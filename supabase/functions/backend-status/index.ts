@@ -1,10 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 
 const missing = (name: string) => json({ ok: false, code: 'MISSING_BACKEND_SECRET', message: `${name} is not configured on the server.` }, 500)
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
   const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')

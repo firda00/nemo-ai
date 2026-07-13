@@ -3,7 +3,7 @@
 // and run its steps with the request body as {{input}}. PUBLIC (the secret is the auth).
 //   POST /functions/v1/automation-hook/<secret>   body: any (becomes {{input}})
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { runAutomation } from '../_shared/automationEngine.ts'
 
@@ -14,7 +14,8 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 type Any = any
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const secret = new URL(req.url).pathname.split('/').filter(Boolean).pop()
   if (!secret || secret === 'automation-hook') return new Response('no secret', { status: 400 })
 

@@ -3,6 +3,7 @@
 // load when a user actually uploads a file — the main bundle stays small.
 
 const MAX_CHARS = 200_000 // bound what we store per document
+export const MAX_KNOWLEDGE_FILE_BYTES = 20 * 1024 * 1024
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any
@@ -11,8 +12,14 @@ type Any = any
 export const KNOWLEDGE_ACCEPT = '.pdf,.docx,.xlsx,.txt,.md,.csv,.tsv,.json,.html,.htm'
 
 export async function extractText(file: File): Promise<string> {
+  if (file.size <= 0) throw new Error('EMPTY_FILE')
+  if (file.size > MAX_KNOWLEDGE_FILE_BYTES) throw new Error('FILE_TOO_LARGE')
   const name = file.name.toLowerCase()
   const type = file.type || ''
+
+  if (!/\.(pdf|docx|xlsx|txt|md|markdown|csv|tsv|json|log|html?|xml)$/.test(name)) {
+    throw new Error('UNSUPPORTED_FILE_TYPE')
+  }
 
   // plain-text family
   if (type.startsWith('text/') || /\.(txt|md|markdown|csv|tsv|json|log|html?|xml)$/.test(name)) {
@@ -56,6 +63,5 @@ export async function extractText(file: File): Promise<string> {
       .slice(0, MAX_CHARS)
   }
 
-  // last resort: treat as text
-  return (await file.text()).slice(0, MAX_CHARS)
+  throw new Error('UNSUPPORTED_FILE_TYPE')
 }

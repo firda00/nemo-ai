@@ -2,14 +2,16 @@
 // talks according to `task`. Logs the call. (Vapi supported similarly if connected.)
 //   POST /functions/v1/make-call  (Bearer jwt)  { phone, task } -> { ok, call_id }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
+import { openSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -20,13 +22,18 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const { data: account } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).maybeSingle()
+  if (!account || account.blocked || Number(account.token_balance ?? 0) <= 0) {
+    return json({ ok: false, code: 'NO_CREDITS', message: 'Пополните баланс, чтобы совершать AI-звонки.' }, 402)
+  }
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'bland').maybeSingle()
-  const key = keyRow?.api_key
+  const key = await openSecret(keyRow?.api_key)
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Подключите Bland.ai в разделе «Интеграции», чтобы агент мог звонить.' }, 200)
 
   const body = await req.json().catch(() => ({}))
-  const phone = String(body?.phone ?? '').replace(/[^\d+]/g, '')
+  const phone = String(body?.phone ?? '').trim().replace(/[\s()-]/g, '')
   const task = String(body?.task ?? '').trim()
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) return json({ ok: false, error: 'Укажите номер в международном формате, например +998901234567.' }, 200)
   if (phone.length < 7) return json({ ok: false, error: 'Укажите корректный номер телефона.' }, 200)
   if (task.length < 3) return json({ ok: false, error: 'Опишите, что агент должен сказать/сделать.' }, 200)
 

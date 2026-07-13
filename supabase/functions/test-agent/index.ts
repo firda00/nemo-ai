@@ -12,7 +12,7 @@ import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { retrieveKnowledge } from '../_shared/knowledge.ts'
 import { ESCALATION_RULE, parseEscalation, routingRule, parseRoute, NO_FABRICATION } from '../_shared/agent.ts'
 import { runAgentTools } from '../_shared/tools.ts'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -30,7 +30,8 @@ const ALLOWED_MODELS = new Set([
 ])
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
 
   // self-improving agents recall memory from past chats (and learn from this one)
   const isLearning = agent?.type === 'learning'
-  const memory = isLearning && agentId ? await loadMemory(userDb, agentId) : ''
+  const memory = isLearning && agentId ? await loadMemory(userDb, agentId, null) : ''
 
   const messages: ChatMsg[] = [
     {

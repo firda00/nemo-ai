@@ -3,7 +3,7 @@
 // reviewed prompt-only improvement per agent every seven days. It cannot change tools,
 // integrations, billing, code, deployment, permissions, or database policies.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, json } from '../_shared/cors.ts'
+import { corsPreflight, json } from '../_shared/cors.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 
@@ -166,7 +166,8 @@ async function createEvolution(db: Any, agent: Any, autoMode: boolean) {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = corsPreflight(req)
+  if (preflight) return preflight
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
   const body = await req.json().catch(() => ({}))
   const action = String(body.action ?? 'analyze')
