@@ -17,6 +17,7 @@ export default function AutonomousPage() {
       return [parsed.teamName, parsed.goal].filter(Boolean).join(': ')
     } catch { return '' }
   })
+  const [selectedDepartment, setSelectedDepartment] = useState<{ id: string; name: string; roles: string; goal: string } | null>(null)
   const isTeam = mode === 'team'
 
   const examples = isTeam
@@ -81,7 +82,14 @@ export default function AutonomousPage() {
       </div>
 
       <div className="mt-6">
-        {isTeam ? <AutonomousRunner key={starterGoal || 'blank-team'} defaultGoal={starterGoal} /> : <SingleAgentRunner />}
+        {isTeam ? (
+          <AutonomousRunner
+            defaultGoal={starterGoal}
+            goalValue={starterGoal}
+            onGoalChange={setStarterGoal}
+            contextHint={selectedDepartment ? `Selected department: ${selectedDepartment.name}. Preferred roles: ${selectedDepartment.roles}. Use this only to staff the team; the user's written task below remains the exact goal and must not be replaced.` : undefined}
+          />
+        ) : <SingleAgentRunner />}
       </div>
 
       {isTeam && (
@@ -89,7 +97,7 @@ export default function AutonomousPage() {
           <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Выберите отдел — роли подставятся автоматически' : lang === 'uz' ? 'Boʻlimni tanlang — rollar avtomatik tanlanadi' : 'Choose a department — roles are selected automatically'}</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {departmentPresets.map((p) => (
-              <button key={p.id} onClick={() => { setStarterGoal(p.goal); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left transition hover:border-violet/35 hover:bg-violet/[0.04]">
+              <button key={p.id} onClick={() => { setSelectedDepartment(p); setStarterGoal((current) => current.trim() ? current : p.goal); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className={cn('rounded-2xl border bg-white/[0.02] p-3 text-left transition hover:border-violet/35 hover:bg-violet/[0.04]', selectedDepartment?.id === p.id ? 'border-violet/60 bg-violet/[0.08]' : 'border-ice/10')}>
                 <span className="text-sm font-semibold text-text">{p.name}</span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-muted">{p.roles}</span>
               </button>
@@ -102,7 +110,7 @@ export default function AutonomousPage() {
         <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{t('autonomousPage.examplesLabel')}</p>
         <div className="grid gap-2 sm:grid-cols-2">
           {examples.map((e) => (
-            <button key={e} onClick={() => isTeam && setStarterGoal(e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
+            <button key={e} onClick={() => isTeam && setStarterGoal((current) => current.trim() ? current : e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
           ))}
         </div>
       </div>

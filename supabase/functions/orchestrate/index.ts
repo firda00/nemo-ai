@@ -427,9 +427,16 @@ OUTPUT CONTRACT:
       // marketing skill briefs assigned by the architect (staff use_skills) — injected
       // into the specialist's system prompt so it works BY THE METHOD, not from vibes
       const skills = Array.isArray(body?.skills) ? (body.skills as unknown[]).map((id) => String(id)).slice(0, 3) : []
+      const webResearch = role === 'researcher' && body?.web_research === true
       const model = workModel
       const msgs: ChatMsg[] = [
-        { role: 'system', content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + skillBlock(skills) + bizBlock },
+        {
+          role: 'system',
+          content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + skillBlock(skills) + bizBlock +
+            (webResearch
+              ? '\n\nLIVE RESEARCH IS ENABLED. Search the web for current evidence. Cite every external factual claim with a Markdown link. Never invent metrics, traffic, customers, growth percentages, quotes, tools used by a company, or competitor facts. If reliable evidence is unavailable, write "Not verified" instead of guessing.'
+              : '\n\nGROUNDING RULE: Use only facts present in the goal, business profile, knowledge/context, or cited sources. Never invent metrics, growth percentages, named competitors, testimonials, traffic, dates, or tool usage. Mark missing facts as "Not verified".'),
+        },
         {
           role: 'user',
           content:
@@ -437,7 +444,15 @@ OUTPUT CONTRACT:
             `Your step: ${task}${context ? `\n\nContext from previous steps:\n${context}` : ''}${langRule}`,
         },
       ]
-      const r = await callOpenRouter({ apiKey: orKey, model, messages: msgs, temperature: role === 'researcher' ? 0.2 : 0.5, maxTokens: 1100, fallbackModel: FALLBACK_MODEL })
+      const r = await callOpenRouter({
+        apiKey: orKey,
+        model,
+        messages: msgs,
+        temperature: role === 'researcher' ? 0.2 : 0.5,
+        maxTokens: 1400,
+        fallbackModel: FALLBACK_MODEL,
+        ...(webResearch ? { plugins: [{ id: 'web', engine: 'exa', max_results: 5 }] } : {}),
+      })
       await account(r.tokens)
       return json({ ok: true, output: r.content, sources: r.citations })
     }
@@ -452,6 +467,11 @@ OUTPUT CONTRACT:
       const authorRole = String(body?.author_role ?? 'коллега')
       const reviewerSystem = String(body?.reviewer_system ?? '').trim()
       const criteria = String(body?.criteria ?? '').trim()
+      const previousScore = Math.max(0, Math.min(100, Number(body?.previous_score) || 0))
+      const previousIssues = Array.isArray(body?.previous_issues)
+        ? (body.previous_issues as unknown[]).map(String).slice(0, 8)
+        : []
+      const revisionRound = Math.max(0, Math.min(3, Number(body?.revision_round) || 0))
       const lang = String(body?.lang ?? '').trim()
       const langRule = lang && LANG_NAME[lang] ? ` Write "issues" and "fix" in ${LANG_NAME[lang]}.` : ''
       // Rubric-based review (advanced-evaluation): score fixed DIMENSIONS instead of a vague
@@ -463,8 +483,11 @@ OUTPUT CONTRACT:
         `. Score these four dimensions independently, each 0-100: ` +
         `accuracy (facts correct & on-goal, no fabrication), completeness (covers everything the goal asks), clarity (clear, well-structured), actionability (client can use it as-is). ` +
         `The overall "score" reflects the WEAKEST critical dimension, not an average — a serious flaw in accuracy or completeness caps it low. Judge the work, not its length or confident tone. ` +
+        (revisionRound > 0
+          ? `This is revision round ${revisionRound}. The prior verdict scored ${previousScore}/100 with these issues: ${previousIssues.join('; ') || 'none recorded'}. Check whether those SAME issues were fixed. Do not lower the score merely by inventing new preferences; lower it only for a concrete regression introduced by the revision, and name that regression. `
+          : '') +
         `Respond ONLY as compact JSON: {"approved":boolean,"score":0-100,"dimensions":{"accuracy":0-100,"completeness":0-100,"clarity":0-100,"actionability":0-100},"issues":[string],"fix":string}. ` +
-        `"issues" = concrete problems (each tied to a dimension); "fix" = ONE actionable instruction telling the author exactly what to change. Set approved:true (empty issues) ONLY if every dimension is genuinely strong.` + langRule + bizBlock
+        `"issues" = concrete problems (each tied to a dimension); "fix" = ONE actionable instruction telling the author exactly what to change. Set approved:true (empty issues) ONLY if score is at least 80 and every dimension is genuinely strong. Unsupported numbers, named examples, traffic claims, testimonials or growth claims are an accuracy failure.` + langRule + bizBlock
       const msgs: ChatMsg[] = [
         { role: 'system', content: sys },
         { role: 'user', content: `GOAL:\n${goal}\n\nWORK BY THE ${authorRole} — REVIEW IT:\n${work}` },
@@ -472,14 +495,18 @@ OUTPUT CONTRACT:
       const r = await callOpenRouter({ apiKey: orKey, model: workModel, messages: msgs, temperature: 0.2, maxTokens: 800, fallbackModel: FALLBACK_MODEL })
       await account(r.tokens)
       const parsed = extractJson(r.content) ?? {}
-      const approved = Boolean(parsed.approved)
       const clamp = (v: unknown) => Math.max(0, Math.min(100, Number(v) || 0))
       const d = (parsed.dimensions ?? {}) as Record<string, unknown>
       const dimensions = { accuracy: clamp(d.accuracy), completeness: clamp(d.completeness), clarity: clamp(d.clarity), actionability: clamp(d.actionability) }
-      const score = clamp(parsed.score)
+      const currentScore = clamp(parsed.score)
+      // The UI score is explicitly best-so-far, so stochastic reviewer variance cannot
+      // make a successful revision look worse. Approval still uses the CURRENT verdict;
+      // a regressed draft is rejected even though its historical best remains visible.
+      const score = revisionRound > 0 ? Math.max(previousScore, currentScore) : currentScore
       const issues = Array.isArray(parsed.issues) ? parsed.issues.map((x: unknown) => String(x)).slice(0, 8) : []
       const fix = String(parsed.fix ?? '').slice(0, 800)
-      return json({ ok: true, approved, score, dimensions, issues, fix })
+      const approved = Boolean(parsed.approved) && currentScore >= 80 && Object.values(dimensions).every((n) => n >= 75) && issues.length === 0
+      return json({ ok: true, approved, score, current_score: currentScore, dimensions, issues, fix })
     }
 
     if (action === 'synth') {
@@ -526,7 +553,7 @@ OUTPUT CONTRACT:
             'Your team prepared some notes (below the request). Use them ONLY where they directly help; if they are generic or off-topic, ignore them and write the deliverable yourself. Do NOT let the notes pull you off the exact request. ' +
             'A note marked HUMAN REVIEW REQUIRED is not approved evidence: label the affected decision/action as pending authorized human review, and never convert it into a confirmed action, recommendation, filing, payment, booking, legal/medical/HR/insurance conclusion, or external message. ' +
             'No meta-commentary, no "as an AI", no mention of internal steps, sub-agents or JSON. End with a Sources list only if sources exist. ' +
-            `${langRule} Do not invent facts — if something is unknown, state the assumption in one line.${bizBlock}`,
+            `${langRule} Do not invent facts. Never output placeholder names such as "Company 1", unsupported percentages, traffic claims, testimonials, customer counts, dates, or named tools as if verified. Every current external claim must be supported by one of the supplied source URLs; otherwise label it "Not verified" and state what evidence is needed.${bizBlock}`,
         },
         {
           role: 'user',

@@ -35,6 +35,9 @@ async function attemptModel(opts: {
   maxTokens?: number
   // e.g. { type: 'json_object' } to force valid JSON output (used by lead extraction)
   responseFormat?: Record<string, unknown>
+  // OpenRouter plugins are opt-in per request. Research agents use the web plugin
+  // so current claims arrive with URL citations instead of plausible filler.
+  plugins?: Array<Record<string, unknown>>
 }): Promise<{ content: string; tokens: number; citations: string[] }> {
   if (Date.now() < breakerUntil) throw new Error('OpenRouter temporarily throttled (circuit open)')
   await acquireSlot()
@@ -57,6 +60,7 @@ async function attemptModel(opts: {
         temperature: opts.temperature ?? 0.6,
         max_tokens: opts.maxTokens ?? 800,
         ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
+        ...(opts.plugins?.length ? { plugins: opts.plugins } : {}),
       }),
     })
     if (res.ok) break
@@ -96,6 +100,7 @@ export async function callOpenRouter(opts: {
   temperature?: number
   maxTokens?: number
   responseFormat?: Record<string, unknown>
+  plugins?: Array<Record<string, unknown>>
   // If the primary model fails, retry once with this model (reliability degrade).
   fallbackModel?: string
 }): Promise<{ content: string; tokens: number; citations: string[] }> {

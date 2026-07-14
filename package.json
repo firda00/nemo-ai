@@ -28,6 +28,7 @@
     "test:logistics-behavior": "node agent-hub/logistics-behavior.mjs",
     "test:lead-behavior": "node agent-hub/lead-merge-behavior.mjs",
     "test:release": "node agent-hub/release-entitlement-contracts.mjs",
+    "test:review-ux": "node agent-hub/review-ux-contracts.mjs",
     "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview"

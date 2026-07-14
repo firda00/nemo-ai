@@ -26,6 +26,7 @@ interface Spec {
   revised?: boolean
   revisions?: number
   escalated?: boolean
+  sources?: string[]
   status: 'pending' | 'running' | 'review' | 'fixing' | 'done'
 }
 
@@ -63,6 +64,8 @@ export function AutonomousRunner({
   postActions,
   departmentId,
   onRunSaved,
+  goalValue,
+  onGoalChange,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -76,12 +79,21 @@ export function AutonomousRunner({
   // remain visible after a reload of the team page.
   departmentId?: string
   onRunSaved?: () => void | Promise<void>
+  // Optional controlled draft. The department picker uses this so choosing roles
+  // can never silently replace text the user already typed.
+  goalValue?: string
+  onGoalChange?: (value: string) => void
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
   const addAgent = useAgentStore((s) => s.addAgent)
   const deleteAgent = useAgentStore((s) => s.deleteAgent)
-  const [goal, setGoal] = useState(defaultGoal)
+  const [internalGoal, setInternalGoal] = useState(defaultGoal)
+  const goal = goalValue ?? internalGoal
+  const setGoal = (value: string) => {
+    if (onGoalChange) onGoalChange(value)
+    else setInternalGoal(value)
+  }
   const [running, setRunning] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'architect' | 'team' | 'review' | 'synth'>('idle')
   const [specs, setSpecs] = useState<Spec[]>([])
@@ -141,19 +153,24 @@ export function AutonomousRunner({
       // 2) each SPECIALIST executes its part (live)
       setPhase('team')
       const done: Spec[] = []
+      const runSources = new Set<string>()
       let ctx = ''
       for (let i = 0; i < created.length; i++) {
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'running' } : s)))
+        const role = mapRole(created[i].role)
         const r = await call({
           action: 'step',
           goal: g,
-          role: mapRole(created[i].role),
+          role,
           task: created[i].prompt.tasks || created[i].role,
           system: subSystem(created[i]),
           context: ctx.slice(-4000),
+          web_research: role === 'researcher',
         })
         const output = r?.output ?? ''
-        const filled: Spec = { ...created[i], output, status: 'done' }
+        const sources = Array.isArray(r?.sources) ? r.sources.map(String).filter(Boolean).slice(0, 12) : []
+        sources.forEach((source: string) => runSources.add(source))
+        const filled: Spec = { ...created[i], output, sources, status: 'done' }
         done.push(filled)
         ctx += `\n[${filled.name}] ${output}`
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? filled : s)))
@@ -175,26 +192,41 @@ export function AutonomousRunner({
           let revised = false
           let escalated = false
           let rounds = 0
+          const originalOutput = done[i].output ?? ''
+          let bestOutput = originalOutput
+          let bestReview: Review | null = null
+          let previousReview: Review | null = null
           for (let round = 0; round < MAX_ROUNDS; round++) {
             const v = await call({
               action: 'review', goal: g, work: done[i].output ?? '', author_role: done[i].role,
               reviewer_system: subSystem(reviewer),
               criteria: 'соответствие задаче; конкретика и факты; отсутствие воды и клише; готовность без доработки',
+              previous_score: previousReview?.score ?? 0,
+              previous_issues: previousReview?.issues ?? [],
+              revision_round: round,
             })
             if (!v) break
             review = { approved: Boolean(v.approved), score: Number(v.score) || 0, issues: Array.isArray(v.issues) ? v.issues : [], fix: String(v.fix ?? '') }
-            if (review.approved) break
+            if (!bestReview || review.approved || review.score > bestReview.score || (review.score === bestReview.score && review.issues.length < bestReview.issues.length)) {
+              bestReview = review
+              bestOutput = done[i].output ?? ''
+            }
+            if (review.approved) { bestReview = review; bestOutput = done[i].output ?? ''; break }
             if (round === MAX_ROUNDS - 1) { escalated = true; break } // out of rounds, still not converged
             setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'fixing', review, reviewedBy: reviewer.name } : s)))
             const fix = await call({
               action: 'step', goal: g, role: mapRole(done[i].role),
               task: 'Перепиши свою работу, устранив ВСЕ замечания коллеги. Верни улучшенную версию целиком, в том же формате.',
               system: subSystem(done[i]),
-              context: `ТВОЯ РАБОТА:\n${(done[i].output ?? '').slice(0, 2600)}\n\nЗАМЕЧАНИЯ КОЛЛЕГИ (${reviewer.name}):\n${review.fix}\n${review.issues.join('\n')}`,
+              context: `ТВОЯ РАБОТА:\n${(done[i].output ?? '').slice(0, 3000)}\n\nПРОШЛАЯ ОЦЕНКА: ${review.score}/100.\nЗАМЕЧАНИЯ КОЛЛЕГИ (${reviewer.name}):\n${review.fix}\n${review.issues.join('\n')}\n\nСохрани всё, что уже сделано хорошо. Исправь перечисленные проблемы. Не добавляй выдуманные цифры, компании, трафик, отзывы или проценты; если факта и источника нет, явно напиши «Не подтверждено».`,
             })
             if (!fix?.output) break
-            done[i].output = fix.output; revised = true; rounds = round + 1
+            done[i].output = fix.output; revised = true; rounds = round + 1; previousReview = review
           }
+          review = bestReview ?? review
+          done[i].output = bestOutput
+          revised = bestOutput !== originalOutput
+          escalated = !review?.approved
           done[i] = { ...done[i], review, reviewedBy: reviewer.name, revised, revisions: rounds, escalated, status: 'done' }
           setSpecs((prev) => prev.map((s, idx) => (idx === i ? done[i] : s)))
         }
@@ -215,13 +247,14 @@ export function AutonomousRunner({
           role: d.role,
           task: d.prompt.tasks,
           output: d.output,
+          sources: d.sources,
           reviewedBy: d.reviewedBy,
           review: d.review,
           revised: Boolean(d.revised),
           revisions: d.revisions ?? 0,
           needsHumanReview: Boolean(d.escalated),
         })),
-        sources: [],
+        sources: [...runSources].slice(0, 30),
       })
       if (!synth) {
         setError('Final synthesis failed — check token balance.')
