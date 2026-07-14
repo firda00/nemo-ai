@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-13T10:38:37.615Z",
+  "generated_at": "2026-07-14T08:39:46.773Z",
   "failed": 0,
   "report": [
     {
@@ -61,6 +61,96 @@
       "name": "Agent creation burst is rate-limited",
       "ok": true,
       "detail": "29 accepted before block"
+    },
+    {
+      "name": "Parallel lead merges keep one row with both fields",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Cross-account CRM-push claim is refused",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Concurrent CRM-push claims have exactly one winner",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Released claim (nothing was sent) is immediately reclaimable",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Stale CRM-push claim is reclaimable",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Only the tenant token holder finishes; completed lead is not reclaimable",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Cross-account lead merge is rejected",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browser role cannot execute lead RPCs or write leads directly",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Same-tenant department creation works with the tenant guard on",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Cross-tenant department lead is rejected by the database",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Owner tenant can create a team knowledge doc",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Foreign tenant cannot write into another team's knowledge",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Foreign tenant cannot read another team's knowledge",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Team doc indexes into chunks for the owner tenant",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Foreign tenant cannot index another team's doc",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Account-verified team retrieval returns the shared chunks",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Mismatched account + department yields nothing (fail closed)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browser role cannot execute team retrieval directly",
+      "ok": true,
+      "detail": ""
     },
     {
       "name": "Deleting account cascades provider/OAuth secrets",
