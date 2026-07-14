@@ -205,17 +205,21 @@ export async function createIndustryTeam(
   kind: IndustryTeamKind,
   addAgent: (agent: PlatformAgent) => Promise<{ id?: string; error?: string }>,
   deleteAgent?: (id: string) => Promise<{ error?: string }>,
-  localization?: { name?: string; niche?: string },
+  localization?: { name?: string; niche?: string; model?: string },
 ) {
   const blueprint = INDUSTRY_TEAM_BLUEPRINTS[kind]
+  // the user-chosen LLM applies to the lead AND every specialist; the runtime
+  // still plan-gates premium models server-side (gateModel)
+  const model = localization?.model?.trim() || undefined
   const opts = {
     name: localization?.name?.trim() || blueprint.name,
     niche: localization?.niche?.trim() || blueprint.niche,
     riskTier: blueprint.riskTier,
     templateKey: kind,
     goal: blueprint.goal,
-    specialists: blueprint.specialists,
+    specialists: model ? blueprint.specialists.map((s) => ({ ...s, model })) : blueprint.specialists,
     workflowMode: 'generic' as const,
+    ...(model ? { lead: { model } } : {}),
   }
   return await saveDynamicTeam(addAgent, opts, deleteAgent)
 }

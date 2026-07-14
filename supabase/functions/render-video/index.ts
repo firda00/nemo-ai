@@ -58,6 +58,17 @@ Deno.serve(async (req) => {
   const props = body?.props ?? {}
   const scenes = Array.isArray(props?.scenes) ? props.scenes : []
   if (!scenes.length && !props?.title) return json({ ok: false, error: 'Добавьте кадры (сцены) для видео.' }, 200)
+  // Resolution entitlement: the client sends ONLY a quality enum (never dimensions).
+  // 1080p and 4K are a Pro-and-above feature (plans.hiResVideo); lower tiers get 720p.
+  // Unknown values are rejected, absent quality defaults plan-aware — no silent downgrade
+  // of an explicit hi-res request.
+  const VIDEO_QUALITIES = ['720p', '1080p', '4k']
+  const hiResAllowed = plan.hiResVideo || Boolean(prof?.is_admin)
+  const quality = body?.quality == null || body.quality === '' ? (hiResAllowed ? '1080p' : '720p') : String(body.quality)
+  if (!VIDEO_QUALITIES.includes(quality)) return json({ ok: false, error: 'Недопустимое качество видео.' }, 200)
+  if (quality !== '720p' && !hiResAllowed) {
+    return json({ ok: false, code: 'PLAN_HIRES', message: '1080p и 4K доступны на тарифе Pro и выше. На вашем тарифе видео рендерится в 720p.' }, 200)
+  }
   if (!prof?.is_admin) {
     if (!plan.media) return json({ ok: false, code: 'PLAN', message: 'Видео-движок входит в тариф Starter и выше.' }, 200)
     const used = await monthlyVideo(admin, accountId)
@@ -85,10 +96,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const r = await fetch(`${WORKER}/render`, { method: 'POST', headers: H, body: JSON.stringify({ accountId, props }) }).then((x) => x.json())
+    const r = await fetch(`${WORKER}/render`, { method: 'POST', headers: H, body: JSON.stringify({ accountId, props, quality }) }).then((x) => x.json())
     if (!r?.jobId) return json({ ok: false, error: r?.error ?? 'Не удалось запустить рендер.' }, 200)
     // count this render toward the monthly fair-use cap
-    await admin.from('tool_runs').insert({ account_id: accountId, tool: 'render_video', args: { scenes: scenes.length, title: String(props?.title ?? '').slice(0, 120) }, result: r.jobId, ok: true })
+    await admin.from('tool_runs').insert({ account_id: accountId, tool: 'render_video', args: { scenes: scenes.length, title: String(props?.title ?? '').slice(0, 120), quality }, result: r.jobId, ok: true })
     return json({ ok: true, job_id: r.jobId, status: 'queued', voiced, voiceRequested: Boolean(voiceText) })
   } catch (e) { return json({ ok: false, error: String(e).slice(0, 200) }, 200) }
 })

@@ -8,8 +8,10 @@ import { planOf } from './plans.ts'
 import { loadMemory, saveMemory } from './memory.ts'
 import { openSecret } from './secretBox.ts'
 import { resolveOpenRouterKey } from './keys.ts'
-import { retrieveKnowledge } from './knowledge.ts'
+import { retrieveKnowledge, retrieveTeamKnowledge } from './knowledge.ts'
+import { ALLOWED_MODEL_IDS } from './models.ts'
 import { amoCreateLead } from './amocrm.ts'
+import { buildLeadKeys, sanitizeLeadPatch } from './leadPatch.ts'
 import { runAgentTools } from './tools.ts'
 import { roleSkillBlock } from './skills.ts'
 import { tgSend } from './telegram.ts'
@@ -61,9 +63,15 @@ export function parseRoute(text: string): string | null {
 // Server-side premium-model gate: a client can set agents.model to any id, so a plan without
 // `premium` could otherwise run gpt-4o / Claude Opus on Nemo's shared key and blow unit economics
 // (~50x). Downgrade frontier models to the cheap primary unless the account's plan allows premium.
-const PREMIUM_RE = /opus|sonnet|gpt-4o(?!-mini)|gpt-4\.1|gpt-5(?!-?(?:mini|nano))|(?:^|\/)o[0-9]|grok|gemini-[0-9.]*-pro|deepseek-(?:r[0-9]|reasoner|v[0-9]+-pro)|mistral-large|qwen[\w.]*-?max/i
+// Kept in sync with the premium flags of the frontend model catalog
+// (src/data/platform.ts PROVIDERS) — asserted by release-entitlement-contracts.
+const PREMIUM_RE = /opus|sonnet|gpt-4o(?!-mini)|gpt-4\.1(?!-?mini)|gpt-5(?!(?:\.\d+)?-?(?:mini|nano))|(?:^|\/)o[0-9]|grok|gemini[\w.-]*pro|deepseek-(?:r[0-9]|reasoner|v[0-9]+-pro)|mistral-large|qwen[\w.]*-?max/i
+// gateModel: (1) only models from the authoritative server allowlist may run at
+// all — arbitrary ids saved by a direct API client fall back to the primary
+// model; (2) premium models additionally require a premium plan.
 export function gateModel(requested: string | undefined, premiumAllowed: boolean): string {
-  const r = requested || PRIMARY_MODEL
+  const r = (requested || PRIMARY_MODEL).trim()
+  if (!ALLOWED_MODEL_IDS.has(r)) return PRIMARY_MODEL
   return (!premiumAllowed && PREMIUM_RE.test(r)) ? PRIMARY_MODEL : r
 }
 
@@ -115,18 +123,26 @@ export async function classifyRoute(apiKey: string, text: string, self: any, sib
 // and upsert the dialogue's lead. Only runs when contact info (phone/email) is actually present,
 // so it doesn't spend a call on small talk. NEVER invents fields — only what the customer stated.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-// Push a completed lead (name/phone/email) to the account's connected CRM. Best-effort, returns the
-// CRM name on success. Fires automatically once a lead has a phone, so leads flow to the CRM without
-// relying on the LLM to call a tool.
-async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>): Promise<string | null> {
+// Push a completed lead (name/phone/email) to the account's connected CRM. Fires automatically
+// once a lead has a phone, so leads flow to the CRM without relying on the LLM to call a tool.
+// `attempted` reports whether any HTTP call actually left the building: an attempted-but-failed
+// push is AMBIGUOUS (a timeout may still have landed remotely), which the caller must treat
+// differently from "no CRM was contacted at all".
+async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>): Promise<{ provider: string | null; attempted: boolean }> {
+  let attempted = false
   try {
     const { data: keys } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId).in('provider', ['bitrix24', 'hubspot', 'amocrm'])
     const byP: Record<string, string> = {}; for (const k of (keys ?? []) as any[]) byP[k.provider] = await openSecret(k.api_key)
     const name = String(lead.name ?? '').slice(0, 120), phone = String(lead.phone ?? ''), email = String(lead.email ?? ''), note = String(lead.request ?? lead.budget ?? '')
+    // ONE external attempt per claim: after an ambiguous failure (timeout may
+    // have landed remotely) we must NOT fan out to the next CRM — that could
+    // create the same lead in two systems. The first eligible provider is THE
+    // attempt; retry happens on a later claim after the lease expires.
     if (byP.amocrm && byP.amocrm.includes('|')) {
       const [sub, token] = byP.amocrm.split('|')
+      attempted = true
       const r = await amoCreateLead(sub, token, { name, phone, email, note })
-      if (r.ok) return 'amocrm'
+      return { provider: r.ok ? 'amocrm' : null, attempted }
     }
     if (byP.bitrix24 && /^https?:\/\//i.test(byP.bitrix24)) {
       const base = byP.bitrix24.replace(/\/+$/, '')
@@ -134,8 +150,10 @@ async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, un
       if (name) fields.NAME = name
       if (note) fields.COMMENTS = note
       if (phone) fields.PHONE = [{ VALUE: phone, VALUE_TYPE: 'WORK' }]
-      const r = await fetch(`${base}/crm.lead.add.json`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) }).then((x) => x.json()).catch(() => ({}))
-      if (r?.result) return 'bitrix24'
+      attempted = true
+      // hard timeout well below the 10-minute CRM-push claim lease
+      const r = await fetch(`${base}/crm.lead.add.json`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }), signal: AbortSignal.timeout(10_000) }).then((x) => x.json()).catch(() => ({}))
+      return { provider: r?.result ? 'bitrix24' : null, attempted }
     }
     if (byP.hubspot) {
       const props: any = {}
@@ -143,56 +161,80 @@ async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, un
       if (name) { const parts = name.split(' '); props.firstname = parts[0]; if (parts.length > 1) props.lastname = parts.slice(1).join(' ') }
       if (phone) props.phone = phone
       if (props.email || props.phone) {
-        const r = await fetch('https://api.hubapi.com/crm/v3/objects/contacts', { method: 'POST', headers: { Authorization: `Bearer ${byP.hubspot}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ properties: props }) }).then((x) => x.json()).catch(() => ({}))
-        if (r?.id) return 'hubspot'
+        attempted = true
+        const r = await fetch('https://api.hubapi.com/crm/v3/objects/contacts', { method: 'POST', headers: { Authorization: `Bearer ${byP.hubspot}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ properties: props }), signal: AbortSignal.timeout(10_000) }).then((x) => x.json()).catch(() => ({}))
+        return { provider: r?.id ? 'hubspot' : null, attempted }
       }
     }
-    return null
-  } catch { return null }
+    return { provider: null, attempted }
+  } catch { return { provider: null, attempted } }
 }
 
 async function extractLead(db: any, apiKey: string, dialogueId: string, history: any[], existing: Record<string, unknown>, rowId: string | null, wantFields: string[] = [], eager = false, accountId = ''): Promise<number> {
+  // all lead writes go through tenant-verified RPCs, so the account is mandatory
+  if (!accountId) return 0
   const convo = (history ?? []).map((m: any) => `${m.author === 'customer' ? 'Customer' : 'Agent'}: ${String(m.content ?? '')}`).join('\n').slice(-4000)
   const hasContact = /(\+?\d[\d\s()\-]{6,}\d)|([\w.+-]+@[\w-]+\.[\w.-]+)/.test(convo)
+  let tokens = 0
+  // freshest known fields — replaced by the post-merge row whenever this turn writes
+  let fields: Record<string, unknown> = { ...(existing ?? {}) }
   // qualifier/sales/booking agents always try (name-only leads count); others only when the
   // conversation already carries a phone or email, to avoid spending on small talk.
-  if (!eager && !hasContact) return 0
-  // strict allowed-key set = core contact fields + the agent's own configured lead-form fields
-  // (so a custom field like "course" is actually captured, not just the 5 hardcoded ones).
-  const keys = [...new Set(['name', 'phone', 'email', 'request', 'budget', ...wantFields.map((f) => String(f).trim()).filter(Boolean)])].slice(0, 12)
-  const r = await callOpenRouter({
-    apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0, maxTokens: 300,
-    responseFormat: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: `Extract the customer's lead details from this conversation. Return ONLY a JSON object. Include a key ONLY if the customer EXPLICITLY stated it. Allowed keys: ${keys.join(', ')}. If an allowed key names a specific thing the customer mentioned (e.g. a course, product or service they want), put that value under THAT key rather than only in 'request'. Use ONLY values the customer actually gave — NEVER invent, guess or infer. Omit keys you did not find. If nothing, return {}.` },
-      { role: 'user', content: convo },
-    ],
-  })
-  let obj: any = {}
-  try { obj = JSON.parse(r.content) } catch {
-    const s = r.content.indexOf('{'); const e = r.content.lastIndexOf('}')
-    try { obj = s >= 0 && e > s ? JSON.parse(r.content.slice(s, e + 1)) : {} } catch { obj = {} }
-  }
-  const clean: Record<string, string> = {}
-  for (const k of keys) {
-    const v = obj?.[k]
-    if (v != null && String(v).trim() && String(v).trim().toLowerCase() !== 'null') clean[k] = String(v).slice(0, 300)
-  }
-  // value validation — never persist a non-numeric "phone" or a malformed "email" as fact
-  // (e.g. the model echoing "тот же номер" / "call me" into the phone field).
-  if (clean.phone && (clean.phone.replace(/\D/g, '').length < 6)) delete clean.phone
-  if (clean.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean.email)) delete clean.email
-  if (Object.keys(clean).length) {
-    const merged: Record<string, unknown> = { ...(existing ?? {}), ...clean }
-    if (rowId) await db.from('leads').update({ fields: merged }).eq('id', rowId)
-    else { const ins = await db.from('leads').insert({ dialogue_id: dialogueId, fields: merged, status: 'new' }).select('id').single(); rowId = ins?.data?.id ?? null }
-    // once a lead has a phone, auto-forward it to the connected CRM (once), no LLM tool-call needed
-    if (accountId && merged.phone && !merged.crm_pushed) {
-      const pushed = await pushLeadToCrm(db, accountId, merged)
-      if (pushed && rowId) { merged.crm_pushed = pushed; await db.from('leads').update({ fields: merged }).eq('id', rowId) }
+  if (eager || hasContact) {
+    // strict allowed-key set = core contact fields + the agent's own configured lead-form fields
+    // (so a custom field like "course" is actually captured), minus reserved CRM-claim and
+    // prototype names — lead-form labels are user-controlled and must not become those keys.
+    const keys = buildLeadKeys(wantFields)
+    const r = await callOpenRouter({
+      apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0, maxTokens: 300,
+      responseFormat: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: `Extract the customer's lead details from this conversation. Return ONLY a JSON object. Include a key ONLY if the customer EXPLICITLY stated it. Allowed keys: ${keys.join(', ')}. If an allowed key names a specific thing the customer mentioned (e.g. a course, product or service they want), put that value under THAT key rather than only in 'request'. Use ONLY values the customer actually gave — NEVER invent, guess or infer. Omit keys you did not find. If nothing, return {}.` },
+        { role: 'user', content: convo },
+      ],
+    })
+    tokens = r.tokens ?? 0
+    let obj: unknown = {}
+    try { obj = JSON.parse(r.content) } catch {
+      const s = r.content.indexOf('{'); const e = r.content.lastIndexOf('}')
+      try { obj = s >= 0 && e > s ? JSON.parse(r.content.slice(s, e + 1)) : {} } catch { obj = {} }
+    }
+    const clean = sanitizeLeadPatch(obj, keys)
+    if (Object.keys(clean).length) {
+      // Atomic server-side merge, advisory-lock serialized per dialogue: concurrent turns can
+      // neither drop each other's captured fields nor insert duplicate lead rows.
+      const { data, error } = await db.rpc('merge_lead_fields', { p_account_id: accountId, p_dialogue_id: dialogueId, p_patch: clean })
+      if (error) { console.error('lead merge failed:', error); return tokens }
+      const row = Array.isArray(data) ? data[0] : data
+      if (row?.lead_id) { rowId = row.lead_id; fields = (row.lead_fields ?? {}) as Record<string, unknown> }
     }
   }
-  return r.tokens ?? 0
+  // Once a lead has a phone, auto-forward it to the connected CRM — single claimant via a
+  // self-expiring lease, so concurrent turns cannot double-push; a previously failed push is
+  // retried even on turns that extracted nothing new (and never inserts an empty lead).
+  // Only a real provider marker counts as pushed (matching the claim RPC), so junk written
+  // through a hostile lead-form label during the deploy window cannot suppress the push.
+  const alreadyPushed = ['bitrix24', 'amocrm', 'hubspot'].includes(String(fields.crm_pushed ?? ''))
+  if (rowId && fields.phone && !alreadyPushed) {
+    const { data: claimData, error: claimError } = await db.rpc('claim_lead_crm_push', { p_account_id: accountId, p_lead_id: rowId })
+    if (claimError) { console.error('lead claim failed:', claimError); return tokens }
+    const claim = Array.isArray(claimData) ? claimData[0] : claimData
+    if (claim?.claim_token) {
+      // push the claimed row's CURRENT fields, not this turn's snapshot
+      const push = await pushLeadToCrm(db, accountId, (claim.lead_fields ?? fields) as Record<string, unknown>)
+      if (push.provider) {
+        const { data: finished, error: finishError } = await db.rpc('finish_lead_crm_push', { p_account_id: accountId, p_lead_id: rowId, p_token: claim.claim_token, p_provider: push.provider })
+        if (finishError || finished !== true) console.error('lead push finish failed:', finishError ?? 'claim token no longer valid')
+      } else if (!push.attempted) {
+        // nothing was sent (no eligible CRM connected) — release so the next turn retries cheaply
+        const { error: releaseError } = await db.rpc('finish_lead_crm_push', { p_account_id: accountId, p_lead_id: rowId, p_token: claim.claim_token, p_provider: null })
+        if (releaseError) console.error('lead claim release failed:', releaseError)
+      }
+      // attempted-but-failed is ambiguous (a timeout may have landed remotely): keep the
+      // lease and let it expire, so a concurrent turn cannot double-push the same lead.
+    }
+  }
+  return tokens
 }
 
 // Best-effort Telegram ping to the business admin when a dialogue is escalated.
@@ -277,27 +319,44 @@ async function buildTeamReply(
   knowledge: string,
   bizBlock = '',
   knownLead: Record<string, unknown> = {},
+  premiumAllowed = false,
 ): Promise<{ text: string; tokens: number; trace: TraceStep[]; humanReviewReason?: string }> {
   let tokens = 0
   const trace: TraceStep[] = []
-  // inject already-known lead details + today's date so the TEAM path also never re-asks (#5)
-  const leadSystem = buildSystemPrompt(agent, knowledge, '', { today: new Date().toISOString().slice(0, 10), knownLead }) + bizBlock + NO_FABRICATION
   const hist: ChatMsg[] = (history ?? []).map((m: any): ChatMsg => ({ role: m.author === 'customer' ? 'user' : 'assistant', content: m.content }))
   const lastUser = [...(history ?? [])].reverse().find((m: any) => m.author === 'customer')?.content ?? ''
   const temp = Number(agent.temperature) || 0.5
 
-  // load the lead's saved team (department + specialist sub-agents)
-  const { data: depts } = await db.from('departments').select('id').eq('main_agent_id', agent.id).order('created_at', { ascending: false }).limit(1)
+  // load the lead's saved team (department + specialist sub-agents) — scoped to
+  // the agent's account so a cross-tenant link can never be traversed
+  const { data: depts } = await db.from('departments').select('id').eq('main_agent_id', agent.id).eq('account_id', agent.account_id).order('created_at', { ascending: false }).limit(1)
   const dept = depts?.[0]
   let subs: any[] = []
   if (dept) {
-    const { data } = await db.from('sub_agents').select('id, role, name, prompt, status').eq('department_id', dept.id).limit(8)
+    // model is loaded so a specialist's SAVED model choice is honored (plan-gated below)
+    const { data } = await db.from('sub_agents').select('id, role, name, prompt, status, model').eq('department_id', dept.id).limit(8)
     subs = (data ?? []).filter((s: any) => (s.status ?? 'active') !== 'paused')
   }
 
-  // no team yet -> the lead just answers directly
+  // TEAM-SHARED RAG: the department's shared knowledge base (owner_type 'team')
+  // complements the lead's own docs; the RPC verifies tenant ownership itself.
+  const teamKnowledge = dept ? await retrieveTeamKnowledge(db, agent.account_id, dept.id, String(lastUser)) : ''
+  const fullKnowledge = [knowledge, teamKnowledge].filter(Boolean).join('\n').slice(0, 8000)
+  // inject already-known lead details + today's date so the TEAM path also never re-asks (#5)
+  const leadSystem = buildSystemPrompt(agent, fullKnowledge, '', { today: new Date().toISOString().slice(0, 10), knownLead }) + bizBlock + NO_FABRICATION
+  // specialists get the same verified knowledge — a delegated task must be answered
+  // from the team's real facts, not from the model's imagination
+  const specialistKnowledgeBlock = fullKnowledge
+    ? `\n\n=== TEAM KNOWLEDGE (verified facts — rely on these, never contradict them) ===\n${fullKnowledge}\n=== end of team knowledge ===`
+    : ''
+
+  // every call where the LEAD speaks or decides uses the lead's SAVED model
+  // (plan-gated) — routing, direct answers, fallbacks and the final synthesis
+  const leadModel = gateModel(agent.model, premiumAllowed)
+
+  // no team yet -> the lead just answers directly (never with an ungated raw model)
   if (!subs.length) {
-    const out = await callOpenRouter({ apiKey, model: agent.model || PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
+    const out = await callOpenRouter({ apiKey, model: leadModel, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
     return { text: out.content, tokens: out.tokens, trace }
   }
 
@@ -319,7 +378,7 @@ async function buildTeamReply(
     },
     ...hist,
   ]
-  const r1 = await callOpenRouter({ apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: routeMsgs, temperature: 0.3, maxTokens: 500 })
+  const r1 = await callOpenRouter({ apiKey, model: leadModel, fallbackModel: FALLBACK_MODEL, messages: routeMsgs, temperature: 0.3, maxTokens: 500 })
   tokens += r1.tokens
   const plan = extractJson(r1.content) ?? {}
   const delegate = Array.isArray(plan.delegate) ? (plan.delegate as any[]).slice(0, MAX_SPECIALISTS) : []
@@ -329,7 +388,7 @@ async function buildTeamReply(
 
   if (!delegate.length) {
     if (typeof plan.answer === 'string' && plan.answer.trim()) return { text: plan.answer.trim(), tokens, trace }
-    const out = await callOpenRouter({ apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
+    const out = await callOpenRouter({ apiKey, model: leadModel, fallbackModel: FALLBACK_MODEL, messages: [{ role: 'system', content: leadSystem }, ...hist], temperature: temp, maxTokens: 700 })
     return { text: out.content, tokens: tokens + out.tokens, trace }
   }
 
@@ -344,14 +403,14 @@ async function buildTeamReply(
   const specialistSystem = (sa: any) => {
     const p = sa?.prompt ?? {}
     return `You are "${sa.name}", a ${sa.role}. ${p.role ?? ''} Tasks: ${p.tasks ?? ''}. Rules: ${p.rules ?? ''}` +
-      roleSkillBlock(String(sa.role ?? ''), `${p.role ?? ''} ${p.tasks ?? ''}`) + bizBlock + NO_FABRICATION + TEAM_SAFETY_GUARD
+      roleSkillBlock(String(sa.role ?? ''), `${p.role ?? ''} ${p.tasks ?? ''}`) + specialistKnowledgeBlock + bizBlock + NO_FABRICATION + TEAM_SAFETY_GUARD
   }
   const assignments = activeSubs
     .filter((sa: any) => plannedTasks.has(String(sa.id)))
     .map((sa: any) => ({ sa, task: plannedTasks.get(String(sa.id)) as string }))
   if (!assignments.length) {
     const out = await callOpenRouter({
-      apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL,
+      apiKey, model: leadModel, fallbackModel: FALLBACK_MODEL,
       messages: [{ role: 'system', content: `${leadSystem}${TEAM_SAFETY_GUARD}` }, ...hist],
       temperature: temp, maxTokens: 700,
     })
@@ -360,7 +419,7 @@ async function buildTeamReply(
   const executed = await Promise.all(assignments.map(async ({ sa, task }) => {
     try {
       const rr = await callOpenRouter({
-        apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.35, maxTokens: 520,
+        apiKey, model: gateModel(sa.model, premiumAllowed), fallbackModel: FALLBACK_MODEL, temperature: 0.35, maxTokens: 520,
         messages: [
           { role: 'system', content: `${specialistSystem(sa)}\n${LANG_HINT}` },
           { role: 'user', content: `Customer said: "${lastUser}"\n\nYour task from the team lead: ${task}\n\nGive a concrete, specific contribution the lead can use directly. No filler. Do not perform or claim external actions.` },
@@ -440,7 +499,7 @@ async function buildTeamReply(
       const verdict = item.verdict as PeerVerdict
       try {
         const rr = await callOpenRouter({
-          apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.25, maxTokens: 520,
+          apiKey, model: gateModel(item.sa.model, premiumAllowed), fallbackModel: FALLBACK_MODEL, temperature: 0.25, maxTokens: 520,
           messages: [
             { role: 'system', content: `${specialistSystem(item.sa)}\nRevise your own contribution once. Preserve every safety and human-approval limit. ${LANG_HINT}` },
             { role: 'user', content: `CUSTOMER REQUEST:\n${String(lastUser).slice(0, 2200)}\n\nYOUR ASSIGNED TASK:\n${item.task}\n\nYOUR PREVIOUS WORK:\n${item.output.slice(0, 4000)}\n\nPEER ISSUES:\n${verdict.issues.join('\n')}\n\nREQUIRED FIX:\n${verdict.fix}\n\nReturn the complete corrected contribution only.` },
@@ -491,7 +550,7 @@ async function buildTeamReply(
 
   // 4) LEAD synthesizes one customer-facing reply from peer-approved contributions only.
   const synth = await callOpenRouter({
-    apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.5, maxTokens: 900,
+    apiKey, model: leadModel, fallbackModel: FALLBACK_MODEL, temperature: 0.5, maxTokens: 900,
     messages: [
       {
         role: 'system',
@@ -521,6 +580,7 @@ export async function buildSubAgentReply(
   apiKey: string,
   sub: any,
   history: any[],
+  premiumAllowed = false,
 ): Promise<{ text: string; tokens: number }> {
   let tokens = 0
   const p = sub.prompt ?? {}
@@ -570,7 +630,7 @@ export async function buildSubAgentReply(
   }
 
   const out = await callOpenRouter({
-    apiKey, model: sub.model || PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.5, maxTokens: 700,
+    apiKey, model: gateModel(sub.model, premiumAllowed), fallbackModel: FALLBACK_MODEL, temperature: 0.5, maxTokens: 700,
     messages: [{ role: 'system', content: `${persona}${consult}\n${LANG_HINT}` }, ...hist],
   })
   return { text: out.content, tokens: tokens + out.tokens }
@@ -649,7 +709,8 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     let knownLead: Record<string, unknown> = {}
     let leadRowId: string | null = null
     if (isCustomerFacing) {
-      const { data: lr } = await db.from('leads').select('id, fields').eq('dialogue_id', dialogueId).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      // canonical row = newest by (created_at, id) — same deterministic order as merge_lead_fields
+      const { data: lr } = await db.from('leads').select('id, fields').eq('dialogue_id', dialogueId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
       if (lr) { leadRowId = lr.id; knownLead = (lr.fields ?? {}) as Record<string, unknown> }
     }
     const promptOpts = { today, leadFields, knownLead }
@@ -677,7 +738,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       modelTag = 'tool'
     } else if (agent.type === 'workflow') {
       // TEAM: the lead runs the whole department on this message (with known lead state injected)
-      const team = await buildTeamReply(db, apiKey, agent, history ?? [], knowledge, bizBlock, knownLead)
+      const team = await buildTeamReply(db, apiKey, agent, history ?? [], knowledge, bizBlock, knownLead, premiumAllowed)
       replyText = team.text
       tokensUsed = team.tokens
       modelTag = 'team'

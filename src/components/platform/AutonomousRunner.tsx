@@ -5,6 +5,8 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/ustudyTeam'
 import { IMAGE_MODEL_CATALOG, DEFAULT_IMAGE_MODEL } from '../../lib/models'
+import { PROVIDERS } from '../../data/platform'
+import { INDUSTRY_TEAM_BLUEPRINTS } from '../../lib/industryTeams'
 import { useI18n } from '../../i18n'
 import { Markdown } from '../ui/Markdown'
 import { DocExport } from './DocExport'
@@ -88,6 +90,10 @@ export function AutonomousRunner({
   const [error, setError] = useState('')
   const [openStep, setOpenStep] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  // team save options: chosen LLM (provider+model) and business sphere;
+  // premium models remain plan-gated server-side on every reply
+  const [saveModel, setSaveModel] = useState('')
+  const [saveSphere, setSaveSphere] = useState('')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const call = async (b: Record<string, unknown>): Promise<any> => {
@@ -233,10 +239,13 @@ export function AutonomousRunner({
     if (saving || !specs.length) return
     setSaving(true)
     try {
+      const model = saveModel || undefined
       const res = await saveDynamicTeam(addAgent, {
         name: `Team: ${goal.trim().slice(0, 40)}`,
         goal: goal.trim(),
-        specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt })),
+        specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt, ...(model ? { model } : {}) })),
+        ...(saveSphere.trim() ? { niche: saveSphere.trim() } : {}),
+        ...(model ? { lead: { model } } : {}),
       }, deleteAgent)
       if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
       else setError(res.error ?? 'Could not save the complete team.')
@@ -346,9 +355,30 @@ export function AutonomousRunner({
           {postActions && <QualityBar goal={goal} content={result} model={model} lang={lang} onRevised={setResult} />}
           {postActions && <DeliveryBar content={result} />}
           {!presetSpecs?.length && (
-            <button onClick={saveTeam} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition disabled:opacity-40">
-              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} {t('autonomousRunner.saveTeam')}
-            </button>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="space-y-1">
+                <span className="block text-[10px] font-medium uppercase tracking-wide text-muted">{t('autonomousRunner.saveModel')}</span>
+                <select value={saveModel} onChange={(e) => setSaveModel(e.target.value)} className="glass rounded-xl px-2.5 py-2 text-xs text-text outline-none focus:border-violet/50">
+                  <option value="">{t('autonomousRunner.saveModelDefault')}</option>
+                  {PROVIDERS.map((p) => (
+                    <optgroup key={p.id} label={p.name}>
+                      {p.models.map((m) => <option key={m.id} value={m.id}>{m.label}{m.premium ? ' · Pro 💎' : ''}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[10px] font-medium uppercase tracking-wide text-muted">{t('autonomousRunner.saveSphere')}</span>
+                <input value={saveSphere} onChange={(e) => setSaveSphere(e.target.value)} list="nemo-team-sphere-options" placeholder={t('autonomousRunner.saveSpherePh')} className="glass w-52 rounded-xl px-2.5 py-2 text-xs text-text outline-none placeholder:text-fog focus:border-violet/50" />
+                {/* the 12 industry spheres as suggestions; free text stays allowed */}
+                <datalist id="nemo-team-sphere-options">
+                  {Object.values(INDUSTRY_TEAM_BLUEPRINTS).map((bp) => <option key={bp.name} value={bp.niche} />)}
+                </datalist>
+              </label>
+              <button onClick={saveTeam} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition disabled:opacity-40">
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} {t('autonomousRunner.saveTeam')}
+              </button>
+            </div>
           )}
         </div>
       )}

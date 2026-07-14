@@ -34,6 +34,7 @@ import { createUstudyOperationsTeam } from '../../lib/ustudyTeam'
 import { createCommerceTeam, type CommerceTeamKind } from '../../lib/commerceTeams'
 import { createIndustryTeam, type IndustryTeamKind } from '../../lib/industryTeams'
 import type { LegacyMarketplaceTeamKind } from '../../lib/legacyMarketplaceTeams'
+import { PROVIDERS } from '../../data/platform'
 
 type TemplateCategory = 'all' | 'tourism' | 'sales' | 'commerce' | 'services' | 'operations' | 'people' | 'regulated'
 type CopyLang = 'ru' | 'uz' | 'en'
@@ -185,6 +186,11 @@ export default function MarketplacePage() {
   const [seeding, setSeeding] = useState('')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<TemplateCategory>('all')
+  // pre-create setup: the user picks the LLM (provider+model) and the business
+  // sphere before the team is persisted; premium models stay plan-gated server-side
+  const [pending, setPending] = useState<TeamTemplate | null>(null)
+  const [pickModel, setPickModel] = useState('')
+  const [pickNiche, setPickNiche] = useState('')
 
   const visibleTemplates = useMemo(() => {
     const search = query.trim().toLowerCase()
@@ -222,37 +228,44 @@ export default function MarketplacePage() {
       }
       return
     }
-    if (tpl.commerceKey) {
-      setSeeding(tpl.title)
-      try {
-        const res = await createCommerceTeam(tpl.commerceKey, addAgent, deleteAgent)
-        if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
-        else toast(res.error ?? 'Could not create the complete team', 'error')
-      } catch (error) {
-        toast(error instanceof Error ? error.message : 'Could not create the complete team', 'error')
-      } finally {
-        setSeeding('')
-      }
-      return
-    }
-    if (tpl.industryKey) {
-      setSeeding(tpl.title)
-      try {
-        const localized = localizeTemplate(tpl, copyLang)
-        const res = await createIndustryTeam(tpl.industryKey, addAgent, deleteAgent, { name: localized.title, niche: localized.market })
-        if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
-        else toast(res.error ?? 'Could not create the complete team', 'error')
-      } catch (error) {
-        toast(error instanceof Error ? error.message : 'Could not create the complete team', 'error')
-      } finally {
-        setSeeding('')
-      }
+    // commerce/industry teams first open the setup step (model + sphere)
+    if (tpl.commerceKey || tpl.industryKey) {
+      const localized = localizeTemplate(tpl, copyLang)
+      setPickModel('')
+      setPickNiche(localized.market)
+      setPending(tpl)
       return
     }
     if (!tpl.legacyKey) {
       toast('This team template is not configured yet', 'error')
       return
     }
+    createLegacy(tpl)
+  }
+
+  // creates the pending commerce/industry team with the chosen model + sphere
+  const createPending = async () => {
+    const tpl = pending
+    if (!tpl) return
+    setPending(null)
+    setSeeding(tpl.title)
+    try {
+      const localized = localizeTemplate(tpl, copyLang)
+      const niche = pickNiche.trim() || localized.market
+      const model = pickModel || undefined
+      const res = tpl.commerceKey
+        ? await createCommerceTeam(tpl.commerceKey, addAgent, deleteAgent, { model, niche })
+        : await createIndustryTeam(tpl.industryKey as IndustryTeamKind, addAgent, deleteAgent, { name: localized.title, niche, model })
+      if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
+      else toast(res.error ?? 'Could not create the complete team', 'error')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Could not create the complete team', 'error')
+    } finally {
+      setSeeding('')
+    }
+  }
+
+  const createLegacy = (tpl: TeamTemplate) => {
     const type = tpl.legacyKey === 'student-support' ? 'support' : tpl.legacyKey
     localStorage.setItem('nemo-selected-template', JSON.stringify({
       teamName: tpl.title,
@@ -336,6 +349,39 @@ export default function MarketplacePage() {
       {!visibleTemplates.length && (
         <div className="mt-8 rounded-3xl border border-dashed border-ice/[0.12] p-10 text-center text-sm text-muted">
           {ui.empty}
+        </div>
+      )}
+
+      {pending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPending(null)}>
+          <div className="card w-full max-w-md rounded-3xl p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-text">{t('marketplacePage.setupTitle')}</h3>
+            <p className="mt-1 text-xs text-muted">{localizeTemplate(pending, copyLang).title}</p>
+            <label className="mt-4 block space-y-1.5">
+              <span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('marketplacePage.setupModel')}</span>
+              <select value={pickModel} onChange={(e) => setPickModel(e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
+                <option value="">{t('marketplacePage.setupModelDefault')}</option>
+                {PROVIDERS.map((p) => (
+                  <optgroup key={p.id} label={p.name}>
+                    {p.models.map((m) => <option key={m.id} value={m.id}>{m.label}{m.premium ? ' · Pro 💎' : ''}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <label className="mt-3 block space-y-1.5">
+              <span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('marketplacePage.setupSphere')}</span>
+              <input value={pickNiche} onChange={(e) => setPickNiche(e.target.value)} list="nemo-sphere-options" className="glass w-full rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+              {/* the 12 industry spheres as suggestions; free text stays allowed */}
+              <datalist id="nemo-sphere-options">
+                {[...new Set(templates.map((item) => localizeTemplate(item, copyLang).market))].map((market) => <option key={market} value={market} />)}
+              </datalist>
+            </label>
+            <p className="mt-3 text-[11px] leading-relaxed text-fog">{t('marketplacePage.setupNote')}</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setPending(null)}>{t('marketplacePage.setupCancel')}</Button>
+              <Button size="sm" onClick={createPending}>{t('marketplacePage.setupCreate')}</Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

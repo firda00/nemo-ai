@@ -143,8 +143,14 @@ check(
 )
 check(
   'catalog creates only complete persisted industry teams',
-  /createIndustryTeam\(tpl\.industryKey, addAgent, deleteAgent, \{ name: localized\.title, niche: localized\.market \}\)/.test(marketplaceSource)
+  /createIndustryTeam\(tpl\.industryKey as IndustryTeamKind, addAgent, deleteAgent, \{ name: localized\.title, niche, model \}\)/.test(marketplaceSource)
     && /!res\.error && res\.agentId && res\.departmentId/.test(marketplaceSource),
+)
+check(
+  'catalog setup passes the chosen model and sphere through the factory',
+  /localization\?\.model/.test(source)
+    && /const niche = pickNiche\.trim\(\) \|\| localized\.market/.test(marketplaceSource)
+    && /const model = pickModel \|\| undefined/.test(marketplaceSource),
 )
 check(
   'localized industry name and niche are persisted',

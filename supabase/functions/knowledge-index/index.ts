@@ -65,12 +65,19 @@ Deno.serve(async (req) => {
     const { data: ag } = await admin.from('agents').select('account_id').eq('id', agentId).maybeSingle()
     return ag?.account_id === accountId
   }
+  // helper: verify a department (team knowledge owner) belongs to this account
+  const ownsDepartment = async (departmentId: string): Promise<boolean> => {
+    if (!departmentId) return false
+    const { data: dep } = await admin.from('departments').select('account_id').eq('id', departmentId).maybeSingle()
+    return dep?.account_id === accountId
+  }
 
   if (action === 'index') {
     const docId = String(body?.doc_id ?? '')
     const { data: doc } = await admin.from('knowledge_docs').select('id, owner_id, owner_type, content').eq('id', docId).maybeSingle()
     if (!doc) return json({ ok: false, error: 'Документ не найден.' }, 200)
-    if (!(await ownsAgent(doc.owner_id))) return json({ error: 'forbidden' }, 403)
+    const owned = doc.owner_type === 'team' ? await ownsDepartment(doc.owner_id) : await ownsAgent(doc.owner_id)
+    if (!owned) return json({ error: 'forbidden' }, 403)
 
     const chunks = chunkText(String(doc.content ?? ''))
     // replace any previous chunks for this doc

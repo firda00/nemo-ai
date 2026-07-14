@@ -6,11 +6,12 @@
 //   POST /functions/v1/test-agent   (Authorization: Bearer <user jwt>)
 //   body { "agent": {...}, "message": "...", "history": [{author, content}] }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, buildSystemPrompt, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, buildSystemPrompt, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { loadMemory, saveMemory } from '../_shared/memory.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
-import { retrieveKnowledge } from '../_shared/knowledge.ts'
-import { ESCALATION_RULE, parseEscalation, routingRule, parseRoute, NO_FABRICATION } from '../_shared/agent.ts'
+import { retrieveKnowledge, retrieveTeamKnowledge } from '../_shared/knowledge.ts'
+import { ESCALATION_RULE, parseEscalation, routingRule, parseRoute, NO_FABRICATION, gateModel } from '../_shared/agent.ts'
+import { planOf } from '../_shared/plans.ts'
 import { runAgentTools } from '../_shared/tools.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
@@ -18,16 +19,6 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
-
-// Reliable default; allow cheap paid + free models the picker offers.
-const DEFAULT_MODEL = PRIMARY_MODEL
-const ALLOWED_MODELS = new Set([
-  'openai/gpt-4o-mini', 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet',
-  'google/gemini-flash-1.5', 'meta-llama/llama-3.3-70b-instruct',
-  'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free', 'qwen/qwen3-next-80b-a3b-instruct:free',
-  'nousresearch/hermes-3-llama-3.1-405b:free',
-])
 
 Deno.serve(async (req) => {
   const preflight = corsPreflight(req)
@@ -63,11 +54,14 @@ Deno.serve(async (req) => {
     if (!savedAgent) return json({ error: 'agent_not_found' }, 404)
     agent = savedAgent
   }
-  const model = ALLOWED_MODELS.has(agent?.model) ? agent.model : DEFAULT_MODEL
   const temperature = Number.isFinite(agent?.temperature) ? Number(agent.temperature) : 0.6
-  const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
+  const { data: acc } = await admin.from('accounts').select('token_balance, blocked, plan').eq('id', accountId).single()
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
+  // sandbox mirrors the live runtime exactly: same premium plan gate, same fallback —
+  // a non-premium plan cannot try premium models here that the channel would refuse
+  const premiumAllowed = planOf(acc?.plan).premium
+  const model = gateModel(agent?.model, premiumAllowed)
 
   // cap history to keep the sandbox cheap
   const history: ChatMsg[] = Array.isArray(body?.history)
@@ -80,7 +74,17 @@ Deno.serve(async (req) => {
   // Load the saved agent's knowledge base via semantic RAG so the sandbox reflects
   // exactly what the live channel agent retrieves (admin/service-role bypasses RLS on chunks).
   let knowledge = ''
-  if (agentId) knowledge = await retrieveKnowledge(admin, agentId, message)
+  if (agentId) {
+    knowledge = await retrieveKnowledge(admin, agentId, message)
+    // team leads also see their department's SHARED knowledge, exactly like live
+    if (agent?.type === 'workflow') {
+      const { data: dept } = await admin.from('departments').select('id').eq('main_agent_id', agentId).eq('account_id', accountId).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (dept?.id) {
+        const teamKnow = await retrieveTeamKnowledge(admin, accountId, dept.id, message)
+        knowledge = [knowledge, teamKnow].filter(Boolean).join('\n').slice(0, 8000)
+      }
+    }
+  }
 
   // teammates for dynamic routing (sandbox mirrors the live channel behavior)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -157,7 +161,7 @@ Deno.serve(async (req) => {
         ...history,
         { role: 'user', content: message },
       ]
-      const tmodel = ALLOWED_MODELS.has(tgt.model) ? tgt.model : DEFAULT_MODEL
+      const tmodel = gateModel(tgt.model, premiumAllowed)
       const tout = await callOpenRouter({ apiKey, model: tmodel, messages: tmsgs, temperature: Number(tgt.temperature) || 0.5, fallbackModel: FALLBACK_MODEL })
       if (tout.tokens) {
         await admin.from('usage').insert({ account_id: accountId, tokens: tout.tokens, model: tmodel })

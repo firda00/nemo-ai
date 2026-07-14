@@ -17,6 +17,8 @@ $steps = @(
   @{ Name = 'Governed agent evolution contracts'; Command = { npm run test:evolution } },
   @{ Name = 'Integration truthfulness contracts'; Command = { npm run test:integrations } },
   @{ Name = 'Logistics parser behavior'; Command = { npm run test:logistics-behavior } },
+  @{ Name = 'Lead patch behavior'; Command = { npm run test:lead-behavior } },
+  @{ Name = 'Release entitlement contracts'; Command = { npm run test:release } },
   @{ Name = 'Auth and trace RLS contracts'; Command = { npm run test:auth-contracts } },
   @{ Name = 'Thirty-point security contracts'; Command = { npm run test:security } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },

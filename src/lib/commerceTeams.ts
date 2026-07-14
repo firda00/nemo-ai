@@ -71,8 +71,16 @@ export async function createCommerceTeam(
   kind: CommerceTeamKind,
   addAgent: (a: PlatformAgent) => Promise<{ id?: string; error?: string }>,
   deleteAgent?: (id: string) => Promise<{ error?: string }>,
+  options?: { model?: string; niche?: string },
 ) {
-  const bp = COMMERCE_BLUEPRINTS[kind]
+  const base = COMMERCE_BLUEPRINTS[kind]
+  // user-chosen LLM/sphere overrides; premium models stay plan-gated server-side
+  const model = options?.model?.trim() || undefined
+  const bp = {
+    ...base,
+    ...(options?.niche?.trim() ? { niche: options.niche.trim() } : {}),
+    ...(model ? { lead: { model }, specialists: base.specialists.map((s) => ({ ...s, model })) } : {}),
+  }
   return await saveDynamicTeam(addAgent, bp, deleteAgent)
 }
 

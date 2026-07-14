@@ -29,3 +29,26 @@ export const MODEL_CATALOG: ModelDef[] = [
 export function modelDef(id: string): ModelDef | undefined {
   return MODEL_CATALOG.find((m) => m.id === id)
 }
+
+// Every model id the product offers anywhere in the UI: the editor catalog above
+// plus the provider picker (src/data/platform.ts PROVIDERS — kept in sync by
+// release-entitlement-contracts). gateModel() rejects anything outside this
+// list, so a direct API client cannot run arbitrary/expensive OpenRouter models
+// on Nemo's key even when the id slips past the premium regex.
+export const ALLOWED_MODEL_IDS = new Set<string>([
+  ...MODEL_CATALOG.map((m) => m.id),
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.5',
+  'anthropic/claude-sonnet-5',
+  'anthropic/claude-opus-4.8',
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-3.5-flash',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  'qwen/qwen3.7-plus',
+  'qwen/qwen3.7-max',
+  'z-ai/glm-5.2',
+  'google/gemma-4-26b-a4b-it:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.3-70b-instruct',
+])

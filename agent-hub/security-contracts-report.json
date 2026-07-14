@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-07-13T10:39:16.122Z",
+  "generated_at": "2026-07-14T08:05:32.310Z",
   "failed": 0,
-  "partial": 1,
+  "partial": 0,
   "rows": [
     {
       "id": 1,
@@ -174,8 +174,8 @@
     {
       "id": 29,
       "name": "Concurrent CRM subagents",
-      "state": "PARTIAL",
-      "detail": "tenant isolation exists; same-row last-write conflict detection is not implemented"
+      "state": "PASS",
+      "detail": "same-dialogue lead writes are serialized and merged atomically in SQL, browser DML on leads is revoked, and the CRM push is single-claimant behind a self-expiring lease"
     },
     {
       "id": 30,

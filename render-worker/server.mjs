@@ -55,7 +55,11 @@ const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u)
 const hex = (v) => (/^#[0-9a-fA-F]{6}$/.test(v || '') ? v : '#8B7CF8')
 
-const sanitizeProps = (p = {}) => {
+// Resolution comes as a quality ENUM validated against the worker's own allowlist —
+// never as caller-controlled dimensions. Must mirror QUALITY_CANVAS in src/Reel.tsx.
+const QUALITIES = ['720p', '1080p', '4k']
+
+const sanitizeProps = (p = {}, quality = '') => {
   const scenesIn = Array.isArray(p.scenes) ? p.scenes.slice(0, MAX_SCENES) : []
   const scenes = scenesIn.map((s) => ({
     imageUrl: isHttp(s?.imageUrl) ? s.imageUrl : undefined,
@@ -68,6 +72,7 @@ const sanitizeProps = (p = {}) => {
     brand: str(p.brand, 40) || undefined,
     accent: hex(p.accent),
     audioUrl: isHttp(p.audioUrl) ? p.audioUrl : undefined,
+    quality: QUALITIES.includes(quality) ? quality : '1080p',
     scenes,
   }
 }
@@ -101,7 +106,8 @@ async function processNext() {
       inputProps: job.props,
       concurrency: 1,
       offthreadVideoCacheSizeInBytes: 64 * 1024 * 1024,
-      timeoutInMilliseconds: 120000,
+      // 4K pushes ~4x the pixels of 1080p through the same single slot — give it headroom
+      timeoutInMilliseconds: job.props?.quality === '4k' ? 300000 : 120000,
       logLevel: 'error',
     })
     const buf = await readFile(outFile)
@@ -164,7 +170,7 @@ app.get('/health', (_req, res) => res.json({ ok: true, busy, queued: queue.lengt
 
 app.post('/render', (req, res) => {
   const accountId = str(req.body?.accountId, 64) || 'anon'
-  const props = sanitizeProps(req.body?.props)
+  const props = sanitizeProps(req.body?.props, str(req.body?.quality, 8))
   if (queue.length > 20) return res.status(429).json({ error: 'queue full' })
   const id = randomUUID()
   jobs.set(id, { status: 'queued', url: null, error: null, at: Date.now(), accountId, props })

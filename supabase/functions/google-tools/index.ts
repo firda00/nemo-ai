@@ -6,7 +6,7 @@
 //   { action:'sheets_append', spreadsheet_id, range, values:[...] }
 //   { action:'calendar_create', summary, start_iso, end_iso, description? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { googleAccessToken } from '../_shared/google.ts'
+import { googleAccessToken, extractSheetId } from '../_shared/google.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -121,6 +121,45 @@ Deno.serve(async (req) => {
       const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json())
       if (r.error) return json({ ok: false, error: r.error?.message ?? 'sheets_failed' }, 502)
       return json({ ok: true, values: r.values ?? [] })
+    }
+
+    if (action === 'sheets_read_knowledge') {
+      // Knowledge ingestion: a bounded, normalized text snapshot of ONE sheet.
+      // The range is clamped server-side (no caller-controlled ranges), cells are
+      // escaped so the TSV stays parseable, the pasted URL's gid picks the tab,
+      // and the output is bounded to the knowledge_docs content limit BEFORE it
+      // leaves the server — the browser never receives a multi-megabyte payload.
+      const rawRef = String(body.url ?? body.spreadsheet_id ?? '').slice(0, 500)
+      const id = extractSheetId(rawRef) || (/^[A-Za-z0-9_-]{20,}$/.test(rawRef) ? rawRef : '')
+      if (!id) return json({ ok: false, error: 'spreadsheet url or id required' }, 400)
+      const gidMatch = rawRef.match(/[#&?]gid=(\d+)/)
+      const gid = gidMatch ? Number(gidMatch[1]) : null
+      const meta = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=properties.title,sheets.properties`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json())
+      if (meta.error) return json({ ok: false, error: meta.error?.message ?? 'sheets_failed' }, 502)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sheets: any[] = Array.isArray(meta.sheets) ? meta.sheets : []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const target = (gid != null ? sheets.find((s: any) => s?.properties?.sheetId === gid) : sheets[0])?.properties
+      // an unknown gid must NOT silently fall back to the first sheet — that
+      // would ingest the wrong tab as knowledge
+      if (gid != null && !target) return json({ ok: false, error: 'sheet tab (gid) not found in this spreadsheet' }, 400)
+      const tabTitle = String(target?.title ?? '')
+      const range = tabTitle ? `'${tabTitle.replace(/'/g, "''")}'!A1:Z5000` : 'A1:Z5000'
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`, { headers: { Authorization: `Bearer ${token}` } }).then((x) => x.json())
+      if (r.error) return json({ ok: false, error: r.error?.message ?? 'sheets_failed' }, 502)
+      const MAX_CONTENT = 200_000
+      const cell = (v: unknown) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim()
+      const rows: unknown[][] = Array.isArray(r.values) ? r.values : []
+      let content = ''
+      let truncated = false
+      for (const row of rows) {
+        const line = (Array.isArray(row) ? row : [row]).map(cell).join('\t')
+        if (!line.trim()) continue
+        if (content.length + line.length + 1 > MAX_CONTENT) { truncated = true; break }
+        content += (content ? '\n' : '') + line
+      }
+      const docName = `${String(meta?.properties?.title ?? 'Google Sheet').slice(0, 200)}${tabTitle ? ` · ${tabTitle.slice(0, 40)}` : ''}`
+      return json({ ok: true, name: docName.slice(0, 250), content, rows: rows.length, truncated })
     }
 
     if (action === 'sheets_append') {

@@ -15,6 +15,8 @@ export async function amoCreateLead(subdomain: string, token: string, lead: { na
     const payload = [{ name: `Nemo: ${name || phone || 'лид'}`, _embedded: { contacts: [contact] } }]
     const r = await fetch(`https://${sub}.amocrm.ru/api/v4/leads/complex`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      // hard timeout well below the 10-minute CRM-push claim lease
+      signal: AbortSignal.timeout(10_000),
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const d: any = await r.json().catch(() => ({}))

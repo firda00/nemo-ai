@@ -64,4 +64,36 @@ export async function retrieveKnowledge(db: any, ownerId: string, query: string,
     return await naiveDump(db, ownerId)
   }
 }
+
+async function naiveTeamDump(db: any, departmentId: string): Promise<string> {
+  const { data: docs } = await db.from('knowledge_docs').select('name, content').eq('owner_type', 'team').eq('owner_id', departmentId).limit(10)
+  return (docs ?? []).map((d: any) => `- ${d.name ?? ''}: ${d.content ?? ''}`).join('\n').slice(0, 4000)
+}
+
+/**
+ * Retrieve the department's SHARED knowledge (owner_type 'team') most relevant to
+ * `query`. Ownership is verified FIRST (fail closed) so neither the RPC path nor
+ * the naive fallback can ever serve another tenant's documents through a wrong
+ * or forged department id; the RPC additionally re-verifies server-side and
+ * joins through knowledge_docs, so stale chunk owner columns cannot leak
+ * foreign content. Never throws.
+ */
+export async function retrieveTeamKnowledge(db: any, accountId: string, departmentId: string, query: string, k = 6): Promise<string> {
+  try {
+    if (!accountId || !departmentId) return ''
+    // fail-closed tenant check gates EVERY path below, including the fallback
+    const { data: dept } = await db.from('departments').select('id').eq('id', departmentId).eq('account_id', accountId).maybeSingle()
+    if (!dept?.id) return ''
+    const q = (query || '').trim()
+    if (q.length < 2) return await naiveTeamDump(db, departmentId)
+    const emb = await embedText(q.slice(0, 1600))
+    const { data } = await db.rpc('match_knowledge_team', { p_account_id: accountId, p_agent_id: null, p_department_id: departmentId, p_query: emb, p_k: k })
+    if (Array.isArray(data) && data.length) {
+      return data.map((r: any) => `- ${String(r.content ?? '').trim()}`).join('\n').slice(0, 4000)
+    }
+    return await naiveTeamDump(db, departmentId) // no embedded chunks yet
+  } catch (_e) {
+    return ''
+  }
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

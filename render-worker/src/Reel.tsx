@@ -26,6 +26,15 @@ export const FPS = 30
 const TRANSITION = 15 // frames of cross-fade between scenes
 const DEFAULT_SCENE_SEC = 3
 
+// Vertical Reels canvas per quality tier. The worker maps its OWN allowlist —
+// callers send an enum, never dimensions. 1080p is the design reference: all
+// typography/spacing below scales by width/1080.
+export const QUALITY_CANVAS: Record<string, { width: number; height: number }> = {
+  '720p': { width: 720, height: 1280 },
+  '1080p': { width: 1080, height: 1920 },
+  '4k': { width: 2160, height: 3840 },
+}
+
 export type Scene = { imageUrl?: string; caption?: string; durationSec?: number }
 export type ReelProps = {
   title?: string
@@ -33,6 +42,7 @@ export type ReelProps = {
   accent?: string
   scenes: Scene[]
   audioUrl?: string
+  quality?: string
 }
 
 export const reelDefaults: ReelProps = {
@@ -52,18 +62,21 @@ const sceneFrames = (s: Scene) => Math.max(FPS, Math.round((s.durationSec ?? DEF
 export const calcReelMetadata: CalculateMetadataFunction<ReelProps> = ({ props }) => {
   const scenes = props.scenes?.length ? props.scenes : reelDefaults.scenes
   const total = scenes.reduce((a, s) => a + sceneFrames(s), 0) - Math.max(0, scenes.length - 1) * TRANSITION
-  return { durationInFrames: Math.max(FPS, total), fps: FPS }
+  const canvas = QUALITY_CANVAS[props.quality ?? ''] ?? QUALITY_CANVAS['1080p']
+  return { durationInFrames: Math.max(FPS, total), fps: FPS, width: canvas.width, height: canvas.height }
 }
 
 const SceneView: React.FC<{ scene: Scene; accent: string; title?: string; brand?: string }> = ({ scene, accent, title, brand }) => {
   const frame = useCurrentFrame()
-  const { fps } = useVideoConfig()
+  const { fps, width } = useVideoConfig()
+  // scale factor vs the 1080p design reference, so 720p/4K keep identical composition
+  const k = width / 1080
 
   // Ken Burns — slow zoom keeps a still image alive.
   const zoom = interpolate(frame, [0, 6 * fps], [1.06, 1.18], { extrapolateRight: 'clamp' })
   // Caption entrance — spring fade + slide up from its reserved slot.
   const appear = spring({ frame, fps, config: { damping: 200 }, durationInFrames: Math.round(0.8 * fps) })
-  const slide = interpolate(appear, [0, 1], [46, 0])
+  const slide = interpolate(appear, [0, 1], [46 * k, 0])
 
   return (
     <AbsoluteFill style={{ backgroundColor: '#0A0D1C' }}>
@@ -79,15 +92,15 @@ const SceneView: React.FC<{ scene: Scene; accent: string; title?: string; brand?
       <AbsoluteFill style={{ background: 'linear-gradient(to top, rgba(5,7,15,0.94) 4%, rgba(5,7,15,0.45) 34%, rgba(0,0,0,0) 60%)' }} />
 
       {/* content column — everything lives in a layout slot (no manual overlap) */}
-      <AbsoluteFill style={{ padding: '0 80px 160px', justifyContent: 'flex-end', alignItems: 'center', textAlign: 'center', fontFamily }}>
+      <AbsoluteFill style={{ padding: `0 ${80 * k}px ${160 * k}px`, justifyContent: 'flex-end', alignItems: 'center', textAlign: 'center', fontFamily }}>
         {title ? (
-          <div style={{ color: '#fff', fontSize: 84, lineHeight: 1.08, fontWeight: 800, marginBottom: 28, textShadow: '0 6px 30px rgba(0,0,0,0.65)' }}>{title}</div>
+          <div style={{ color: '#fff', fontSize: 84 * k, lineHeight: 1.08, fontWeight: 800, marginBottom: 28 * k, textShadow: `0 ${6 * k}px ${30 * k}px rgba(0,0,0,0.65)` }}>{title}</div>
         ) : null}
         {scene.caption ? (
-          <div style={{ opacity: appear, transform: `translateY(${slide}px)`, color: '#fff', fontSize: title ? 48 : 72, lineHeight: 1.16, fontWeight: 700, textShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>{scene.caption}</div>
+          <div style={{ opacity: appear, transform: `translateY(${slide}px)`, color: '#fff', fontSize: (title ? 48 : 72) * k, lineHeight: 1.16, fontWeight: 700, textShadow: `0 ${4 * k}px ${24 * k}px rgba(0,0,0,0.6)` }}>{scene.caption}</div>
         ) : null}
         {brand ? (
-          <div style={{ marginTop: 34, color: accent, fontSize: 34, fontWeight: 700, letterSpacing: 1 }}>{brand}</div>
+          <div style={{ marginTop: 34 * k, color: accent, fontSize: 34 * k, fontWeight: 700, letterSpacing: 1 * k }}>{brand}</div>
         ) : null}
       </AbsoluteFill>
     </AbsoluteFill>

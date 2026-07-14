@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, HelpCircle, Link2, Plus, Trash2, X, Upload, Loader2 } from 'lucide-react'
+import { FileText, HelpCircle, Link2, Plus, Trash2, X, Upload, Loader2, Table2 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../ui/Toast'
 import { Button } from '../ui/Button'
@@ -7,7 +7,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { extractText, KNOWLEDGE_ACCEPT, MAX_KNOWLEDGE_FILE_BYTES } from '../../lib/extractText'
 import { cn } from '../../lib/cn'
 
-type Source = 'file' | 'faq' | 'link'
+type Source = 'file' | 'faq' | 'link' | 'gsheet'
 interface Doc {
   id: string
   source: Source
@@ -17,25 +17,28 @@ interface Doc {
 }
 
 const live = isSupabaseEnabled
-const srcIcon: Record<Source, typeof FileText> = { file: FileText, faq: HelpCircle, link: Link2 }
+const srcIcon: Record<Source, typeof FileText> = { file: FileText, faq: HelpCircle, link: Link2, gsheet: Table2 }
 const inputCls =
   'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50 focus:shadow-glow'
 
 let demoId = 0
 
 /**
- * Per-agent knowledge base (RAG). Files (PDF/Word/Excel/TXT/CSV) are parsed to
- * text IN THE BROWSER, then the extracted text is stored in knowledge_docs.content
- * — the agent runtime injects it into the prompt. FAQ = pasted text; link = a URL
- * whose public text is fetched server-side (covers shared Google Drive/Docs links).
+ * Knowledge base (RAG) for one owner: an agent (owner_type 'agent') or a whole
+ * team's shared base (owner_type 'team', ownerId = department id). Files
+ * (PDF/Word/Excel/TXT/CSV) are parsed to text IN THE BROWSER, then the extracted
+ * text is stored in knowledge_docs.content — the agent runtime injects it into
+ * the prompt. FAQ = pasted text; link = a URL whose public text is fetched
+ * server-side; Google Sheets = a bounded sheet snapshot read server-side via the
+ * connected Google account.
  */
-export function KnowledgeManager({ agentId }: { agentId: string }) {
+export function KnowledgeManager({ agentId, ownerType = 'agent' }: { agentId: string; ownerType?: 'agent' | 'team' }) {
   const { t } = useI18n()
   const toast = useToast()
   const [docs, setDocs] = useState<Doc[]>([])
   const [loading, setLoading] = useState(live)
   const [uploading, setUploading] = useState(false)
-  const [form, setForm] = useState<{ source: 'faq' | 'link'; name: string; content: string } | null>(null)
+  const [form, setForm] = useState<{ source: 'faq' | 'link' | 'gsheet'; name: string; content: string } | null>(null)
   const [savingForm, setSavingForm] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -46,6 +49,7 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
         .from('knowledge_docs')
         .select('id, source, name, content, status')
         .eq('owner_id', agentId)
+        .eq('owner_type', ownerType)
         .order('created_at', { ascending: false })
         .then(({ data }) => {
           if (on) {
@@ -59,13 +63,13 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
     return () => {
       on = false
     }
-  }, [agentId])
+  }, [agentId, ownerType])
 
   const insertDoc = async (source: Source, name: string, content: string): Promise<Doc | null> => {
     if (live && supabase) {
       const { data, error } = await supabase
         .from('knowledge_docs')
-        .insert({ owner_type: 'agent', owner_id: agentId, source, name, content, status: 'indexing' })
+        .insert({ owner_type: ownerType, owner_id: agentId, source, name, content, status: 'indexing' })
         .select('id, source, name, content, status')
         .single()
       if (error || !data) {
@@ -113,11 +117,26 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
   }
 
   const submitForm = async () => {
-    if (!form || !form.name.trim()) return
+    if (!form) return
+    if (form.source !== 'gsheet' && !form.name.trim()) return
     setSavingForm(true)
     try {
       let content = form.content
-      if (form.source === 'link' && live && supabase) {
+      let name = form.name.trim()
+      if (form.source === 'gsheet') {
+        // server-side bounded snapshot via the connected Google account
+        if (!live || !supabase) { toast(t('platform.knowledge.sheetError')); return }
+        const { data } = await supabase.functions.invoke('google-tools', { body: { action: 'sheets_read_knowledge', url: form.content.trim() } })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = data as any
+        if (!p?.ok || !String(p.content ?? '').trim()) {
+          toast(p?.code === 'google_not_connected_or_refresh_failed' ? t('platform.knowledge.sheetConnect') : p?.error || t('platform.knowledge.sheetError'))
+          return
+        }
+        content = String(p.content)
+        name = name || String(p.name ?? 'Google Sheet')
+        if (p.truncated) toast(t('platform.knowledge.sheetTruncated'))
+      } else if (form.source === 'link' && live && supabase) {
         // try to ingest the URL's text server-side; fall back to storing the URL
         const { data } = await supabase.functions.invoke('fetch-url', { body: { url: form.content } })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,7 +144,7 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
         if (fetched && fetched.trim()) content = fetched
         else toast(t('platform.knowledge.fetchError'))
       }
-      const doc = await insertDoc(form.source, form.name, content)
+      const doc = await insertDoc(form.source, name, content)
       if (doc) setDocs((d) => [doc, ...d])
       setForm(null)
     } finally {
@@ -157,6 +176,9 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
         </Button>
         <Button size="sm" variant="subtle" onClick={() => setForm({ source: 'link', name: '', content: '' })}>
           <Plus size={14} /> {t('platform.knowledge.addLink')}
+        </Button>
+        <Button size="sm" variant="subtle" onClick={() => setForm({ source: 'gsheet', name: '', content: '' })}>
+          <Table2 size={14} /> {t('platform.knowledge.addSheet')}
         </Button>
       </div>
 
@@ -206,11 +228,16 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
               </button>
             </div>
             <div className="mt-4 space-y-3">
-              <input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('platform.knowledge.namePh')} className={inputCls} />
+              <input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={form.source === 'gsheet' ? t('platform.knowledge.nameOptionalPh') : t('platform.knowledge.namePh')} className={inputCls} />
               {form.source === 'link' ? (
                 <>
                   <input value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder={t('platform.knowledge.urlPh')} className={inputCls} />
                   <p className="text-[11px] leading-snug text-muted">{t('platform.knowledge.urlNote')}</p>
+                </>
+              ) : form.source === 'gsheet' ? (
+                <>
+                  <input value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder={t('platform.knowledge.sheetUrlPh')} className={inputCls} />
+                  <p className="text-[11px] leading-snug text-muted">{t('platform.knowledge.sheetNote')}</p>
                 </>
               ) : (
                 <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={5} placeholder={t('platform.knowledge.contentPh')} className={cn(inputCls, 'resize-none')} />
@@ -220,7 +247,7 @@ export function KnowledgeManager({ agentId }: { agentId: string }) {
               <Button size="sm" variant="ghost" onClick={() => setForm(null)}>
                 {t('common.cancel')}
               </Button>
-              <Button size="sm" onClick={submitForm} disabled={savingForm || !form.name.trim() || (form.source === 'link' && !form.content.trim())}>
+              <Button size="sm" onClick={submitForm} disabled={savingForm || (form.source !== 'gsheet' && !form.name.trim()) || ((form.source === 'link' || form.source === 'gsheet') && !form.content.trim())}>
                 {savingForm ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} {t('platform.knowledge.add')}
               </Button>
             </div>

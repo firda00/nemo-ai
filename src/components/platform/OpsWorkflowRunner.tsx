@@ -66,7 +66,10 @@ const statusCls = (s?: string) =>
       : s === 'in_progress' ? 'bg-cyan/15 text-cyan'
         : 'bg-white/[0.06] text-muted'
 
-const MAX_AUDIO_SECONDS = 2 * 60 * 60
+const MAX_AUDIO_SECONDS = 5 * 60 * 60
+// long recordings are transcribed in resumable server windows; the client keeps
+// calling {action:'continue'} until the transcript is complete
+const MAX_CONTINUE_CALLS = 30
 const fileToB64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader()
   reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '')
@@ -102,6 +105,7 @@ export function OpsWorkflowRunner({
   const [result, setResult] = useState<OpsResult | null>(null)
   const [error, setError] = useState('')
   const [transcribing, setTranscribing] = useState(false)
+  const [continueNote, setContinueNote] = useState('')
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   // Upload an audio recording -> storage -> transcribe-file -> drop the transcript into the input.
@@ -110,9 +114,9 @@ export function OpsWorkflowRunner({
     if (!file || !supabase) return
     setError(''); setTranscribing(true)
     try {
-      if (file.size > 180 * 1024 * 1024) { setError('Аудио больше 180 МБ. Сожмите запись или экспортируйте MP3/AAC.'); return }
+      if (file.size > 180 * 1024 * 1024) { setError('Аудио больше 180 МБ. Сожмите запись (для 5 часов подойдёт MP3/AAC ~64 кбит/с).'); return }
       const duration = await readAudioDuration(file)
-      if (duration > MAX_AUDIO_SECONDS) { setError('Максимальная длина записи — 2 часа (120 минут).'); return }
+      if (duration > MAX_AUDIO_SECONDS) { setError('Максимальная длина записи — 5 часов (300 минут).'); return }
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setError('Войдите в Nemo, чтобы загрузить аудиозапись.'); return }
       const path = `${user.id}/audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
@@ -123,12 +127,23 @@ export function OpsWorkflowRunner({
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body: any = !up.error
-        ? { storage_path: path, format: file.type, language: lang || 'auto' }
-        : { audio_b64: await fileToB64(file), format: file.type, language: lang || 'auto' }
+        ? { storage_path: path, format: file.type, language: lang || 'auto', duration_seconds: Math.round(duration) }
+        : { audio_b64: await fileToB64(file), format: file.type, language: lang || 'auto', duration_seconds: Math.round(duration) }
       const { data } = await supabase.functions.invoke('transcribe-file', { body })
+      // long recordings: the server transcribes in windows and asks to continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const p = data as any
+      let p = data as any
+      for (let call = 0; call < MAX_CONTINUE_CALLS && p?.ok && p.pending && p.job_id; call++) {
+        const done = Number(p.windows_done) || 0
+        const total = Number(p.windows_max) || 0
+        setError('')
+        setContinueNote(total ? `Расшифровываю длинную запись… ${Math.min(99, Math.round((done / total) * 100))}%` : 'Расшифровываю длинную запись…')
+        const next = await supabase.functions.invoke('transcribe-file', { body: { action: 'continue', job_id: p.job_id } })
+        p = next.data
+      }
+      setContinueNote('')
       if (p?.ok && p.transcript) setInput(p.transcript)
+      else if (p?.ok && p.pending) setError('Расшифровка ещё идёт — запись очень длинная. Нажмите загрузку ещё раз позже.')
       else setError(p?.message || p?.error || 'Не удалось расшифровать аудио.')
     } catch { setError('Ошибка загрузки/расшифровки аудио.') } finally { setTranscribing(false) }
   }
@@ -200,8 +215,8 @@ export function OpsWorkflowRunner({
           {kind === 'meeting_to_tasks' && (
             <label className="mr-auto inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-ice/12 px-3 py-2 text-xs font-medium text-muted transition hover:text-text">
               {transcribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-              {transcribing ? 'Расшифровка…' : 'Загрузить аудио'}
-              <span className="text-[10px] text-muted/70">до 120 минут · 20 языков</span>
+              {transcribing ? (continueNote || 'Расшифровка…') : 'Загрузить аудио'}
+              <span className="text-[10px] text-muted/70">до 5 часов · 20 языков</span>
               <input type="file" accept="audio/*" className="hidden" onChange={onAudio} disabled={transcribing || running} />
             </label>
           )}

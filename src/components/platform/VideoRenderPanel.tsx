@@ -12,6 +12,13 @@ import { Button } from '../ui/Button'
  */
 type Scene = { caption: string; durationSec: number; imageUrl?: string }
 type Phase = 'idle' | 'scenes' | 'images' | 'render' | 'done' | 'error'
+// 'auto' lets the SERVER pick the plan-aware default (1080p on Pro+, 720p below)
+// so a Starter user never hits a plan rejection without explicitly asking for hi-res
+type Quality = 'auto' | '720p' | '1080p' | '4k'
+
+// display only — the server maps the enum to dimensions and enforces the plan
+const QUALITY_DIMS: Record<Quality, string> = { auto: '', '720p': '720×1280', '1080p': '1080×1920', '4k': '2160×3840' }
+const HI_RES: Quality[] = ['1080p', '4k']
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function invoke(fn: string, body: Record<string, unknown>): Promise<any> {
@@ -45,6 +52,7 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
   // caption-led video with an editorial gradient when both options are off.
   const [genImages, setGenImages] = useState(false)
   const [voice, setVoice] = useState(false)
+  const [quality, setQuality] = useState<Quality>('auto')
   const [scenes, setScenes] = useState<Scene[]>([])
   const [phase, setPhase] = useState<Phase>('idle')
   const [note, setNote] = useState('')
@@ -89,14 +97,16 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
     setPhase('render'); setNote(t('videoRenderPanel.renderingServer'))
     // narration script → the server synthesizes a voiceover (ElevenLabs) and mixes it in
     const narration = voice ? (script.trim() || finalScenes.map((s) => s.caption).join('. ')) : ''
-    const started = await invoke('render-video', { action: 'render', voiceText: narration || undefined, props: { title: title.trim() || undefined, brand: brand.trim() || undefined, accent: '#8B7CF8', scenes: finalScenes } })
+    const started = await invoke('render-video', { action: 'render', quality: quality === 'auto' ? undefined : quality, voiceText: narration || undefined, props: { title: title.trim() || undefined, brand: brand.trim() || undefined, accent: '#8B7CF8', scenes: finalScenes } })
     if (!started?.ok || !started.job_id) {
+      // PLAN_HIRES = the selected resolution needs Pro+; the server message says so explicitly
       setPhase('error'); setErr(started?.message || started?.error || t('videoRenderPanel.renderStartErr')); return
     }
     if (started.voiceRequested && !started.voiced) setNote(t('videoRenderPanel.voiceNoKey'))
-    // poll status
+    // poll status — 4K renders get a longer budget than the worker's 300s timeout
     const jobId = started.job_id
-    for (let i = 0; i < 60; i++) {
+    const maxPolls = quality === '4k' ? 95 : 60
+    for (let i = 0; i < maxPolls; i++) {
       await new Promise((r) => setTimeout(r, 4000))
       const st = await invoke('render-video', { action: 'status', job_id: jobId })
       if (st?.status === 'done' && st.url) { setVideoUrl(String(st.url)); setPhase('done'); setNote(t('videoRenderPanel.done')); return }
@@ -110,7 +120,7 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
     <>
       <div className="card flex items-start gap-2 rounded-2xl border border-violet/20 bg-violet/[0.05] p-4 text-[12.5px] leading-relaxed text-muted">
         <Film size={15} className="mt-0.5 shrink-0 text-violet" />
-        <span>{t('videoRenderPanel.introA')} <b className="text-text">1080×1920</b> {t('videoRenderPanel.introB')}</span>
+        <span>{t('videoRenderPanel.introA')} <b className="text-text">{quality === 'auto' ? t('videoRenderPanel.qualityAuto') : QUALITY_DIMS[quality]}</b> {t('videoRenderPanel.introB')}</span>
       </div>
 
       <div className="card mt-4 space-y-5 rounded-3xl p-6">
@@ -125,6 +135,20 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
           <Button variant="secondary" onClick={breakScenes} disabled={busy || script.trim().length < 8}>{phase === 'scenes' ? <><Loader2 size={15} className="animate-spin" /> {t('videoRenderPanel.breakingBtn')}</> : <><Wand2 size={15} /> {t('videoRenderPanel.breakBtn')}</>}</Button>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={genImages} onChange={(e) => setGenImages(e.target.checked)} className="accent-violet" /><ImageIcon size={14} /> {t('videoRenderPanel.imgPerScene')}</label>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} className="accent-violet" /><Mic size={14} /> {t('videoRenderPanel.voiceover')}</label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted">{t('videoRenderPanel.qualityLabel')}</span>
+          {(Object.keys(QUALITY_DIMS) as Quality[]).map((q) => (
+            <button
+              key={q}
+              onClick={() => setQuality(q)}
+              disabled={busy}
+              className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${quality === q ? 'border-violet/60 bg-violet/15 text-text' : 'border-ice/10 text-muted hover:border-violet/30'}`}
+            >
+              {q === 'auto' ? t('videoRenderPanel.qualityAuto') : q === '4k' ? '4K' : q}{HI_RES.includes(q) ? ' 💎' : ''}
+            </button>
+          ))}
+          <span className="text-[11px] text-fog">{t('videoRenderPanel.qualityProNote')}</span>
         </div>
         <p className="rounded-xl border border-teal/15 bg-teal/[0.05] px-3 py-2 text-xs leading-relaxed text-muted">
           {lang === 'ru' ? 'Естественный режим включён: видео собирается из ваших кадров и текста. AI-картинки и AI-озвучка добавляются только вручную.' : lang === 'uz' ? 'Tabiiy rejim yoqilgan: video sizning kadrlaringiz va matningizdan yig‘iladi. AI rasmlari va ovozi faqat qo‘lda yoqiladi.' : 'Natural mode is on: the video uses your footage and captions. AI visuals and voice are opt-in.'}

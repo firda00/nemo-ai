@@ -14,7 +14,7 @@ const deploy = read('deploy.ps1')
 
 const checks = [
   ['four commerce team blueprints exist', ['marketplace:', 'dropshipping:', "'online-store':", 'logistics:'].every((key) => blueprints.includes(key))],
-  ['templates create persistent teams', /createCommerceTeam\(tpl\.commerceKey, addAgent, deleteAgent\)/.test(marketplace) && /saveDynamicTeam\(addAgent, bp, deleteAgent\)/.test(blueprints)],
+  ['templates create persistent teams', /createCommerceTeam\(tpl\.commerceKey, addAgent, deleteAgent, \{ model, niche \}\)/.test(marketplace) && /saveDynamicTeam\(addAgent, bp, deleteAgent\)/.test(blueprints)],
   ['partial team creation is rolled back', /const rollback = async/.test(teamPersistence) && /if \(subErr\)[\s\S]*rollback\(dep\.id\)/.test(teamPersistence) && /!res\.error && res\.agentId && res\.departmentId/.test(marketplace)],
   ['marketplace team is honest about read-only access', /WB\/Ozon tools are connected separately and remain read-only/.test(blueprints)],
   ['supplier purchases require approval', /Supplier orders, payments and customer refunds always require human approval/.test(blueprints)],

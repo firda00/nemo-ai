@@ -40,6 +40,11 @@ function layoutTraces(messages: DialogueMessage[]): TraceLayout {
 
 const live = isSupabaseEnabled
 
+// PostgREST rows are read untyped (no generated Supabase DB types in this repo,
+// and production schemas vary) — mapDialogue validates the shape downstream.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Row = Record<string, any>
+
 const statusKey: Record<DialogueStatus, string> = {
   open: 'statusOpen',
   resolved: 'statusResolved',
@@ -98,32 +103,29 @@ export default function DialoguesPage() {
       // Do not depend on nested PostgREST relationships here. Older production
       // schemas do not expose messages.agent_id -> agents in the schema cache,
       // which made the former nested select fail the whole inbox with HTTP 400.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const dialogueRows = (dialogueResult.data ?? []) as any[]
+      const dialogueRows = (dialogueResult.data ?? []) as Row[]
       const dialogueIds = dialogueRows.map((row) => row.id)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let messageRows: any[] = []
+      let messageRows: Row[] = []
       if (dialogueIds.length) {
         const messageResult = await supabase.from('messages').select('*').in('dialogue_id', dialogueIds).order('created_at', { ascending: true })
         if (messageResult.error) { setLoading(false); setLoadError(true); continue }
-        messageRows = (messageResult.data ?? []) as any[]
+        messageRows = (messageResult.data ?? []) as Row[]
       }
       const agentIds = Array.from(new Set([...dialogueRows.map((row) => row.agent_id), ...messageRows.map((row) => row.agent_id)].filter(Boolean))) as string[]
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let agentRows: any[] = []
+      let agentRows: Row[] = []
       if (agentIds.length) {
         const agentResult = await supabase.from('agents').select('id, name').in('id', agentIds)
         if (agentResult.error) { setLoading(false); setLoadError(true); continue }
-        agentRows = (agentResult.data ?? []) as any[]
+        agentRows = (agentResult.data ?? []) as Row[]
       }
       const namesById = new Map(agentRows.map((row) => [row.id, row.name]))
-      const messagesByDialogue = new Map<string, any[]>()
+      const messagesByDialogue = new Map<string, Row[]>()
       for (const message of messageRows) {
         const list = messagesByDialogue.get(message.dialogue_id) ?? []
         list.push({ ...message, agents: message.agent_id ? { name: namesById.get(message.agent_id) ?? null } : null })
         messagesByDialogue.set(message.dialogue_id, list)
       }
-      const rows = dialogueRows.map((row) => ({ ...row, agents: { name: namesById.get(row.agent_id) ?? null }, messages: messagesByDialogue.get(row.id) ?? [] }))
+      const rows: Row[] = dialogueRows.map((row) => ({ ...row, agents: { name: namesById.get(row.agent_id) ?? null }, messages: messagesByDialogue.get(row.id) ?? [] }))
       setDialogues(rows.map(mapDialogue))
       const names: Record<string, string> = {}
       for (const r of rows) if (r.agents?.name) names[r.agent_id] = r.agents.name

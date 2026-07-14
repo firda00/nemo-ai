@@ -51,6 +51,9 @@ Apply-Migration .\supabase\migrations\20260711200000_industry_risk_policy.sql
 Apply-Migration .\supabase\migrations\20260711210000_channel_safe_read_columns.sql
 Apply-Migration .\supabase\migrations\20260713120000_governed_agent_evolution.sql
 Apply-Migration .\supabase\migrations\20260713150000_product_intelligence.sql
+Apply-Migration .\supabase\migrations\20260714090000_leads_concurrency.sql
+Apply-Migration .\supabase\migrations\20260714100000_team_shared_rag.sql
+Apply-Migration .\supabase\migrations\20260714110000_transcribe_jobs.sql
 
 $schemaCheckSql = @'
 select
@@ -83,15 +86,55 @@ select
     join pg_proc p on p.oid = t.tgfoid
     where t.tgname = 'channels_regulated_agent_guard' and not t.tgisinternal and t.tgenabled <> 'D'
       and n.nspname = 'public' and c.relname = 'channels' and p.proname = 'block_regulated_agent_channel'
-  ) as channel_guard;
+  ) as channel_guard,
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'crm_push_claim')
+    and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'crm_push_claimed_at') as lead_claim_columns,
+  to_regclass('public.leads_dialogue_latest_idx') is not null as leads_latest_index,
+  to_regprocedure('public.merge_lead_fields(uuid,uuid,jsonb)') is not null
+    and to_regprocedure('public.claim_lead_crm_push(uuid,uuid)') is not null
+    and to_regprocedure('public.finish_lead_crm_push(uuid,uuid,uuid,text)') is not null as lead_rpcs,
+  not has_function_privilege('authenticated', 'public.merge_lead_fields(uuid,uuid,jsonb)', 'execute')
+    and not has_function_privilege('anon', 'public.merge_lead_fields(uuid,uuid,jsonb)', 'execute')
+    and not has_function_privilege('authenticated', 'public.claim_lead_crm_push(uuid,uuid)', 'execute')
+    and not has_function_privilege('anon', 'public.claim_lead_crm_push(uuid,uuid)', 'execute')
+    and not has_function_privilege('authenticated', 'public.finish_lead_crm_push(uuid,uuid,uuid,text)', 'execute')
+    and not has_function_privilege('anon', 'public.finish_lead_crm_push(uuid,uuid,uuid,text)', 'execute') as lead_rpcs_locked,
+  not has_table_privilege('authenticated', 'public.leads', 'insert')
+    and not has_table_privilege('authenticated', 'public.leads', 'update')
+    and not has_table_privilege('authenticated', 'public.leads', 'delete')
+    and not has_table_privilege('anon', 'public.leads', 'insert')
+    and not has_table_privilege('anon', 'public.leads', 'update')
+    and not has_table_privilege('anon', 'public.leads', 'delete')
+    and has_table_privilege('authenticated', 'public.leads', 'select') as leads_dml_locked,
+  to_regprocedure('public.match_knowledge_team(uuid,uuid,uuid,vector,integer)') is not null as team_rag_rpc,
+  not has_function_privilege('authenticated', 'public.match_knowledge_team(uuid,uuid,uuid,vector,integer)', 'execute')
+    and not has_function_privilege('anon', 'public.match_knowledge_team(uuid,uuid,uuid,vector,integer)', 'execute') as team_rag_locked,
+  exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'knowledge_docs' and policyname = 'knowledge_acc' and qual like '%departments%') as team_docs_policy,
+  exists(
+    select 1 from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where t.tgname = 'departments_tenant_guard' and not t.tgisinternal and t.tgenabled <> 'D' and n.nspname = 'public' and c.relname = 'departments'
+  ) and exists(
+    select 1 from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where t.tgname = 'sub_agents_tenant_guard' and not t.tgisinternal and t.tgenabled <> 'D' and n.nspname = 'public' and c.relname = 'sub_agents'
+  ) as team_tenant_guards,
+  exists(select 1 from information_schema.tables where table_schema = 'public' and table_name = 'transcribe_jobs')
+    and (select relrowsecurity from pg_class where oid = 'public.transcribe_jobs'::regclass)
+    and not exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'transcribe_jobs')
+    and to_regprocedure('public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)') is not null
+    and not has_function_privilege('authenticated', 'public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)', 'execute')
+    and not has_function_privilege('anon', 'public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)', 'execute') as transcribe_jobs_locked;
 '@
 $schemaCheckBody = $jsonSer.Serialize(@{ query = $schemaCheckSql })
 $schemaCheck = Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/database/query" -Method Post -Headers $hdr -Body $schemaCheckBody
 $schemaRow = @($schemaCheck)[0]
-if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.governed_evolution -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard) {
+if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.governed_evolution -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard -or -not $schemaRow.lead_claim_columns -or -not $schemaRow.leads_latest_index -or -not $schemaRow.lead_rpcs -or -not $schemaRow.lead_rpcs_locked -or -not $schemaRow.leads_dml_locked -or -not $schemaRow.team_rag_rpc -or -not $schemaRow.team_rag_locked -or -not $schemaRow.team_docs_policy -or -not $schemaRow.team_tenant_guards -or -not $schemaRow.transcribe_jobs_locked) {
   throw 'Schema verification failed after migrations.'
 }
-Write-Host '     logistics, billing, governed evolution, safe channel metadata and regulated-channel schema verified.' -ForegroundColor Green
+Write-Host '     logistics, billing, governed evolution, safe channel metadata, regulated-channel and leads-concurrency schema verified.' -ForegroundColor Green
 
 $riskProbeSql = @'
 do $risk_probe$
@@ -152,6 +195,64 @@ $risk_probe$;
 '@
 Apply-Sql $riskProbeSql
 Write-Host '     regulated-channel behavior probe passed.' -ForegroundColor Green
+
+$leadsProbeSql = @'
+do $leads_probe$
+declare
+  probe_account uuid;
+  probe_agent uuid;
+  probe_dialogue uuid;
+  first_lead uuid;
+  second_lead uuid;
+  probe_fields jsonb;
+  probe_token uuid;
+  reclaim_token uuid;
+begin
+  insert into public.accounts (name) values ('Nemo leads concurrency deploy probe') returning id into probe_account;
+  insert into public.agents (account_id, name) values (probe_account, 'Leads probe agent') returning id into probe_agent;
+  insert into public.dialogues (agent_id, channel, external_id) values (probe_agent, 'widget', 'leads-probe') returning id into probe_dialogue;
+
+  select lead_id into first_lead from public.merge_lead_fields(probe_account, probe_dialogue, '{"name":"Probe"}'::jsonb);
+  select lead_id, lead_fields into second_lead, probe_fields from public.merge_lead_fields(probe_account, probe_dialogue, '{"phone":"+998900000000"}'::jsonb);
+  if first_lead is null or first_lead <> second_lead then
+    raise exception 'lead merge did not reuse the canonical row';
+  end if;
+  if probe_fields->>'name' <> 'Probe' or probe_fields->>'phone' <> '+998900000000' then
+    raise exception 'lead merge lost previously captured fields';
+  end if;
+  if (select count(*) from public.leads where dialogue_id = probe_dialogue) <> 1 then
+    raise exception 'lead merge created duplicate rows';
+  end if;
+
+  select claim_token into probe_token from public.claim_lead_crm_push(probe_account, first_lead);
+  if probe_token is null then raise exception 'first CRM-push claim failed'; end if;
+  select claim_token into reclaim_token from public.claim_lead_crm_push(probe_account, first_lead);
+  if reclaim_token is not null then raise exception 'live CRM-push claim was double-issued'; end if;
+  update public.leads set crm_push_claimed_at = now() - interval '11 minutes' where id = first_lead;
+  select claim_token into reclaim_token from public.claim_lead_crm_push(probe_account, first_lead);
+  if reclaim_token is null then raise exception 'stale CRM-push claim was not reclaimable'; end if;
+  if public.finish_lead_crm_push(probe_account, first_lead, gen_random_uuid(), 'probe') then
+    raise exception 'CRM-push finish accepted a wrong token';
+  end if;
+  if not public.finish_lead_crm_push(probe_account, first_lead, reclaim_token, 'probe') then
+    raise exception 'CRM-push finish with a valid token failed';
+  end if;
+  select claim_token into reclaim_token from public.claim_lead_crm_push(probe_account, first_lead);
+  if reclaim_token is not null then raise exception 'completed lead was claimable again'; end if;
+
+  begin
+    perform public.merge_lead_fields(gen_random_uuid(), probe_dialogue, '{"name":"x"}'::jsonb);
+    raise exception 'cross-account lead merge was not rejected';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  delete from public.accounts where id = probe_account;
+end
+$leads_probe$;
+'@
+Apply-Sql $leadsProbeSql
+Write-Host '     leads concurrency behavior probe passed.' -ForegroundColor Green
 
 if ($cronLine) {
   $safeCron = $cronValue.Replace("'", "''")

@@ -97,6 +97,69 @@ try {
   }
   ok('Agent creation burst is rate-limited', rateBlocked && created <= 30, `${created} accepted before block`)
 
+  // Leads concurrency (security gate #29): truly parallel PostgREST calls — merges must not
+  // lose fields or duplicate rows, and the CRM-push claim must have exactly one winner.
+  const claimTokenOf = (r) => (Array.isArray(r.data) ? r.data[0] : r.data)?.claim_token ?? null
+  const { data: leadDialogue } = await admin.from('dialogues').insert({ agent_id: agentB.id, channel: 'widget', external_id: `lead-${stamp}` }).select('id').single()
+  const merges = await Promise.all([
+    admin.rpc('merge_lead_fields', { p_account_id: b.accountId, p_dialogue_id: leadDialogue.id, p_patch: { name: 'Aziz' } }),
+    admin.rpc('merge_lead_fields', { p_account_id: b.accountId, p_dialogue_id: leadDialogue.id, p_patch: { phone: '+998901234567' } }),
+  ])
+  const { data: leadRows } = await admin.from('leads').select('id, fields').eq('dialogue_id', leadDialogue.id)
+  ok('Parallel lead merges keep one row with both fields', merges.every((r) => !r.error) && (leadRows ?? []).length === 1 && leadRows?.[0]?.fields?.name === 'Aziz' && leadRows?.[0]?.fields?.phone === '+998901234567')
+  const leadId = leadRows?.[0]?.id
+  const foreignClaim = await admin.rpc('claim_lead_crm_push', { p_account_id: a.accountId, p_lead_id: leadId })
+  ok('Cross-account CRM-push claim is refused', !foreignClaim.error && claimTokenOf(foreignClaim) === null)
+  const claims = await Promise.all([
+    admin.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId }),
+    admin.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId }),
+  ])
+  const winnerTokens = claims.map(claimTokenOf).filter(Boolean)
+  ok('Concurrent CRM-push claims have exactly one winner', claims.every((r) => !r.error) && winnerTokens.length === 1)
+  const release = await admin.rpc('finish_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId, p_token: winnerTokens[0], p_provider: null })
+  const reclaimAfterRelease = await admin.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId })
+  ok('Released claim (nothing was sent) is immediately reclaimable', release.data === true && Boolean(claimTokenOf(reclaimAfterRelease)))
+  const staleSet = await admin.from('leads').update({ crm_push_claimed_at: new Date(Date.now() - 11 * 60 * 1000).toISOString() }).eq('id', leadId)
+  const reclaim = await admin.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId })
+  const reclaimToken = claimTokenOf(reclaim)
+  ok('Stale CRM-push claim is reclaimable', !staleSet.error && !reclaim.error && Boolean(reclaimToken))
+  const wrongToken = await admin.rpc('finish_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId, p_token: crypto.randomUUID(), p_provider: 'forged' })
+  const foreignFinish = await admin.rpc('finish_lead_crm_push', { p_account_id: a.accountId, p_lead_id: leadId, p_token: reclaimToken, p_provider: 'forged' })
+  const finish = await admin.rpc('finish_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId, p_token: reclaimToken, p_provider: 'bitrix24' })
+  const afterFinish = await admin.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId })
+  ok('Only the tenant token holder finishes; completed lead is not reclaimable', wrongToken.data === false && foreignFinish.data === false && finish.data === true && !afterFinish.error && claimTokenOf(afterFinish) === null)
+  const foreignMerge = await admin.rpc('merge_lead_fields', { p_account_id: a.accountId, p_dialogue_id: leadDialogue.id, p_patch: { name: 'intruder' } })
+  ok('Cross-account lead merge is rejected', Boolean(foreignMerge.error))
+  const browserMerge = await b.client.rpc('merge_lead_fields', { p_account_id: b.accountId, p_dialogue_id: leadDialogue.id, p_patch: { name: 'browser' } })
+  const browserClaim = await b.client.rpc('claim_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId })
+  const browserFinish = await b.client.rpc('finish_lead_crm_push', { p_account_id: b.accountId, p_lead_id: leadId, p_token: crypto.randomUUID(), p_provider: 'forged' })
+  const browserWrite = await b.client.from('leads').update({ pushed_to_crm: false }).eq('id', leadId)
+  ok('Browser role cannot execute lead RPCs or write leads directly', Boolean(browserMerge.error) && Boolean(browserClaim.error) && Boolean(browserFinish.error) && Boolean(browserWrite.error))
+
+  // Team-shared RAG: tenant-scoped team docs, account-aware retrieval, cross-tenant guards.
+  const { data: deptB, error: deptErr } = await admin.from('departments').insert({ account_id: b.accountId, main_agent_id: agentB.id, name: `RAG team ${stamp}` }).select('id').single()
+  ok('Same-tenant department creation works with the tenant guard on', !deptErr && Boolean(deptB?.id))
+  const crossDept = await admin.from('departments').insert({ account_id: a.accountId, main_agent_id: agentB.id, name: 'forged cross-tenant team' })
+  ok('Cross-tenant department lead is rejected by the database', Boolean(crossDept.error))
+  const { data: teamDoc, error: teamDocErr } = await b.client.from('knowledge_docs').insert({ owner_type: 'team', owner_id: deptB.id, source: 'faq', name: 'team-shared', content: `TEAM_SHARED_FACT_${stamp}: office opens at 9am` }).select('id').single()
+  ok('Owner tenant can create a team knowledge doc', !teamDocErr && Boolean(teamDoc?.id))
+  const foreignTeamDoc = await a.client.from('knowledge_docs').insert({ owner_type: 'team', owner_id: deptB.id, source: 'faq', name: 'intruder', content: 'foreign write' })
+  ok('Foreign tenant cannot write into another team\'s knowledge', Boolean(foreignTeamDoc.error))
+  const foreignTeamRead = await a.client.from('knowledge_docs').select('id').eq('owner_type', 'team').eq('owner_id', deptB.id)
+  ok('Foreign tenant cannot read another team\'s knowledge', !foreignTeamRead.error && (foreignTeamRead.data ?? []).length === 0)
+  const indexTeamDoc = await fetch(`${url}/functions/v1/knowledge-index`, { method: 'POST', headers: { Authorization: `Bearer ${b.jwt}`, apikey: anonKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'index', doc_id: teamDoc.id }) })
+  const indexPayload = await indexTeamDoc.json().catch(() => ({}))
+  ok('Team doc indexes into chunks for the owner tenant', indexTeamDoc.status === 200 && indexPayload?.ok === true && Number(indexPayload?.chunks) >= 1)
+  const foreignIndex = await fetch(`${url}/functions/v1/knowledge-index`, { method: 'POST', headers: { Authorization: `Bearer ${a.jwt}`, apikey: anonKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'index', doc_id: teamDoc.id }) })
+  ok('Foreign tenant cannot index another team\'s doc', foreignIndex.status === 403)
+  const unitVec = [1, ...Array(383).fill(0)]
+  const ragOwn = await admin.rpc('match_knowledge_team', { p_account_id: b.accountId, p_agent_id: null, p_department_id: deptB.id, p_query: unitVec, p_k: 5 })
+  ok('Account-verified team retrieval returns the shared chunks', !ragOwn.error && Array.isArray(ragOwn.data) && ragOwn.data.length >= 1)
+  const ragForeign = await admin.rpc('match_knowledge_team', { p_account_id: a.accountId, p_agent_id: null, p_department_id: deptB.id, p_query: unitVec, p_k: 5 })
+  ok('Mismatched account + department yields nothing (fail closed)', !ragForeign.error && (ragForeign.data ?? []).length === 0)
+  const browserRag = await b.client.rpc('match_knowledge_team', { p_account_id: b.accountId, p_agent_id: null, p_department_id: deptB.id, p_query: unitVec, p_k: 5 })
+  ok('Browser role cannot execute team retrieval directly', Boolean(browserRag.error))
+
   await admin.from('google_accounts').upsert({ account_id: a.accountId, google_email: 'security@example.invalid', refresh_token: 'temporary-refresh-token' })
   await admin.from('google_oauth_apps').upsert({ account_id: a.accountId, client_id: 'temporary-client', client_secret: 'temporary-secret' })
   await admin.from('provider_keys').upsert({ account_id: a.accountId, provider: 'sentry', api_key: 'temporary-provider-secret' })

@@ -50,14 +50,17 @@ function subSystem(sa: any, fallback: string): string {
 const oneOf = (v: unknown, allowed: string[], def: string) => (allowed.includes(String(v)) ? String(v) : def)
 const validDate = (d: unknown): string | null => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null)
 
-// A two-hour transcript is much larger than one model prompt. Keep the full
+// A five-hour transcript is much larger than one model prompt. Keep the full
 // input, split it into bounded overlapping windows, analyze every window, then
 // reduce the structured results. The constants cap both provider cost and DB
-// side effects while still covering the final words of a 240k-character input.
-const MEETING_INPUT_MAX_CHARS = 240_000
-const MEETING_CHUNK_CHARS = 22_000
+// side effects while still covering the final words of a 600k-character input:
+// worst-case advance per window is 0.95 * 30000 - 400 ≈ 28.1k chars, so 24
+// windows guarantee > 674k coverage (fewer, larger calls also keep the total
+// request wall-clock close to the previous 12-window budget).
+const MEETING_INPUT_MAX_CHARS = 600_000
+const MEETING_CHUNK_CHARS = 30_000
 const MEETING_CHUNK_OVERLAP = 400
-const MEETING_MAX_CHUNKS = 12
+const MEETING_MAX_CHUNKS = 24
 const MEETING_TASKS_PER_CHUNK = 12
 const MEETING_FINAL_TASK_LIMIT = 40
 const MEETING_NORMALIZE_BATCH = 20
@@ -70,7 +73,7 @@ function splitMeetingTranscript(input: string): string[] {
     let end = Math.min(input.length, start + MEETING_CHUNK_CHARS)
     if (end < input.length) {
       // Prefer a sentence/paragraph boundary near the end without shrinking a
-      // chunk enough to leave the tail uncovered by the 12-window hard cap.
+      // chunk enough to leave the tail uncovered by the window hard cap.
       const floor = start + Math.floor(MEETING_CHUNK_CHARS * 0.95)
       const window = input.slice(floor, end)
       const candidates = [window.lastIndexOf('\n\n'), window.lastIndexOf('\n'), window.lastIndexOf('. '), window.lastIndexOf('? '), window.lastIndexOf('! ')]

@@ -6,6 +6,7 @@ import { buildReply, buildSubAgentReply } from './agent.ts'
 import { tgSend } from './telegram.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
 import { resolveOpenRouterKey } from './keys.ts'
+import { planOf } from './plans.ts'
 import { transcribeAudio } from './transcribe.ts'
 import { isRegulatedAgent } from './riskPolicy.ts'
 
@@ -26,12 +27,13 @@ const VOICE_MSG = {
 async function subAgentReply(db: any, agent: any, subId: string, dialogueId: string): Promise<string> {
   const { data: sub } = await db.from('sub_agents').select('*').eq('id', subId).maybeSingle()
   if (!sub || (sub.status && sub.status !== 'active')) return ''
-  const { data: acc } = await db.from('accounts').select('token_balance').eq('id', agent.account_id).single()
+  const { data: acc } = await db.from('accounts').select('token_balance, plan').eq('id', agent.account_id).single()
   if (acc && Number(acc.token_balance) <= 0) return ''
   const { data: history } = await db.from('messages').select('author, content').eq('dialogue_id', dialogueId).eq('message_type', 'chat').order('created_at', { ascending: false }).limit(20)
   const chronological = (history ?? []).slice().reverse()
   const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
-  const { text, tokens } = await buildSubAgentReply(db, apiKey, sub, chronological)
+  // the sub-agent's saved model runs through the same plan gate as every other path
+  const { text, tokens } = await buildSubAgentReply(db, apiKey, sub, chronological, planOf(acc?.plan).premium)
   if (text) {
     await db.from('messages').insert({ dialogue_id: dialogueId, author: 'agent', content: text })
     await db.from('usage').insert({ account_id: agent.account_id, tokens, model: 'subagent' })
