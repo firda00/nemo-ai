@@ -20,6 +20,7 @@ $steps = @(
   @{ Name = 'Lead patch behavior'; Command = { npm run test:lead-behavior } },
   @{ Name = 'Release entitlement contracts'; Command = { npm run test:release } },
   @{ Name = 'Review convergence and input UX contracts'; Command = { npm run test:review-ux } },
+  @{ Name = 'Document export contracts'; Command = { npm run test:exports } },
   @{ Name = 'Auth and trace RLS contracts'; Command = { npm run test:auth-contracts } },
   @{ Name = 'Thirty-point security contracts'; Command = { npm run test:security } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
