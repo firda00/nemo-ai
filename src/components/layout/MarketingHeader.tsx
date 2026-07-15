@@ -8,15 +8,20 @@ import { Button } from '../ui/Button'
 import { LanguageToggle } from '../ui/LanguageToggle'
 
 export function MarketingHeader() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { isAuthed } = useAuth()
   const [open, setOpen] = useState(false)
 
+  const labels = {
+    ru: ['Продукт', 'Сценарии', 'Как работает', 'Цены'],
+    uz: ['Mahsulot', 'Ssenariylar', 'Qanday ishlaydi', 'Narxlar'],
+    en: ['Product', 'Use cases', 'How it works', 'Pricing'],
+  }[lang]
   const links = [
-    { href: '#product', label: t('marketingHeader.product') },
-    { href: '#templates', label: t('marketingHeader.templates') },
-    { href: '#workflow', label: t('marketingHeader.workflow') },
-    { href: '/app/billing', label: t('marketingHeader.pricing') },
+    { href: '#product', label: labels[0] },
+    { href: '#templates', label: labels[1] },
+    { href: '#workflow', label: labels[2] },
+    { href: '/app/billing', label: labels[3] },
   ]
 
   return (
@@ -47,7 +52,7 @@ export function MarketingHeader() {
                 <Link to="/auth" className="text-sm font-medium text-muted transition-colors hover:text-text">
                   {t('nav.login')}
                 </Link>
-                <Button to="/auth?mode=signup" size="sm" className="!bg-white !bg-none !text-bg shadow-none hover:brightness-95">
+                <Button to="/auth?mode=signup" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </>
@@ -69,7 +74,7 @@ export function MarketingHeader() {
               ))}
               <div className="mt-2 flex items-center justify-between gap-3 px-1">
                 <LanguageToggle />
-                <Button to="/auth?mode=signup" size="sm" className="!bg-white !bg-none !text-bg shadow-none hover:brightness-95">
+                <Button to="/auth?mode=signup" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </div>
