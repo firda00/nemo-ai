@@ -13,14 +13,14 @@ export function MarketingHeader() {
   const [open, setOpen] = useState(false)
 
   const labels = {
-    ru: ['Продукт', 'Сценарии', 'Как работает', 'Цены'],
-    uz: ['Mahsulot', 'Ssenariylar', 'Qanday ishlaydi', 'Narxlar'],
-    en: ['Product', 'Use cases', 'How it works', 'Pricing'],
+    ru: ['Возможности', 'Сценарии', 'Как работает', 'Цены'],
+    uz: ['Imkoniyatlar', 'Ssenariylar', 'Qanday ishlaydi', 'Narxlar'],
+    en: ['Capabilities', 'Use cases', 'How it works', 'Pricing'],
   }[lang]
   const links = [
-    { href: '#product', label: labels[0] },
+    { href: '#capabilities', label: labels[0] },
     { href: '#templates', label: labels[1] },
-    { href: '#workflow', label: labels[2] },
+    { href: '#product', label: labels[2] },
     { href: '/app/billing', label: labels[3] },
   ]
 

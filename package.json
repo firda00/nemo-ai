@@ -32,7 +32,8 @@
     "test:exports": "node --experimental-strip-types agent-hub/export-contracts.mjs",
     "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "demo:swarm": "node agent-hub/demo-simulation.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",

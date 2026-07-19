@@ -1,13 +1,21 @@
 import {
   ArrowRight,
+  BrainCircuit,
   Check,
   CheckCircle2,
   ClipboardCheck,
   Database,
+  Globe,
+  Layers,
   MessageCircleMore,
+  Mic,
+  Plug,
+  Repeat,
+  Rocket,
   ShieldCheck,
   Sparkles,
   UserRoundCheck,
+  Zap,
 } from 'lucide-react'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
@@ -18,166 +26,238 @@ import { cn } from '../lib/cn'
 
 const copy = {
   ru: {
-    launch: 'Публичный запуск 19 июля',
-    heroKicker: 'Для учебных центров и онлайн-школ',
-    title: 'AI-продажи\nучебного центра',
-    subtitle: 'Квалифицирует лиды, готовит follow-up, обновляет CRM или Google Sheets и показывает руководителю следующий шаг.',
-    primaryCta: 'Запустить пилот',
-    secondaryCta: 'Посмотреть workflow',
-    openTeam: 'Открыть AI-команду',
-    notes: ['UZ, RU и EN', 'Руководитель подтверждает важные действия'],
-    painKicker: 'Одна заявка. Один понятный маршрут.',
-    painTitle: 'Лид не должен теряться между чатом, таблицей и менеджером',
-    painSubtitle: 'Nemo собирает входящие обращения в управляемый процесс. Каждый шаг виден, а спорные решения остаются за человеком.',
+    launch: "Публичный запуск 19 июля",
+    heroKicker: "AI-платформа для любого бизнеса",
+    title: "Создайте\nAI-агента\nза минуты",
+    subtitle: "Опишите задачу — Nemo соберёт AI-команду: от поддержки клиентов до автоматизации любых рабочих процессов.",
+    primaryCta: "Создать агента бесплатно",
+    secondaryCta: "Посмотреть, как работает",
+    openTeam: "Создать AI-команду",
+    notes: ["1 000 кредитов бесплатно", "67 AI-функций", "Без кода"],
+    statsTitle: "Платформа, готовая к масштабированию",
+    stats: [
+      ["67", "AI-функций"],
+      ["20+", "интеграций"],
+      ["6", "каналов связи"],
+      ["5 мин", "до первого агента"],
+    ],
+    painKicker: "Как это работает",
+    painTitle: "От идеи до рабочего AI-агента — четыре шага",
+    painSubtitle: "Не нужно писать код или разбираться в API. Опишите задачу, настройте поведение, подключите каналы — и агент работает.",
     flow: [
-      ['Входящие', 'Telegram, Instagram, форма или файл'],
-      ['Квалификация', 'Цель, курс, срок, бюджет и готовность'],
-      ['Действие', 'Персональный follow-up и следующая задача'],
-      ['Контроль', 'CRM/Sheets и ежедневный отчёт руководителю'],
+      ["Опишите задачу", "Расскажите, что должен делать агент — на любом языке"],
+      ["Настройте команду", "Выберите роли, инструменты, базу знаний и каналы"],
+      ["Запустите", "Подключите Telegram, WhatsApp, виджет или API"],
+      ["Масштабируйте", "Добавляйте агентов, создавайте AI-команды и отделы"],
     ],
-    before: 'Без Nemo',
-    after: 'С Nemo',
-    beforeItems: ['Ответ зависит от свободного менеджера', 'Данные копируются вручную', 'Следующий шаг легко забыть', 'Руководитель узнаёт результат слишком поздно'],
-    afterItems: ['Первичная обработка идёт по одному стандарту', 'Лид получает статус и владельца', 'CRM или таблица обновляется структурно', 'Человек видит риски и подтверждает важные действия'],
-    workflowKicker: 'Живой рабочий процесс',
-    workflowTitle: 'Не чат-бот, а команда с ролями и проверкой результата',
-    workflowSubtitle: 'Team Lead распределяет работу между специалистами. В интерфейсе видно, кто что сделал и что требуется дальше.',
-    pilotKicker: 'Сценарий первого запуска',
-    pilotTitle: 'Начните с одной задачи, которую можно измерить за неделю',
-    pilotText: 'Мы настраиваем обработку входящих лидов, правила квалификации и формат вашей таблицы или CRM. После пилота вы видите скорость ответа, статусы лидов и следующий шаг по каждой заявке.',
-    pilotSteps: ['Подключить источник заявок', 'Настроить вопросы и статусы', 'Проверить на реальных диалогах', 'Передать команде рабочий регламент'],
-    controlKicker: 'Контроль встроен в продукт',
-    controlTitle: 'Агенты помогают команде, но не действуют вслепую',
-    controls: [
-      ['Видимый trace', 'Каждое действие и результат доступны руководителю.', ClipboardCheck],
-      ['Передача человеку', 'Неуверенный или важный случай уходит менеджеру.', UserRoundCheck],
-      ['Изоляция данных', 'Данные разных компаний разделены политиками доступа.', ShieldCheck],
-      ['Ваши инструменты', 'Google Sheets, CRM и модели подключаются по правилам компании.', Database],
+    before: "Без AI-агентов",
+    after: "С Nemo AI",
+    beforeItems: ["Рутинные задачи съедают часы каждый день", "Каждый процесс требует отдельного инструмента", "Масштабирование = найм новых людей", "Нет единой системы автоматизации"],
+    afterItems: ["AI-агент работает 24/7 по вашим правилам", "Одна платформа для агентов, команд и каналов", "Масштабирование = добавить ещё одного агента", "Полный контроль: история действий, передача человеку"],
+    workflowKicker: "AI-команды по запросу",
+    workflowTitle: "Не один бот, а координированная AI-команда с ролями",
+    workflowSubtitle: "Координатор распределяет задачи между специалистами. Вы видите, кто что сделал и какой шаг будет следующим.",
+    capKicker: "Возможности AI-агента",
+    capTitle: "Всё, что нужно для умной автоматизации",
+    capabilities: [
+      ["Мессенджеры", "Telegram, WhatsApp, Instagram, виджет на сайте", MessageCircleMore],
+      ["База знаний", "Загрузите PDF, DOCX, XLSX — агент учится на ваших данных", Database],
+      ["Инструменты", "CRM, Google Sheets, API, браузер, генерация файлов", Plug],
+      ["Голос", "Распознавание и генерация речи для голосовых каналов", Mic],
+      ["Автопосты", "Планируйте и публикуйте контент по расписанию", Repeat],
+      ["Аналитика", "Отслеживайте эффективность каждого агента и команды", Layers],
     ],
-    templatesKicker: 'После первого workflow',
-    templatesTitle: 'Расширяйте Nemo на соседние процессы',
+    templatesKicker: "Сценарии использования",
+    templatesTitle: "AI-агенты для любой сферы бизнеса",
     templates: [
-      ['Продажи курсов', 'Лиды, follow-up, CRM и отчёт'],
-      ['Поддержка студентов', 'Вопросы, маршрутизация и передача человеку'],
-      ['Планёрка', 'Запись встречи, задачи, сроки и напоминания'],
+      ["Поддержка клиентов", "Мгновенные ответы, маршрутизация и передача оператору"],
+      ["Продажи и лиды", "Квалификация заявок, follow-up и обновление CRM"],
+      ["Контент и маркетинг", "Генерация текстов, постов и креативов по расписанию"],
+      ["Аналитика и отчёты", "Ежедневные сводки, мониторинг и уведомления"],
+      ["HR и рекрутинг", "Скрининг резюме, ответы кандидатам, онбординг"],
+      ["Исследования", "Поиск информации, анализ конкурентов и рынка"],
     ],
-    faqTitle: 'Что важно знать до пилота',
+    controlKicker: "Безопасность и контроль",
+    controlTitle: "AI-агенты помогают команде, но не действуют вслепую",
+    controls: [
+      ["История действий", "Каждое действие и результат доступны вам в реальном времени.", ClipboardCheck],
+      ["Передача человеку", "Сложные или критичные случаи передаются оператору.", UserRoundCheck],
+      ["Изоляция данных", "Данные каждого аккаунта изолированы политиками доступа.", ShieldCheck],
+      ["Ваши инструменты", "Подключайте свои API, модели и базы данных.", Database],
+    ],
+    faqTitle: "Частые вопросы",
     faq: [
-      { q: 'Nemo сам отправляет сообщения клиентам?', a: 'Автоматический режим настраивается отдельно. На пилоте можно оставить подтверждение каждого внешнего действия за менеджером.' },
-      { q: 'Нужно переносить нашу таблицу?', a: 'Нет. Можно подключить существующий Google Sheet или загрузить XLSX/CSV и настроить соответствие колонок.' },
-      { q: 'Можно поменять модель AI?', a: 'Да. В команде можно выбрать разрешённого провайдера и модель с учётом тарифа и ключей компании.' },
-      { q: 'Агенты работают без ошибок?', a: 'Ни одна AI-система не даёт нулевой риск ошибок. Поэтому Nemo показывает trace, использует проверки результата и передаёт критичные решения человеку.' },
+      { q: "Что такое AI-агент?", a: "AI-агент — это автономная программа, которая выполняет задачи по вашим правилам: отвечает клиентам, обрабатывает заявки, генерирует контент или анализирует данные. Агент работает 24/7 и подключается к вашим каналам и инструментам." },
+      { q: "Нужно ли уметь программировать?", a: "Нет. Вы описываете задачу на обычном языке, выбираете инструменты и каналы — Nemo настроит агента автоматически. Для продвинутых пользователей есть API и кастомные инструменты." },
+      { q: "Какие каналы поддерживаются?", a: "Telegram, WhatsApp, Instagram, веб-виджет и API. Список постоянно расширяется — Discord, YouTube и другие в планах." },
+      { q: "Что такое AI-команда?", a: "AI-команда — это несколько агентов с разными ролями, управляемых координатором. Например: один агент квалифицирует заявку, другой готовит ответ, третий обновляет CRM. Координатор распределяет работу автоматически." },
+      { q: "Агенты работают без ошибок?", a: "Ни одна AI-система не гарантирует нулевой риск ошибок. Nemo снижает риск через историю действий, проверку результатов и автоматическую передачу сложных случаев человеку." },
+      { q: "Сколько это стоит?", a: "Регистрация бесплатна — вы получаете 1 000 кредитов. Пакеты кредитов от $10. Планы для команд от $59/мес. Подробнее — на странице Billing." },
     ],
-    finalTitle: 'Подготовьте AI-отдел продаж к запуску 19 июля',
-    finalText: 'Начните с одного сценария и реальных заявок. Мы поможем настроить роли, таблицу и правила контроля.',
+    finalTitle: "Создайте своего AI-агента прямо сейчас",
+    finalText: "1 000 кредитов бесплатно при регистрации. Опишите задачу — и ваш агент начнёт работать через 5 минут.",
+    preview: {
+      process: "AI-команда Nemo", request: "Обработка входящего запроса", done: "Готово", team: "Команда", message: "Запрос пользователя",
+      quote: "«Нужна помощь с выбором тарифа и подключением Telegram бота»", history: "Что сделано", next: "Следующий шаг", action: "Отправить рекомендацию клиенту",
+      agents: ["Координатор", "Аналитик запросов", "Специалист по продукту", "Контроль качества"],
+      steps: ["Запрос принят и классифицирован", "Тарифы подобраны по критериям", "Инструкция по подключению готова", "Ответ проверен и отправлен"],
+    },
   },
   uz: {
-    launch: 'Ommaviy ishga tushirish 19-iyul',
-    heroKicker: "O'quv markazlari va onlayn maktablar uchun",
-    title: "O'quv markazida\nAI savdo",
-    subtitle: "Lidlarni saralaydi, follow-up tayyorlaydi, CRM yoki Google Sheetsni yangilaydi va rahbarga keyingi qadamni ko'rsatadi.",
-    primaryCta: 'Pilotni boshlash',
-    secondaryCta: "Workflowni ko'rish",
-    openTeam: 'AI-komandani ochish',
-    notes: ['UZ, RU va EN', "Muhim harakatlarni rahbar tasdiqlaydi"],
-    painKicker: "Bitta ariza. Bitta aniq yo'l.",
-    painTitle: "Lid chat, jadval va menejer orasida yo'qolmasligi kerak",
-    painSubtitle: "Nemo kiruvchi murojaatlarni boshqariladigan jarayonga aylantiradi. Har bir qadam ko'rinadi, muhim qaror esa insonda qoladi.",
+    launch: "Ommaviy ishga tushirish 19-iyul",
+    heroKicker: "Har qanday biznes uchun AI-platforma",
+    title: "AI-agentni\nminutlarda\nyarating",
+    subtitle: "Vazifani tushuntiring — Nemo AI-jamoani yig'adi: mijozlarga yordam berishdan jarayonlarni avtomatlashtrishgacha.",
+    primaryCta: "Bepul agent yaratish",
+    secondaryCta: "Qanday ishlashini ko'rish",
+    openTeam: "AI-jamoa yaratish",
+    notes: ["1 000 kredit bepul", "67 AI-funksiya", "Kodsiz"],
+    statsTitle: "Masshtablashga tayyor platforma",
+    stats: [
+      ["67", "AI-funksiya"],
+      ["20+", "integratsiya"],
+      ["6", "aloqa kanali"],
+      ["5 min", "birinchi agentgacha"],
+    ],
+    painKicker: "Qanday ishlaydi",
+    painTitle: "G'oyadan ishlaydigan AI-agentgacha — to'rt qadam",
+    painSubtitle: "Kod yozish yoki API bilan ishlash shart emas. Vazifani tushuntiring, xatti-harakatni sozlang, kanallarni ulang — agent ishlaydi.",
     flow: [
-      ['Kiruvchi lid', 'Telegram, Instagram, forma yoki fayl'],
-      ['Saralash', 'Maqsad, kurs, muddat, budjet va tayyorlik'],
-      ['Harakat', 'Shaxsiy follow-up va keyingi vazifa'],
-      ['Nazorat', 'CRM/Sheets va rahbar uchun kunlik hisobot'],
+      ["Vazifani tushuntiring", "Agent nima qilishi kerakligini aytib bering — istalgan tilda"],
+      ["Jamoani sozlang", "Rollarni, asboblarni, bilim bazasi va kanallarni tanlang"],
+      ["Ishga tushiring", "Telegram, WhatsApp, vidjeti yoki APIni ulang"],
+      ["Masshtablang", "Agentlar qo'shing, AI-jamoalar va bo'limlar yarating"],
     ],
-    before: 'Nemo siz',
-    after: 'Nemo bilan',
-    beforeItems: ["Javob bo'sh menejerga bog'liq", "Ma'lumot qo'lda ko'chiriladi", "Keyingi qadam unutilishi mumkin", "Rahbar natijani kech ko'radi"],
-    afterItems: ["Birinchi javob yagona standartda", "Lid status va egaga ega", "CRM yoki jadval tartibli yangilanadi", "Inson xatarlarni ko'rib muhim harakatni tasdiqlaydi"],
-    workflowKicker: 'Jonli ish jarayoni',
-    workflowTitle: 'Oddiy chatbot emas, rollar va tekshiruvli AI jamoa',
-    workflowSubtitle: "Team Lead ishni mutaxassislarga bo'ladi. Interfeysda kim nima qilgani va keyin nima kerakligi ko'rinadi.",
-    pilotKicker: 'Birinchi pilot ssenariysi',
-    pilotTitle: "Bir haftada o'lchash mumkin bo'lgan bitta vazifadan boshlang",
-    pilotText: "Kiruvchi lidlar, saralash qoidalari va mavjud jadval yoki CRM formatini sozlaymiz. Pilotdan keyin javob tezligi, lid statuslari va har bir murojaat bo'yicha keyingi qadam ko'rinadi.",
-    pilotSteps: ['Ariza manbasini ulash', 'Savol va statuslarni sozlash', 'Real dialoglarda tekshirish', 'Jamoaga ish reglamentini berish'],
-    controlKicker: 'Nazorat mahsulot ichida',
-    controlTitle: "Agentlar yordam beradi, lekin nazoratsiz ishlamaydi",
-    controls: [
-      ['Ko‘rinadigan trace', "Har bir harakat va natijani rahbar ko'radi.", ClipboardCheck],
-      ['Insonga topshirish', "Noaniq yoki muhim holat menejerga o'tadi.", UserRoundCheck],
-      ['Ma’lumot izolyatsiyasi', "Turli kompaniyalar ma'lumoti kirish siyosati bilan ajratiladi.", ShieldCheck],
-      ['Sizning vositalaringiz', 'Google Sheets, CRM va modellar kompaniya qoidasi bo‘yicha ulanadi.', Database],
+    before: "AI-agentlarsiz",
+    after: "Nemo AI bilan",
+    beforeItems: ["Kundalik vazifalar har kuni soatlarni yeydi", "Har bir jarayon alohida vosita talab qiladi", "Masshtablash = yangi odamlar yollash", "Yagona avtomatlashtirish tizimi yo'q"],
+    afterItems: ["AI-agent 24/7 sizning qoidalaringiz bo'yicha ishlaydi", "Agentlar, jamoalar va kanallar uchun bitta platforma", "Masshtablash = yana bitta agent qo'shish", "To'liq nazorat: harakatlar tarixi, insonga topshirish"],
+    workflowKicker: "So'rov bo'yicha AI-jamoalar",
+    workflowTitle: "Bitta bot emas, rollar bilan muvofiqlashtirilgan AI-jamoa",
+    workflowSubtitle: "Koordinator vazifalarni mutaxassislarga taqsimlaydi. Kim nima qilganini va keyingi qadam nimani ko'rasiz.",
+    capKicker: "AI-agent imkoniyatlari",
+    capTitle: "Aqlli avtomatlashtirish uchun kerak bo'lgan hamma narsa",
+    capabilities: [
+      ["Messenjerlar", "Telegram, WhatsApp, Instagram, saytdagi vidjet", MessageCircleMore],
+      ["Bilim bazasi", "PDF, DOCX, XLSX yuklang — agent sizning ma'lumotlaringizdan o'rganadi", Database],
+      ["Asboblar", "CRM, Google Sheets, API, brauzer, fayl yaratish", Plug],
+      ["Ovoz", "Ovozli kanallar uchun nutq tanish va yaratish", Mic],
+      ["Autopostlar", "Kontentni rejaga ko'ra rejalashtiring va joylashtiring", Repeat],
+      ["Analitika", "Har bir agent va jamoa samaradorligini kuzating", Layers],
     ],
-    templatesKicker: 'Birinchi workflowdan keyin',
-    templatesTitle: 'Nemo imkoniyatlarini qo‘shni jarayonlarga kengaytiring',
+    templatesKicker: "Foydalanish senariylari",
+    templatesTitle: "Har qanday biznes sohasi uchun AI-agentlar",
     templates: [
-      ['Kurs savdosi', 'Lidlar, follow-up, CRM va hisobot'],
-      ['Talabalar yordami', 'Savollar, yo‘naltirish va insonga topshirish'],
-      ['Planerka', 'Uchrashuv yozuvi, vazifalar, muddatlar va eslatmalar'],
+      ["Mijozlarni qo'llab-quvvatlash", "Tezkor javoblar, yo'naltirish va operatorga topshirish"],
+      ["Savdo va lidlar", "Arizalarni saralash, follow-up va CRM yangilash"],
+      ["Kontent va marketing", "Matnlar, postlar va kreativlarni rejaga ko'ra yaratish"],
+      ["Analitika va hisobotlar", "Kundalik xulosalar, monitoring va bildirishnomalar"],
+      ["HR va recruiting", "Rezumeni skrining qilish, nomzodlarga javob, onboarding"],
+      ["Tadqiqotlar", "Ma'lumot qidirish, raqobatchilar va bozor tahlili"],
     ],
-    faqTitle: 'Pilotdan oldin bilish kerak',
+    controlKicker: "Xavfsizlik va nazorat",
+    controlTitle: "AI-agentlar jamoaga yordam beradi, lekin nazoratsiz ishlamaydi",
+    controls: [
+      ["Harakatlar tarixi", "Har bir harakat va natijani real vaqtda ko'rasiz.", ClipboardCheck],
+      ["Insonga topshirish", "Murakkab yoki muhim holatlar operatorga o'tadi.", UserRoundCheck],
+      ["Ma'lumot izolyatsiyasi", "Har bir akkaunt ma'lumoti kirishlar siyosati bilan ajratiladi.", ShieldCheck],
+      ["Sizning vositalaringiz", "O'z API, modellar va ma'lumotlar bazangizni ulang.", Database],
+    ],
+    faqTitle: "Ko'p beriladigan savollar",
     faq: [
-      { q: "Nemo mijozga o'zi yozadimi?", a: "Avtomatik rejim alohida sozlanadi. Pilotda har bir tashqi harakatni menejer tasdiqlashi mumkin." },
-      { q: "Jadvalimizni ko'chirish kerakmi?", a: "Yo'q. Mavjud Google Sheetni ulash yoki XLSX/CSV yuklab, ustunlarni moslash mumkin." },
-      { q: "AI modelini o'zgartirish mumkinmi?", a: "Ha. Tarif va kompaniya kalitlariga qarab ruxsat etilgan provayder va model tanlanadi." },
-      { q: 'Agentlar xatosiz ishlaydimi?', a: "Hech bir AI tizimida xato xavfi nol emas. Nemo trace, natija tekshiruvi va muhim qarorlarni insonga topshirish orqali xavfni kamaytiradi." },
+      { q: "AI-agent nima?", a: "AI-agent — bu sizning qoidalaringiz bo'yicha vazifalarni bajaradigan avtonom dastur: mijozlarga javob beradi, arizalarni qayta ishlaydi, kontent yaratadi yoki ma'lumotlarni tahlil qiladi. Agent 24/7 ishlaydi va sizning kanallar va vositalaringizga ulanadi." },
+      { q: "Dasturlash bilish kerakmi?", a: "Yo'q. Vazifani oddiy tilda tushuntirasiz, vositalar va kanallarni tanlaysiz — Nemo agentni avtomatik sozlaydi. Ilg'or foydalanuvchilar uchun API va maxsus vositalar mavjud." },
+      { q: "Qaysi kanallar qo'llab-quvvatlanadi?", a: "Telegram, WhatsApp, Instagram, veb-vidjet va API. Ro'yxat doimiy kengaymoqda — Discord, YouTube va boshqalar rejalashtirilgan." },
+      { q: "AI-jamoa nima?", a: "AI-jamoa — turli rollarga ega bir nechta agentlar, koordinator tomonidan boshqariladi. Masalan: bitta agent arizani saralaydi, ikkinchisi javob tayyorlaydi, uchinchisi CRM yangilaydi." },
+      { q: "Agentlar xatosiz ishlaydimi?", a: "Hech bir AI tizimida xato xavfi nol emas. Nemo harakatlar tarixi, natijalarni tekshirish va murakkab holatlarni avtomatik insonga topshirish orqali xavfni kamaytiradi." },
+      { q: "Narxi qancha?", a: "Ro'yxatdan o'tish bepul — 1 000 kredit olasiz. Kredit paketlari $10 dan. Jamoa rejalari $59/oy dan. Batafsil — Billing sahifasida." },
     ],
-    finalTitle: "19-iyulga AI savdo bo'limingizni tayyorlang",
-    finalText: "Bitta ssenariy va real lidlardan boshlang. Rollar, jadval va nazorat qoidalarini sozlashga yordam beramiz.",
+    preview: {
+      process: "Nemo AI-jamoasi", request: "Kiruvchi so'rovni qayta ishlash", done: "Tayyor", team: "Jamoa", message: "Foydalanuvchi so'rovi",
+      quote: "«Tarif tanlash va Telegram bot ulashda yordam kerak»", history: "Nima bajarildi", next: "Keyingi qadam", action: "Mijozga tavsiya yuborish",
+      agents: ["Koordinator", "So'rov tahlilchisi", "Mahsulot mutaxassisi", "Sifat nazorati"],
+      steps: ["So'rov qabul qilindi va tasniflandi", "Tariflar mezonlar bo'yicha tanlandi", "Ulash bo'yicha ko'rsatma tayyor", "Javob tekshirildi va yuborildi"],
+    },
+    finalTitle: "AI-agentingizni hoziroq yarating",
+    finalText: "Ro'yxatdan o'tishda 1 000 kredit bepul. Vazifani tushuntiring — agentingiz 5 daqiqada ishlaydi.",
   },
   en: {
-    launch: 'Public launch July 19',
-    heroKicker: 'For education centers and online schools',
-    title: 'AI sales for\neducation teams',
-    subtitle: 'Qualifies leads, prepares follow-up, updates CRM or Google Sheets, and shows managers the next action.',
-    primaryCta: 'Start a pilot',
-    secondaryCta: 'See the workflow',
-    openTeam: 'Open the AI team',
-    notes: ['UZ, RU and EN', 'Managers approve important actions'],
-    painKicker: 'One inquiry. One clear route.',
-    painTitle: 'A lead should not disappear between a chat, a spreadsheet, and a manager',
-    painSubtitle: 'Nemo turns incoming inquiries into a controlled workflow. Every step is visible, while sensitive decisions stay with people.',
+    launch: "Public launch July 19",
+    heroKicker: "AI platform for any business",
+    title: "Build your\nAI agent\nin minutes",
+    subtitle: "Describe a task — Nemo assembles an AI team: from customer support to automating any workflow.",
+    primaryCta: "Create agent for free",
+    secondaryCta: "See how it works",
+    openTeam: "Create AI team",
+    notes: ["1,000 free credits", "67 AI functions", "No code required"],
+    statsTitle: "A platform ready to scale",
+    stats: [
+      ["67", "AI functions"],
+      ["20+", "integrations"],
+      ["6", "channels"],
+      ["5 min", "to first agent"],
+    ],
+    painKicker: "How it works",
+    painTitle: "From idea to a working AI agent — four steps",
+    painSubtitle: "No code, no API docs. Describe a task, configure behavior, connect channels — and the agent is live.",
     flow: [
-      ['Inbound', 'Telegram, Instagram, form, or file'],
-      ['Qualification', 'Goal, course, timeline, budget, and intent'],
-      ['Action', 'Personal follow-up and next task'],
-      ['Control', 'CRM/Sheets and a daily manager report'],
+      ["Describe the task", "Tell the agent what to do — in any language"],
+      ["Configure the team", "Choose roles, tools, knowledge base, and channels"],
+      ["Launch", "Connect Telegram, WhatsApp, a widget, or API"],
+      ["Scale", "Add agents, build AI teams and departments"],
     ],
-    before: 'Without Nemo',
-    after: 'With Nemo',
-    beforeItems: ['Response depends on an available manager', 'Data is copied by hand', 'The next action is easy to forget', 'Managers learn the outcome too late'],
-    afterItems: ['First response follows one standard', 'Every lead gets a status and owner', 'CRM or Sheets receives structured updates', 'People see risks and approve important actions'],
-    workflowKicker: 'Live operating workflow',
-    workflowTitle: 'Not a chatbot. A role-based team that checks its work',
-    workflowSubtitle: 'The Team Lead routes work to specialists. The interface shows who did what and what needs to happen next.',
-    pilotKicker: 'First launch workflow',
-    pilotTitle: 'Start with one job you can measure in a week',
-    pilotText: 'We configure incoming leads, qualification rules, and your existing CRM or spreadsheet format. The pilot shows response time, lead status, and the next action for every inquiry.',
-    pilotSteps: ['Connect an inquiry source', 'Configure questions and statuses', 'Test with real conversations', 'Give the team a working playbook'],
-    controlKicker: 'Control is built in',
-    controlTitle: 'Agents help the team without operating blindly',
-    controls: [
-      ['Visible trace', 'Managers can inspect every action and result.', ClipboardCheck],
-      ['Human handoff', 'Uncertain or sensitive cases go to a manager.', UserRoundCheck],
-      ['Data isolation', 'Access policies separate each company’s data.', ShieldCheck],
-      ['Your tools', 'Google Sheets, CRM, and models follow company rules.', Database],
+    before: "Without AI agents",
+    after: "With Nemo AI",
+    beforeItems: ["Routine tasks consume hours every day", "Each process requires a separate tool", "Scaling = hiring more people", "No unified automation system"],
+    afterItems: ["AI agent works 24/7 by your rules", "One platform for agents, teams, and channels", "Scaling = adding one more agent", "Full control: action history, human handoff"],
+    workflowKicker: "AI teams on demand",
+    workflowTitle: "Not a single bot — a coordinated AI team with roles",
+    workflowSubtitle: "A coordinator routes tasks to specialists. You see who did what and what happens next.",
+    capKicker: "Agent capabilities",
+    capTitle: "Everything you need for intelligent automation",
+    capabilities: [
+      ["Messengers", "Telegram, WhatsApp, Instagram, website widget", MessageCircleMore],
+      ["Knowledge base", "Upload PDF, DOCX, XLSX — the agent learns from your data", Database],
+      ["Tools", "CRM, Google Sheets, API, browser, file generation", Plug],
+      ["Voice", "Speech recognition and generation for voice channels", Mic],
+      ["Auto-posts", "Plan and publish content on a schedule", Repeat],
+      ["Analytics", "Track the performance of every agent and team", Layers],
     ],
-    templatesKicker: 'After the first workflow',
-    templatesTitle: 'Expand Nemo into adjacent work',
+    templatesKicker: "Use cases",
+    templatesTitle: "AI agents for any business domain",
     templates: [
-      ['Course sales', 'Leads, follow-up, CRM, and reporting'],
-      ['Student support', 'Questions, routing, and human handoff'],
-      ['Meetings', 'Recording, tasks, deadlines, and reminders'],
+      ["Customer support", "Instant replies, routing, and human handoff"],
+      ["Sales & leads", "Lead qualification, follow-up, and CRM updates"],
+      ["Content & marketing", "Generate copy, posts, and creatives on schedule"],
+      ["Analytics & reports", "Daily summaries, monitoring, and alerts"],
+      ["HR & recruiting", "Resume screening, candidate replies, onboarding"],
+      ["Research", "Information search, competitor and market analysis"],
     ],
-    faqTitle: 'What to know before a pilot',
+    controlKicker: "Security & control",
+    controlTitle: "AI agents help the team without operating blindly",
+    controls: [
+      ["Action history", "Every action and result is available to you in real time.", ClipboardCheck],
+      ["Human handoff", "Complex or critical cases are routed to a human operator.", UserRoundCheck],
+      ["Data isolation", "Each account's data is separated by access policies.", ShieldCheck],
+      ["Your tools", "Connect your own APIs, models, and databases.", Database],
+    ],
+    faqTitle: "Frequently asked questions",
     faq: [
-      { q: 'Does Nemo message customers automatically?', a: 'Automatic mode is configured separately. During a pilot, managers can approve every external action.' },
-      { q: 'Do we need to replace our spreadsheet?', a: 'No. Connect an existing Google Sheet or upload XLSX/CSV and map the columns.' },
-      { q: 'Can we change the AI model?', a: 'Yes. Choose an allowed provider and model based on the plan and company keys.' },
-      { q: 'Do agents work without errors?', a: 'No AI system has zero error risk. Nemo reduces risk with visible traces, result checks, and human approval for sensitive decisions.' },
+      { q: "What is an AI agent?", a: "An AI agent is an autonomous program that performs tasks by your rules: answers customers, processes requests, generates content, or analyzes data. It works 24/7 and connects to your channels and tools." },
+      { q: "Do I need to code?", a: "No. Describe the task in plain language, choose tools and channels — Nemo configures the agent automatically. Advanced users can use the API and custom tools." },
+      { q: "Which channels are supported?", a: "Telegram, WhatsApp, Instagram, web widget, and API. The list is constantly growing — Discord, YouTube, and more are planned." },
+      { q: "What is an AI team?", a: "An AI team is multiple agents with different roles managed by a coordinator. For example: one agent qualifies a request, another prepares a reply, a third updates the CRM. The coordinator routes work automatically." },
+      { q: "Do agents work without errors?", a: "No AI system guarantees zero errors. Nemo reduces risk through action history, result checks, and automatic handoff of complex cases to humans." },
+      { q: "How much does it cost?", a: "Registration is free — you get 1,000 credits. Credit packs start at $10. Team plans start at $59/mo. See the Billing page for details." },
     ],
-    finalTitle: 'Prepare your AI sales team for the July 19 launch',
-    finalText: 'Start with one workflow and real inquiries. We will help configure roles, data, and control rules.',
+    preview: {
+      process: "Nemo AI team", request: "Processing incoming request", done: "Done", team: "Team", message: "User request",
+      quote: "\"I need help choosing a plan and connecting a Telegram bot\"", history: "What was done", next: "Next step", action: "Send recommendation to customer",
+      agents: ["Coordinator", "Request analyst", "Product specialist", "Quality control"],
+      steps: ["Request received and classified", "Plans matched by criteria", "Connection guide prepared", "Response verified and sent"],
+    },
+    finalTitle: "Create your AI agent right now",
+    finalText: "1,000 free credits on signup. Describe a task — your agent starts working in 5 minutes.",
   },
 }
 
@@ -195,28 +275,39 @@ function SectionIntro({ kicker, title, text }: { kicker: string; title: string; 
   )
 }
 
-function WorkflowPreview() {
-  const agents = ['Team Lead', 'Lead Qualifier', 'Follow-up', 'CRM Agent']
-  const trace = ['Заявка принята', 'Цель и срок определены', 'Follow-up подготовлен', 'Строка CRM сохранена']
+type PreviewCopy = {
+  process: string
+  request: string
+  done: string
+  team: string
+  message: string
+  quote: string
+  history: string
+  next: string
+  action: string
+  agents: string[]
+  steps: string[]
+}
 
+function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
   return (
     <div className="relative mx-auto w-full max-w-3xl">
       <div className="absolute -inset-8 rounded-[2rem] bg-cyan/10 blur-3xl" />
       <div className="relative overflow-hidden rounded-[1.65rem] border border-cyan/25 bg-[#08111d] shadow-2xl shadow-black/40">
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
-            <p className="text-xs font-semibold text-muted">Nemo workflow</p>
-            <p className="mt-1 text-sm font-bold text-text">Входящая заявка на IELTS</p>
+            <p className="text-xs font-semibold text-muted">{preview.process}</p>
+            <p className="mt-1 text-sm font-bold text-text">{preview.request}</p>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> Готово
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {preview.done}
           </span>
         </div>
         <div className="grid gap-4 p-4 sm:grid-cols-[0.72fr_1.28fr] sm:p-5">
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">AI-команда</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">{preview.team}</p>
             <div className="mt-4 space-y-2.5">
-              {agents.map((agent, index) => (
+              {preview.agents.map((agent, index) => (
                 <div key={agent} className="flex items-center gap-2.5 rounded-xl border border-white/8 bg-black/20 px-3 py-2.5 text-xs font-semibold text-text">
                   <span className={cn('h-2.5 w-2.5 rounded-full', index === 0 ? 'bg-cyan' : index === 1 ? 'bg-emerald-400' : index === 2 ? 'bg-amber' : 'bg-blue')} />
                   {agent}
@@ -226,19 +317,19 @@ function WorkflowPreview() {
           </div>
           <div className="space-y-4">
             <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">Входящее сообщение</p>
-              <p className="mt-2 text-sm font-semibold leading-relaxed text-text">«Хочу IELTS. Какая цена и можно ли начать на этой неделе?»</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">{preview.message}</p>
+              <p className="mt-2 text-sm font-semibold leading-relaxed text-text">{preview.quote}</p>
             </div>
             <div className="grid gap-4 md:grid-cols-[1.25fr_0.75fr]">
               <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <p className="text-sm font-bold text-text">Trace команды</p>
+                <p className="text-sm font-bold text-text">{preview.history}</p>
                 <div className="mt-3 space-y-2.5">
-                  {trace.map((item) => <div key={item} className="flex items-center gap-2 text-xs text-muted"><CheckCircle2 size={15} className="shrink-0 text-cyan" />{item}</div>)}
+                  {preview.steps.map((item) => <div key={item} className="flex items-center gap-2 text-xs text-muted"><CheckCircle2 size={15} className="shrink-0 text-cyan" />{item}</div>)}
                 </div>
               </div>
               <div className="rounded-2xl border border-amber/25 bg-amber/10 p-4">
-                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-amber">Следующий шаг</p>
-                <p className="mt-3 text-sm font-semibold leading-relaxed text-text">Позвонить сегодня до 18:00</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-amber">{preview.next}</p>
+                <p className="mt-3 text-sm font-semibold leading-relaxed text-text">{preview.action}</p>
               </div>
             </div>
           </div>
@@ -257,12 +348,13 @@ export default function LandingPage() {
       <MarketingHeader />
 
       <main>
+        {/* ─── HERO ─── */}
         <section className="relative overflow-hidden border-b border-white/8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(34,211,238,0.13),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(16,185,129,0.08),transparent_32%)]" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(34,211,238,0.13),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(139,124,248,0.10),transparent_32%)]" />
           <div className="container-page relative grid min-h-[calc(100vh-76px)] items-center gap-12 py-14 lg:grid-cols-[0.96fr_1.04fr] lg:py-20">
             <div className="max-w-2xl">
               <StatusPill><Sparkles size={13} />{c.launch}</StatusPill>
-              <p className="mt-8 text-sm font-bold uppercase tracking-[0.16em] text-emerald-300">{c.heroKicker}</p>
+              <p className="mt-8 text-sm font-bold uppercase tracking-[0.16em] text-cyan">{c.heroKicker}</p>
               <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
@@ -275,21 +367,38 @@ export default function LandingPage() {
                 {c.notes.map((note) => <span key={note} className="inline-flex items-center gap-2"><Check size={14} className="text-emerald-300" />{note}</span>)}
               </div>
             </div>
-            <WorkflowPreview />
+            <WorkflowPreview copy={c.preview} />
           </div>
         </section>
 
+        {/* ─── SOCIAL PROOF STATS ─── */}
+        <section className="border-b border-white/8 bg-[#08101c]">
+          <div className="container-page py-16 sm:py-20">
+            <p className="text-center text-sm font-bold uppercase tracking-[0.16em] text-muted">{c.statsTitle}</p>
+            <div className="mt-10 grid grid-cols-2 gap-6 lg:grid-cols-4">
+              {c.stats.map(([value, label]) => (
+                <div key={label} className="text-center">
+                  <p className="text-[clamp(2.5rem,5vw,4rem)] font-black tracking-tight text-cyan">{value}</p>
+                  <p className="mt-1 text-sm font-medium text-muted">{label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ─── HOW IT WORKS (FLOW) ─── */}
         <section id="product" className="container-page py-20 sm:py-28">
           <SectionIntro kicker={c.painKicker} title={c.painTitle} text={c.painSubtitle} />
           <div className="mt-12 grid gap-3 lg:grid-cols-4">
             {c.flow.map(([title, text], index) => (
-              <div key={title} className="relative rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+              <div key={title} className="group relative rounded-2xl border border-white/10 bg-white/[0.035] p-5 transition-colors hover:border-cyan/30 hover:bg-cyan/[0.04]">
                 <span className="text-xs font-black text-cyan">0{index + 1}</span>
                 <h3 className="mt-6 text-lg font-bold text-text">{title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{text}</p>
               </div>
             ))}
           </div>
+          {/* Before / After */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
             <div className="rounded-3xl border border-rose-300/10 bg-rose-300/[0.035] p-7 sm:p-8">
               <p className="text-sm font-bold text-rose-200">{c.before}</p>
@@ -302,31 +411,61 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ─── WORKFLOW / AI TEAMS ─── */}
         <section id="workflow" className="border-y border-white/8 bg-[#08101c]">
           <div className="container-page grid items-center gap-12 py-20 sm:py-28 lg:grid-cols-[0.82fr_1.18fr]">
             <div>
               <SectionIntro kicker={c.workflowKicker} title={c.workflowTitle} text={c.workflowSubtitle} />
               <Button to="/app/create-team" variant="outline" className="mt-8">{c.openTeam}<ArrowRight size={15} /></Button>
             </div>
-            <WorkflowPreview />
+            <WorkflowPreview copy={c.preview} />
           </div>
         </section>
 
-        <section id="how" className="container-page py-20 sm:py-28">
-          <div className="grid gap-10 lg:grid-cols-[1.02fr_0.98fr] lg:items-start">
-            <SectionIntro kicker={c.pilotKicker} title={c.pilotTitle} text={c.pilotText} />
-            <div className="rounded-3xl border border-cyan/20 bg-cyan/[0.055] p-6 sm:p-8">
-              {c.pilotSteps.map((step, index) => (
-                <div key={step} className="flex gap-4 border-b border-white/10 py-4 first:pt-0 last:border-0 last:pb-0">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan text-xs font-black text-[#041018]">{index + 1}</span>
-                  <p className="pt-1 text-sm font-semibold text-text sm:text-base">{step}</p>
+        {/* ─── AGENT CAPABILITIES ─── */}
+        <section id="capabilities" className="container-page py-20 sm:py-28">
+          <SectionIntro kicker={c.capKicker} title={c.capTitle} />
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {c.capabilities.map(([title, text, Icon]) => (
+              <div key={title as string} className="group rounded-2xl border border-white/10 bg-white/[0.035] p-6 transition-colors hover:border-violet/30 hover:bg-violet/[0.04]">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15">
+                  <Icon size={20} className="text-violet" />
+                </div>
+                <h3 className="mt-5 text-lg font-bold text-text">{title as string}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{text as string}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ─── USE CASES ─── */}
+        <section id="templates" className="border-y border-white/8 bg-[#08101c]">
+          <div className="container-page py-20 sm:py-24">
+            <SectionIntro kicker={c.templatesKicker} title={c.templatesTitle} />
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {c.templates.map(([title, text], index) => (
+                <div key={title} className="group rounded-2xl border border-white/10 bg-black/20 p-6 transition-colors hover:border-cyan/25 hover:bg-cyan/[0.03]">
+                  <div className="flex items-center justify-between">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan/10">
+                      {index === 0 ? <MessageCircleMore size={18} className="text-cyan" /> :
+                       index === 1 ? <Zap size={18} className="text-cyan" /> :
+                       index === 2 ? <Sparkles size={18} className="text-cyan" /> :
+                       index === 3 ? <Layers size={18} className="text-cyan" /> :
+                       index === 4 ? <Globe size={18} className="text-cyan" /> :
+                       <BrainCircuit size={18} className="text-cyan" />}
+                    </div>
+                    <span className="text-xs font-black text-fog">0{index + 1}</span>
+                  </div>
+                  <h3 className="mt-6 text-xl font-bold text-text">{title}</h3>
+                  <p className="mt-2 text-sm text-muted">{text}</p>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="features" className="container-page pb-20 sm:pb-28">
+        {/* ─── SECURITY & CONTROL ─── */}
+        <section id="features" className="container-page py-20 sm:py-28">
           <SectionIntro kicker={c.controlKicker} title={c.controlTitle} />
           <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {c.controls.map(([title, text, Icon]) => (
@@ -339,21 +478,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="templates" className="border-y border-white/8 bg-[#08101c]">
-          <div className="container-page py-20 sm:py-24">
-            <SectionIntro kicker={c.templatesKicker} title={c.templatesTitle} />
-            <div className="mt-10 grid gap-4 lg:grid-cols-3">
-              {c.templates.map(([title, text], index) => (
-                <div key={title} className="rounded-2xl border border-white/10 bg-black/20 p-6">
-                  <div className="flex items-center justify-between"><MessageCircleMore size={20} className="text-emerald-300" /><span className="text-xs font-black text-fog">0{index + 1}</span></div>
-                  <h3 className="mt-8 text-xl font-bold text-text">{title}</h3>
-                  <p className="mt-2 text-sm text-muted">{text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
+        {/* ─── FAQ ─── */}
         <section id="faq" className="container-page grid gap-10 py-20 sm:py-28 lg:grid-cols-[0.72fr_1.28fr]">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan">FAQ</p>
@@ -362,11 +487,15 @@ export default function LandingPage() {
           <Accordion items={c.faq} />
         </section>
 
+        {/* ─── FINAL CTA ─── */}
         <section className="container-page pb-20 sm:pb-28">
           <div className="relative overflow-hidden rounded-[2rem] border border-cyan/25 bg-[#0b1c25] p-8 sm:p-12 lg:flex lg:items-end lg:justify-between">
             <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-cyan/15 blur-3xl" />
+            <div className="pointer-events-none absolute -left-20 -bottom-16 h-56 w-56 rounded-full bg-violet/15 blur-3xl" />
             <div className="relative max-w-3xl">
-              <StatusPill>{c.launch}</StatusPill>
+              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                <Rocket size={13} />1,000 free credits
+              </div>
               <h2 className="mt-6 text-[clamp(2.2rem,4.5vw,4rem)] font-black leading-[1.02] text-text">{c.finalTitle}</h2>
               <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{c.finalText}</p>
             </div>
