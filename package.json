@@ -33,7 +33,8 @@
     "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview",
-    "demo:swarm": "node agent-hub/demo-simulation.mjs"
+    "demo:swarm": "node agent-hub/demo-simulation.mjs",
+    "test:showcase": "node agent-hub/demo-showcase-tests.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",
