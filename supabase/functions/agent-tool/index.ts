@@ -10,7 +10,7 @@ import { runBrowserTask, looksAbusive } from '../_shared/browser.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { redactText, redactValue } from '../_shared/redact.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -137,7 +137,9 @@ Deno.serve(async (req) => {
   // which integrations are connected -> which tools are available
   const { data: keysRows } = await admin.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
-  for (const r of keysRows ?? []) keyByProvider[r.provider] = await openSecret(r.api_key)
+  for (const r of keysRows ?? []) {
+    keyByProvider[r.provider] = await openSecret(r.api_key, providerSecretContext(accountId, r.provider))
+  }
   // Google is connected via OAuth (google_accounts), not an api key
   const { data: gRow } = await admin.from('google_accounts').select('refresh_token').eq('account_id', accountId).maybeSingle()
   const googleConnected = Boolean(gRow?.refresh_token)

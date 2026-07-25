@@ -97,7 +97,7 @@ export default function AutonomousPage() {
           <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Выберите отдел — роли подставятся автоматически' : lang === 'uz' ? 'Boʻlimni tanlang — rollar avtomatik tanlanadi' : 'Choose a department — roles are selected automatically'}</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {departmentPresets.map((p) => (
-              <button key={p.id} onClick={() => { setSelectedDepartment(p); setStarterGoal((current) => current.trim() ? current : p.goal); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className={cn('rounded-2xl border bg-white/[0.02] p-3 text-left transition hover:border-violet/35 hover:bg-violet/[0.04]', selectedDepartment?.id === p.id ? 'border-violet/60 bg-violet/[0.08]' : 'border-ice/10')}>
+              <button key={p.id} onClick={() => { setSelectedDepartment(p); setStarterGoal(p.goal); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className={cn('rounded-2xl border bg-white/[0.02] p-3 text-left transition hover:border-violet/35 hover:bg-violet/[0.04]', selectedDepartment?.id === p.id ? 'border-violet/60 bg-violet/[0.08]' : 'border-ice/10')}>
                 <span className="text-sm font-semibold text-text">{p.name}</span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-muted">{p.roles}</span>
               </button>
@@ -110,7 +110,7 @@ export default function AutonomousPage() {
         <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{t('autonomousPage.examplesLabel')}</p>
         <div className="grid gap-2 sm:grid-cols-2">
           {examples.map((e) => (
-            <button key={e} onClick={() => isTeam && setStarterGoal((current) => current.trim() ? current : e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
+            <button key={e} onClick={() => isTeam && setStarterGoal(e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
           ))}
         </div>
       </div>

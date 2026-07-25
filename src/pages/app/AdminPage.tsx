@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ShieldCheck, Plus, Check, Coins, Gift, Loader2, Lock, Unlock, Ban } from 'lucide-react'
+import { ShieldCheck, Plus, Check, Coins, Gift, Loader2, Lock, Unlock, Ban, Bot, MessageSquareWarning, Sparkles, UserCog } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
@@ -23,6 +23,32 @@ interface GiftRow {
   tokens: number
   redeemed_by: string | null
 }
+interface FeedbackRow {
+  id: string
+  email: string | null
+  rating: -1 | 1
+  category: string
+  comment: string | null
+  path: string | null
+  created_at: string
+}
+interface SkillReviewRow {
+  id: string
+  name: string
+  source_filename: string | null
+  status: 'shared_candidate' | 'shared' | 'rejected'
+  compatibility_score: number | null
+  analysis: { reason?: string; risks?: string[] }
+  created_at: string
+}
+interface ModeratedAgent {
+  id: string
+  account_id: string
+  email: string | null
+  name: string
+  status: string
+  type: string
+}
 
 const inputCls = 'glass w-full rounded-lg px-2.5 py-1.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50'
 
@@ -35,6 +61,10 @@ export default function AdminPage() {
 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [gifts, setGifts] = useState<GiftRow[]>([])
+  const [feedback, setFeedback] = useState<FeedbackRow[]>([])
+  const [skillReviews, setSkillReviews] = useState<SkillReviewRow[]>([])
+  const [moderatedAgents, setModeratedAgents] = useState<ModeratedAgent[]>([])
+  const [adminCapabilities, setAdminCapabilities] = useState({ set_admin: false, moderate_agents: false })
   const [amounts, setAmounts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [giftTokens, setGiftTokens] = useState('10000')
@@ -53,9 +83,23 @@ export default function AdminPage() {
 
   const loadAll = useCallback(async () => {
     setLoading(true)
-    const [a, g] = await Promise.all([call('list_accounts'), call('list_gifts')])
-    if (a) setAccounts((a.accounts as Account[]) ?? [])
+    const skillRequest = isSupabaseEnabled && supabase
+      ? supabase.functions.invoke('review-skill', { body: { action: 'list_admin' } })
+      : Promise.resolve({ data: null })
+    const [a, g, f, skills] = await Promise.all([call('list_accounts'), call('list_gifts'), call('list_feedback'), skillRequest])
+    if (a) {
+      setAccounts((a.accounts as Account[]) ?? [])
+      const capabilities = (a.capabilities as { set_admin?: boolean; moderate_agents?: boolean } | undefined) ?? {}
+      setAdminCapabilities({ set_admin: capabilities.set_admin === true, moderate_agents: capabilities.moderate_agents === true })
+      if (capabilities.moderate_agents === true) {
+        const agentRows = await call('list_agents')
+        if (agentRows) setModeratedAgents((agentRows.agents as ModeratedAgent[]) ?? [])
+      }
+    }
     if (g) setGifts((g.gifts as GiftRow[]) ?? [])
+    if (f) setFeedback((f.feedback as FeedbackRow[]) ?? [])
+    const skillData = skills.data as { skills?: SkillReviewRow[] } | null
+    if (skillData?.skills) setSkillReviews(skillData.skills)
     setLoading(false)
   }, [call])
   useEffect(() => {
@@ -129,6 +173,27 @@ export default function AdminPage() {
       else setBcResult(p?.message ?? p?.error ?? t('adminPage.sendFailed'))
     } catch { setBcResult(t('adminPage.sendError')) } finally { setBcBusy(false) }
   }
+  const setAdmin = async (a: Account, enabled: boolean) => {
+    if (!a.user_id) return
+    const res = await call('set_admin', { user_id: a.user_id, enabled })
+    if (!res) { toast(t('common.error')); return }
+    setAccounts((rows) => rows.map((row) => row.id === a.id ? { ...row, is_admin: enabled } : row))
+    toast(enabled ? 'Администратор назначен' : 'Права администратора сняты')
+  }
+  const quarantineAgent = async (agent: ModeratedAgent, quarantined: boolean) => {
+    const res = await call('quarantine_agent', { agent_id: agent.id, quarantined })
+    if (!res) { toast(t('common.error')); return }
+    setModeratedAgents((rows) => rows.map((row) => row.id === agent.id ? { ...row, status: quarantined ? 'paused' : 'active' } : row))
+    toast(quarantined ? 'Агент остановлен' : 'Агент восстановлен')
+  }
+
+  const reviewSkill = async (id: string, action: 'publish' | 'reject') => {
+    if (!supabase) return
+    const { data, error } = await supabase.functions.invoke('review-skill', { body: { action, id } })
+    if (error || !(data as { ok?: boolean } | null)?.ok) { toast(t('common.error')); return }
+    setSkillReviews((rows) => rows.map((row) => row.id === id ? { ...row, status: action === 'publish' ? 'shared' : 'rejected' } : row))
+    toast(action === 'publish' ? 'Skill опубликован' : 'Skill отклонён')
+  }
 
   if (!isAdmin) {
     return (
@@ -152,6 +217,51 @@ export default function AdminPage() {
       </div>
 
       {/* SMS broadcast — Nemo news/ads to all saved phones */}
+      <section className="card mt-6 rounded-3xl p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold text-text"><MessageSquareWarning size={16} className="text-amber" /> Жалобы и обратная связь</h2>
+            <p className="mt-1 text-xs text-muted">Последние сообщения пользователей. Доступно только администраторам.</p>
+          </div>
+          <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-muted">{feedback.length}</span>
+        </div>
+        {feedback.length === 0 ? <p className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4 text-sm text-muted">Новых сообщений нет.</p> : (
+          <div className="mt-4 space-y-2">
+            {feedback.slice(0, 20).map((row) => (
+              <div key={row.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className={row.rating < 0 ? 'text-danger' : 'text-teal'}>{row.rating < 0 ? 'Жалоба' : 'Отзыв'}</span>
+                  <span className="text-muted">{row.category}</span>
+                  <span className="text-muted">{row.email || 'email unavailable'}</span>
+                  <span className="ml-auto text-fog">{new Date(row.created_at).toLocaleString('ru-RU')}</span>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text">{row.comment || 'Комментарий не добавлен'}</p>
+                {row.path && <p className="mt-2 text-[11px] text-fog">Страница: {row.path}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="card mt-6 rounded-3xl p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div><h2 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={16} className="text-violet" /> Проверка пользовательских skills</h2><p className="mt-1 text-xs text-muted">AI может предложить публикацию, но окончательное решение принимает администратор.</p></div>
+          <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-muted">{skillReviews.filter((row) => row.status === 'shared_candidate').length}</span>
+        </div>
+        {skillReviews.length === 0 ? <p className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4 text-sm text-muted">Кандидатов на проверку нет.</p> : (
+          <div className="mt-4 space-y-2">
+            {skillReviews.map((row) => (
+              <div key={row.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-text">{row.name}</p><span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-muted">{row.compatibility_score ?? 0}/100</span><span className="text-[10px] text-fog">{row.status}</span></div>
+                <p className="mt-2 text-xs leading-relaxed text-muted">{row.analysis?.reason || 'Без пояснения'}</p>
+                {row.analysis?.risks?.length ? <p className="mt-2 text-[11px] text-amber">Риски: {row.analysis.risks.join(', ')}</p> : null}
+                {row.status === 'shared_candidate' && <div className="mt-3 flex gap-2"><Button size="sm" onClick={() => void reviewSkill(row.id, 'publish')}>Опубликовать</Button><Button size="sm" variant="ghost" onClick={() => void reviewSkill(row.id, 'reject')}>Оставить приватным</Button></div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       <div className="card mt-6 rounded-3xl p-6">
         <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Coins size={16} className="text-violet" /> {t('adminPage.smsTitle')}</h2>
         <p className="mt-1 text-xs text-muted">{t('adminPage.smsDesc')}</p>
@@ -248,11 +358,19 @@ export default function AdminPage() {
                         <button onClick={() => apply(a.id, 'set')} className="rounded-lg border border-ice/12 px-2 py-1.5 text-xs font-medium text-muted hover:text-text" title={t('platform.adminPanel.setBalance')}>
                           <Check size={13} />
                         </button>
-                        <select value={a.plan ?? 'free'} onChange={(e) => setPlan(a, e.target.value)} className={cn(inputCls, 'w-[92px] cursor-pointer')} title="Plan (free=cheap model, pro/business=gpt-4o)">
+                        <select value={a.plan ?? 'starter'} onChange={(e) => setPlan(a, e.target.value)} className={cn(inputCls, 'w-[112px] cursor-pointer')} title="Тариф аккаунта">
                           <option value="free">free</option>
+                          <option value="starter">Starter</option>
                           <option value="pro">pro</option>
                           <option value="business">business</option>
+                          <option value="agency">Agency</option>
+                          <option value="enterprise">Enterprise</option>
                         </select>
+                        {adminCapabilities.set_admin && a.user_id && (
+                          <button onClick={() => void setAdmin(a, !a.is_admin)} className={cn('rounded-lg border px-2 py-1.5 text-xs', a.is_admin ? 'border-violet/30 text-violet' : 'border-ice/12 text-muted hover:text-text')} title={a.is_admin ? 'Снять права администратора' : 'Назначить администратором'}>
+                            <UserCog size={13} />
+                          </button>
+                        )}
                         {!a.is_admin && (
                           <>
                             <button
@@ -278,6 +396,29 @@ export default function AdminPage() {
           </div>
         )}
       </section>
+
+      {adminCapabilities.moderate_agents && (
+        <section className="card mt-6 rounded-2xl p-5">
+          <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Bot size={16} className="text-violet" /> Модерация агентов · {moderatedAgents.length}</h2>
+          <p className="mt-1 text-xs text-muted">Остановите агента, который нарушает правила конфиденциальности или условия использования. Удаление не выполняется — решение можно отменить.</p>
+          <div className="mt-4 grid gap-2 md:grid-cols-2">
+            {moderatedAgents.map((agent) => {
+              const paused = agent.status === 'paused'
+              return (
+                <div key={agent.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/10 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-text">{agent.name}</p>
+                    <p className="truncate text-xs text-muted">{agent.email ?? agent.account_id} · {agent.type}</p>
+                  </div>
+                  <button onClick={() => void quarantineAgent(agent, !paused)} className={cn('rounded-xl border px-3 py-1.5 text-xs font-medium', paused ? 'border-teal/30 text-teal hover:bg-teal/10' : 'border-danger/30 text-danger hover:bg-danger/10')}>
+                    {paused ? 'Восстановить' : 'Остановить'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

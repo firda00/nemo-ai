@@ -6,12 +6,13 @@ import { PRIMARY_MODEL, callOpenRouter } from './llm.ts'
 import { runBrowserTask, looksAbusive } from './browser.ts'
 import { googleAccessToken } from './google.ts'
 import { wbProducts, wbOrders, ozonProducts, ozonOrders } from './marketplace.ts'
+import { uzumProducts, uzumShops } from './uzum.ts'
 import { amoCreateLead } from './amocrm.ts'
 import { safeFetch } from './net.ts'
 import { buildCustomSpecs, execCustomTool, type CustomToolRow } from './customTools.ts'
 import { SKILL_TOOLS } from './capabilitySkills.ts'
 import { redactText, redactValue } from './redact.ts'
-import { openSecret } from './secretBox.ts'
+import { openSecret, providerSecretContext } from './secretBox.ts'
 
 export { SKILL_TOOLS } from './capabilitySkills.ts'
 
@@ -59,6 +60,8 @@ const TOOLS: Record<string, { provider: string; spec: any }> = {
   wb_orders: { provider: 'wildberries', spec: { type: 'function', function: { name: 'wb_orders', description: "Count and list NEW (unprocessed) orders on the seller's Wildberries store.", parameters: { type: 'object', properties: {} } } } },
   ozon_products: { provider: 'ozon', spec: { type: 'function', function: { name: 'ozon_products', description: "List the seller's products on Ozon (offer id / article). Use to answer what the store sells.", parameters: { type: 'object', properties: { limit: { type: 'number', description: 'how many, default 30' } } } } } },
   ozon_orders: { provider: 'ozon', spec: { type: 'function', function: { name: 'ozon_orders', description: "Count and list UNFULFILLED orders on the seller's Ozon store.", parameters: { type: 'object', properties: {} } } } },
+  uzum_shops: { provider: 'uzum', spec: { type: 'function', function: { name: 'uzum_shops', description: "List the owner's connected Uzum Market stores. Read-only.", parameters: { type: 'object', properties: {} } } } },
+  uzum_products: { provider: 'uzum', spec: { type: 'function', function: { name: 'uzum_products', description: "List products/SKU for one Uzum Market store. Read-only; first call uzum_shops to obtain the numeric shop id if needed.", parameters: { type: 'object', properties: { shop_id: { type: 'string', description: 'numeric Uzum seller shop id' }, limit: { type: 'number', description: 'how many, default 30' } }, required: ['shop_id'] } } } },
 }
 
 const GOOGLE_TOOLS: Record<string, any> = {
@@ -283,6 +286,8 @@ async function execProvider(name: string, args: any, key: string): Promise<{ ok:
       if (!clientId || !apiKey) return { ok: false, result: 'Для Ozon укажите ключ в формате «Client-Id|Api-Key».' }
       return name === 'ozon_products' ? await ozonProducts(clientId, apiKey, Number(args.limit) || 30) : await ozonOrders(clientId, apiKey)
     }
+    if (name === 'uzum_shops') return await uzumShops(key)
+    if (name === 'uzum_products') return await uzumProducts(key, String(args.shop_id ?? ''), Number(args.limit) || 30)
     if (name === 'amocrm_create_lead') {
       const [sub, token] = String(key).split('|')
       if (!sub || !token) return { ok: false, result: 'Для amoCRM укажите ключ в формате «поддомен|токен».' }
@@ -348,7 +353,9 @@ async function execAnyTool(
 export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string, tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string }, skills?: string[]): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
   const { data: keysRows } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
-  for (const r of keysRows ?? []) keyByProvider[r.provider] = await openSecret(r.api_key)
+  for (const r of keysRows ?? []) {
+    keyByProvider[r.provider] = await openSecret(r.api_key, providerSecretContext(accountId, r.provider))
+  }
   const { data: gRow } = await db.from('google_accounts').select('refresh_token').eq('account_id', accountId).maybeSingle()
   const googleConnected = Boolean(gRow?.refresh_token)
   // In an auto reply we only offer tools the account explicitly connected (a key), so the
@@ -383,7 +390,7 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
   const customerFacing = ['chat', 'support', 'sales', 'qualifier', 'booking', 'workflow', 'learning'].includes(agentType ?? '')
   // deny the owner-side / high-abuse write tools to customer-facing agents (untrusted channel text
   // could drive them). CRM (hubspot/bitrix/stripe) stays — creating a lead IS the sales agent's job.
-  const CUSTOMER_DENY = new Set(['slack_send_message', 'github_create_issue', 'notion_create_page', 'airtable_create_record', 'browser_task', 'wb_orders', 'ozon_orders'])
+  const CUSTOMER_DENY = new Set(['slack_send_message', 'github_create_issue', 'notion_create_page', 'airtable_create_record', 'browser_task', 'wb_orders', 'ozon_orders', 'uzum_shops', 'uzum_products'])
   const specs = [
     ...Object.entries(TOOLS).filter(([name, t]) => keyByProvider[t.provider] && !(customerFacing && CUSTOMER_DENY.has(name))).map(([, t]) => t.spec),
     ...(googleConnected ? Object.entries(GOOGLE_TOOLS).filter(([name]) => !(customerFacing && name === 'gmail_send')).map(([, v]) => v) : []),

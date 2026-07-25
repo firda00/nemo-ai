@@ -245,7 +245,7 @@ export default function EducationSalesWorkflowPage() {
   const liveReady = backend.liveWorkflowReady
   const llmConfigured = backend.llmReady
   const modeClass = executionMode === 'live_success' ? 'border-teal/20 bg-teal/10 text-teal' : executionMode === 'live_failed' ? 'border-danger/25 bg-danger/10 text-danger' : liveReady ? 'border-teal/20 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber'
-  const modeLabel = executionMode === 'live_success' ? 'Live orchestrate completed' : executionMode === 'live_failed' ? 'Live failed · fallback available' : liveReady ? 'Live workspace ready' : 'Local simulation mode'
+  const modeLabel = executionMode === 'live_success' ? 'Backend execution completed' : executionMode === 'live_failed' ? 'Backend execution failed · fallback available' : liveReady ? 'Backend ready' : 'Local simulation mode'
   const results = workflowResult?.leads ?? []
   const runCompleted = page === 'run' && !!workflowResult && runSteps.length > 0 && runSteps.every((step) => step.state === 'done')
   const hot = results.filter((lead) => lead.status === 'hot').length
@@ -508,8 +508,15 @@ export default function EducationSalesWorkflowPage() {
         <div className="flex flex-wrap gap-2">
           <Button to="/app/create-team" variant={page === 'create' ? 'primary' : 'secondary'}>Create Team</Button>
           <Button to="/app/run-workflow" variant={page === 'run' ? 'primary' : 'secondary'}>Run Workflow</Button>
-          <Button to="/app/results" variant={page === 'results' ? 'primary' : 'secondary'}>Results</Button>
+          <Button to="/app/activity" variant={page === 'results' ? 'primary' : 'secondary'}>Activity</Button>
         </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+        <Button to="/app/results" size="sm" variant={page === 'results' ? 'primary' : 'ghost'}>All results</Button>
+        <Button to="/app/dialogues" size="sm" variant="ghost">Dialogues</Button>
+        <Button to="/app/lead-forms" size="sm" variant="ghost">Lead forms</Button>
+        <Button to="/app/analytics" size="sm" variant="ghost">Analytics</Button>
       </div>
 
       {page === 'create' && (
@@ -605,14 +612,14 @@ export default function EducationSalesWorkflowPage() {
               <StatusPill label="LLM provider" ok={llmConfigured && liveReady} okText="server-side" badText="missing/unknown" />
               <StatusPill label="Mode" ok={liveReady} okText="live" badText={backend.mode === 'not_configured' ? 'not configured' : 'local simulation'} />
             </div>
-            {!liveReady && <div className="mt-3 flex flex-wrap gap-2"><Button to="/app/providers" size="sm" variant="outline">Configure live backend</Button><Button onClick={runLocalSimulation} size="sm">Continue in local simulation</Button></div>}
+            {!liveReady && <div className="mt-3 flex flex-wrap gap-2"><Button to="/app/integrations" size="sm" variant="outline">Configure integrations</Button><Button onClick={runLocalSimulation} size="sm">Continue in local simulation</Button></div>}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {workflowOptions.map((option) => <button key={option.id} onClick={() => setWorkflowType(option.id)} className={`rounded-2xl border p-3 text-left ${workflowType === option.id ? 'border-cyan/50 bg-cyan/10' : 'border-white/10 bg-white/[0.03] hover:border-white/25'}`}><p className="text-sm font-semibold text-text">{option.label}</p><p className="mt-1 text-xs text-muted">{option.desc}</p></button>)}
             </div>
             <textarea value={leads} onChange={(e) => setLeads(e.target.value)} rows={13} className={`${fieldCls} mt-4 resize-y leading-relaxed`} />
-            {backendError && <div className="mt-4 rounded-2xl border border-danger/25 bg-danger/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-danger"><AlertCircle size={16} /> {executionMode === 'local_simulation' ? 'Live workflow disabled' : 'Backend workflow failed'}</p><p className="mt-1 text-xs text-muted">{backendError}</p><div className="mt-3 flex flex-wrap gap-2"><Button onClick={runLocalSimulation} size="sm" variant="outline">Run local simulation instead</Button><Button to="/app/providers" size="sm" variant="outline">Configure live backend</Button></div></div>}
+            {backendError && <div className="mt-4 rounded-2xl border border-danger/25 bg-danger/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-danger"><AlertCircle size={16} /> {executionMode === 'local_simulation' ? 'Live workflow disabled' : 'Backend workflow failed'}</p><p className="mt-1 text-xs text-muted">{backendError}</p><div className="mt-3 flex flex-wrap gap-2"><Button onClick={runLocalSimulation} size="sm" variant="outline">Run local simulation instead</Button><Button to="/app/integrations" size="sm" variant="outline">Configure integrations</Button></div></div>}
             <Button onClick={runWorkflow} disabled={running || leads.trim().length < 10} fullWidth className="mt-4"><Play size={16} /> {running ? 'Running agents...' : 'Run workflow'}</Button>
-            {runCompleted && <div className="mt-4 rounded-2xl border border-teal/20 bg-teal/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-teal"><CheckCircle2 size={16} /> Completed</p><p className="mt-1 text-xs text-muted">Agent execution finished and structured results were saved.</p><Button to="/app/results" size="sm" className="mt-3">View Results</Button></div>}
+            {runCompleted && <div className="mt-4 rounded-2xl border border-teal/20 bg-teal/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-teal"><CheckCircle2 size={16} /> Completed</p><p className="mt-1 text-xs text-muted">Agent execution finished and structured output was saved.</p><Button to="/app/activity" size="sm" className="mt-3">View activity</Button></div>}
           </div>
           <div className="card rounded-3xl p-6">
             <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-bold text-text">Agent execution</h2><span className={`rounded-pill border px-3 py-1 text-xs ${modeClass}`}>{executionMode === 'live_success' ? 'Live orchestrate' : executionMode === 'live_failed' ? 'Live failed' : 'Local simulation'}</span></div>

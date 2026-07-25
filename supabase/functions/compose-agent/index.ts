@@ -6,7 +6,7 @@
 //   POST /functions/v1/compose-agent   (Authorization: Bearer <user jwt>)
 //   body { "description": "...", "ui_lang": "uz" | "ru" | "en" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
@@ -128,7 +128,7 @@ Deno.serve(async (req) => {
 
   // account usage
   if (tokens) {
-    await admin.from('usage').insert({ account_id: accountId, tokens, model: COMPOSER_MODEL })
+    await admin.from('usage').insert({ account_id: accountId, tokens, model: COMPOSER_MODEL, cost: estimateCostUsd(COMPOSER_MODEL, tokens) })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
   }
 

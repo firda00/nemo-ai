@@ -7,7 +7,7 @@
 //     key, then they must connect a key or upgrade.
 // resolveMediaAccess returns the API key to use + the source, or a block code + message.
 import { type PlanLimit, monthlyMedia, weeklyMedia } from './plans.ts'
-import { openSecret } from './secretBox.ts'
+import { openSecret, providerSecretContext } from './secretBox.ts'
 
 export type MediaKind = 'image' | 'video' | 'voice'
 export interface MediaAccess {
@@ -43,7 +43,9 @@ export async function resolveMediaAccess(
   // 1) BYO — own key for this media kind → use it (their cost, no Nemo cap)
   const { data: keys } = await admin.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const byProvider: Record<string, string> = {}
-  for (const r of keys ?? []) byProvider[r.provider] = await openSecret(r.api_key)
+  for (const r of keys ?? []) {
+    byProvider[r.provider] = await openSecret(r.api_key, providerSecretContext(accountId, r.provider))
+  }
   for (const prov of BYO_PROVIDERS[kind]) {
     if (byProvider[prov]) return { ok: true, key: byProvider[prov], source: 'byo', provider: prov }
   }

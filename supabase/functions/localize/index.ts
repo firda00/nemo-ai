@@ -6,7 +6,7 @@
 //   POST /functions/v1/localize   (Bearer jwt)
 //   { action:'post', source, lang, platform, goal? } -> { ok, post, tokens }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     const r = await callOpenRouter({ apiKey: orKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.6, maxTokens: 700, messages: msgs })
     const post = (r.content ?? '').trim()
     if (r.tokens) {
-      await admin.from('usage').insert({ account_id: accountId, tokens: r.tokens, model: PRIMARY_MODEL })
+      await admin.from('usage').insert({ account_id: accountId, tokens: r.tokens, model: PRIMARY_MODEL, cost: estimateCostUsd(PRIMARY_MODEL, r.tokens) })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: r.tokens })
     }
     if (!post) return json({ ok: false, error: 'empty' }, 502)

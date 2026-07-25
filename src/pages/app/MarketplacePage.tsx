@@ -57,6 +57,7 @@ interface TeamTemplate {
 }
 
 const templates: TeamTemplate[] = [
+  { kind: 'team', icon: Boxes, title: 'AI Media & Learning Team', market: 'Media production / creators / brand teams', setup: '9 min', agents: 5, category: 'services', secondaryCategories: ['operations'], badge: 'Pilot · reviewed outputs', tools: ['brief intake', 'transcription', 'OCR', 'storyboard', 'captions', 'media QC', 'learning history'], desc: 'A controlled media workflow: brief and sources → transcript/OCR → storyboard and captions → reviewer QC. Repeated errors become reviewed prompt/skill proposals with version history and rollback; no automatic code, permission or publishing-policy changes.' },
   { kind: 'team', icon: Hotel, title: 'Hotel & Tourism Guest Team', market: 'Tourism and hospitality', setup: '8 min', agents: 6, category: 'tourism', badge: 'Saved team · review outputs', tools: ['multilingual guests', 'booking requests', 'itineraries', 'guest tasks', 'reports'], desc: 'A multilingual guest desk for hotels, tours and transfers. It prepares requests and service tasks; availability, price, visa advice, payments and refunds stay under human control.', industryKey: 'hotel-tourism' },
   { kind: 'team', icon: CalendarCheck, title: 'Local Services Team', market: 'Salons, repair, education and services', setup: '7 min', agents: 6, category: 'services', badge: 'Saved team · review outputs', tools: ['intake', 'booking requests', 'reminders', 'handoff', 'reports'], desc: 'Qualifies requests, answers from your knowledge base, prepares appointments and follow-ups, and reports open work. A booking is not confirmed without a calendar or operator.', industryKey: 'local-services' },
   { kind: 'team', icon: Building2, title: 'Real Estate Lead & Viewing Team', market: 'Real estate', setup: '8 min', agents: 6, category: 'sales', badge: 'Saved team · review outputs', tools: ['lead qualification', 'listing match', 'viewing requests', 'CRM', 'pipeline'], desc: 'Matches verified listings to buyer needs and prepares viewing requests and follow-ups. It never invents availability, price, ownership or legal status.', industryKey: 'real-estate' },
@@ -69,16 +70,16 @@ const templates: TeamTemplate[] = [
   { kind: 'team', icon: Calculator, title: 'Accounting & Collections Team', market: 'Finance operations', setup: '9 min', agents: 6, category: 'regulated', badge: 'Safety beta · Nemo only', tools: ['receivables', 'reconciliation', 'reminder drafts', 'collection tasks', 'review report'], desc: 'Analyzes supplied invoice and payment-status data and prepares respectful reminders. It never moves money, files taxes or writes off debt; live channels are blocked in this beta.', industryKey: 'accounting-collections' },
   { kind: 'team', icon: Scale, title: 'Legal Office Coordination Team', market: 'Legal operations', setup: '10 min', agents: 6, category: 'regulated', badge: 'Safety beta · Nemo only', tools: ['matter intake', 'documents', 'research drafts', 'deadlines', 'matter report'], desc: 'Organizes matters, documents, sources and deadlines for lawyer review. It does not give final legal advice or file, sign or settle; live channels are blocked in this beta.', industryKey: 'legal-office' },
   { kind: 'team', icon: ShieldCheck, title: 'Insurance Operations Team', market: 'Insurance operations', setup: '9 min', agents: 6, category: 'regulated', badge: 'Safety beta · Nemo only', tools: ['policy FAQ', 'claim intake', 'documents', 'status follow-up', 'SLA report'], desc: 'Coordinates policy and claim administration from verified records. Coverage, underwriting, denial and payout remain human decisions; live channels are blocked in this beta.', industryKey: 'insurance-operations' },
-  { kind: 'agent', icon: Bot, title: 'Course Consultant', market: 'Single Agent', setup: '3 min', agents: 1, category: 'sales', tools: ['test chat', 'knowledge'], desc: 'Standalone course consultant that recommends courses and collects student next actions.' },
-  { kind: 'team', icon: GraduationCap, title: 'Sales Team', market: 'Education sales', setup: '6 min', agents: 5, category: 'sales', tools: ['qualification', 'follow-up', 'crm rows'], desc: 'Student leads, follow-ups, CRM-ready rows and daily sales report for IT Academy.', legacyKey: 'sales' },
-  { kind: 'team', icon: Building2, title: 'Operations Team', market: 'Education operations', setup: '8 min', agents: 7, category: 'operations', badge: 'Production team', tools: ['payments', 'admin escalation', 'meeting analysis', 'task management', 'reports'], desc: 'Routine admin and operations automation: payment reminders, admin escalation, meeting-to-tasks, weekly follow-up and manager reports.' },
+  { kind: 'agent', icon: Bot, title: 'Sales Consultant', market: 'Inbound Sales', setup: '3 min', agents: 1, category: 'sales', tools: ['test chat', 'knowledge'], desc: 'Standalone sales assistant that answers product questions and collects next actions.' },
+  { kind: 'team', icon: GraduationCap, title: 'Sales Team', market: 'Inbound Sales', setup: '6 min', agents: 5, category: 'sales', tools: ['qualification', 'follow-up', 'crm rows'], desc: 'Inbound leads, follow-ups, CRM-ready rows and daily sales report for B2B prospects.', legacyKey: 'sales' },
+  { kind: 'team', icon: Building2, title: 'Operations Team', market: 'Business operations', setup: '8 min', agents: 7, category: 'operations', badge: 'Production team', tools: ['payments', 'admin escalation', 'meeting analysis', 'task management', 'reports'], desc: 'Routine operations automation: payment reminders, admin escalation, meeting-to-tasks, weekly follow-up and manager reports.' },
   { kind: 'team', icon: PackageSearch, title: 'Marketplace Seller Team', market: 'Wildberries / Ozon', setup: '7 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['seller data analysis', 'listing drafts', 'pricing advice', 'seller report'], desc: 'Create an AI seller team for data you provide. WB/Ozon connections are configured separately and remain read-only; marketplace writes are not automated.', commerceKey: 'marketplace' },
   { kind: 'team', icon: Boxes, title: 'Dropshipping Team', market: 'Dropshipping', setup: '8 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['supplied product data', 'supplier comparison', 'SKU mapping', 'fulfillment tasks'], desc: 'Analyze supplied products and suppliers, protect margin and prepare fulfillment tasks. It never purchases from a supplier automatically.', commerceKey: 'dropshipping' },
   { kind: 'team', icon: Store, title: 'Online Store Team', market: 'E-commerce', setup: '7 min', agents: 6, category: 'commerce', badge: 'Data / connector required', tools: ['sales', 'CRM', 'follow-up', 'uploaded orders', 'content'], desc: 'Create a team for product consultation, leads, supplied order analysis, follow-up and reporting. Store connectors are configured separately.', commerceKey: 'online-store' },
   { kind: 'team', icon: Truck, title: 'Logistics Control Team', market: 'Manual logistics beta', setup: '8 min', agents: 6, category: 'operations', badge: 'Manual analysis beta', tools: ['CSV shipment analysis', 'SLA rules', 'exceptions', 'saved tasks', 'message drafts'], desc: 'Paste shipment rows to detect delays and stale scans, save responsible tasks and prepare drafts. Live carrier tracking and automatic sending are not connected.', commerceKey: 'logistics' },
-  { kind: 'team', icon: Building2, title: 'Education Admin Team', market: 'Education ops', setup: '8 min', agents: 6, category: 'operations', tools: ['attendance', 'payments', 'risk report'], desc: 'Attendance, payment reminders, student risk, mentor quality and daily education admin report.', legacyKey: 'education-admin' },
-  { kind: 'team', icon: ShoppingBag, title: 'Content Team', market: 'Marketing', setup: '7 min', agents: 5, category: 'services', tools: ['telegram', 'instagram', 'campaigns'], desc: 'Telegram/Instagram posts, course marketing ideas, content calendar and campaign briefs.', legacyKey: 'content' },
-  { kind: 'team', icon: HeartPulse, title: 'Student Support Team', market: 'Support', setup: '7 min', agents: 4, category: 'services', tools: ['faq', 'handoff', 'summary'], desc: 'Student questions, FAQ responses, issue triage and human handoff summaries.', legacyKey: 'student-support' },
+  { kind: 'team', icon: Building2, title: 'Education Admin Team', market: 'Admin & Office', setup: '8 min', agents: 6, category: 'operations', tools: ['attendance', 'payments', 'risk report'], desc: 'Inbox triage, schedules, payment reminders, SLA alerts and daily operations report.', legacyKey: 'education-admin' },
+  { kind: 'team', icon: ShoppingBag, title: 'Content Team', market: 'Marketing', setup: '7 min', agents: 5, category: 'services', tools: ['telegram', 'instagram', 'campaigns'], desc: 'Telegram/Instagram posts, marketing ideas, content calendar and campaign briefs.', legacyKey: 'content' },
+  { kind: 'team', icon: HeartPulse, title: 'Student Support Team', market: 'Customer Support / Operations', setup: '7 min', agents: 4, category: 'services', tools: ['faq', 'handoff', 'summary'], desc: 'Customer questions, FAQ responses, issue triage and human handoff summaries.', legacyKey: 'student-support' },
   { kind: 'team', icon: Utensils, title: 'Custom Team', market: 'Custom workflow', setup: '5 min', agents: 4, category: 'services', tools: ['custom', 'trace', 'results'], desc: 'Describe any repeatable workflow and configure Team Lead plus Specialist Agents.', legacyKey: 'custom' },
 ]
 
@@ -113,7 +114,7 @@ const marketplaceUi: Record<CopyLang, {
   en: {
     eyebrow: 'AI Team Templates',
     bannerTitle: 'How templates work:',
-    bannerBody: 'a saved industry team creates one lead and five specialists. Safety limits are prompt guardrails, not an enforced approval queue yet, so review every result before acting. HR, clinic, accounting, legal and insurance teams run inside Nemo only; live channel connections are blocked in this beta.',
+    bannerBody: 'a saved industry team creates one lead and five specialists. Safety limits are prompt guardrails, not an enforced approval queue yet — review and confirm every result before acting on it. HR, clinic, accounting, legal and insurance teams run inside Nemo only; live channel connections are blocked in this beta.',
     searchPlaceholder: 'Search by industry or task…',
     searchAria: 'Search AI team templates',
     count: (value) => `${value} teams`,
@@ -122,7 +123,7 @@ const marketplaceUi: Record<CopyLang, {
   ru: {
     eyebrow: 'Шаблоны AI-команд',
     bannerTitle: 'Как работают шаблоны:',
-    bannerBody: 'сохранённая отраслевая команда создаёт одного руководителя и пять специалистов. Ограничения безопасности пока работают как инструкции в промпте, а не как обязательная очередь согласований, поэтому проверяйте каждый результат перед действием. Команды для HR, клиник, бухгалтерии, юристов и страхования работают только внутри Nemo; подключения к внешним каналам в этой бета-версии заблокированы.',
+    bannerBody: 'сохранённая отраслевая команда создаёт одного руководителя и пять специалистов. Ограничения безопасности — это промпт-инструкции, а не принудительная очередь согласований: проверяйте и подтверждайте каждый результат перед использованием. Команды для HR, клиник, бухгалтерии, юристов и страхования работают только внутри Nemo; подключения к внешним каналам в этой бета-версии заблокированы.',
     searchPlaceholder: 'Поиск по отрасли или задаче…',
     searchAria: 'Поиск шаблонов AI-команд',
     count: (value) => `${value} команд`,
@@ -131,7 +132,7 @@ const marketplaceUi: Record<CopyLang, {
   uz: {
     eyebrow: 'AI jamoa shablonlari',
     bannerTitle: 'Shablonlar qanday ishlaydi:',
-    bannerBody: 'saqlangan sohaviy jamoa bitta rahbar va beshta mutaxassis yaratadi. Xavfsizlik cheklovlari hozircha majburiy tasdiqlash navbati emas, balki prompt ko‘rsatmalaridir, shuning uchun har bir natijani ishlatishdan oldin tekshiring. HR, klinika, buxgalteriya, yuridik va sug‘urta jamoalari faqat Nemo ichida ishlaydi; bu beta-versiyada tashqi kanallar bloklangan.',
+    bannerBody: 'saqlangan sohaviy jamoa bitta rahbar va beshta mutaxassis yaratadi. Xavfsizlik cheklovlari prompt darajasidagi ko‘rsatmalar bo‘lib, hozircha majburiy tasdiqlash navbati emas — har bir natijani qo‘llashdan oldin tekshirib tasdiqlang. HR, klinika, buxgalteriya, yuridik va sug‘urta jamoalari faqat Nemo ichida ishlaydi; bu beta-versiyada tashqi kanallar bloklangan.',
     searchPlaceholder: 'Soha yoki vazifa bo‘yicha qidirish…',
     searchAria: 'AI jamoa shablonlarini qidirish',
     count: (value) => `${value} ta jamoa`,
@@ -170,9 +171,243 @@ const industryTemplateCopy: Record<'ru' | 'uz', Record<IndustryTeamKind, Industr
   },
 }
 
+const legacyLocalizations: Record<CopyLang, Record<string, Partial<TeamTemplate>>> = {
+  en: {
+    'sales': {
+      title: 'Inbound Sales Team',
+      market: 'Inbound Sales',
+      desc: 'Inbound leads, follow-ups, CRM-ready rows and daily sales report for B2B prospects.'
+    },
+    'education-admin': {
+      title: 'Admin Support Team',
+      market: 'Admin & Office',
+      desc: 'Inbox triage, schedules, payment reminders, SLA alerts and daily operations report.'
+    },
+    'student-support': {
+      title: 'Customer Support & Operations Team',
+      market: 'Customer Support / Operations',
+      desc: 'Customer questions, FAQ responses, issue triage and human handoff summaries.'
+    }
+  },
+  ru: {
+    'sales': {
+      title: 'Команда входящих продаж',
+      market: 'Входящие продажи',
+      desc: 'Квалификация лидов, подготовка follow-up, выгрузка строк в CRM и ежедневный отчет для B2B-продаж.'
+    },
+    'education-admin': {
+      title: 'Команда административной поддержки',
+      market: 'Администрация и офис',
+      desc: 'Координация входящих обращений, напоминания об оплатах, операционные риски и ежедневная сводка.'
+    },
+    'student-support': {
+      title: 'Команда поддержки и операций',
+      market: 'Поддержка и операции',
+      desc: 'Ответы на вопросы клиентов из базы знаний, классификация обращений и передача оператору.'
+    }
+  },
+  uz: {
+    'sales': {
+      title: 'Kiruvchi savdo jamoasi',
+      market: 'Kiruvchi savdo',
+      desc: 'Lidlarni saralash, follow-up tayyorlash, CRM-ga saqlash va B2B savdo bo‘yicha kundalik hisobot.'
+    },
+    'education-admin': {
+      title: 'Ma’muriy qo‘llab-quvvatlash jamoasi',
+      market: 'Ma’muriyat va ofis',
+      desc: 'Kiruvchi arizalar, to‘lov eslatmalari, operatsion xavflar va kundalik ma’muriy hisobot.'
+    },
+    'student-support': {
+      title: 'Mijozlarni qo‘llab-quvvatlash va operatsiyalar',
+      market: 'Mijozlar yordami / Operatsiyalar',
+      desc: 'Bilimlar bazasi asosida mijozlar savollariga javob berish, arizalarni tasniflash va operatorga uzatish.'
+    }
+  }
+}
+
+const toolTranslations: Record<CopyLang, Record<string, string>> = {
+  en: {},
+  ru: {
+    'multilingual guests': 'мультиязычные гости',
+    'booking requests': 'запросы бронирования',
+    'itineraries': 'маршруты',
+    'guest tasks': 'задачи гостей',
+    'reports': 'отчеты',
+    'intake': 'прием обращений',
+    'reminders': 'напоминания',
+    'handoff': 'передача человеку',
+    'lead qualification': 'квалификация лидов',
+    'listing match': 'подбор объектов',
+    'viewing requests': 'запросы на показ',
+    'CRM': 'CRM',
+    'pipeline': 'воронка продаж',
+    'qualification': 'квалификация',
+    'offer knowledge': 'знание предложений',
+    'follow-up': 'фоллоу-ап',
+    'CRM handoff': 'передача в CRM',
+    'menu knowledge': 'знание меню',
+    'reservation requests': 'бронь столиков',
+    'events': 'мероприятия',
+    'prep tasks': 'подготовка задач',
+    'guest follow-up': 'связь с гостями',
+    'role intake': 'прием вакансии',
+    'CV evidence': 'анализ резюме',
+    'interviews': 'интервью',
+    'onboarding tasks': 'задачи адаптации',
+    'review report': 'отчет проверки',
+    'service FAQ': 'FAQ по услугам',
+    'appointment requests': 'запросы на запись',
+    'document checklist': 'чек-лист документов',
+    'material requests': 'запросы материалов',
+    'quote comparison': 'сравнение цен',
+    'approvals': 'согласования',
+    'delivery tasks': 'задачи доставки',
+    'risk report': 'отчет по рискам',
+    'dealer leads': 'лиды дилеров',
+    'product knowledge': 'знание продуктов',
+    'order requests': 'запросы заказов',
+    'delivery control': 'контроль доставки',
+    'receivables': 'дебиторка',
+    'reconciliation': 'сверка данных',
+    'reminder drafts': 'черновики напоминаний',
+    'collection tasks': 'сбор долгов',
+    'matter intake': 'прием дел',
+    'documents': 'документы',
+    'research drafts': 'черновики анализа',
+    'deadlines': 'сроки выполнения',
+    'matter report': 'отчет по делам',
+    'policy FAQ': 'FAQ по полисам',
+    'claim intake': 'прием претензий',
+    'status follow-up': 'статус обращений',
+    'SLA report': 'отчет SLA',
+    'crm rows': 'строки CRM',
+    'payments': 'оплаты',
+    'admin escalation': 'эскалация админам',
+    'meeting analysis': 'анализ встреч',
+    'task management': 'управление задачами',
+    'seller data analysis': 'анализ продаж WB/Ozon',
+    'listing drafts': 'черновики карточек',
+    'pricing advice': 'анализ цен',
+    'seller report': 'отчет продавца',
+    'supplied product data': 'данные товаров',
+    'supplier comparison': 'сравнение поставщиков',
+    'SKU mapping': 'сопоставление SKU',
+    'fulfillment tasks': 'задачи фулфилмента',
+    'sales': 'продажи',
+    'uploaded orders': 'загрузка заказов',
+    'content': 'контент',
+    'CSV shipment analysis': 'анализ отправлений',
+    'SLA rules': 'правила SLA',
+    'exceptions': 'исключения',
+    'saved tasks': 'сохраненные задачи',
+    'message drafts': 'черновики сообщений',
+    'attendance': 'davomat',
+    'telegram': 'Telegram',
+    'instagram': 'Instagram',
+    'campaigns': 'кампании',
+    'faq': 'FAQ',
+    'summary': 'сводка',
+    'custom': 'кастомный',
+    'trace': 'логи действий',
+    'results': 'результаты',
+    'test chat': 'тестовый чат',
+    'knowledge': 'база знаний'
+  },
+  uz: {
+    'multilingual guests': 'ko‘p tilli mehmonlar',
+    'booking requests': 'bron so‘rovlari',
+    'itineraries': 'yo‘nalishlar',
+    'guest tasks': 'mehmon vazifalari',
+    'reports': 'hisobotlar',
+    'intake': 'arizalar qabuli',
+    'reminders': 'eslatmalar',
+    'handoff': 'operatorga topshirish',
+    'lead qualification': 'lidlarni saralash',
+    'listing match': 'obyektlarni tanlash',
+    'viewing requests': 'ko‘rish so‘rovlari',
+    'CRM': 'CRM',
+    'pipeline': 'savdo voronkasi',
+    'qualification': 'saralash',
+    'offer knowledge': 'takliflar bilimi',
+    'follow-up': 'follow-up',
+    'CRM handoff': 'CRM-ga yuklash',
+    'menu knowledge': 'menyu bilimi',
+    'reservation requests': 'stollar bandi',
+    'events': 'tadbirlar',
+    'prep tasks': 'tayyorgarlik ishlari',
+    'guest follow-up': 'mehmon bilan aloqa',
+    'role intake': 'vakansiya qabuli',
+    'CV evidence': 'rezyume tahlili',
+    'interviews': 'intervyular',
+    'onboarding tasks': 'moslashuv vazifalari',
+    'review report': 'nazorat hisoboti',
+    'service FAQ': 'xizmatlar FAQ',
+    'appointment requests': 'yozilish so‘rovlari',
+    'document checklist': 'hujjatlar ro‘yxati',
+    'material requests': 'materiallar so‘rovi',
+    'quote comparison': 'narxlar solishtiruvi',
+    'approvals': 'tasdiqlashlar',
+    'delivery tasks': 'etkazish vazifalari',
+    'risk report': 'xavflar hisoboti',
+    'dealer leads': 'diler lidlari',
+    'product knowledge': 'mahsulotlar bilimi',
+    'order requests': 'buyurtmalar so‘rovi',
+    'delivery control': 'etkazish nazorati',
+    'receivables': 'debitorlik qarzi',
+    'reconciliation': 'solishtirish',
+    'reminder drafts': 'eslatma qoralamalari',
+    'collection tasks': 'qarzlarni yig‘ish',
+    'matter intake': 'ishlar qabuli',
+    'documents': 'hujjatlar',
+    'research drafts': 'tahlil qoralamalari',
+    'deadlines': 'muddatlar',
+    'matter report': 'ishlar hisoboti',
+    'policy FAQ': 'polislar FAQ',
+    'claim intake': 'da’volar qabuli',
+    'status follow-up': 'murojaat holati',
+    'SLA report': 'SLA hisoboti',
+    'crm rows': 'CRM satrlari',
+    'payments': 'to‘lovlar',
+    'admin escalation': 'ma’murlarga uzatish',
+    'meeting analysis': 'yig‘ilish tahlili',
+    'task management': 'vazifalar boshqaruvi',
+    'seller data analysis': 'sotuv tahlili WB/Ozon',
+    'listing drafts': 'kartochkalar qoralamalari',
+    'pricing advice': 'narx tahlili',
+    'seller report': 'sotuvchi hisoboti',
+    'supplied product data': 'tovarlar ma’lumotlari',
+    'supplier comparison': 'etkazib beruvchi solishtiruvi',
+    'SKU mapping': 'SKU-larni moslash',
+    'fulfillment tasks': 'bajarish vazifalari',
+    'sales': 'savdo',
+    'uploaded orders': 'buyurtmalar yuklovi',
+    'content': 'kontent',
+    'CSV shipment analysis': 'jo‘natmalar tahlili',
+    'SLA rules': 'SLA qoidalari',
+    'exceptions': 'istisnolar',
+    'saved tasks': 'saqlangan vazifalar',
+    'message drafts': 'xabar qoralamalari',
+    'attendance': 'davomat',
+    'telegram': 'Telegram',
+    'instagram': 'Instagram',
+    'campaigns': 'kampaniyalar',
+    'faq': 'FAQ',
+    'summary': 'xulosa',
+    'custom': 'maxsus',
+    'trace': 'harakatlar tarixi',
+    'results': 'natijalar',
+    'test chat': 'sinov suhbati',
+    'knowledge': 'bilimlar bazasi'
+  }
+}
+
 function localizeTemplate(template: TeamTemplate, lang: CopyLang): TeamTemplate {
-  if (lang === 'en' || !template.industryKey) return template
-  return { ...template, ...industryTemplateCopy[lang][template.industryKey] }
+  let result = { ...template }
+  if (template.legacyKey && legacyLocalizations[lang]?.[template.legacyKey]) {
+    result = { ...result, ...legacyLocalizations[lang][template.legacyKey] }
+  }
+  if (lang === 'en' || !template.industryKey) return result
+  return { ...result, ...industryTemplateCopy[lang][template.industryKey] }
 }
 
 export default function MarketplacePage() {
@@ -290,10 +525,6 @@ export default function MarketplacePage() {
         <Button to="/app/create-team">{t('marketplacePage.custom')}</Button>
       </div>
 
-      <div className="mt-7 rounded-2xl border border-cyan/20 bg-cyan/[0.06] p-4 text-sm leading-relaxed text-muted">
-        <span className="font-semibold text-text">{ui.bannerTitle}</span> {ui.bannerBody}
-      </div>
-
       <div className="mt-5 space-y-3">
         <div className="relative max-w-xl">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -307,16 +538,29 @@ export default function MarketplacePage() {
           />
         </div>
         <div className="flex flex-wrap gap-2">
-          {categories.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setCategory(item.id)}
-              className={`rounded-pill border px-3 py-1.5 text-xs transition ${category === item.id ? 'border-cyan/40 bg-cyan/15 text-cyan' : 'border-ice/[0.1] bg-white/[0.03] text-muted hover:text-text'}`}
-            >
-              {categoryLabels[copyLang][item.id]}
-            </button>
-          ))}
+          {categories.map((item) => {
+            const emojis: Record<TemplateCategory, string> = {
+              all: '🌐',
+              tourism: '🏨',
+              sales: '💼',
+              commerce: '🛒',
+              services: '🛠️',
+              operations: '⚙️',
+              people: '👥',
+              regulated: '🔒'
+            }
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setCategory(item.id)}
+                className={`inline-flex items-center gap-1.5 rounded-pill border px-3 py-1.5 text-xs transition ${category === item.id ? 'border-cyan/40 bg-cyan/15 text-cyan' : 'border-ice/[0.1] bg-white/[0.03] text-muted hover:text-text'}`}
+              >
+                <span>{emojis[item.id]}</span>
+                <span>{categoryLabels[copyLang][item.id]}</span>
+              </button>
+            )
+          })}
           <span className="ml-auto self-center text-xs text-muted">{ui.count(visibleTemplates.length)}</span>
         </div>
       </div>
@@ -338,9 +582,18 @@ export default function MarketplacePage() {
               <Mini label={t('marketplacePage.type')} value={t('mvp.templates.vertical')} />
             </div>
             <div className="mt-4 flex flex-wrap gap-1.5">
-              {tpl.tools.map((tool) => <span key={tool} className="rounded-pill border border-cyan/20 bg-cyan/10 px-2 py-0.5 text-[10px] text-cyan">{tool}</span>)}
+              {tpl.tools.map((tool) => {
+                const label = toolTranslations[copyLang]?.[tool] ?? tool
+                return <span key={tool} className="rounded-pill border border-cyan/20 bg-cyan/10 px-2 py-0.5 text-[10px] text-cyan">{label}</span>
+              })}
             </div>
-            <Button onClick={() => applyTemplate(tpl)} disabled={!!seeding} size="sm" className="mt-5">
+            <Button
+              onClick={() => applyTemplate(tpl)}
+              disabled={!!seeding}
+              size="sm"
+              variant="outline"
+              className="mt-5 border-cyan/40 bg-cyan/[0.02] text-cyan hover:bg-cyan/10 hover:border-cyan/60 hover:shadow-[0_0_15px_rgba(34,211,238,0.15)] transition-all duration-200"
+            >
               {seeding === tpl.title ? <><Loader2 size={15} className="animate-spin" /> …</> : <>{t('marketplacePage.use')} <ArrowRight size={15} /></>}
             </Button>
           </div>
@@ -353,24 +606,24 @@ export default function MarketplacePage() {
       )}
 
       {pending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPending(null)}>
-          <div className="card w-full max-w-md rounded-3xl p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={() => setPending(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0e1626] p-6 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.7)]" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-text">{t('marketplacePage.setupTitle')}</h3>
             <p className="mt-1 text-xs text-muted">{localizeTemplate(pending, copyLang).title}</p>
             <label className="mt-4 block space-y-1.5">
               <span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('marketplacePage.setupModel')}</span>
-              <select value={pickModel} onChange={(e) => setPickModel(e.target.value)} className="glass w-full rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
-                <option value="">{t('marketplacePage.setupModelDefault')}</option>
+              <select value={pickModel} onChange={(e) => setPickModel(e.target.value)} className="w-full rounded-xl border border-white/10 bg-[#162235] px-3 py-2.5 text-sm text-text outline-none focus:border-cyan/50">
+                <option value="" className="bg-[#162235] text-text">{t('marketplacePage.setupModelDefault')}</option>
                 {PROVIDERS.map((p) => (
-                  <optgroup key={p.id} label={p.name}>
-                    {p.models.map((m) => <option key={m.id} value={m.id}>{m.label}{m.premium ? ' · Pro 💎' : ''}</option>)}
+                  <optgroup key={p.id} label={p.name} className="bg-[#162235] text-muted font-semibold">
+                    {p.models.map((m) => <option key={m.id} value={m.id} className="bg-[#162235] text-text font-normal">{m.label}{m.premium ? ' · Pro 💎' : ''}</option>)}
                   </optgroup>
                 ))}
               </select>
             </label>
             <label className="mt-3 block space-y-1.5">
               <span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('marketplacePage.setupSphere')}</span>
-              <input value={pickNiche} onChange={(e) => setPickNiche(e.target.value)} list="nemo-sphere-options" className="glass w-full rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-violet/50" />
+              <input value={pickNiche} onChange={(e) => setPickNiche(e.target.value)} list="nemo-sphere-options" className="w-full rounded-xl border border-white/10 bg-[#162235] px-3 py-2.5 text-sm text-text outline-none focus:border-cyan/50" />
               {/* the 12 industry spheres as suggestions; free text stays allowed */}
               <datalist id="nemo-sphere-options">
                 {[...new Set(templates.map((item) => localizeTemplate(item, copyLang).market))].map((market) => <option key={market} value={market} />)}
@@ -384,6 +637,10 @@ export default function MarketplacePage() {
           </div>
         </div>
       )}
+
+      <div className="mt-12 rounded-2xl border border-cyan/20 bg-cyan/[0.06] p-4 text-sm leading-relaxed text-muted">
+        <span className="font-semibold text-text">{ui.bannerTitle}</span> {ui.bannerBody}
+      </div>
     </div>
   )
 }

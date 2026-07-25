@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MessagesSquare, Clock, CheckCircle2, UserPlus, Star, Users, MousePointerClick, MessageCircle, Bug, Mail } from 'lucide-react'
+import { MessagesSquare, Clock, CheckCircle2, UserPlus, Star, Users, MousePointerClick, MessageCircle, Bug, Mail, Bot, GitBranch, Share2, AlertTriangle } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { analytics } from '../../data/platform'
 import { channelLabel } from '../../lib/platformMeta'
@@ -81,6 +81,13 @@ export default function AnalyticsPage() {
     : analytics.funnel
   const funnelMax = funnel[0]?.value || 1
 
+  // swarm efficiency: live traces or demo aggregates; '—' until the first multi-agent reply
+  const swarm = live ? summary?.swarm : analytics.swarm
+  const vTraces = String(swarm?.tracedReplies ?? 0)
+  const vHops = swarm?.avgHops != null ? String(swarm.avgHops) : '—'
+  const vDeleg = swarm?.delegatedPct != null ? `${swarm.delegatedPct}%` : '—'
+  const vUnres = swarm?.unresolvedPct != null ? `${swarm.unresolvedPct}%` : '—'
+
   return (
     <div className="container-page max-w-6xl py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -138,6 +145,28 @@ export default function AnalyticsPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="mt-5">
+        <div className="mb-3">
+          <h2 className="font-normal text-text">{t('platform.analytics.swarm')}</h2>
+          <p className="mt-1 text-xs text-muted">{t('platform.analytics.swarmDesc')}</p>
+        </div>
+        {loadingSummary ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label={t('common.loading')}>
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-2xl" />)}
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric icon={Bot} label={t('platform.analytics.mTraces')} value={vTraces} tone="bg-violet/15 text-violet" />
+              <Metric icon={GitBranch} label={t('platform.analytics.mHops')} value={vHops} tone="bg-blue/15 text-blue" />
+              <Metric icon={Share2} label={t('platform.analytics.mDeleg')} value={vDeleg} tone="bg-cyan/15 text-cyan" />
+              <Metric icon={AlertTriangle} label={t('platform.analytics.mUnres')} value={vUnres} tone={swarm?.unresolvedPct ? 'bg-rose-400/15 text-rose-300' : 'bg-teal/15 text-teal'} />
+            </div>
+            {live && !swarm?.tracedReplies && <p className="mt-2 text-xs text-muted">{t('platform.analytics.swarmEmpty')}</p>}
+          </>
+        )}
       </section>
 
       {live && <section className="mt-5">

@@ -1,4 +1,5 @@
-const PREFIX = 'enc:v1:'
+const V1_PREFIX = 'enc:v1:'
+const V2_PREFIX = 'enc:v2:'
 let cachedKey: Promise<CryptoKey> | null = null
 
 function decodeBase64(value: string): Uint8Array {
@@ -25,18 +26,44 @@ async function encryptionKey(): Promise<CryptoKey> {
   return cachedKey
 }
 
-export async function sealSecret(value: string): Promise<string> {
-  if (!value || value.startsWith(PREFIX)) return value
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const plaintext = new TextEncoder().encode(value)
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await encryptionKey(), plaintext))
-  return `${PREFIX}${encodeBase64(iv)}:${encodeBase64(encrypted)}`
+export function providerSecretContext(accountId: string, provider: string): string {
+  if (!accountId || !provider) throw new Error('Credential context is required')
+  return `provider-key:${accountId}:${provider}`
 }
 
-export async function openSecret(value: string | null | undefined): Promise<string> {
-  if (!value || !value.startsWith(PREFIX)) return value ?? '' // legacy rows are migrated separately
+export function accountSecretContext(accountId: string, kind: string): string {
+  if (!accountId || !kind) throw new Error('Credential context is required')
+  return `account-secret:${accountId}:${kind}`
+}
+
+export async function sealSecret(value: string, context = ''): Promise<string> {
+  if (!value) return value
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const plaintext = new TextEncoder().encode(value)
+  try {
+    const algorithm: AesGcmParams = context
+      ? { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(context) }
+      : { name: 'AES-GCM', iv }
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt(algorithm, await encryptionKey(), plaintext))
+    return `${context ? V2_PREFIX : V1_PREFIX}${encodeBase64(iv)}:${encodeBase64(encrypted)}`
+  } finally {
+    plaintext.fill(0)
+  }
+}
+
+export async function openSecret(value: string | null | undefined, context = ''): Promise<string> {
+  if (!value || (!value.startsWith(V1_PREFIX) && !value.startsWith(V2_PREFIX))) return value ?? '' // legacy rows are migrated separately
+  const v2 = value.startsWith(V2_PREFIX)
+  if (v2 && !context) throw new Error('Credential context is required')
   const [, , iv64, encrypted64] = value.split(':')
   if (!iv64 || !encrypted64) throw new Error('Malformed encrypted credential')
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: decodeBase64(iv64) }, await encryptionKey(), decodeBase64(encrypted64))
-  return new TextDecoder().decode(decrypted)
+  const algorithm: AesGcmParams = v2
+    ? { name: 'AES-GCM', iv: decodeBase64(iv64), additionalData: new TextEncoder().encode(context) }
+    : { name: 'AES-GCM', iv: decodeBase64(iv64) }
+  const decrypted = new Uint8Array(await crypto.subtle.decrypt(algorithm, await encryptionKey(), decodeBase64(encrypted64)))
+  try {
+    return new TextDecoder().decode(decrypted)
+  } finally {
+    decrypted.fill(0)
+  }
 }

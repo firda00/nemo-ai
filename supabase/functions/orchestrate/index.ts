@@ -12,13 +12,15 @@
 //
 //   POST /functions/v1/orchestrate   (Authorization: Bearer <user jwt>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { planOf, monthlyTokens } from '../_shared/plans.ts'
 import { modelDef } from '../_shared/models.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { MARKETING_SKILLS, skillCatalog, skillBlock } from '../_shared/marketingSkills.ts'
+import { CAPABILITY_SKILLS, selectedSkillBlock } from '../_shared/capabilitySkills.ts'
 import { safeFetch } from '../_shared/net.ts'
+import { marketplaceEvidenceBlock } from '../_shared/marketplaceData.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -35,6 +37,65 @@ const PREMIUM_MODEL = Deno.env.get('MANAGER_MODEL') ?? 'openai/gpt-4o'
 const MAX_STEPS = 4
 const MAX_SYNTH_STEPS = 5
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const MAX_INPUT_ARTIFACTS = 4
+const MAX_ARTIFACT_CHARS = 24_000
+const MAX_ARTIFACT_CONTEXT_CHARS = 60_000
+
+interface InputArtifact {
+  name: string
+  content: string
+}
+
+const CAPABILITY_SKILL_IDS = new Set(CAPABILITY_SKILLS.map((skill) => skill.id))
+const ORCHESTRATION_SKILL_IDS = new Set([...Object.keys(MARKETING_SKILLS), ...CAPABILITY_SKILL_IDS])
+
+function orchestrationSkillCatalog(): string {
+  const capabilityCatalog = CAPABILITY_SKILLS
+    .map((skill) => `- ${skill.id} — ${skill.instruction}`)
+    .join('\n')
+  return [capabilityCatalog, skillCatalog()].filter(Boolean).join('\n')
+}
+
+function orchestrationSkillBlock(ids: string[]): string {
+  return [selectedSkillBlock(ids), skillBlock(ids)].filter(Boolean).join('\n\n')
+}
+
+function inputArtifacts(value: unknown): InputArtifact[] {
+  if (!Array.isArray(value)) return []
+  let remaining = MAX_ARTIFACT_CONTEXT_CHARS
+  const result: InputArtifact[] = []
+  for (const item of value.slice(0, MAX_INPUT_ARTIFACTS)) {
+    if (!item || typeof item !== 'object' || remaining <= 0) continue
+    const row = item as Record<string, unknown>
+    const name = String(row.name ?? 'data').replace(/[\r\n\t]/g, ' ').trim().slice(0, 120) || 'data'
+    const raw = String(row.content ?? '').split('\u0000').join('').trim()
+    if (!raw) continue
+    const content = raw.slice(0, Math.min(MAX_ARTIFACT_CHARS, remaining))
+    remaining -= content.length
+    result.push({ name, content })
+  }
+  return result
+}
+
+function artifactContext(artifacts: InputArtifact[], maxChars = MAX_ARTIFACT_CONTEXT_CHARS): string {
+  if (!artifacts.length) return ''
+  return artifacts
+    .map((artifact) => `=== INPUT FILE: ${artifact.name} ===\n${artifact.content}`)
+    .join('\n\n')
+    .slice(0, maxChars)
+}
+
+function marketplaceEvidence(goal: string, artifacts: InputArtifact[]): string {
+  return marketplaceEvidenceBlock([goal, ...artifacts.map((artifact) => artifact.content)].join('\n'))
+}
+
+function deterministicSkills(goal: string): string[] {
+  if (/(uzum|marketplace|маркетплейс|sku|артикул|товар|остатк|закуп|assortment|inventory)/i.test(goal)) {
+    return ['marketplace-growth-manager', 'catalog-inventory-analysis', 'data-analysis']
+  }
+  if (/(csv|xlsx|spreadsheet|таблиц|выгрузк|dataset|данн.*анализ)/i.test(goal)) return ['data-analysis']
+  return []
+}
 
 // plan (+ admin) -> which models this account gets. Premium tiers (planOf().premium)
 // get gpt-4o for the manager AND the sub-agent steps; free/starter stay on the cheap model.
@@ -204,10 +265,23 @@ Deno.serve(async (req) => {
   const managerModel = chosenModel || tier.manager
   const workModel = chosenModel || tier.work
 
-  // record the REAL model that ran (honest transparency — no fake labels), not a generic tag
-  const account = async (tokens: number, model: string = managerModel) => {
+  // One team run fans out over many HTTP actions, so the client stamps them all with the same
+  // run_ref — without it a run's real token and dollar cost cannot be reconstructed afterwards.
+  const requestedRunRef = String(body?.run_ref ?? '').trim()
+  const runRef = UUID_RE.test(requestedRunRef) ? requestedRunRef : null
+
+  // Record the REAL model that ran (honest transparency — no fake labels), its cost, and the
+  // pipeline stage in its own column so a stage tag can never be mistaken for a model.
+  const account = async (tokens: number, model: string = managerModel, stage: string | null = null) => {
     if (!tokens) return
-    await admin.from('usage').insert({ account_id: accountId, tokens, model })
+    await admin.from('usage').insert({
+      account_id: accountId,
+      tokens,
+      model,
+      stage,
+      run_ref: runRef,
+      cost: estimateCostUsd(model, tokens),
+    })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
   }
   // account's own OpenRouter key if set, else Nemo's shared key
@@ -319,6 +393,7 @@ Deno.serve(async (req) => {
     // 'staff' — design a persistent team of specialist sub-agents for a sphere.
     if (action === 'staff') {
       const goal = String(body?.goal ?? '').trim()
+      const artifacts = inputArtifacts(body?.input_artifacts)
       const niche = String(body?.niche ?? '').trim()
       const purpose = String(body?.purpose ?? '').trim()
       const lang = String(body?.lang ?? '').trim()
@@ -330,9 +405,20 @@ Deno.serve(async (req) => {
       // equips each specialist with 1-3 method briefs from Nemo's skill library, and
       // 'step' later injects those briefs into the specialist's system prompt.
       const useSkills = Boolean(body?.use_skills)
+      const marketplaceNoExecutorRule = deterministicSkills(goal).includes('marketplace-growth-manager')
+        ? `
+MARKETPLACE EXECUTION BOUNDARY:
+- Nemo does not have a verified production Uzum executor in this workflow. Never claim that a specialist will publish cards, change prices or stock, configure ads, place orders, or report achieved sales results.
+- If the user supplied no marketplace export, build a useful growth diagnostic: a prioritized 7-day experiment plan, product-card and offer improvements that can be drafted from verified facts, the exact minimum data checklist, and measurable acceptance criteria. Label every platform-side change as a draft or human-approved action.
+- If source data is supplied, analyze it and produce evidence-based recommendations, but keep every marketplace mutation behind explicit human approval and a separately verified executor.
+${artifacts.length === 0
+  ? '- NO SOURCE DATA IS ATTACHED. No specialist may claim to analyze current sales, stock, reviews, ads, SKU performance or achieved results. Assign one specialist to produce the exact export/data request and a fillable diagnostic framework; all numeric conclusions remain pending that input.'
+  : '- Source data is attached. Every factual conclusion must trace to supplied rows; name missing fields instead of estimating them.'}
+`
+        : ''
       const skillsRule = useSkills
         ? '\nMARKETING SKILLS — Nemo has a library of proven marketing methods. Give EACH specialist a "skills" array with 1-3 skill ids from this catalog, matched to that specialist\'s function ([] if none fits). Use ONLY ids from the catalog:\n' +
-          skillCatalog() +
+          orchestrationSkillCatalog() +
           '\nAdd the "skills" field next to "role"/"name" in each subagent object.\n'
         : ''
       const enBrief = await englishBrief(orKey, goal)
@@ -368,14 +454,20 @@ QUALITY BAR: sharp, non-overlapping personas specific to THIS goal; no vague "as
 
 OUTPUT CONTRACT:
 - Respond with ONLY valid JSON — no prose, no explanation, no markdown, no code fences — matching EXACTLY:
-{"subagents":[{"role":string,"name":string,"prompt":{"role":string,"tasks":string,"tone":string,"rules":string}}]}
+{"subagents":[{"role":string,"name":string,"skills":[string],"prompt":{"role":string,"tasks":string,"tone":string,"rules":string}}]}
 - Do not add, rename, or remove fields. Encode all tools and handoffs INSIDE the existing "tasks"/"rules" text.
 - Write every field's text in the GOAL's language.
 
 `
       const msgs: ChatMsg[] = [
-        { role: 'system', content: staffSystem + skillsRule + langRule + bizBlock },
+        { role: 'system', content: staffSystem + skillsRule + marketplaceNoExecutorRule + langRule + bizBlock },
         { role: 'user', content: `${ctx || goal || 'A general business assistant team.'}${enBrief ? `\n\nGoal in English (for precise understanding — design the team around THIS outcome, not the domain):\n${enBrief}` : ''}` },
+        ...(artifacts.length
+          ? [{
+              role: 'user' as const,
+              content: `The user attached ${artifacts.length} source file(s): ${artifacts.map((artifact) => artifact.name).join(', ')}. Design concrete roles that use these supplied files; do not replace data work with a generic plan.\n\n${artifactContext(artifacts, 8_000)}`,
+            }]
+          : []),
       ]
       // Cheap models sometimes truncate or wrap the JSON in prose/code fences, which
       // would leave the team empty. Retry up to 3x with more room + a stricter reminder
@@ -398,9 +490,13 @@ OUTPUT CONTRACT:
             return {
               role: String(s.role).slice(0, 60),
               name: String((s.name as string) ?? s.role).slice(0, 60),
-              // only ids that exist in the library survive (the model may hallucinate ids)
-              skills: useSkills && Array.isArray(s.skills)
-                ? (s.skills as unknown[]).map((id) => String(id)).filter((id) => id in MARKETING_SKILLS).slice(0, 3)
+              // Only canonical ids survive. Deterministic domain methods fill a gap
+              // when the architect omits an essential marketplace/data capability.
+              skills: useSkills
+                ? [...new Set([
+                    ...deterministicSkills(goal),
+                    ...(Array.isArray(s.skills) ? (s.skills as unknown[]).map(String) : []),
+                  ])].filter((id) => ORCHESTRATION_SKILL_IDS.has(id)).slice(0, 3)
                 : [],
               prompt: {
                 role: String(p.role ?? '').slice(0, 600),
@@ -419,20 +515,26 @@ OUTPUT CONTRACT:
       const goal = String(body?.goal ?? '')
       const role = (ROLES as readonly string[]).includes(body?.role) ? (body.role as Role) : 'analyst'
       const task = String(body?.task ?? '')
-      const context = String(body?.context ?? '').slice(0, 4000)
+      const context = String(body?.context ?? '').slice(-18_000)
+      const artifacts = inputArtifacts(body?.input_artifacts)
       const lang = String(body?.lang ?? '').trim()
       const langRule = lang && LANG_NAME[lang] ? `\n\nWrite your entire answer in ${LANG_NAME[lang]}.` : ''
       // a saved sub-agent can supply its own system prompt (custom domain role)
       const customSystem = String(body?.system ?? '').trim()
       // marketing skill briefs assigned by the architect (staff use_skills) — injected
       // into the specialist's system prompt so it works BY THE METHOD, not from vibes
-      const skills = Array.isArray(body?.skills) ? (body.skills as unknown[]).map((id) => String(id)).slice(0, 3) : []
+      const skills = Array.isArray(body?.skills)
+        ? (body.skills as unknown[]).map(String).filter((id) => ORCHESTRATION_SKILL_IDS.has(id)).slice(0, 6)
+        : []
+      // Not gated on the assigned skills: the architect can label a numeric task anything,
+      // and a silent miss here is what lets a specialist do purchase math in prose.
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
       const webResearch = role === 'researcher' && body?.web_research === true
       const model = workModel
       const msgs: ChatMsg[] = [
         {
           role: 'system',
-          content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + skillBlock(skills) + bizBlock +
+          content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + orchestrationSkillBlock(skills) + bizBlock +
             (webResearch
               ? '\n\nLIVE RESEARCH IS ENABLED. Search the web for current evidence. Cite every external factual claim with a Markdown link. Never invent metrics, traffic, customers, growth percentages, quotes, tools used by a company, or competitor facts. If reliable evidence is unavailable, write "Not verified" instead of guessing.'
               : '\n\nGROUNDING RULE: Use only facts present in the goal, business profile, knowledge/context, or cited sources. Never invent metrics, growth percentages, named competitors, testimonials, traffic, dates, or tool usage. Mark missing facts as "Not verified".'),
@@ -441,7 +543,10 @@ OUTPUT CONTRACT:
           role: 'user',
           content:
             `Overall goal (stay strictly on it — deliver exactly what it asks, no generic background essays):\n${goal}\n\n` +
-            `Your step: ${task}${context ? `\n\nContext from previous steps:\n${context}` : ''}${langRule}`,
+            `Your step: ${task}` +
+            `${calculatedEvidence ? `\n\n${calculatedEvidence}\nUse these server-calculated values as the numeric source of truth. Do not invent a safety stock or turn a baseline into a final purchase order.` : ''}` +
+            `${artifacts.length ? `\n\nUser-supplied source files (authoritative input; calculate from these rows and name missing columns instead of inventing values):\n${artifactContext(artifacts)}` : ''}` +
+            `${context ? `\n\nStructured handoff from previous specialists:\n${context}` : ''}${langRule}`,
         },
       ]
       const r = await callOpenRouter({
@@ -464,7 +569,9 @@ OUTPUT CONTRACT:
       // catches errors BEFORE the client sees them (reduces hallucinations).
       const goal = String(body?.goal ?? '')
       const work = String(body?.work ?? '').slice(0, 6000)
+      const artifacts = inputArtifacts(body?.input_artifacts)
       const authorRole = String(body?.author_role ?? 'коллега')
+      const authorTask = String(body?.author_task ?? '').trim().slice(0, 2_000)
       const reviewerSystem = String(body?.reviewer_system ?? '').trim()
       const criteria = String(body?.criteria ?? '').trim()
       const previousScore = Math.max(0, Math.min(100, Number(body?.previous_score) || 0))
@@ -472,14 +579,17 @@ OUTPUT CONTRACT:
         ? (body.previous_issues as unknown[]).map(String).slice(0, 8)
         : []
       const revisionRound = Math.max(0, Math.min(3, Number(body?.revision_round) || 0))
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
       const lang = String(body?.lang ?? '').trim()
       const langRule = lang && LANG_NAME[lang] ? ` Write "issues" and "fix" in ${LANG_NAME[lang]}.` : ''
       // Rubric-based review (advanced-evaluation): score fixed DIMENSIONS instead of a vague
       // holistic number, and let a critical flaw in any one cap the overall score. This makes
       // scores consistent and mitigates leniency/length bias.
       const sys = (reviewerSystem || roleSystem.reviewer) +
-        `\n\nYou are PEER-REVIEWING the work of the ${authorRole}. Judge it ONLY against the goal` +
+        `\n\nYou are PEER-REVIEWING the work of the ${authorRole}. Their assigned handoff contract is:\n${authorTask || 'No separate assignment was provided.'}\n` +
+        `Judge whether they completed THEIR ASSIGNED HANDOFF CONTRACT in service of the overall goal` +
         (criteria ? ` and these criteria: ${criteria}` : '') +
+        `. Do not require this author to perform work explicitly assigned to a downstream specialist. For example, a planner is complete when it delivers a precise specification and acceptance criteria; it must not be penalized for not producing the analyst's calculations. The final synthesis, not each intermediate author, is responsible for the entire goal. ` +
         `. Score these four dimensions independently, each 0-100: ` +
         `accuracy (facts correct & on-goal, no fabrication), completeness (covers everything the goal asks), clarity (clear, well-structured), actionability (client can use it as-is). ` +
         `The overall "score" reflects the WEAKEST critical dimension, not an average — a serious flaw in accuracy or completeness caps it low. Judge the work, not its length or confident tone. ` +
@@ -487,10 +597,17 @@ OUTPUT CONTRACT:
           ? `This is revision round ${revisionRound}. The prior verdict scored ${previousScore}/100 with these issues: ${previousIssues.join('; ') || 'none recorded'}. Check whether those SAME issues were fixed. Do not lower the score merely by inventing new preferences; lower it only for a concrete regression introduced by the revision, and name that regression. `
           : '') +
         `Respond ONLY as compact JSON: {"approved":boolean,"score":0-100,"dimensions":{"accuracy":0-100,"completeness":0-100,"clarity":0-100,"actionability":0-100},"issues":[string],"fix":string}. ` +
-        `"issues" = concrete problems (each tied to a dimension); "fix" = ONE actionable instruction telling the author exactly what to change. Set approved:true (empty issues) ONLY if score is at least 80 and every dimension is genuinely strong. Unsupported numbers, named examples, traffic claims, testimonials or growth claims are an accuracy failure.` + langRule + bizBlock
+        `"issues" = concrete problems (each tied to a dimension); "fix" = ONE actionable instruction telling the author exactly what to change. Set approved:true (empty issues) ONLY if score is at least 80 and every dimension is genuinely strong. Unsupported numbers, named examples, traffic claims, testimonials or growth claims are an accuracy failure. ` +
+        `ARITHMETIC CHECK — do this before scoring: recompute every calculation the work states. When a sentence shows its own inputs (for example "77.22 - 12 = 65.22, rounded to 78"), verify that the stated result and rounding actually follow from those inputs. A number that contradicts the values shown beside it, or that contradicts the server-calculated evidence, is a CRITICAL accuracy failure: list it as an issue with the corrected value and cap accuracy below 50.` + langRule + bizBlock
       const msgs: ChatMsg[] = [
         { role: 'system', content: sys },
-        { role: 'user', content: `GOAL:\n${goal}\n\nWORK BY THE ${authorRole} — REVIEW IT:\n${work}` },
+        {
+          role: 'user',
+          content: `GOAL:\n${goal}` +
+            `${calculatedEvidence ? `\n\n${calculatedEvidence}\nTreat these server-calculated values as authoritative. Reject arithmetic that conflicts with them and reject any invented safety stock.` : ''}` +
+            `${artifacts.length ? `\n\nSOURCE FILES USED BY THE AUTHOR — verify claims and calculations against this evidence:\n${artifactContext(artifacts, 30_000)}` : ''}` +
+            `\n\nWORK BY THE ${authorRole} — REVIEW IT:\n${work}`,
+        },
       ]
       const r = await callOpenRouter({ apiKey: orKey, model: workModel, messages: msgs, temperature: 0.2, maxTokens: 800, fallbackModel: FALLBACK_MODEL })
       await account(r.tokens)
@@ -511,6 +628,8 @@ OUTPUT CONTRACT:
 
     if (action === 'synth') {
       const goal = String(body?.goal ?? '').trim()
+      const artifacts = inputArtifacts(body?.input_artifacts)
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
       type SynthStep = {
         role: string
         task: string
@@ -559,6 +678,7 @@ OUTPUT CONTRACT:
           role: 'user',
           content:
             `CLIENT'S REQUEST — this is exactly what you MUST deliver, in full:\n${goal}${enBrief ? `\n(In English, for precise understanding: ${enBrief})` : ''}\n\n` +
+            `${calculatedEvidence ? `${calculatedEvidence}\nUse these values exactly. If reorder_units is null, clearly state that the quantity is a planning baseline and request safety_stock before a purchase-ready order; never invent it.\n\n` : ''}` +
             `Reference notes from the team (use ONLY the parts relevant to the request above; ignore anything off-topic or generic):\n` +
             `${steps.map((s) => `## ${s.role}: ${s.task}${s.needsHumanReview ? ' [HUMAN REVIEW REQUIRED]' : ''}\n${s.output || '(no output)'}`).join('\n\n')}\n\n` +
             `${sources.length ? `Sources:\n${sources.join('\n')}\n\n` : ''}` +
@@ -582,9 +702,20 @@ OUTPUT CONTRACT:
         },
       }))
       const runStatus = needsHumanReview ? 'needs_review' : 'done'
+      // Every call this run made carries its run_ref, so the run's real token and dollar cost
+      // is a sum over what actually happened — not a per-run constant applied to everyone.
+      let runTokens = 0
+      let runCost = 0
+      if (runRef) {
+        const { data: spend } = await admin.from('usage').select('tokens, cost').eq('run_ref', runRef).limit(2000)
+        for (const row of spend ?? []) {
+          runTokens += Number(row.tokens) || 0
+          runCost += Number(row.cost) || 0
+        }
+      }
       const { data: run, error: runError } = await userDb
         .from('research_runs')
-        .insert({ task: goal, status: runStatus, kind: 'team_run', department_id: departmentId, report: r.content, sources, steps: stepRows, model: managerModel })
+        .insert({ task: goal, status: runStatus, kind: 'team_run', department_id: departmentId, report: r.content, sources, steps: stepRows, model: managerModel, tokens: runTokens, cost: Number(runCost.toFixed(6)) })
         .select('id')
         .single()
       if (runError || !run?.id) {

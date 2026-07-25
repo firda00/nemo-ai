@@ -14,6 +14,8 @@ import {
   Route,
   Search,
   Send,
+  ShoppingBasket,
+  Store,
   Users,
 } from 'lucide-react'
 
@@ -38,6 +40,8 @@ export const AGENT_SKILLS: AgentSkillDefinition[] = [
   { id: 'document-evidence-review', icon: FileSearch, color: '#60A5FA' },
   { id: 'commercial-comparison', icon: FileText, color: '#34D399' },
   { id: 'catalog-inventory-analysis', icon: PackageSearch, color: '#F59E0B' },
+  { id: 'store-assortment-customer-care', icon: Store, color: '#EC4899' },
+  { id: 'marketplace-growth-manager', icon: ShoppingBasket, color: '#F97316' },
   { id: 'logistics-exception-control', icon: Route, color: '#2DD4BF' },
   { id: 'executive-reporting', icon: Headphones, color: '#818CF8' },
   { id: 'content-production-review', icon: Megaphone, color: '#FB7185' },

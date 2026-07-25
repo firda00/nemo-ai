@@ -1,4 +1,5 @@
 import { supabase, isSupabaseEnabled } from './supabase'
+import { computeSwarmEfficiency, type SwarmEfficiency } from './swarmEfficiency.ts'
 import type { Dialogue, DialogueMessage } from '../types/platform'
 
 // Aggregates for Dashboard / Analytics computed from live Supabase data.
@@ -52,6 +53,8 @@ export interface LiveSummary {
   leadConvPct: number
   /** operator-takeover conversations still open */
   needsOperator: number
+  /** multi-agent efficiency computed from persisted system_trace rows */
+  swarm: SwarmEfficiency
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -107,5 +110,8 @@ export async function fetchLiveSummary(): Promise<LiveSummary | null> {
   // clamp: `total` can be capped by PostgREST's row limit while `leads` is an exact count
   const leadConvPct = total ? Math.min(100, Math.round((leads / total) * 100)) : 0
 
-  return { dialogues, total, resolved, resolvedPct, byChannel, daily: buckets, leads, avgResponseSec, leadConvPct, needsOperator }
+  // trace rows are filtered out of `dialogues`, so aggregate them from the raw rows
+  const swarm = computeSwarmEfficiency(rows.flatMap((r) => r.messages ?? []))
+
+  return { dialogues, total, resolved, resolvedPct, byChannel, daily: buckets, leads, avgResponseSec, leadConvPct, needsOperator, swarm }
 }

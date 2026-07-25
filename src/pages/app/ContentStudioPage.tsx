@@ -14,6 +14,7 @@ import { MODEL_CATALOG, MODEL_CATEGORIES, DEFAULT_MODEL } from '../../lib/models
 import { useState } from 'react'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
+import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 
 /**
  * Content Factory — simplified to THREE top-level groups so the first screen is
@@ -80,6 +81,7 @@ export default function ContentStudioPage() {
 
   return (
     <div className="container-page max-w-7xl py-8">
+      <ContentSalesNav active="content" />
       <div className="flex flex-wrap items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Factory size={20} /></span>
         <div className="flex-1">

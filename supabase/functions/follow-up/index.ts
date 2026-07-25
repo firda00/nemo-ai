@@ -12,7 +12,7 @@
 //   Cron (x-cron-secret header):
 //     { action:'run_due' }                    -> { processed, results }  (all accounts)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { tgSend } from '../_shared/telegram.ts'
@@ -152,7 +152,7 @@ async function processOne(admin: any, row: any): Promise<{ id: string; status: s
 
     // Account for tokens
     if (r.tokens) {
-      await admin.from('usage').insert({ account_id: accountId, tokens: r.tokens, model: PRIMARY_MODEL })
+      await admin.from('usage').insert({ account_id: accountId, tokens: r.tokens, model: PRIMARY_MODEL, cost: estimateCostUsd(PRIMARY_MODEL, r.tokens) })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: r.tokens })
     }
 

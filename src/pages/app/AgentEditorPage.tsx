@@ -42,6 +42,7 @@ import { OrchestratorRunner } from '../../components/platform/OrchestratorRunner
 import { DepartmentPanel } from '../../components/platform/DepartmentPanel'
 import { FileRunner } from '../../components/platform/FileRunner'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
+import { SkillFileImporter } from '../../components/platform/SkillFileImporter'
 import { cn } from '../../lib/cn'
 import type { PlatformAgent } from '../../types/platform'
 
@@ -84,6 +85,7 @@ export default function AgentEditorPage() {
       voiceEnabled: a.voiceEnabled ?? false,
       voiceMode: a.voiceMode ?? 'both',
       voiceId: a.voiceId ?? '',
+      sttModel: a.sttModel ?? 'auto',
       personaMode: a.personaMode ?? 'business',
       ownerName: a.ownerName ?? '',
       skills: a.skills ?? [],
@@ -269,6 +271,28 @@ export default function AgentEditorPage() {
                         ))}
                       </div>
                     </Field>
+                    {(draft.voiceMode === 'stt' || draft.voiceMode === 'both') && (
+                      <Field label={t('platform.editor.sttModel')}>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          {([
+                            ['auto', t('platform.editor.sttAuto')],
+                            ['ovozify-whisper-small-uz', 'Ovozify Whisper Small UZ'],
+                            ['gemini-openrouter', 'Gemini STT'],
+                          ] as const).map(([model, label]) => (
+                            <button
+                              key={model}
+                              type="button"
+                              onClick={() => set({ sttModel: model })}
+                              className={cn('flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs transition', (draft.sttModel ?? 'auto') === model ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25')}
+                            >
+                              {label}
+                              {(draft.sttModel ?? 'auto') === model && <Check size={14} className="shrink-0 text-violet" />}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-[11px] text-muted">{t('platform.editor.sttModelHint')}</p>
+                      </Field>
+                    )}
                     <p className="flex items-center gap-1.5 text-[11px] text-amber"><HelpCircle size={13} /> {t('platform.editor.voiceSoon')}</p>
                   </div>
                 )}
@@ -326,6 +350,7 @@ export default function AgentEditorPage() {
                     )
                   })}
                 </div>
+                <SkillFileImporter agentId={draft.id} rules={draft.prompt.rules} onChange={(rules) => setPrompt({ rules })} />
               </div>
             </Card>
           )}

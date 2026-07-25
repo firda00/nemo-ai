@@ -7,12 +7,13 @@ interface CommerceBlueprint {
   name: string
   goal: string
   workflowMode: 'generic' | 'logistics'
-  specialists: { role: string; name: string; prompt: AgentPrompt }[]
+  specialists: { role: string; name: string; prompt: AgentPrompt; skills?: string[] }[]
 }
 
-const specialist = (role: string, name: string, tasks: string, rules: string): CommerceBlueprint['specialists'][number] => ({
+const specialist = (role: string, name: string, tasks: string, rules: string, skills: string[] = []): CommerceBlueprint['specialists'][number] => ({
   role,
   name,
+  skills,
   prompt: { role, tasks, tone: 'Concise, operational, evidence-based.', rules },
 })
 
@@ -20,13 +21,13 @@ export const COMMERCE_BLUEPRINTS: Record<CommerceTeamKind, CommerceBlueprint> = 
   marketplace: {
     name: 'Marketplace Seller Team',
     workflowMode: 'generic',
-    goal: 'Analyze supplied marketplace catalog, order, stock and review data, then prepare seller recommendations and reports. WB/Ozon tools are connected separately and remain read-only; all price, stock and order changes require human approval.',
+    goal: 'Analyze supplied marketplace catalog, order, stock, cost, fee, advertising, return, competitor and review data; prepare Uzbek and Russian product-card drafts; classify every SKU; calculate a concrete seven-day purchase proposal; prepare a physical shelf-count checklist; evaluate bounded new-product tests; answer customer questions from verified store facts; and prepare seller reports. Marketplace tools are connected separately and remain read-only unless a production executor is explicitly verified. Purchases, publishing, price/stock/order changes, refunds and unapproved outbound messages require human approval.',
     specialists: [
-      specialist('Order Control Agent', 'Order Controller', 'Check new and unfulfilled marketplace orders, deadlines and operational exceptions.', 'Use only connected seller data; never expose order data in public customer channels.'),
-      specialist('Catalog and Listing Specialist', 'Listing Specialist', 'Audit product cards, missing attributes, titles, descriptions and compliance requirements.', 'Recommendations only; publishing a card requires approval.'),
-      specialist('Pricing and Promotion Analyst', 'Pricing Analyst', 'Calculate margin-aware pricing and promotion proposals from supplied costs and fees.', 'Never change a price automatically and never invent cost or commission data.'),
-      specialist('Reviews and Returns Specialist', 'Reviews Specialist', 'Group review/return issues, draft replies and identify recurring product defects.', 'Drafts require approval before publishing.'),
-      specialist('Seller Report Agent', 'Seller Reporter', 'Prepare a concise seller report with risks, owners, deadlines and next actions.', 'Separate verified facts from recommendations.'),
+      specialist('Order Control Agent', 'Order Controller', 'Check new and unfulfilled marketplace orders, deadlines and operational exceptions.', 'Use only connected seller data; never expose order data in public customer channels.', ['marketplace-growth-manager', 'task-sla-control']),
+      specialist('Assortment and Bilingual Listing Specialist', 'Assortment Specialist', 'Audit product cards; classify every SKU as scale, keep, fix, clear, pause or insufficient data; draft Uzbek Latin and Russian titles, descriptions, benefits, specifications, search phrases and image briefs; and evaluate new-product ideas as small tests.', 'Use verified product facts only. Show dated demand evidence, competition, achievable margin, confidence, test quantity and stop rule. Never invent characteristics, purchase or publish automatically.', ['marketplace-growth-manager', 'catalog-inventory-analysis', 'content-production-review']),
+      specialist('Pricing and Promotion Analyst', 'Pricing Analyst', 'Calculate margin-aware pricing and promotion proposals from supplied costs and fees.', 'Never change a price automatically and never invent cost or commission data.', ['marketplace-growth-manager', 'data-analysis', 'commercial-comparison']),
+      specialist('Customer Conversation and Reviews Specialist', 'Customer Care Specialist', 'Answer product questions from verified catalog and store policies, group review/return issues, draft replies and identify recurring product defects.', 'Never invent price, stock, delivery, warranty or return terms. Live sending requires a configured channel and its approval policy; refunds, discounts and dispute resolutions require human approval.', ['store-assortment-customer-care', 'grounded-knowledge']),
+      specialist('Weekly Purchase, Shelf and Seller Report Agent', 'Seller Reporter', 'Calculate 7/14/28-day velocity, stock cover and a seven-day reorder proposal from on-hand, confirmed inbound, supplier lead time and explicit safety stock; prepare a shelf-count checklist and a concise seller report.', 'Do not recommend a purchase when cost, fee, lead time or stock is unknown. Separate facts, calculations and hypotheses; every order remains an approval request.', ['marketplace-growth-manager', 'catalog-inventory-analysis', 'executive-reporting']),
     ],
   },
   dropshipping: {

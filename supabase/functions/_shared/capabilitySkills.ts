@@ -71,6 +71,16 @@ export const CAPABILITY_SKILLS: CapabilitySkill[] = [
     instruction: 'Analyze product or inventory data for stockouts, slow movers, margin, demand and data-quality issues. Recommend actions tied to specific rows or metrics.',
   },
   {
+    id: 'store-assortment-customer-care', version: 1,
+    tools: ['run_code', 'web_search', 'read_webpage'],
+    instruction: 'Operate as a store intelligence assistant. Score products as keep, add, test or avoid using verified catalog, sales, stock, margin, review and public competitor evidence; show confidence and missing data. Recommend what the owner could source, but never purchase, publish, change price/stock or promise availability automatically. Answer or draft customer replies only from verified catalog and store policies, never inventing price, stock, delivery, warranty or return terms; live sending requires a configured channel and its approval policy.',
+  },
+  {
+    id: 'marketplace-growth-manager', version: 1,
+    tools: ['run_code', 'web_search', 'read_webpage'],
+    instruction: 'Operate as an evidence-based marketplace growth manager for Uzum and similar stores. From supplied sales, stock, cost, fee, ad, return and review data, validate data quality; classify each SKU as scale, keep, fix, clear, pause or insufficient data; calculate 7/14/28-day velocity, margin, stock cover and a concrete seven-day reorder proposal using lead time, confirmed inbound and explicit safety stock. Draft product cards in Uzbek Latin and Russian using verified facts only. Produce a shelf-count checklist and evaluate new-product ideas as bounded tests with dated demand evidence, competition, unit economics, test quantity and stop rule. Separate facts, calculations and hypotheses. Never claim direct marketplace access, publish a card, change price/stock, place an order, issue a refund or send a customer message without a configured production executor and human approval.',
+  },
+  {
     id: 'logistics-exception-control', version: 1,
     tools: ['run_code'],
     instruction: 'Normalize shipment events, compare planned versus actual milestones, flag ETA/SLA exceptions and name the owner, evidence and next recovery action.',

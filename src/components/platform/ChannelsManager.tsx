@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEffect } from 'react'
 import { Plug, Unplug, Check, X, Copy, ShieldCheck } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../ui/Toast'
@@ -23,6 +24,7 @@ interface MetaResult {
   verify_token?: string
   channel_id?: string
 }
+interface ChannelRow { id: string; type: ChannelType; label?: string | null; status?: string | null }
 
 /**
  * Real channel connect/disconnect for one agent. Telegram → connect-telegram
@@ -42,6 +44,16 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<MetaResult | null>(null)
   const [copied, setCopied] = useState('')
+  const [channelRows, setChannelRows] = useState<ChannelRow[]>([])
+
+  const loadChannels = async () => {
+    if (!isSupabaseEnabled || !supabase) return
+    const { data } = await supabase.from('channels').select('id,type,label,status').eq('agent_id', agentId).order('created_at', { ascending: false })
+    setChannelRows((data as ChannelRow[] | null) ?? [])
+  }
+  // Initial read synchronizes the server-backed channel list for this agent.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { void loadChannels() }, [agentId])
 
   // The visitor pastes this on their site; it loads the widget and talks to widget-webhook
   // (keyed by the channel id, which we only have AFTER connecting).
@@ -115,6 +127,7 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
         return
       }
       await hydrate()
+      await loadChannels()
       if (active === 'widget') {
         // widget: show the embed snippet built from the real channel id
         setResult({ channel_id: data.channel_id, webhook: data.webhook })
@@ -130,10 +143,13 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
     }
   }
 
-  const disconnect = async (c: ChannelType) => {
+  const disconnect = async (c: ChannelType, channelId?: string) => {
     if (isSupabaseEnabled && supabase) {
-      await supabase.from('channels').delete().eq('agent_id', agentId).eq('type', c)
+      const query = supabase.from('channels').delete().eq('agent_id', agentId).eq('type', c)
+      if (channelId) query.eq('id', channelId)
+      await query
       await hydrate()
+      await loadChannels()
     } else {
       updateAgent(agentId, { channels: connected.filter((x) => x !== c) })
     }
@@ -152,6 +168,27 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
         <h2 className="font-normal text-text">{t('platform.editor.channelsTitle')}</h2>
         <p className="mt-0.5 text-xs text-muted">{t('platform.editor.channelsDesc')}</p>
       </div>
+
+      {channelRows.length > 0 && (
+        <div className="rounded-2xl border border-cyan/20 bg-cyan/[0.04] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-text">Подключённые боты и каналы</p>
+              <p className="mt-1 text-xs text-muted">Можно добавить несколько ботов одной платформы и удалить каждый отдельно.</p>
+            </div>
+            <span className="rounded-full border border-cyan/25 px-2 py-1 text-xs text-cyan">{channelRows.length}</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {channelRows.map((row) => (
+              <div key={row.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm text-text">{row.label || channelLabel(row.type, t)}</span>
+                <span className="text-[11px] text-teal">{row.status || 'connected'}</span>
+                <button onClick={() => void disconnect(row.type, row.id)} className="rounded-lg p-1.5 text-muted hover:bg-danger/10 hover:text-danger" aria-label="Удалить подключение"><Unplug size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {(Object.keys(channelMeta) as ChannelType[]).map((c) => {

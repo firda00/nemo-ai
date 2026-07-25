@@ -23,15 +23,15 @@ export interface PlanLimit {
 }
 
 export const PLAN_LIMITS: Record<string, PlanLimit> = {
-  // US self-serve ladder (2026). Prices flow to Stripe via inline price_data — no Price IDs to sync.
+  // Self-serve ladder approved for launch. Prices flow to Stripe via inline price_data — no Price IDs to sync.
   // "Standard/Plus" = BYO tiers (mediaIncluded:false) → connect your own key, or a small weekly
   // trial on Nemo's key. "Pro/Max" = included (mediaIncluded:true) → no API to connect.
-  free:       { label: 'Free',       price: 0,    tokens: 500_000,     teams: 1,    premium: false, media: false, mediaIncluded: false, mediaTrialWeekly: 0,  video: false, hiResVideo: false, mediaMonthly: 5,     browserMonthly: 0,     videoMonthly: 0,    competitors: 1 },
-  starter:    { label: 'Starter',    price: 59,   tokens: 6_000_000,   teams: 3,    premium: false, media: true,  mediaIncluded: false, mediaTrialWeekly: 5,  video: false, hiResVideo: false, mediaMonthly: 150,   browserMonthly: 50,    videoMonthly: 20,   competitors: 3 },
-  pro:        { label: 'Pro',        price: 249,  tokens: 30_000_000,  teams: 10,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  hiResVideo: true,  mediaMonthly: 800,   browserMonthly: 250,   videoMonthly: 100,  competitors: 5 },
-  business:   { label: 'Business',   price: 699,  tokens: 90_000_000,  teams: 30,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  hiResVideo: true,  mediaMonthly: 3000,  browserMonthly: 1000,  videoMonthly: 400,  competitors: 8 },
-  agency:     { label: 'Agency',     price: 1990, tokens: 90_000_000,  teams: 200,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  hiResVideo: true,  mediaMonthly: 8000,  browserMonthly: 3000,  videoMonthly: 1000, competitors: 12 },
-  enterprise: { label: 'Enterprise', price: 1490, tokens: 300_000_000, teams: 9999, premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  hiResVideo: true,  mediaMonthly: 40000, browserMonthly: 15000, videoMonthly: 5000, competitors: 20 },
+  free:       { label: 'Free',       price: 0,    tokens: 150_000,     teams: 1,    premium: false, media: false, mediaIncluded: false, mediaTrialWeekly: 0,  video: false, hiResVideo: false, mediaMonthly: 0,     browserMonthly: 0,     videoMonthly: 0,    competitors: 1 },
+  starter:    { label: 'Starter',    price: 25,  tokens: 500_000,    teams: 1,   premium: false, media: true,  mediaIncluded: false, mediaTrialWeekly: 5, video: false, hiResVideo: false, mediaMonthly: 0,     browserMonthly: 20,   videoMonthly: 0,    competitors: 2 },
+  pro:        { label: 'Pro',        price: 59,  tokens: 2_000_000,  teams: 2,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 100,   browserMonthly: 75,   videoMonthly: 20,   competitors: 3 },
+  business:   { label: 'Business',   price: 119, tokens: 6_000_000,  teams: 10,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 400,   browserMonthly: 250,  videoMonthly: 80,   competitors: 5 },
+  agency:     { label: 'Agency',     price: 350, tokens: 20_000_000, teams: 30,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 1500,  browserMonthly: 1000, videoMonthly: 300,  competitors: 10 },
+  enterprise: { label: 'Enterprise', price: 0,   tokens: 60_000_000, teams: 100, premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 5000,  browserMonthly: 3000, videoMonthly: 1000, competitors: 20 },
   // existing beta accounts keep generous included access
   beta:       { label: 'Beta',       price: 0,    tokens: 5_000_000,   teams: 10,   premium: false, media: true,  mediaIncluded: true,  mediaTrialWeekly: 0,  video: true,  hiResVideo: true,  mediaMonthly: 300,   browserMonthly: 100,   videoMonthly: 40,   competitors: 5 },
 }

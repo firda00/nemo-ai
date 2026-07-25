@@ -6,7 +6,7 @@
 import { callOpenRouter, buildSystemPrompt, estimateCostUsd, SCOPE_GUARD, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from './llm.ts'
 import { planOf } from './plans.ts'
 import { loadMemory, saveMemory } from './memory.ts'
-import { openSecret } from './secretBox.ts'
+import { openSecret, providerSecretContext } from './secretBox.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { retrieveKnowledge, retrieveTeamKnowledge } from './knowledge.ts'
 import { ALLOWED_MODEL_IDS } from './models.ts'
@@ -132,7 +132,10 @@ async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, un
   let attempted = false
   try {
     const { data: keys } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId).in('provider', ['bitrix24', 'hubspot', 'amocrm'])
-    const byP: Record<string, string> = {}; for (const k of (keys ?? []) as any[]) byP[k.provider] = await openSecret(k.api_key)
+    const byP: Record<string, string> = {}
+    for (const k of (keys ?? []) as any[]) {
+      byP[k.provider] = await openSecret(k.api_key, providerSecretContext(accountId, k.provider))
+    }
     const name = String(lead.name ?? '').slice(0, 120), phone = String(lead.phone ?? ''), email = String(lead.email ?? ''), note = String(lead.request ?? lead.budget ?? '')
     // ONE external attempt per claim: after an ambiguous failure (timeout may
     // have landed remotely) we must NOT fan out to the next CRM — that could
@@ -722,6 +725,10 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     let replyText = ''
     let tokensUsed = 0
     let modelTag: string = model
+    // The stage is a separate fact from the model. Overwriting the model id with 'tool' or
+    // 'team' both erased the model mix AND made estimateCostUsd fall through to its cheap
+    // default, so a run on 4o was recorded at a mini-class price.
+    let stageTag: string | null = null
     let traceSteps: TraceStep[] = []
     let replyAgentId: string | null = agent.id ?? null
 
@@ -735,13 +742,13 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     if (toolRun?.ran) {
       replyText = String(toolRun.result ?? 'Готово.')
       tokensUsed = toolRun.tokens
-      modelTag = 'tool'
+      stageTag = 'tool'
     } else if (agent.type === 'workflow') {
       // TEAM: the lead runs the whole department on this message (with known lead state injected)
       const team = await buildTeamReply(db, apiKey, agent, history ?? [], knowledge, bizBlock, knownLead, premiumAllowed)
       replyText = team.text
       tokensUsed = team.tokens
-      modelTag = 'team'
+      stageTag = 'team'
       traceSteps = team.trace
       // A peer-review failure is a real human handoff, not a hidden warning followed by an
       // unapproved answer. Persist the trace even though no agent reply is emitted; the channel
@@ -759,7 +766,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
           })
           if (traceErr) console.error('escalation trace insert failed:', traceErr)
         }
-        await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
+        await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, stage: stageTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
         if (tokensUsed) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed })
         return ''
       }
@@ -859,7 +866,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
         })
         if (traceErr) console.error('trace insert failed:', traceErr)
       }
-      await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
+      await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: modelTag, stage: stageTag, dialogue_id: dialogueId, cost: estimateCostUsd(modelTag, tokensUsed) })
       if (tokensUsed) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed })
       if (isLearning || personal) {
         const lastCustomer = [...(history ?? [])].reverse().find((m: any) => m.author === 'customer')

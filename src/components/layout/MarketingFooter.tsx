@@ -10,17 +10,17 @@ export function MarketingFooter() {
     {
       title: t('landing.footer.product'),
       links: [
-        { label: t('nav.howItWorks'), href: '#how' },
-        { label: t('nav.features'), href: '#features' },
-        { label: t('nav.pricing'), href: '/app/billing' },
-        { label: t('nav.faq'), href: '#faq' },
+        { label: t('nav.howItWorks'), href: '/#how' },
+        { label: t('nav.features'), href: '/#features' },
+        { label: t('nav.pricing'), href: '/pricing' },
+        { label: t('nav.faq'), href: '/#faq' },
       ],
     },
     {
       title: t('landing.footer.company'),
       links: [
         { label: 'Nemo AI', href: '#' },
-        { label: t('nav.scenarios'), href: '#scenarios' },
+        { label: t('nav.scenarios'), href: '/#scenarios' },
       ],
     },
     {
@@ -41,7 +41,7 @@ export function MarketingFooter() {
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">{t('marketingFooter.tagline')}</p>
             <div className="mt-5 inline-flex items-center gap-2 rounded-pill border border-white/10 bg-white/5 px-3 py-1">
               <span className="h-1.5 w-1.5 rounded-full bg-teal" />
-              <span className="text-xs font-medium text-text">Nemo.ai</span>
+              <span className="text-xs font-medium text-text">Nemo AI</span>
             </div>
           </div>
           {cols.map((c) => (

@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Sparkles,
   UserRoundCheck,
+  X,
   Zap,
 } from 'lucide-react'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
@@ -26,54 +27,64 @@ import { cn } from '../lib/cn'
 
 const copy = {
   ru: {
-    launch: "Публичный запуск 19 июля",
-    heroKicker: "AI-платформа для любого бизнеса",
-    title: "Создайте\nAI-агента\nза минуты",
-    subtitle: "Опишите задачу — Nemo соберёт AI-команду: от поддержки клиентов до автоматизации любых рабочих процессов.",
-    primaryCta: "Создать агента бесплатно",
+    launch: "Публичная бета",
+    heroKicker: "AI-платформа для автоматизации бизнеса",
+    title: "Оркестрируйте\nAI-команды\nза минуты",
+    subtitle: "Интегрируйте координированные команды AI-агентов в ваши бизнес-процессы. От квалификации лидов и поддержки до сложных операций — без кода.",
+    primaryCta: "Создать команду бесплатно",
     secondaryCta: "Посмотреть, как работает",
     openTeam: "Создать AI-команду",
-    notes: ["1 000 кредитов бесплатно", "67 AI-функций", "Без кода"],
+    notes: ["Бесплатный план — 150 000 токенов", "Без кода", "UZ / RU / EN"],
     statsTitle: "Платформа, готовая к масштабированию",
     stats: [
-      ["67", "AI-функций"],
-      ["20+", "интеграций"],
-      ["6", "каналов связи"],
-      ["5 мин", "до первого агента"],
+      ["12", "интеграций работают"],
+      ["790", "сервисов в каталоге"],
+      ["3", "языка интерфейса"],
+      ["5 мин", "до первой команды"],
     ],
     painKicker: "Как это работает",
-    painTitle: "От идеи до рабочего AI-агента — четыре шага",
-    painSubtitle: "Не нужно писать код или разбираться в API. Опишите задачу, настройте поведение, подключите каналы — и агент работает.",
+    painTitle: "От идеи до рабочей AI-команды — четыре шага",
+    painSubtitle: "Не нужно писать код или разбираться в API. Опишите задачу, настройте поведение, подключите каналы — и команда работает.",
     flow: [
-      ["Опишите задачу", "Расскажите, что должен делать агент — на любом языке"],
-      ["Настройте команду", "Выберите роли, инструменты, базу знаний и каналы"],
-      ["Запустите", "Подключите Telegram, WhatsApp, виджет или API"],
-      ["Масштабируйте", "Добавляйте агентов, создавайте AI-команды и отделы"],
+      ["Опишите задачу", "Расскажите, что должна делать команда — на любом языке"],
+      ["Настройте роли", "Выберите специалистов, инструменты, базу знаний и каналы"],
+      ["Запустите", "Подключите Telegram, виджет на сайте или API"],
+      ["Масштабируйте", "Добавляйте агентов, создавайте новые AI-команды и отделы"],
     ],
     before: "Без AI-агентов",
     after: "С Nemo AI",
-    beforeItems: ["Рутинные задачи съедают часы каждый день", "Каждый процесс требует отдельного инструмента", "Масштабирование = найм новых людей", "Нет единой системы автоматизации"],
-    afterItems: ["AI-агент работает 24/7 по вашим правилам", "Одна платформа для агентов, команд и каналов", "Масштабирование = добавить ещё одного агента", "Полный контроль: история действий, передача человеку"],
-    workflowKicker: "AI-команды по запросу",
+    beforeItems: [
+      "Время ответа зависит от загрузки менеджеров",
+      "Каждый процесс требует отдельного разрозненного инструмента",
+      "Масштабирование требует найма новых людей",
+      "Нет единой системы для отслеживания рабочих процессов",
+    ],
+    afterItems: [
+      "Первый ответ всегда соответствует высшему стандарту компании",
+      "Единая платформа для агентов, команд и каналов связи",
+      "Масштабирование — это просто запуск ещё одной AI-команды",
+      "Полный аудит: история действий, метрики качества и передача человеку",
+    ],
+    workflowKicker: "Координированные AI-команды",
     workflowTitle: "Не один бот, а координированная AI-команда с ролями",
-    workflowSubtitle: "Координатор распределяет задачи между специалистами. Вы видите, кто что сделал и какой шаг будет следующим.",
-    capKicker: "Возможности AI-агента",
+    workflowSubtitle: "Operations Lead распределяет задачи между специалистами. Вы видите, кто что сделал и какой шаг будет следующим.",
+    capKicker: "Возможности AI-команды",
     capTitle: "Всё, что нужно для умной автоматизации",
     capabilities: [
-      ["Мессенджеры", "Telegram, WhatsApp, Instagram, виджет на сайте", MessageCircleMore],
-      ["База знаний", "Загрузите PDF, DOCX, XLSX — агент учится на ваших данных", Database],
+      ["Мессенджеры", "Telegram и виджет на сайте; WhatsApp и Instagram — в разработке", MessageCircleMore],
+      ["База знаний", "Загрузите PDF, DOCX, XLSX — агенты учатся на ваших данных", Database],
       ["Инструменты", "CRM, Google Sheets, API, браузер, генерация файлов", Plug],
       ["Голос", "Распознавание и генерация речи для голосовых каналов", Mic],
-      ["Автопосты", "Планируйте и публикуйте контент по расписанию", Repeat],
-      ["Аналитика", "Отслеживайте эффективность каждого агента и команды", Layers],
+      ["Автопосты", "Планируйте и автоматически публикуйте контент по расписанию", Repeat],
+      ["Аналитика", "Отслеживайте эффективность каждого агента и всей команды", Layers],
     ],
     templatesKicker: "Сценарии использования",
-    templatesTitle: "AI-агенты для любой сферы бизнеса",
+    templatesTitle: "AI-команды для любой сферы бизнеса",
     templates: [
       ["Поддержка клиентов", "Мгновенные ответы, маршрутизация и передача оператору"],
       ["Продажи и лиды", "Квалификация заявок, follow-up и обновление CRM"],
       ["Контент и маркетинг", "Генерация текстов, постов и креативов по расписанию"],
-      ["Аналитика и отчёты", "Ежедневные сводки, мониторинг и уведомления"],
+      ["Аналитика и отчёты", "Ежедневные сводки, мониторинг отклонений и уведомления"],
       ["HR и рекрутинг", "Скрининг резюме, ответы кандидатам, онбординг"],
       ["Исследования", "Поиск информации, анализ конкурентов и рынка"],
     ],
@@ -88,58 +99,74 @@ const copy = {
     faqTitle: "Частые вопросы",
     faq: [
       { q: "Что такое AI-агент?", a: "AI-агент — это автономная программа, которая выполняет задачи по вашим правилам: отвечает клиентам, обрабатывает заявки, генерирует контент или анализирует данные. Агент работает 24/7 и подключается к вашим каналам и инструментам." },
-      { q: "Нужно ли уметь программировать?", a: "Нет. Вы описываете задачу на обычном языке, выбираете инструменты и каналы — Nemo настроит агента автоматически. Для продвинутых пользователей есть API и кастомные инструменты." },
-      { q: "Какие каналы поддерживаются?", a: "Telegram, WhatsApp, Instagram, веб-виджет и API. Список постоянно расширяется — Discord, YouTube и другие в планах." },
+      { q: "Нужно ли уметь программировать?", a: "Нет. Вы описываете задачу на обычном языке, выбираете инструменты и каналы — Nemo настроит команду автоматически. Для продвинутых пользователей есть API и кастомные инструменты." },
+      { q: "Какие каналы поддерживаются?", a: "Сейчас работают Telegram, веб-виджет и API. WhatsApp и Instagram — в разработке: вебхуки написаны, но канал не включаем, пока в продакшене не проверена подпись Meta. Статус каждого сервиса виден на странице «Интеграции»." },
       { q: "Что такое AI-команда?", a: "AI-команда — это несколько агентов с разными ролями, управляемых координатором. Например: один агент квалифицирует заявку, другой готовит ответ, третий обновляет CRM. Координатор распределяет работу автоматически." },
       { q: "Агенты работают без ошибок?", a: "Ни одна AI-система не гарантирует нулевой риск ошибок. Nemo снижает риск через историю действий, проверку результатов и автоматическую передачу сложных случаев человеку." },
-      { q: "Сколько это стоит?", a: "Регистрация бесплатна — вы получаете 1 000 кредитов. Пакеты кредитов от $10. Планы для команд от $59/мес. Подробнее — на странице Billing." },
+      { q: "Сколько это стоит?", a: "Регистрация бесплатна: на бесплатном плане 150 000 токенов. Платные планы — от $25/мес. Актуальные лимиты и расход — на странице тарифов." },
     ],
-    finalTitle: "Создайте своего AI-агента прямо сейчас",
-    finalText: "1 000 кредитов бесплатно при регистрации. Опишите задачу — и ваш агент начнёт работать через 5 минут.",
-    preview: {
-      process: "AI-команда Nemo", request: "Обработка входящего запроса", done: "Готово", team: "Команда", message: "Запрос пользователя",
-      quote: "«Нужна помощь с выбором тарифа и подключением Telegram бота»", history: "Что сделано", next: "Следующий шаг", action: "Отправить рекомендацию клиенту",
-      agents: ["Координатор", "Аналитик запросов", "Специалист по продукту", "Контроль качества"],
-      steps: ["Запрос принят и классифицирован", "Тарифы подобраны по критериям", "Инструкция по подключению готова", "Ответ проверен и отправлен"],
+    previewSales: {
+      process: "AI-команда Nemo", request: "Квалификация лида (B2B)", done: "В процессе", team: "Состав команды", message: "Входящий запрос",
+      quote: "«Здравствуйте! Хотим запросить корпоративное демо на 50 пользователей. Какие у вас тарифы?»", history: "История действий", next: "Следующий шаг", action: "Назначить демо-звонок с менеджером продаж",
+      agents: ["Координатор", "Lead Qualifier", "Product Expert", "Quality Reviewer"],
+      steps: ["Запрос демо классифицирован (50 лицензий)", "Сетка корпоративных цен найдена в базе знаний", "Лид сохранен в CRM с высоким приоритетом", "Черновик ответа с тарифами проверен и отправлен"],
     },
+    previewOps: {
+      process: "AI-команда Nemo", request: "Разбор встречи и задачи", done: "Завершено", team: "Состав команды", message: "Стенограмма встречи",
+      quote: "«Синхронизация по онбордингу клиентов. Дилшод должен позвонить должникам до пятницы. Мадина пишет инструкции.»", history: "История действий", next: "Следующий шаг", action: "Отправить напоминания исполнителям в Slack/Telegram",
+      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
+      steps: ["Стенограмма встречи проанализирована", "Созданы задачи для Дилшода (звонки) и Мадины (инструкции)", "Сроки и ответственные занесены в таблицу задач", "Сводный операционный отчет отправлен руководству"],
+    },
+    finalTitle: "Создайте свою AI-команду прямо сейчас",
+    finalText: "Бесплатный план — 150 000 токенов. Опишите задачу — и ваша команда начнёт работать через 5 минут.",
   },
   uz: {
-    launch: "Ommaviy ishga tushirish 19-iyul",
-    heroKicker: "Har qanday biznes uchun AI-platforma",
-    title: "AI-agentni\nminutlarda\nyarating",
-    subtitle: "Vazifani tushuntiring — Nemo AI-jamoani yig'adi: mijozlarga yordam berishdan jarayonlarni avtomatlashtrishgacha.",
-    primaryCta: "Bepul agent yaratish",
+    launch: "Ommaviy beta",
+    heroKicker: "Biznesni avtomatlashtirish uchun AI-platforma",
+    title: "AI-jamoalarni\nminutlarda\nboshqaring",
+    subtitle: "AI-agentlar jamoasini biznes jarayonlaringizga integratsiya qiling. Sotuv va qo'llab-quvvatlashdan tortib murakkab operatsiyalargacha — kodsiz.",
+    primaryCta: "Jamoani bepul yaratish",
     secondaryCta: "Qanday ishlashini ko'rish",
     openTeam: "AI-jamoa yaratish",
-    notes: ["1 000 kredit bepul", "67 AI-funksiya", "Kodsiz"],
+    notes: ["Bepul reja — 150 000 token", "Kodsiz", "UZ / RU / EN"],
     statsTitle: "Masshtablashga tayyor platforma",
     stats: [
-      ["67", "AI-funksiya"],
-      ["20+", "integratsiya"],
-      ["6", "aloqa kanali"],
-      ["5 min", "birinchi agentgacha"],
+      ["12", "integratsiya ishlaydi"],
+      ["790", "katalogdagi xizmat"],
+      ["3", "interfeys tili"],
+      ["5 min", "birinchi jamoagacha"],
     ],
     painKicker: "Qanday ishlaydi",
-    painTitle: "G'oyadan ishlaydigan AI-agentgacha — to'rt qadam",
-    painSubtitle: "Kod yozish yoki API bilan ishlash shart emas. Vazifani tushuntiring, xatti-harakatni sozlang, kanallarni ulang — agent ishlaydi.",
+    painTitle: "G'oyadan ishlaydigan AI-jamoagacha — to'rt qadam",
+    painSubtitle: "Kod yozish yoki API bilan ishlash shart emas. Vazifani tushuntiring, xatti-harakatni sozlang, kanallarni ulang — jamoa ishlaydi.",
     flow: [
-      ["Vazifani tushuntiring", "Agent nima qilishi kerakligini aytib bering — istalgan tilda"],
-      ["Jamoani sozlang", "Rollarni, asboblarni, bilim bazasi va kanallarni tanlang"],
-      ["Ishga tushiring", "Telegram, WhatsApp, vidjeti yoki APIni ulang"],
-      ["Masshtablang", "Agentlar qo'shing, AI-jamoalar va bo'limlar yarating"],
+      ["Vazifani tushuntiring", "Jamoa nima qilishi kerakligini aytib bering — istalgan tilda"],
+      ["Rollarni sozlang", "Mutaxassislar, asboblar, bilim bazasi va kanallarni tanlang"],
+      ["Ishga tushiring", "Telegram, saytdagi vidjet yoki APIni ulang"],
+      ["Masshtablang", "Agentlar qo'shing, yangi AI-jamoalar va bo'limlar yarating"],
     ],
     before: "AI-agentlarsiz",
     after: "Nemo AI bilan",
-    beforeItems: ["Kundalik vazifalar har kuni soatlarni yeydi", "Har bir jarayon alohida vosita talab qiladi", "Masshtablash = yangi odamlar yollash", "Yagona avtomatlashtirish tizimi yo'q"],
-    afterItems: ["AI-agent 24/7 sizning qoidalaringiz bo'yicha ishlaydi", "Agentlar, jamoalar va kanallar uchun bitta platforma", "Masshtablash = yana bitta agent qo'shish", "To'liq nazorat: harakatlar tarixi, insonga topshirish"],
-    workflowKicker: "So'rov bo'yicha AI-jamoalar",
+    beforeItems: [
+      "Javob berish vaqti menejerlarning bandligiga bog'liq",
+      "Har bir jarayon alohida va tarqoq vosita talab qiladi",
+      "Masshtablash yangi odamlarni yollashni talab qiladi",
+      "Ish jarayonlarini kuzatish uchun yagona tizim yo'q",
+    ],
+    afterItems: [
+      "Birinchi javob doimo kompaniyaning eng yuqori standartiga mos keladi",
+      "Agentlar, jamoalar va aloqa kanallari uchun yagona platforma",
+      "Masshtablash — shunchaki yana bitta AI-jamoani ishga tushirish",
+      "To'liq audit: harakatlar tarixi, sifat ko'rsatkichlari va insonga topshirish",
+    ],
+    workflowKicker: "Muvofiqlashtirilgan AI-jamoalar",
     workflowTitle: "Bitta bot emas, rollar bilan muvofiqlashtirilgan AI-jamoa",
-    workflowSubtitle: "Koordinator vazifalarni mutaxassislarga taqsimlaydi. Kim nima qilganini va keyingi qadam nimani ko'rasiz.",
-    capKicker: "AI-agent imkoniyatlari",
+    workflowSubtitle: "Operations Lead vazifalarni mutaxassislarga taqsimlaydi. Kim nima qilganini va keyingi qadamni ko'rasiz.",
+    capKicker: "AI-jamoa imkoniyatlari",
     capTitle: "Aqlli avtomatlashtirish uchun kerak bo'lgan hamma narsa",
     capabilities: [
-      ["Messenjerlar", "Telegram, WhatsApp, Instagram, saytdagi vidjet", MessageCircleMore],
-      ["Bilim bazasi", "PDF, DOCX, XLSX yuklang — agent sizning ma'lumotlaringizdan o'rganadi", Database],
+      ["Messenjerlar", "Telegram va saytdagi vidjet; WhatsApp va Instagram — ishlab chiqilmoqda", MessageCircleMore],
+      ["Bilim bazasi", "PDF, DOCX, XLSX yuklang — agentlar ma'lumotlaringizdan o'rganadi", Database],
       ["Asboblar", "CRM, Google Sheets, API, brauzer, fayl yaratish", Plug],
       ["Ovoz", "Ovozli kanallar uchun nutq tanish va yaratish", Mic],
       ["Autopostlar", "Kontentni rejaga ko'ra rejalashtiring va joylashtiring", Repeat],
@@ -167,56 +194,72 @@ const copy = {
     faq: [
       { q: "AI-agent nima?", a: "AI-agent — bu sizning qoidalaringiz bo'yicha vazifalarni bajaradigan avtonom dastur: mijozlarga javob beradi, arizalarni qayta ishlaydi, kontent yaratadi yoki ma'lumotlarni tahlil qiladi. Agent 24/7 ishlaydi va sizning kanallar va vositalaringizga ulanadi." },
       { q: "Dasturlash bilish kerakmi?", a: "Yo'q. Vazifani oddiy tilda tushuntirasiz, vositalar va kanallarni tanlaysiz — Nemo agentni avtomatik sozlaydi. Ilg'or foydalanuvchilar uchun API va maxsus vositalar mavjud." },
-      { q: "Qaysi kanallar qo'llab-quvvatlanadi?", a: "Telegram, WhatsApp, Instagram, veb-vidjet va API. Ro'yxat doimiy kengaymoqda — Discord, YouTube va boshqalar rejalashtirilgan." },
+      { q: "Qaysi kanallar qo'llab-quvvatlanadi?", a: "Hozir Telegram, veb-vidjet va API ishlaydi. WhatsApp va Instagram — ishlab chiqilmoqda: webhook kodi tayyor, lekin Meta imzosi produksiyada tekshirilmaguncha kanal yoqilmaydi. Har bir xizmat holati «Integratsiyalar» sahifasida ko'rinadi." },
       { q: "AI-jamoa nima?", a: "AI-jamoa — turli rollarga ega bir nechta agentlar, koordinator tomonidan boshqariladi. Masalan: bitta agent arizani saralaydi, ikkinchisi javob tayyorlaydi, uchinchisi CRM yangilaydi." },
       { q: "Agentlar xatosiz ishlaydimi?", a: "Hech bir AI tizimida xato xavfi nol emas. Nemo harakatlar tarixi, natijalarni tekshirish va murakkab holatlarni avtomatik insonga topshirish orqali xavfni kamaytiradi." },
-      { q: "Narxi qancha?", a: "Ro'yxatdan o'tish bepul — 1 000 kredit olasiz. Kredit paketlari $10 dan. Jamoa rejalari $59/oy dan. Batafsil — Billing sahifasida." },
+      { q: "Narxi qancha?", a: "Ro'yxatdan o'tish bepul: bepul rejada 150 000 token. Pullik rejalar — $25/oy dan. Amaldagi limitlar va sarf — tariflar sahifasida." },
     ],
-    preview: {
-      process: "Nemo AI-jamoasi", request: "Kiruvchi so'rovni qayta ishlash", done: "Tayyor", team: "Jamoa", message: "Foydalanuvchi so'rovi",
-      quote: "«Tarif tanlash va Telegram bot ulashda yordam kerak»", history: "Nima bajarildi", next: "Keyingi qadam", action: "Mijozga tavsiya yuborish",
-      agents: ["Koordinator", "So'rov tahlilchisi", "Mahsulot mutaxassisi", "Sifat nazorati"],
-      steps: ["So'rov qabul qilindi va tasniflandi", "Tariflar mezonlar bo'yicha tanlandi", "Ulash bo'yicha ko'rsatma tayyor", "Javob tekshirildi va yuborildi"],
+    previewSales: {
+      process: "Nemo AI-jamoasi", request: "Lid malakasi (B2B)", done: "Faol", team: "Jamoa tarkibi", message: "Kiruvchi so'rov",
+      quote: "«Assalomu alaykum! 50 ta foydalanuvchi uchun korporativ demo so'ramoqchi edik. Tariflaringiz qanday?»", history: "Harakatlar tarixi", next: "Keyingi qadam", action: "Savdo direktori bilan demo-qo'ng'iroqni rejalashtirish",
+      agents: ["Koordinator", "Lead Qualifier", "Product Expert", "Quality Reviewer"],
+      steps: ["Demo so'rovi klassifikatsiya qilindi (50 litsenziya)", "Korporativ narxlar bilimlar bazasidan olindi", "Lid yuqori ustuvorlik bilan CRM-ga saqlandi", "Korporativ tariflar bilan javob loyihasi tekshirildi va yuborildi"],
+    },
+    previewOps: {
+      process: "Nemo AI-jamoasi", request: "Uchrashuv tahlili va vazifalar", done: "Bajarildi", team: "Jamoa tarkibi", message: "Uchrashuv transkripti",
+      quote: "«Mijozlarni jalb qilish bo'yicha sinxronizatsiya. Dilshod juma kunigacha qarzdorlarga qo'ng'iroq qilishi kerak. Madina qo'llanmalarni yozadi.»", history: "Harakatlar tarixi", next: "Keyingi qadam", action: "Slack/Telegram orqali mas'ullarga eslatmalar yuborish",
+      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
+      steps: ["Uchrashuv transkripti tahlil qilindi va qarorlar olindi", "Vazifalar yaratildi: Dilshod (qo'ng'iroqlar), Madina (qo'llanmalar)", "Muddati va mas'ullar vazifalar jadvaliga kiritildi", "Operatsion hisobot tuzildi va rahbarga yuborildi"],
     },
     finalTitle: "AI-agentingizni hoziroq yarating",
-    finalText: "Ro'yxatdan o'tishda 1 000 kredit bepul. Vazifani tushuntiring — agentingiz 5 daqiqada ishlaydi.",
+    finalText: "Bepul reja — 150 000 token. Vazifani tushuntiring — agentingiz 5 daqiqada ishlaydi.",
   },
   en: {
-    launch: "Public launch July 19",
-    heroKicker: "AI platform for any business",
-    title: "Build your\nAI agent\nin minutes",
-    subtitle: "Describe a task — Nemo assembles an AI team: from customer support to automating any workflow.",
-    primaryCta: "Create agent for free",
-    secondaryCta: "See how it works",
-    openTeam: "Create AI team",
-    notes: ["1,000 free credits", "67 AI functions", "No code required"],
+    launch: "Public beta",
+    heroKicker: "AI platform for modern business operations",
+    title: "Orchestrate\nAI Teams\nin Minutes",
+    subtitle: "Integrate coordinated teams of AI agents into your business workflows. From inbound sales and support to complex operations — zero code required.",
+    primaryCta: "Create Team for Free",
+    secondaryCta: "See How It Works",
+    openTeam: "Create AI Team",
+    notes: ["Free plan — 150,000 tokens", "No code required", "UZ / RU / EN"],
     statsTitle: "A platform ready to scale",
     stats: [
-      ["67", "AI functions"],
-      ["20+", "integrations"],
-      ["6", "channels"],
-      ["5 min", "to first agent"],
+      ["12", "integrations live"],
+      ["790", "services catalogued"],
+      ["3", "interface languages"],
+      ["5 min", "to first team"],
     ],
     painKicker: "How it works",
-    painTitle: "From idea to a working AI agent — four steps",
-    painSubtitle: "No code, no API docs. Describe a task, configure behavior, connect channels — and the agent is live.",
+    painTitle: "From idea to a working AI team — four steps",
+    painSubtitle: "No code, no API docs. Describe a task, configure behavior, connect channels — and the team is live.",
     flow: [
-      ["Describe the task", "Tell the agent what to do — in any language"],
-      ["Configure the team", "Choose roles, tools, knowledge base, and channels"],
-      ["Launch", "Connect Telegram, WhatsApp, a widget, or API"],
-      ["Scale", "Add agents, build AI teams and departments"],
+      ["Describe the task", "Tell the team what to do — in any language"],
+      ["Configure roles", "Choose specialists, tools, knowledge base, and channels"],
+      ["Launch", "Connect Telegram, the website widget, or API"],
+      ["Scale", "Add agents, build new AI teams and departments"],
     ],
     before: "Without AI agents",
     after: "With Nemo AI",
-    beforeItems: ["Routine tasks consume hours every day", "Each process requires a separate tool", "Scaling = hiring more people", "No unified automation system"],
-    afterItems: ["AI agent works 24/7 by your rules", "One platform for agents, teams, and channels", "Scaling = adding one more agent", "Full control: action history, human handoff"],
-    workflowKicker: "AI teams on demand",
+    beforeItems: [
+      "Response times depend on manager availability",
+      "Each process requires a separate, disconnected tool",
+      "Scaling operations requires manual hiring cycles",
+      "No single system of record for workflow execution",
+    ],
+    afterItems: [
+      "First response always matches your highest company standard",
+      "One platform for agents, swarms, and channels",
+      "Scaling operations means deploying another AI team",
+      "Full audit trail: action history, evaluation metrics, and human handoff",
+    ],
+    workflowKicker: "Coordinated AI teams",
     workflowTitle: "Not a single bot — a coordinated AI team with roles",
-    workflowSubtitle: "A coordinator routes tasks to specialists. You see who did what and what happens next.",
+    workflowSubtitle: "An Operations Lead routes tasks to specialists. You see who did what and what happens next.",
     capKicker: "Agent capabilities",
     capTitle: "Everything you need for intelligent automation",
     capabilities: [
-      ["Messengers", "Telegram, WhatsApp, Instagram, website widget", MessageCircleMore],
+      ["Messengers", "Telegram and the website widget; WhatsApp and Instagram in development", MessageCircleMore],
       ["Knowledge base", "Upload PDF, DOCX, XLSX — the agent learns from your data", Database],
       ["Tools", "CRM, Google Sheets, API, browser, file generation", Plug],
       ["Voice", "Speech recognition and generation for voice channels", Mic],
@@ -245,24 +288,26 @@ const copy = {
     faq: [
       { q: "What is an AI agent?", a: "An AI agent is an autonomous program that performs tasks by your rules: answers customers, processes requests, generates content, or analyzes data. It works 24/7 and connects to your channels and tools." },
       { q: "Do I need to code?", a: "No. Describe the task in plain language, choose tools and channels — Nemo configures the agent automatically. Advanced users can use the API and custom tools." },
-      { q: "Which channels are supported?", a: "Telegram, WhatsApp, Instagram, web widget, and API. The list is constantly growing — Discord, YouTube, and more are planned." },
+      { q: "Which channels are supported?", a: "Telegram, the web widget and the API are live today. WhatsApp and Instagram are in development: the webhooks are written, but we keep the channel off until Meta signature verification is confirmed in production. Every service shows its status on the Integrations page." },
       { q: "What is an AI team?", a: "An AI team is multiple agents with different roles managed by a coordinator. For example: one agent qualifies a request, another prepares a reply, a third updates the CRM. The coordinator routes work automatically." },
       { q: "Do agents work without errors?", a: "No AI system guarantees zero errors. Nemo reduces risk through action history, result checks, and automatic handoff of complex cases to humans." },
-      { q: "How much does it cost?", a: "Registration is free — you get 1,000 credits. Credit packs start at $10. Team plans start at $59/mo. See the Billing page for details." },
+      { q: "How much does it cost?", a: "Registration is free: the free plan includes 150,000 tokens. Paid plans start at $25/mo. Current limits and usage are on the pricing page." },
     ],
-    preview: {
-      process: "Nemo AI team", request: "Processing incoming request", done: "Done", team: "Team", message: "User request",
-      quote: "\"I need help choosing a plan and connecting a Telegram bot\"", history: "What was done", next: "Next step", action: "Send recommendation to customer",
-      agents: ["Coordinator", "Request analyst", "Product specialist", "Quality control"],
-      steps: ["Request received and classified", "Plans matched by criteria", "Connection guide prepared", "Response verified and sent"],
+    previewSales: {
+      process: "Nemo AI Team", request: "Lead Qualification (B2B)", done: "Active", team: "Team Swarm", message: "Inbound Inquiry",
+      quote: "\"Hi! We would like to request an enterprise demo for 50 users. What are your corporate rates?\"", history: "Action History", next: "Next Action", action: "Schedule enterprise demo call with sales director",
+      agents: ["Coordinator", "Lead Qualifier", "Product Expert", "Quality Reviewer"],
+      steps: ["Demo request classified for 50 licenses", "Enterprise pricing retrieved from knowledge base", "Lead saved to CRM with high priority", "Draft response with corporate rates verified and sent"],
     },
-    finalTitle: "Create your AI agent right now",
-    finalText: "1,000 free credits on signup. Describe a task — your agent starts working in 5 minutes.",
+    previewOps: {
+      process: "Nemo AI Team", request: "Meeting Sync & Task Dispatch", done: "Done", team: "Team Swarm", message: "Meeting Transcript",
+      quote: "\"Sync on customer onboarding. Dilshod must call unpaid clients by Friday. Madina will write the help guides.\"", history: "Action History", next: "Next Action", action: "Send automated task reminders to owners via Slack/Telegram",
+      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
+      steps: ["Sync transcript parsed and decisions extracted", "Tasks created: Dilshod (calls), Madina (guides)", "Deadlines and owners mapped in task table", "Operations report compiled and delivered to manager"],
+    },
+    finalTitle: "Create your AI Team right now",
+    finalText: "Free plan — 150,000 tokens. Describe a task — your team starts working in 5 minutes.",
   },
-}
-
-function StatusPill({ children }: { children: React.ReactNode }) {
-  return <span className="inline-flex items-center gap-2 rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1.5 text-xs font-semibold text-cyan">{children}</span>
 }
 
 function SectionIntro({ kicker, title, text }: { kicker: string; title: string; text?: string }) {
@@ -353,8 +398,7 @@ export default function LandingPage() {
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(34,211,238,0.13),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(139,124,248,0.10),transparent_32%)]" />
           <div className="container-page relative grid min-h-[calc(100vh-76px)] items-center gap-12 py-14 lg:grid-cols-[0.96fr_1.04fr] lg:py-20">
             <div className="max-w-2xl">
-              <StatusPill><Sparkles size={13} />{c.launch}</StatusPill>
-              <p className="mt-8 text-sm font-bold uppercase tracking-[0.16em] text-cyan">{c.heroKicker}</p>
+              <p className="text-sm font-bold uppercase tracking-[0.16em] text-cyan">{c.heroKicker}</p>
               <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
@@ -367,7 +411,7 @@ export default function LandingPage() {
                 {c.notes.map((note) => <span key={note} className="inline-flex items-center gap-2"><Check size={14} className="text-emerald-300" />{note}</span>)}
               </div>
             </div>
-            <WorkflowPreview copy={c.preview} />
+            <WorkflowPreview copy={c.previewSales} />
           </div>
         </section>
 
@@ -400,13 +444,27 @@ export default function LandingPage() {
           </div>
           {/* Before / After */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <div className="rounded-3xl border border-rose-300/10 bg-rose-300/[0.035] p-7 sm:p-8">
-              <p className="text-sm font-bold text-rose-200">{c.before}</p>
-              <div className="mt-5 space-y-3">{c.beforeItems.map((item) => <p key={item} className="flex gap-3 text-sm leading-relaxed text-muted"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-300/70" />{item}</p>)}</div>
+            <div className="rounded-3xl border border-rose-950/30 bg-rose-950/[0.02] p-7 sm:p-8 transition-all duration-300 hover:border-rose-500/40 hover:bg-rose-950/[0.04] hover:shadow-[0_0_30px_rgba(244,63,94,0.15)]">
+              <p className="text-sm font-bold text-rose-400">{c.before}</p>
+              <div className="mt-5 space-y-3">
+                {c.beforeItems.map((item) => (
+                  <p key={item} className="flex gap-3 text-sm leading-relaxed text-muted">
+                    <X size={16} className="mt-0.5 shrink-0 text-rose-500" />
+                    {item}
+                  </p>
+                ))}
+              </div>
             </div>
-            <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/[0.06] p-7 sm:p-8">
-              <p className="text-sm font-bold text-emerald-300">{c.after}</p>
-              <div className="mt-5 space-y-3">{c.afterItems.map((item) => <p key={item} className="flex gap-3 text-sm leading-relaxed text-text"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-300" />{item}</p>)}</div>
+            <div className="rounded-3xl border border-cyan/20 bg-cyan/[0.02] p-7 sm:p-8 transition-all duration-300 hover:border-cyan/50 hover:bg-cyan/[0.04] hover:shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+              <p className="text-sm font-bold text-cyan">{c.after}</p>
+              <div className="mt-5 space-y-3">
+                {c.afterItems.map((item) => (
+                  <p key={item} className="flex gap-3 text-sm leading-relaxed text-text">
+                    <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-cyan animate-pulse" />
+                    {item}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -418,7 +476,7 @@ export default function LandingPage() {
               <SectionIntro kicker={c.workflowKicker} title={c.workflowTitle} text={c.workflowSubtitle} />
               <Button to="/app/create-team" variant="outline" className="mt-8">{c.openTeam}<ArrowRight size={15} /></Button>
             </div>
-            <WorkflowPreview copy={c.preview} />
+            <WorkflowPreview copy={c.previewOps} />
           </div>
         </section>
 
@@ -494,7 +552,7 @@ export default function LandingPage() {
             <div className="pointer-events-none absolute -left-20 -bottom-16 h-56 w-56 rounded-full bg-violet/15 blur-3xl" />
             <div className="relative max-w-3xl">
               <div className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
-                <Rocket size={13} />1,000 free credits
+                <Rocket size={13} />{c.notes[0]}
               </div>
               <h2 className="mt-6 text-[clamp(2.2rem,4.5vw,4rem)] font-black leading-[1.02] text-text">{c.finalTitle}</h2>
               <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{c.finalText}</p>

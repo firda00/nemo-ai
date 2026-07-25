@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Copy, Check, ExternalLink, ShieldCheck, KeyRound, Unplug, CheckCircle2, Mail, Table2, CalendarDays } from 'lucide-react'
+import { Loader2, Copy, Check, ExternalLink, ShieldCheck, KeyRound, Unplug, CheckCircle2, Mail, Table2, CalendarDays, FileText, HardDrive } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
@@ -93,10 +93,12 @@ export function GoogleSetup({ onConnected }: { onConnected?: () => void }) {
           <span className="text-sm text-text">{t('googleSetup.connected')}{email ? ` · ${email}` : ''}</span>
           <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy} className="ml-auto">{busy ? <Loader2 size={14} className="animate-spin" /> : <Unplug size={14} />} {t('googleSetup.disconnectBtn')}</Button>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <Cap icon={Mail} text={t('googleSetup.capGmail')} />
           <Cap icon={Table2} text={t('googleSetup.capSheets')} />
           <Cap icon={CalendarDays} text={t('googleSetup.capCalendar')} />
+          <Cap icon={FileText} text="Google Docs" />
+          <Cap icon={HardDrive} text="Google Drive" />
         </div>
         {msg && <Note msg={msg} />}
       </div>
@@ -110,7 +112,7 @@ export function GoogleSetup({ onConnected }: { onConnected?: () => void }) {
       </p>
 
       {/* GUIDE — create the Google app once */}
-      {!accountConfigured && (
+      {!configured && (
         <div className="rounded-xl border border-ice/[0.08] bg-black/20 p-4">
           <p className="flex items-center gap-2 text-[13px] font-semibold text-text">
             <span className="flex h-5 w-5 items-center justify-center rounded-md bg-violet/15 text-[11px] text-violet">1</span>

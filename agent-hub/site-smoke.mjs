@@ -55,12 +55,18 @@ try {
     if (message.type() === 'error' && !/favicon/i.test(message.text())) runtimeErrors.push(`console: ${message.text()}`)
   })
 
-  const publicRoutes = ['/', '/demo', '/pitch', '/auth']
+  const publicRoutes = ['/', '/pricing', '/demo', '/pitch', '/auth']
   const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates']
 
   async function checkRoute(route) {
-    const response = await page.goto(baseUrl + route, { waitUntil: 'networkidle0', timeout: 30_000 })
+    // Vite keeps a development/HMR connection open, so networkidle0 can hang
+    // even after the route is fully rendered. Assert the actual app surface.
+    const response = await page.goto(baseUrl + route, { waitUntil: 'domcontentloaded', timeout: 30_000 })
     if (!response || response.status() >= 400) throw new Error(`${route} returned ${response?.status() ?? 'no response'}`)
+    await page.waitForFunction(() => {
+      const root = document.querySelector('#root')
+      return Boolean(root?.childElementCount && document.body.innerText.trim().length >= 30)
+    }, { timeout: 30_000 })
     const result = await page.evaluate(() => ({
       text: document.body.innerText.trim(),
       rootChildren: document.querySelector('#root')?.childElementCount ?? 0,

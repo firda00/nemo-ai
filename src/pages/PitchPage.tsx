@@ -7,7 +7,7 @@ import { MarketingFooter } from '../components/layout/MarketingFooter'
 const metrics = [
   ['TAM', '$180B+', 'SMB software + support + sales automation'],
   ['Wedge', 'Sales + Support', 'Clear ROI for small businesses'],
-  ['Pricing', '$199-$499/mo', 'Subscription plus usage credits'],
+  ['Pricing', '$25-$350/mo', 'Subscription with a monthly token quota'],
   ['Moat', 'AI team data', 'Templates, traces, evaluations, company brain'],
 ]
 
@@ -108,7 +108,7 @@ export default function PitchPage() {
             <div className="card rounded-3xl p-7">
               <DollarSign className="text-teal" />
               <h3 className="mt-4 text-xl font-bold text-text">Business model</h3>
-              <p className="mt-3 text-sm leading-relaxed text-muted">Monthly SaaS tiers plus AI credits. Expansion revenue from more teams, channels and usage.</p>
+              <p className="mt-3 text-sm leading-relaxed text-muted">Monthly SaaS tiers with an included token quota. Expansion revenue from more teams, channels and usage.</p>
             </div>
             <div className="card rounded-3xl p-7">
               <CheckCircle2 className="text-violet" />

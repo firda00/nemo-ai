@@ -14,7 +14,7 @@ const live = isSupabaseEnabled
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 const PLATFORMS = ['Instagram', 'Telegram', 'YouTube', 'TikTok'] as const
 // How many competitors one run can analyze, by plan (mirrors _shared/plans.ts competitors).
-const PLAN_COMPETITORS: Record<string, number> = { free: 1, starter: 3, pro: 5, business: 8, agency: 12, enterprise: 20, beta: 5 }
+const PLAN_COMPETITORS: Record<string, number> = { free: 1, starter: 2, pro: 3, business: 5, agency: 10, enterprise: 20, beta: 5 }
 
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {

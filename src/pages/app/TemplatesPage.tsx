@@ -6,8 +6,9 @@ import { useAgentStore, blankAgent } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
+import { mediaLearningTeamTemplate } from '../../data/mediaLearningTeamTemplate'
 
-const TEAM_TEMPLATES = [
+const TEAM_TEMPLATES = [mediaLearningTeamTemplate,
   {
     id: 'ai-sales-team',
     title: 'AI Sales Team',

@@ -9,6 +9,15 @@
     color-scheme: dark;
   }
 
+  select {
+    color-scheme: dark;
+  }
+  select option,
+  select optgroup {
+    background-color: #162235;
+    color: #f4f7ff;
+  }
+
   html {
     scroll-behavior: smooth;
   }

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X, MessageSquare } from 'lucide-react'
+import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X, MessageSquare, Paperclip, FileSpreadsheet, AlertTriangle } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/ustudyTeam'
@@ -11,6 +11,15 @@ import { useI18n } from '../../i18n'
 import { Markdown } from '../ui/Markdown'
 import { DocExport } from './DocExport'
 import { cn } from '../../lib/cn'
+import { extractText, KNOWLEDGE_ACCEPT } from '../../lib/extractText'
+import {
+  artifactHandoffContext,
+  boundedArtifact,
+  marketplaceInputMissing,
+  MAX_AUTONOMOUS_INPUT_FILES,
+  MAX_AUTONOMOUS_TOTAL_CHARS,
+  type AutonomousInputArtifact,
+} from '../../lib/autonomousInputs'
 
 const live = isSupabaseEnabled
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
@@ -19,6 +28,7 @@ interface Review { approved: boolean; score: number; issues: string[]; fix: stri
 interface Spec {
   role: string
   name: string
+  skills?: string[]
   prompt: { role: string; tasks: string; tone: string; rules: string }
   output?: string
   review?: Review | null
@@ -69,7 +79,7 @@ export function AutonomousRunner({
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
-  presetSpecs?: { role: string; name: string; prompt: { role?: string; tasks?: string; tone?: string; rules?: string } }[]
+  presetSpecs?: { role: string; name: string; skills?: string[]; prompt: { role?: string; tasks?: string; tone?: string; rules?: string } }[]
   contextHint?: string
   placeholder?: string
   model?: string
@@ -100,18 +110,57 @@ export function AutonomousRunner({
   const [result, setResult] = useState<string | null>(null)
   const [escalatedCount, setEscalatedCount] = useState(0)
   const [error, setError] = useState('')
+  const [dataWarning, setDataWarning] = useState('')
   const [openStep, setOpenStep] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   // team save options: chosen LLM (provider+model) and business sphere;
   // premium models remain plan-gated server-side on every reply
   const [saveModel, setSaveModel] = useState('')
   const [saveSphere, setSaveSphere] = useState('')
+  const [inputArtifacts, setInputArtifacts] = useState<AutonomousInputArtifact[]>([])
+  const [filesBusy, setFilesBusy] = useState(false)
+
+  const addInputFiles = async (files: FileList | null) => {
+    if (!files?.length || filesBusy) return
+    setFilesBusy(true)
+    setError('')
+    setDataWarning('')
+    try {
+      const next = [...inputArtifacts]
+      let remaining = MAX_AUTONOMOUS_TOTAL_CHARS - next.reduce((sum, item) => sum + item.content.length, 0)
+      for (const file of Array.from(files).slice(0, Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - next.length))) {
+        if (remaining <= 0) break
+        const text = await extractText(file)
+        const artifact = boundedArtifact(file.name, text, remaining)
+        if (!artifact) continue
+        next.push(artifact)
+        remaining -= artifact.content.length
+      }
+      setInputArtifacts(next)
+      if (files.length > Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - inputArtifacts.length)) {
+        setError(t('autonomousRunner.fileLimit'))
+      }
+    } catch (fileError) {
+      const code = fileError instanceof Error ? fileError.message : ''
+      setError(code === 'FILE_TOO_LARGE'
+        ? t('autonomousRunner.fileTooLarge')
+        : code === 'UNSUPPORTED_FILE_TYPE'
+          ? t('autonomousRunner.fileUnsupported')
+          : t('autonomousRunner.fileReadFailed'))
+    } finally {
+      setFilesBusy(false)
+    }
+  }
+
+  // One id for the whole run, stamped on every call, so the server can add up what the run
+  // actually cost instead of the billing page guessing from a constant.
+  const runRef = useRef<string | null>(null)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const call = async (b: Record<string, unknown>): Promise<any> => {
     if (!live || !supabase) return null
     const { data, error: err } = await supabase.functions.invoke('orchestrate', {
-      body: { ...b, lang, ...(model ? { model } : {}) },
+      body: { ...b, lang, ...(runRef.current ? { run_ref: runRef.current } : {}), ...(model ? { model } : {}) },
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (err || !(data as any)?.ok) return null
@@ -121,9 +170,12 @@ export function AutonomousRunner({
   const run = async () => {
     const task = goal.trim()
     if (task.length < 4 || running) return
+    runRef.current = crypto.randomUUID()
+    const marketplaceDataMissing = marketplaceInputMissing(task, inputArtifacts, contextHint)
     // the manager reasons on the task; a saved team also gets its team context
     const g = contextHint ? `${contextHint}\n\nЗадача: ${task}` : task
     setError('')
+    setDataWarning(marketplaceDataMissing ? t('autonomousRunner.marketplacePlanningWithoutData') : '')
     setResult(null)
     setSpecs([])
     setEscalatedCount(0)
@@ -136,11 +188,11 @@ export function AutonomousRunner({
       // 1) get the team: use the SAVED team when provided, else design a fresh one
       let created: Spec[]
       if (presetSpecs?.length) {
-        created = presetSpecs.map((s) => ({ role: s.role, name: s.name, prompt: { role: s.prompt.role ?? '', tasks: s.prompt.tasks ?? '', tone: s.prompt.tone ?? '', rules: s.prompt.rules ?? '' }, status: 'pending' as const }))
+        created = presetSpecs.map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: { role: s.prompt.role ?? '', tasks: s.prompt.tasks ?? '', tone: s.prompt.tone ?? '', rules: s.prompt.rules ?? '' }, status: 'pending' as const }))
         setSpecs(created)
       } else {
         setPhase('architect')
-        const staff = await call({ action: 'staff', goal: g })
+        const staff = await call({ action: 'staff', goal: g, use_skills: true, input_artifacts: inputArtifacts })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         created = (staff?.subagents ?? []).map((s: any) => ({ ...s, status: 'pending' as const }))
         if (!created.length) {
@@ -154,7 +206,6 @@ export function AutonomousRunner({
       setPhase('team')
       const done: Spec[] = []
       const runSources = new Set<string>()
-      let ctx = ''
       for (let i = 0; i < created.length; i++) {
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'running' } : s)))
         const role = mapRole(created[i].role)
@@ -164,7 +215,9 @@ export function AutonomousRunner({
           role,
           task: created[i].prompt.tasks || created[i].role,
           system: subSystem(created[i]),
-          context: ctx.slice(-4000),
+          skills: created[i].skills ?? [],
+          context: artifactHandoffContext(done),
+          input_artifacts: inputArtifacts,
           web_research: role === 'researcher',
         })
         const output = r?.output ?? ''
@@ -172,7 +225,6 @@ export function AutonomousRunner({
         sources.forEach((source: string) => runSources.add(source))
         const filled: Spec = { ...created[i], output, sources, status: 'done' }
         done.push(filled)
-        ctx += `\n[${filled.name}] ${output}`
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? filled : s)))
       }
 
@@ -199,6 +251,8 @@ export function AutonomousRunner({
           for (let round = 0; round < MAX_ROUNDS; round++) {
             const v = await call({
               action: 'review', goal: g, work: done[i].output ?? '', author_role: done[i].role,
+              author_task: done[i].prompt.tasks,
+              input_artifacts: inputArtifacts,
               reviewer_system: subSystem(reviewer),
               criteria: 'соответствие задаче; конкретика и факты; отсутствие воды и клише; готовность без доработки',
               previous_score: previousReview?.score ?? 0,
@@ -218,6 +272,8 @@ export function AutonomousRunner({
               action: 'step', goal: g, role: mapRole(done[i].role),
               task: 'Перепиши свою работу, устранив ВСЕ замечания коллеги. Верни улучшенную версию целиком, в том же формате.',
               system: subSystem(done[i]),
+              skills: done[i].skills ?? [],
+              input_artifacts: inputArtifacts,
               context: `ТВОЯ РАБОТА:\n${(done[i].output ?? '').slice(0, 3000)}\n\nПРОШЛАЯ ОЦЕНКА: ${review.score}/100.\nЗАМЕЧАНИЯ КОЛЛЕГИ (${reviewer.name}):\n${review.fix}\n${review.issues.join('\n')}\n\nСохрани всё, что уже сделано хорошо. Исправь перечисленные проблемы. Не добавляй выдуманные цифры, компании, трафик, отзывы или проценты; если факта и источника нет, явно напиши «Не подтверждено».`,
             })
             if (!fix?.output) break
@@ -242,6 +298,7 @@ export function AutonomousRunner({
       const synth = await call({
         action: 'synth',
         goal: g,
+        input_artifacts: inputArtifacts,
         ...(departmentId ? { department_id: departmentId } : {}),
         steps: done.map((d) => ({
           role: d.role,
@@ -276,7 +333,7 @@ export function AutonomousRunner({
       const res = await saveDynamicTeam(addAgent, {
         name: `Team: ${goal.trim().slice(0, 40)}`,
         goal: goal.trim(),
-        specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt, ...(model ? { model } : {}) })),
+        specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt, skills: s.skills ?? [], ...(model ? { model } : {}) })),
         ...(saveSphere.trim() ? { niche: saveSphere.trim() } : {}),
         ...(model ? { lead: { model } } : {}),
       }, deleteAgent)
@@ -291,6 +348,8 @@ export function AutonomousRunner({
     setResult(null)
     setSpecs([])
     setGoal('')
+    setInputArtifacts([])
+    setDataWarning('')
   }
 
   return (
@@ -309,7 +368,58 @@ export function AutonomousRunner({
           {running ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
         </button>
       </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className={cn(
+          'inline-flex cursor-pointer items-center gap-2 rounded-xl border border-ice/10 bg-white/[0.03] px-3 py-2 text-xs font-medium text-muted transition hover:border-violet/35 hover:text-text',
+          (running || filesBusy || inputArtifacts.length >= MAX_AUTONOMOUS_INPUT_FILES) && 'pointer-events-none opacity-50',
+        )}>
+          {filesBusy ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+          {filesBusy ? t('autonomousRunner.readingFiles') : t('autonomousRunner.attachData')}
+          <input
+            type="file"
+            multiple
+            accept={KNOWLEDGE_ACCEPT}
+            disabled={running || filesBusy || inputArtifacts.length >= MAX_AUTONOMOUS_INPUT_FILES}
+            className="sr-only"
+            onChange={(event) => {
+              void addInputFiles(event.target.files)
+              event.currentTarget.value = ''
+            }}
+          />
+        </label>
+        <span className="text-[11px] text-muted">{t('autonomousRunner.attachDataHint')}</span>
+      </div>
+      {inputArtifacts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {inputArtifacts.map((artifact, index) => (
+            <span key={`${artifact.name}-${index}`} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-cyan/15 bg-cyan/[0.05] px-2.5 py-1.5 text-xs text-text">
+              <FileSpreadsheet size={13} className="shrink-0 text-cyan" />
+              <span className="max-w-52 truncate">{artifact.name}</span>
+              <span className="shrink-0 text-[10px] text-muted">{Math.max(1, Math.round(artifact.content.length / 1000))}K</span>
+              {artifact.truncated && (
+                <span title={t('autonomousRunner.fileTruncated')} className="text-amber">
+                  <AlertTriangle size={12} />
+                </span>
+              )}
+              <button
+                type="button"
+                disabled={running}
+                aria-label={t('autonomousRunner.removeFile')}
+                onClick={() => setInputArtifacts((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                className="text-muted transition hover:text-danger disabled:opacity-40"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       {error && <p className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{error}</p>}
+      {dataWarning && (
+        <p className="mt-3 rounded-lg border border-amber/20 bg-amber/10 px-3 py-2 text-center text-xs text-amber">
+          {dataWarning}
+        </p>
+      )}
 
       {running && phase === 'architect' && (
         <div className="card mt-5 flex items-center gap-3 rounded-2xl p-5">
@@ -334,6 +444,7 @@ export function AutonomousRunner({
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: `${color}22`, color }}><Bot size={13} /></span>
                     <span className="shrink-0 text-sm font-medium text-text">{s.name}</span>
                     <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${color}1a`, color }}>{s.role}</span>
+                    {s.skills?.length ? <span className="hidden shrink-0 text-[10px] text-cyan sm:inline">{s.skills.length} {t('autonomousRunner.skillsEnabled')}</span> : null}
                     <span className="min-w-0 flex-1 truncate text-xs text-muted">{s.prompt.tasks}</span>
                     {s.status === 'running' ? (
                       <Loader2 size={14} className="shrink-0 animate-spin text-violet" />

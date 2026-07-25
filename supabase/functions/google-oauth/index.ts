@@ -13,7 +13,7 @@
 // verify the JWT manually and the callback is protected by a signed state.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret, sealSecret } from '../_shared/secretBox.ts'
+import { accountSecretContext, openSecret, sealSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -60,7 +60,13 @@ async function accountForUser(authHeader: string): Promise<string | null> {
 // account's own Google app creds if set, else the shared Nemo app (env)
 async function loadAppCreds(admin: any, accountId: string): Promise<{ id: string; secret: string; own: boolean }> {
   const { data } = await admin.from('google_oauth_apps').select('client_id, client_secret').eq('account_id', accountId).maybeSingle()
-  if (data?.client_id && data?.client_secret) return { id: data.client_id, secret: await openSecret(data.client_secret), own: true }
+  if (data?.client_id && data?.client_secret) {
+    return {
+      id: data.client_id,
+      secret: await openSecret(data.client_secret, accountSecretContext(accountId, 'google-client-secret')),
+      own: true,
+    }
+  }
   return { id: ENV_CLIENT_ID, secret: ENV_CLIENT_SECRET, own: false }
 }
 
@@ -89,7 +95,11 @@ Deno.serve(async (req) => {
         email = ui.email ?? ''
       } catch { /* non-fatal */ }
       await admin.from('google_accounts').upsert({
-        account_id: accountId, google_email: email, refresh_token: await sealSecret(tok.refresh_token), scopes: SCOPES, updated_at: new Date().toISOString(),
+        account_id: accountId,
+        google_email: email,
+        refresh_token: await sealSecret(tok.refresh_token, accountSecretContext(accountId, 'google-refresh-token')),
+        scopes: SCOPES,
+        updated_at: new Date().toISOString(),
       }, { onConflict: 'account_id' })
       return Response.redirect(`${APP_URL}/app/integrations?google=connected`, 302)
     } catch {
@@ -121,7 +131,12 @@ Deno.serve(async (req) => {
     const csec = String(body?.client_secret ?? '').trim()
     if (cid.length < 12 || !cid.includes('.apps.googleusercontent.com')) return json({ ok: false, error: 'Client ID выглядит некорректно — он должен заканчиваться на .apps.googleusercontent.com' }, 200)
     if (csec.length < 6) return json({ ok: false, error: 'Введите корректный Client Secret.' }, 200)
-    await admin.from('google_oauth_apps').upsert({ account_id: accountId, client_id: cid, client_secret: await sealSecret(csec), updated_at: new Date().toISOString() }, { onConflict: 'account_id' })
+    await admin.from('google_oauth_apps').upsert({
+      account_id: accountId,
+      client_id: cid,
+      client_secret: await sealSecret(csec, accountSecretContext(accountId, 'google-client-secret')),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'account_id' })
     return json({ ok: true, account_configured: true, configured: true, client_id: cid, redirect_uri: REDIRECT_URI })
   }
 

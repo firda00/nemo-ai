@@ -1,0 +1,7 @@
+{
+  "kind": "mcp",
+  "name": "demo_crm_tools",
+  "description": "Demo CRM tools for the investor walkthrough",
+  "mcp_url": "https://mcp.example.com/mcp",
+  "header_name": "Authorization"
+}

@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 import { FanoutComposer } from '../../components/platform/FanoutComposer'
+import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 
 /** Autoposting to Telegram / Facebook / Instagram (Meta) / Twitter-X / Reddit. Telegram via a bot;
  *  FB/IG via the customer's Meta connection; X + Reddit via their own API keys. A cron publishes. */
@@ -164,6 +165,7 @@ export default function AutopostPage() {
 
   return (
     <div className="container-page max-w-4xl py-8">
+      <ContentSalesNav active="autopost" />
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet/15 text-violet"><Send size={20} /></span>
         <div className="min-w-0">

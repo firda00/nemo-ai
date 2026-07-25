@@ -3,7 +3,7 @@
 //   POST /functions/v1/make-call  (Bearer jwt)  { phone, task } -> { ok, call_id }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, code: 'NO_CREDITS', message: 'Пополните баланс, чтобы совершать AI-звонки.' }, 402)
   }
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'bland').maybeSingle()
-  const key = await openSecret(keyRow?.api_key)
+  const key = await openSecret(keyRow?.api_key, providerSecretContext(accountId, 'bland'))
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Подключите Bland.ai в разделе «Интеграции», чтобы агент мог звонить.' }, 200)
 
   const body = await req.json().catch(() => ({}))

@@ -3,6 +3,7 @@
 //   POST /functions/v1/send-broadcast  (Bearer jwt, admin)  { message } -> { ok, recipients, sent, failed }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
+import { hasAal2 } from '../_shared/authAssurance.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -23,6 +24,7 @@ Deno.serve(async (req) => {
   if (!user) return json({ error: 'unauthorized' }, 401)
   const { data: prof } = await userDb.from('users').select('is_admin').maybeSingle()
   if (!prof?.is_admin) return json({ error: 'forbidden' }, 403)
+  if (!hasAal2(authHeader)) return json({ error: 'mfa_required' }, 403)
 
   const body = await req.json().catch(() => ({}))
   const message = String(body?.message ?? '').trim()

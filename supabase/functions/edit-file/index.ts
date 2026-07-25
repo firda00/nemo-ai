@@ -5,7 +5,7 @@
 //   POST /functions/v1/edit-file   (Authorization: Bearer <user jwt>)
 //   body { "instruction": "...", "filename": "...", "content": "...", "model"?: "...", "agent_id"?: "..." }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
     const out = await callOpenRouter({ apiKey: orKey, model, messages, temperature: 0.2, maxTokens: 4000 })
     if (out.tokens) {
-      await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model })
+      await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model, cost: estimateCostUsd(model, out.tokens) })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: out.tokens })
     }
     return json({ ok: true, result: out.content })

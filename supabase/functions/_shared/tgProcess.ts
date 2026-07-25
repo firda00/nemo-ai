@@ -36,7 +36,7 @@ async function subAgentReply(db: any, agent: any, subId: string, dialogueId: str
   const { text, tokens } = await buildSubAgentReply(db, apiKey, sub, chronological, planOf(acc?.plan).premium)
   if (text) {
     await db.from('messages').insert({ dialogue_id: dialogueId, author: 'agent', content: text })
-    await db.from('usage').insert({ account_id: agent.account_id, tokens, model: 'subagent' })
+    await db.from('usage').insert({ account_id: agent.account_id, tokens, model: null, stage: 'subagent' })
     if (tokens) await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokens })
   }
   return text
@@ -61,6 +61,7 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   if (!channel) return
   const msg = update?.message
   if (!msg) return
+  const isGroupChat = msg.chat?.type === 'group' || msg.chat?.type === 'supergroup'
 
   const chatId = String(msg.chat.id)
   const customerName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || msg.from?.username || 'Telegram'
@@ -85,7 +86,15 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
       try {
         const orKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
         const b64 = await downloadTelegramFile(botToken, voice.file_id)
-        if (b64) text = String(await transcribeAudio(orKey, b64, 'ogg')).slice(0, MAX_MSG)
+        if (b64) {
+          text = String(await transcribeAudio(
+            orKey,
+            b64,
+            'ogg',
+            agent?.default_lang ?? 'auto',
+            agent?.stt_model ?? 'auto',
+          )).slice(0, MAX_MSG)
+        }
       } catch { /* voice transcription is best-effort */ }
       if (!text) voiceProblem = 'fail'
     }
@@ -93,8 +102,8 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   }
   // A voice we couldn't turn into text -> tell the user instead of staying silent. DMs only, so we
   // don't add noise to groups (the group task-bot only acts on @mentions anyway).
-  if (voice && !text && voiceProblem && botToken && channel.scope !== 'group') {
-    const vlang: 'uz' | 'ru' | 'en' = agent?.language === 'ru' ? 'ru' : agent?.language === 'en' ? 'en' : 'uz'
+  if (voice && !text && voiceProblem && botToken && !isGroupChat) {
+    const vlang: 'uz' | 'ru' | 'en' = agent?.default_lang === 'ru' ? 'ru' : agent?.default_lang === 'en' ? 'en' : 'uz'
     await tgSend(botToken, chatId, VOICE_MSG[vlang][voiceProblem])
     return
   }
@@ -102,7 +111,7 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   if (!text && !hasAttachment) return
 
   // GROUP task-bot
-  if (channel.scope === 'group') {
+  if (channel.scope === 'group' || isGroupChat) {
     if (botToken && OPENROUTER_API_KEY && agent?.account_id) {
       const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
       await handleTaskBot(db, apiKey, channel, agent.account_id, botToken, botUsername, msg)

@@ -54,6 +54,9 @@ verify_jwt = true
 [functions.evolve-agent]
 verify_jwt = true
 
+[functions.review-skill]
+verify_jwt = true
+
 # Autonomous research agent — plans, web-searches (Sonar), synthesizes a report.
 [functions.research-agent]
 verify_jwt = true
@@ -159,3 +162,8 @@ verify_jwt = false
 
 [functions.setup-meta]
 verify_jwt = false
+
+# Visual RAG (PixelRAG/OCR) pilot — authenticated submit/status only; worker
+# RPCs are service-role only; feature-flagged off by default (503 until enabled).
+[functions.visual-rag]
+verify_jwt = true

@@ -61,6 +61,21 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
 
   const busy = phase === 'scenes' || phase === 'images' || phase === 'render'
 
+  const applyNemoPilot = () => {
+    const pilot = lang === 'ru'
+      ? ['Опишите задачу Nemo', 'AI-команда выполнит и проверит работу', 'Подключите сервис только когда он понадобится']
+      : lang === 'uz'
+        ? ['Nemo uchun vazifani yozing', 'AI jamoa ishni bajaradi va tekshiradi', 'Xizmatni faqat kerak bo\u2018lganda ulang']
+        : ['Describe the task to Nemo', 'The AI team executes and reviews the work', 'Connect a service only when the task needs it']
+    setTitle('Nemo AI')
+    setBrand('Nemo AI')
+    setScript(pilot.join('. '))
+    setScenes(pilot.map((caption) => ({ caption, durationSec: 2.5 })))
+    setPhase('idle')
+    setErr('')
+    setNote(lang === 'ru' ? 'Короткий пилот готов: 3 сцены, около 7 секунд.' : lang === 'uz' ? 'Qisqa pilot tayyor: 3 sahna, taxminan 7 soniya.' : 'Short pilot ready: 3 scenes, about 7 seconds.')
+  }
+
   const breakScenes = async () => {
     if (!script.trim() || busy) return
     setPhase('scenes'); setErr(''); setVideoUrl(''); setNote(t('videoRenderPanel.storyboarding'))
@@ -132,6 +147,7 @@ export function VideoRenderPanel({ model, initialScript = '' }: { model?: string
           <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={4} placeholder={t('videoRenderPanel.scriptPh')} className="glass w-full resize-y rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
         </label>
         <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={applyNemoPilot} disabled={busy}><Clapperboard size={15} /> Nemo Pilot · 7 sec</Button>
           <Button variant="secondary" onClick={breakScenes} disabled={busy || script.trim().length < 8}>{phase === 'scenes' ? <><Loader2 size={15} className="animate-spin" /> {t('videoRenderPanel.breakingBtn')}</> : <><Wand2 size={15} /> {t('videoRenderPanel.breakBtn')}</>}</Button>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={genImages} onChange={(e) => setGenImages(e.target.checked)} className="accent-violet" /><ImageIcon size={14} /> {t('videoRenderPanel.imgPerScene')}</label>
           <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} className="accent-violet" /><Mic size={14} /> {t('videoRenderPanel.voiceover')}</label>

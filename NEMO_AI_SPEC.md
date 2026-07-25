@@ -191,6 +191,8 @@ messages(id, dialogue_id, agent_id, author, content, type /* user|agent|system_t
 
 ### Stage 2: AGI-oriented research
 - Explore long-horizon planning, dynamic specialist recruitment, cross-domain memory, self-evaluation, and constrained adaptation.
+- Add governed code improvement teams: one builder proposes an isolated branch/patch, an independent reviewer inspects the diff, and a QA/security agent runs required tests. No agent may edit production directly; merge and deployment require policy approval, audit evidence, canary rollout, and automatic rollback on failed health checks.
+- Let agents improve each other's prompts, skills and evaluations from measured outcomes first. Code changes remain a separate higher-risk workflow and cannot grant new tools, permissions, billing access or secrets to the agents that proposed them.
 - Keep production actions permission-bound, auditable, reversible where possible, and subject to human governance.
 
 ---

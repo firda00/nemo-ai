@@ -115,7 +115,7 @@ export async function runGroupDiscussion(
   if (synth.content) await tgSend(coordToken, chatId, `✅ Итог от лида:\n${synth.content.trim()}`)
 
   // usage accounting
-  await db.from('usage').insert({ account_id: accountId, tokens, model: 'group-discussion' })
+  await db.from('usage').insert({ account_id: accountId, tokens, model: null, stage: 'group-discussion' })
   if (tokens) await db.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
   return true
 }

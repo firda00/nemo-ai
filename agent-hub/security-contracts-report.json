@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-14T10:20:22.393Z",
+  "generated_at": "2026-07-25T09:26:46.815Z",
   "failed": 0,
   "partial": 0,
   "rows": [
@@ -61,7 +61,7 @@
       "id": 10,
       "name": "Provider-key encryption at rest",
       "state": "PASS",
-      "detail": "AES-256-GCM at application layer plus RLS/default-deny"
+      "detail": "tenant/provider-bound AES-256-GCM; database rejects plaintext and browser DML"
     },
     {
       "id": 11,
@@ -157,7 +157,7 @@
       "id": 26,
       "name": "Direct admin URL",
       "state": "PASS",
-      "detail": "UI and API independently deny non-admin users"
+      "detail": "UI denies non-admin users; API independently requires admin role and an AAL2 session"
     },
     {
       "id": 27,

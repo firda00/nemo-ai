@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag, Sparkles, Clock } from 'lucide-react'
+import { Blocks, Code2, CreditCard, Building2, FileText, MessagesSquare, Loader2, CheckCircle2, KeyRound, Unplug, ExternalLink, ShieldCheck, Wrench, Play, Phone, Globe, Mic, Video, Image as ImageIcon, ShoppingBag, Sparkles, Clock, Library } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
@@ -8,6 +8,7 @@ import { CustomToolsManager } from '../../components/platform/CustomToolsManager
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 import { AGENT_SKILLS } from '../../data/agentSkills'
+import { CapabilityDirectory } from '../../components/platform/CapabilityDirectory'
 
 /**
  * Integrations — connect a third-party service once; it becomes a TOOL the AI agent can
@@ -16,9 +17,13 @@ import { AGENT_SKILLS } from '../../data/agentSkills'
  */
 interface Integ { id: string; icon: typeof Code2; color: string; title: string; category: string; what: string; steps: string[]; link: string; placeholder: string; implemented?: boolean }
 const INTEGRATIONS: Integ[] = [
-  { id: 'github', icon: Code2, color: '#8B7CF8', category: 'Разработка', title: 'GitHub', what: 'githubWhat', placeholder: 'ghp_… (Personal Access Token)', link: 'https://github.com/settings/tokens',
+  { id: 'github', icon: Code2, color: '#8B7CF8', category: 'Разработка', title: 'GitHub', what: 'githubWhat', placeholder: 'ghp_… (Personal Access Token)', link: 'https://github.com/settings/tokens', implemented: false,
     steps: ['githubS1', 'githubS2', 'githubS3'] },
-  { id: 'stripe', icon: CreditCard, color: '#635BFF', category: 'Оплата', title: 'Stripe', what: 'stripeWhat', placeholder: 'sk_live_… or sk_test_…', link: 'https://dashboard.stripe.com/apikeys',
+  // Held back deliberately, not for lack of an executor: a Stripe SECRET key is full account
+  // access (refunds, payouts, customer data) and we ask for it on a bare-IP host with no legal
+  // entity, DPA or KMS-encrypted storage. Re-enable only with restricted keys (explicit scopes)
+  // or Stripe Connect OAuth, once the product is on its own domain.
+  { id: 'stripe', icon: CreditCard, color: '#635BFF', category: 'Оплата', title: 'Stripe', what: 'stripeWhat', placeholder: 'sk_live_… or sk_test_…', link: 'https://dashboard.stripe.com/apikeys', implemented: false,
     steps: ['stripeS1', 'stripeS2', 'stripeS3'] },
   { id: 'hubspot', icon: Building2, color: '#FF7A59', category: 'CRM', title: 'HubSpot', what: 'hubspotWhat', placeholder: 'Private App token', link: 'https://developers.hubspot.com/docs/api/private-apps',
     steps: ['hubspotS1', 'hubspotS2', 'hubspotS3'] },
@@ -50,7 +55,7 @@ const INTEGRATIONS: Integ[] = [
   { id: 'stability', icon: ImageIcon, color: '#13C5B4', category: 'Медиа · голос · видео', title: 'Stability AI', what: 'stabilityWhat', placeholder: 'sk-… (Stability key)', link: 'https://platform.stability.ai/account/keys', implemented: false,
     steps: ['stabilityS1', 'stabilityS2', 'stabilityS3'] },
   // Маркетплейсы (API продавца → данные для маркетплейс-агента)
-  { id: 'uzum', icon: ShoppingBag, color: '#7000FF', category: 'Маркетплейсы', title: 'Uzum Market', what: 'uzumWhat', placeholder: 'Uzum Seller API key', link: 'https://seller.uzum.uz', implemented: false,
+  { id: 'uzum', icon: ShoppingBag, color: '#7000FF', category: 'Маркетплейсы', title: 'Uzum Market', what: 'uzumWhat', placeholder: 'Uzum Seller API key', link: 'https://seller.uzum.uz/seller/api-keys',
     steps: ['uzumS1', 'uzumS2', 'uzumS3'] },
   { id: 'wildberries', icon: ShoppingBag, color: '#CB11AB', category: 'Маркетплейсы', title: 'Wildberries', what: 'wildberriesWhat', placeholder: 'WB API token', link: 'https://seller.wildberries.ru',
     steps: ['wildberriesS1', 'wildberriesS2', 'wildberriesS3'] },
@@ -99,6 +104,7 @@ export default function IntegrationsToolsPage() {
   const [brTask, setBrTask] = useState('')
   const [brBusy, setBrBusy] = useState(false)
   const [brRes, setBrRes] = useState<{ ok: boolean; text: string } | null>(null)
+  const [directoryOpen, setDirectoryOpen] = useState(false)
 
   const refresh = async () => {
     if (!supabase) return
@@ -147,7 +153,7 @@ export default function IntegrationsToolsPage() {
     try {
       const { data } = await supabase.functions.invoke('agent-tool', { body: { instruction: instr.trim() } })
       const p = data as any
-      if (p?.code === 'NO_TOOLS') setToolRes({ ok: false, text: p.message })
+      if (p?.code === 'NO_TOOLS') { setToolRes({ ok: false, text: p.message }); setDirectoryOpen(true) }
       else setToolRes({ ok: Boolean(p?.ok), tool: p?.tool, result: p?.result ?? p?.error, text: p?.tool ? undefined : (p?.result ?? p?.error) })
     } catch { setToolRes({ ok: false, text: t('integrationsToolsPage.errorGeneric') }) } finally { setToolBusy(false) }
   }
@@ -164,13 +170,18 @@ export default function IntegrationsToolsPage() {
 
   return (
     <div className="container-page max-w-5xl py-8">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Blocks size={20} /></span>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-text">{t('integrationsToolsPage.title')}</h1>
           <p className="text-sm text-muted">{t('integrationsToolsPage.introA')}<b className="text-text">{t('integrationsToolsPage.introToolBold')}</b>{t('integrationsToolsPage.introB')}</p>
         </div>
+        </div>
+        <Button onClick={() => setDirectoryOpen(true)} variant="outline"><Library size={16} /> Directory</Button>
       </div>
+
+      <CapabilityDirectory open={directoryOpen} onClose={() => setDirectoryOpen(false)} />
 
       <div className="card mt-5 flex items-start gap-2 rounded-2xl border border-violet/15 bg-violet/[0.05] p-4 text-[12.5px] leading-relaxed text-muted">
         <Wrench size={15} className="mt-0.5 shrink-0 text-violet" />

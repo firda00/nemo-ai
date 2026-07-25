@@ -1,17 +1,18 @@
-import { useState } from 'react'
-import { Check, KeyRound, Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, KeyRound, Loader2, Sparkles, Unplug } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { PROVIDERS, providerOf } from '../../data/platform'
 import { useToast } from '../ui/Toast'
 import { cn } from '../../lib/cn'
+import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 
 const inputCls =
   'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-muted/70 focus:border-violet/50 focus:shadow-glow'
 
 /**
  * Model selection grouped by company. The user picks a company, then a model,
- * and chooses the API-key source. Provider key storage is intentionally disabled
- * in the browser build until a secure Edge Function/encryption path is enabled.
+ * and chooses the API-key source. OpenRouter keys are validated and encrypted by
+ * the authenticated connect-model Edge Function and are never read back.
  */
 export function ModelPicker({
   model,
@@ -33,18 +34,53 @@ export function ModelPicker({
   const [useOwn, setUseOwn] = useState(false)
   const [keyInput, setKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
+  const [ownKeyConnected, setOwnKeyConnected] = useState(false)
+  const [checkingKey, setCheckingKey] = useState(isSupabaseEnabled)
 
   const showOwn = useOwn
 
+  useEffect(() => {
+    if (!supabase || !isSupabaseEnabled) return
+    let activeRequest = true
+    void supabase.functions.invoke('connect-model', { body: { action: 'status' } }).then(({ data }) => {
+      if (!activeRequest) return
+      const result = data as { connected?: boolean } | null
+      setOwnKeyConnected(Boolean(result?.connected))
+      setCheckingKey(false)
+    }).catch(() => { if (activeRequest) setCheckingKey(false) })
+    return () => { activeRequest = false }
+  }, [])
+
   const saveKey = async () => {
-    // SECURITY TODO: route provider key saves through an authenticated Edge Function
-    // that encrypts server-side before writing provider_keys. Never write real keys
-    // directly from the browser.
-    if (!keyInput.trim()) return
+    if (!supabase || !/^sk-or-v1-[A-Za-z0-9_-]{20,}$/.test(keyInput.trim()) || savingKey) return
     setSavingKey(true)
-    setSavingKey(false)
-    setKeyInput('')
-    toast('Provider key storage is not enabled in this demo build.')
+    try {
+      const { data, error } = await supabase.functions.invoke('connect-model', { body: { action: 'connect', api_key: keyInput.trim() } })
+      const result = data as { ok?: boolean; error?: string } | null
+      if (error || !result?.ok) { toast(result?.error ?? t('connectAIModel.errConnect')); return }
+      setOwnKeyConnected(true)
+      setKeyInput('')
+      toast(t('connectAIModel.connectedMsg'))
+    } catch {
+      toast(t('connectAIModel.errConnectGeneric'))
+    } finally {
+      setSavingKey(false)
+    }
+  }
+
+  const disconnectKey = async () => {
+    if (!supabase || savingKey) return
+    setSavingKey(true)
+    try {
+      const { error } = await supabase.functions.invoke('connect-model', { body: { action: 'disconnect' } })
+      if (error) { toast(t('connectAIModel.errGeneric')); return }
+      setOwnKeyConnected(false)
+      toast(t('connectAIModel.disconnectedMsg'))
+    } catch {
+      toast(t('connectAIModel.errGeneric'))
+    } finally {
+      setSavingKey(false)
+    }
   }
 
   return (
@@ -121,16 +157,22 @@ export function ModelPicker({
             <p className="flex items-center gap-1.5 text-sm font-normal text-text">
               <KeyRound size={14} className="text-cyan" /> {t('platform.editor.keyOwn')}
             </p>
-            <p className="mt-1 text-[11px] leading-snug text-muted">Provider key storage is not enabled in this demo build.</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted">{t('connectAIModel.securityNote')}</p>
           </button>
         </div>
 
         {showOwn && (
           <div>
-            <div className="rounded-xl border border-amber/25 bg-amber/10 p-3 text-xs leading-relaxed text-muted">
-              Provider key storage is not enabled in this demo build. For production, save keys through a secure Edge Function and store encrypted server-side values only.
-            </div>
-            <div className="mt-2 flex gap-2">
+            {checkingKey ? (
+              <div className="flex items-center gap-2 rounded-xl border border-ice/10 bg-black/15 p-3 text-xs text-muted"><Loader2 size={14} className="animate-spin" /> {t('common.loading')}</div>
+            ) : ownKeyConnected ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal/20 bg-teal/[0.06] p-3">
+                <span className="flex items-center gap-2 text-xs text-teal"><Check size={14} /> {t('connectAIModel.keyConnected')}</span>
+                <button type="button" onClick={() => void disconnectKey()} disabled={savingKey} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-text disabled:opacity-50">
+                  {savingKey ? <Loader2 size={13} className="animate-spin" /> : <Unplug size={13} />} {t('connectAIModel.disconnect')}
+                </button>
+              </div>
+            ) : isSupabaseEnabled ? <div className="flex gap-2">
               <input
                 type="password"
                 value={keyInput}
@@ -140,13 +182,13 @@ export function ModelPicker({
                 autoComplete="off"
               />
               <button
-                onClick={saveKey}
-                disabled={savingKey || !keyInput.trim()}
+                onClick={() => void saveKey()}
+                disabled={savingKey || !/^sk-or-v1-[A-Za-z0-9_-]{20,}$/.test(keyInput.trim())}
                 className="shrink-0 rounded-xl bg-brand px-3 py-2.5 text-sm font-medium text-white disabled:opacity-50"
               >
-                {savingKey ? '…' : t('platform.editor.keySave')}
+                {savingKey ? <Loader2 size={15} className="animate-spin" /> : t('platform.editor.keySave')}
               </button>
-            </div>
+            </div> : <p className="rounded-xl border border-amber/25 bg-amber/10 p-3 text-xs text-muted">{t('connectAIModel.errConnectGeneric')}</p>}
           </div>
         )}
       </div>

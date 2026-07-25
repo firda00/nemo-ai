@@ -33,3 +33,6 @@ supabase/.branches
 agent-hub/state/*.json
 !agent-hub/state/*.example.json
 agent-hub/artifacts/
+
+# gstack worktrees — a nested checkout, never part of the repo
+.claude/worktrees/

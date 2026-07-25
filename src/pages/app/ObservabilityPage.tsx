@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { Activity, Users, Wrench, CheckCircle2, XCircle, Clock, ChevronDown, Bot, Plug, MessageSquare } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
+import { formatCheckAge, opsLiveness } from '../../lib/opsHealth'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 
@@ -37,6 +38,7 @@ export default function ObservabilityPage() {
   const [providers, setProviders] = useState<string[]>([])
   const [dialogues, setDialogues] = useState(0)
   const [health, setHealth] = useState<{ status: string; summary: string; created_at: string } | null>(null)
+  const [checkedAt, setCheckedAt] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openRun, setOpenRun] = useState<string | null>(null)
@@ -67,10 +69,18 @@ export default function ObservabilityPage() {
       setProviders(((prov.data as any)?.connected as string[]) ?? [])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setHealth((ops.data as any) ?? null)
+      setCheckedAt(Date.now())
     } catch { setError(t('observabilityPage.loadError')) }
     setLoading(false)
   }, [t])
   useEffect(() => { let a = true; (async () => { if (a) await load() })(); return () => { a = false } }, [load])
+
+  // Derived, never read straight off the row: an old `ok` is not evidence that anything is ok.
+  // The clock is sampled when the data is fetched, not during render — freshness is a property
+  // of the read, and re-rendering must not silently change the verdict.
+  const liveness = checkedAt
+    ? opsLiveness(health?.created_at, health?.status, checkedAt)
+    : { status: 'unknown' as const, ageMinutes: null, reported: false }
 
   const fmt = (iso: string) => { try { return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) } catch { return iso } }
   const toolOk = tools.filter((t) => t.ok).length
@@ -95,16 +105,26 @@ export default function ObservabilityPage() {
         <div className="mt-6 grid gap-3 sm:grid-cols-4">{[0, 1, 2, 3].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-white/[0.03]" />)}</div>
       ) : (
         <>
-          {health && (
-            <div className={cn('mt-6 flex items-center gap-3 rounded-2xl border px-4 py-3', health.status === 'ok' ? 'border-teal/25 bg-teal/[0.06]' : health.status === 'warn' ? 'border-amber/25 bg-amber/[0.06]' : 'border-danger/25 bg-danger/[0.06]')}>
-              <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', health.status === 'ok' ? 'bg-teal' : health.status === 'warn' ? 'bg-amber' : 'bg-danger')} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-text">{t('observabilityPage.healthTitle')}: {health.status === 'ok' ? t('observabilityPage.healthOk') : health.status === 'warn' ? t('observabilityPage.healthWarn') : t('observabilityPage.healthDown')}</p>
-                <p className="truncate text-[11px] text-muted">{health.summary} · {fmt(health.created_at)}</p>
-              </div>
-              <span className="shrink-0 text-[10px] text-fog">{t('observabilityPage.healthAuto')}</span>
+          {/* A stale row is never rendered as its last known verdict — see src/lib/opsHealth.ts */}
+          <div className={cn('mt-6 flex items-center gap-3 rounded-2xl border px-4 py-3', liveness.status === 'ok' ? 'border-teal/25 bg-teal/[0.06]' : liveness.status === 'warn' ? 'border-amber/25 bg-amber/[0.06]' : 'border-danger/25 bg-danger/[0.06]')}>
+            <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', liveness.status === 'ok' ? 'bg-teal' : liveness.status === 'warn' ? 'bg-amber' : 'bg-danger')} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium text-text">
+                {t('observabilityPage.healthTitle')}:{' '}
+                {liveness.status === 'ok' ? t('observabilityPage.healthOk')
+                  : liveness.status === 'warn' ? t('observabilityPage.healthWarn')
+                  : liveness.status === 'stale' ? t('observabilityPage.healthStale')
+                  : liveness.status === 'unknown' ? t('observabilityPage.healthUnknown')
+                  : t('observabilityPage.healthDown')}
+              </p>
+              <p className="truncate text-[11px] text-muted">
+                {liveness.reported && health ? `${health.summary} · ` : ''}
+                {t('observabilityPage.healthChecked')}: {formatCheckAge(liveness.ageMinutes)}
+                {health ? ` (${fmt(health.created_at)})` : ''}
+              </p>
             </div>
-          )}
+            <span className="shrink-0 text-[10px] text-fog">{t('observabilityPage.healthAuto')}</span>
+          </div>
           <div className="mt-6 grid gap-3 sm:grid-cols-4">
             <Tile icon={Plug} n={connCount} l={t('observabilityPage.tileConnections')} tone="bg-teal/15 text-teal" />
             <Tile icon={Users} n={runs.length} l={t('observabilityPage.tileRuns')} tone="bg-violet/15 text-violet" />

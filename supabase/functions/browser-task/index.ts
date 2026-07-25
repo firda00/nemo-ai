@@ -9,7 +9,7 @@ import { runBrowserTask, pollBrowserTask, looksAbusive } from '../_shared/browse
 import { planOf, monthlyBrowser } from '../_shared/plans.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { redactText, redactValue } from '../_shared/redact.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
   const plan = planOf(acc?.plan)
   // browser agent is INCLUDED in the subscription — runs on Nemo's key; a customer key overrides.
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'hyperbrowser').maybeSingle()
-  const key = (await openSecret(keyRow?.api_key)) || NEMO_HB_KEY
+  const key = (await openSecret(keyRow?.api_key, providerSecretContext(accountId, 'hyperbrowser'))) || NEMO_HB_KEY
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Браузер-агент временно недоступен (провайдер не настроен).' }, 200)
 
   const body = await req.json().catch(() => ({}))

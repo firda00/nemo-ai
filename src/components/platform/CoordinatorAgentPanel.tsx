@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bot, CircleHelp, Loader2, MessageSquare, Sparkles, Wand2 } from 'lucide-react'
+import { Bot, ChevronDown, CircleHelp, Loader2, MessageSquare, Sparkles, Wand2 } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -80,6 +80,7 @@ export function CoordinatorAgentPanel({ mode, context = '', liveStatus }: { mode
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const steps = mode === 'general' ? GENERAL_STEPS[copyLang] : STEPS[mode]
 
   const copy = useMemo(() => lang === 'ru' ? {
@@ -139,43 +140,46 @@ export function CoordinatorAgentPanel({ mode, context = '', liveStatus }: { mode
   }
 
   return (
-    <section className="card rounded-3xl border border-cyan/20 bg-cyan/[0.045] p-5 sm:p-6">
-      <div className="flex flex-wrap items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan/15 text-cyan"><Bot size={20} /></span>
+    <section className="card rounded-2xl border border-cyan/20 bg-cyan/[0.045] p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan/15 text-cyan"><Bot size={18} /></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold text-text">{copy.title}</h2>
+            <h2 className="text-base font-bold text-text">{copy.title}</h2>
             <span className="rounded-pill border border-teal/20 bg-teal/10 px-2 py-0.5 text-[10px] font-medium text-teal">{copy.mode}</span>
           </div>
-          <p className="mt-1 text-sm leading-relaxed text-muted">{copy.subtitle}</p>
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-ice/10 bg-black/15 p-3.5">
-        <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-cyan"><Sparkles size={13} /> {copy.live}</p>
-        <p className="text-[13px] leading-relaxed text-text">{liveStatus || answer || fallback}</p>
+      <div className="mt-3 flex items-start gap-2 rounded-xl border border-ice/10 bg-black/15 px-3 py-2.5">
+        <Sparkles size={14} className="mt-0.5 shrink-0 text-cyan" />
+        <p className="line-clamp-2 text-[13px] leading-relaxed text-text">{liveStatus || answer || fallback}</p>
       </div>
 
-      <div className="mt-4">
-        <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted"><Wand2 size={13} /> {copy.next}</p>
-        <div className="grid gap-2 sm:grid-cols-5">
-          {steps.map((step, i) => (
-            <div key={step.title} className="rounded-xl border border-ice/10 bg-black/10 p-2.5">
-              <p className="text-[11px] font-semibold text-text"><span className="mr-1 text-cyan">{i + 1}.</span>{step.title}</p>
-              <p className="mt-1 text-[10px] font-medium text-violet">{step.agent}</p>
-              <p className="mt-1 text-[10.5px] leading-relaxed text-fog">{step.reason}</p>
-            </div>
-          ))}
-        </div>
+      <div className="mt-2">
+        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-xs font-medium text-muted transition hover:bg-white/[0.03] hover:text-text">
+          <span className="flex items-center gap-1.5"><Wand2 size={13} /> {copy.next} · {steps.length}</span>
+          <ChevronDown size={15} className={cn('transition-transform', expanded && 'rotate-180')} />
+        </button>
+        {expanded && (
+          <div className="mt-1 grid gap-2 sm:grid-cols-5">
+            {steps.map((step, i) => (
+              <div key={step.title} className="rounded-xl border border-ice/10 bg-black/10 px-2.5 py-2">
+                <p className="text-[11px] font-semibold text-text"><span className="mr-1 text-cyan">{i + 1}.</span>{step.title}</p>
+                <p className="mt-0.5 text-[10px] font-medium text-violet">{step.agent}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 flex items-end gap-2">
-        <div className="glass flex min-h-11 flex-1 items-center rounded-xl px-3">
+      <div className="mt-2 flex items-end gap-2">
+        <div className="glass flex min-h-10 flex-1 items-center rounded-xl px-3">
           <MessageSquare size={15} className="mr-2 shrink-0 text-muted" />
           <input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void ask() }} placeholder={copy.placeholder} className="w-full bg-transparent text-sm text-text outline-none placeholder:text-fog" />
         </div>
-        <button onClick={() => void ask()} disabled={busy || !question.trim()} className={cn('inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-3.5 text-sm font-medium text-white transition disabled:opacity-40', busy && 'cursor-wait')}>
-          {busy ? <Loader2 size={15} className="animate-spin" /> : <CircleHelp size={15} />} {copy.ask}
+        <button onClick={() => void ask()} disabled={busy || !question.trim()} aria-label={copy.ask} className={cn('inline-flex h-10 items-center gap-2 rounded-xl bg-brand px-3 text-sm font-medium text-white transition disabled:opacity-40', busy && 'cursor-wait')}>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <CircleHelp size={15} />} <span className="hidden sm:inline">{copy.ask}</span>
         </button>
       </div>
     </section>

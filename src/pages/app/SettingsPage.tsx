@@ -1,10 +1,11 @@
-import { Check, CreditCard, Globe, Users, User as UserIcon } from 'lucide-react'
+import { Check, CreditCard, Globe, Users, User as UserIcon, ShieldCheck } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
 import { Button } from '../../components/ui/Button'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import { cn } from '../../lib/cn'
 import type { Lang } from '../../types'
+import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
 
 const langOptions: { code: Lang; label: string; native: string }[] = [
   { code: 'uz', label: "O‘zbekcha", native: 'UZ' },
@@ -53,6 +54,10 @@ export default function SettingsPage() {
             <div><p className="font-semibold text-text">{t('mvp.settings.pilotPlan')}</p><p className="mt-1 text-xs text-muted">{t('mvp.settings.pilotDesc')}</p></div>
             <Button to="/app/billing" size="sm">{t('mvp.settings.openPricing')}</Button>
           </div>
+        </Section>
+
+        <Section icon={ShieldCheck} title={t('mvp.settings.securityTitle')} desc={t('mvp.settings.securityDesc')}>
+          <MfaSetupPanel />
         </Section>
 
         <ConnectAIModel />

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Wrench, Plus, Trash2, Loader2, Server, Globe, CheckCircle2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Wrench, Plus, Trash2, Loader2, Server, Globe, CheckCircle2, X, Upload } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
@@ -36,12 +36,38 @@ export function CustomToolsManager() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [probe, setProbe] = useState<{ name: string; description: string }[] | null>(null)
   const [f, setF] = useState<Record<string, string>>({ method: 'POST', headerName: 'Authorization' })
+  const manifestRef = useRef<HTMLInputElement>(null)
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }))
   const resetForm = () => { setF({ method: 'POST', headerName: 'Authorization' }); setProbe(null); setMsg(null) }
   const applyPreset = (p: typeof PLATFORM_PRESETS[number]) => {
     setProbe(null); setMsg(null)
     setF({ method: p.method, headerName: 'Authorization', name: p.name, description: t('customTools.preset_' + p.key), url: p.url, params: p.params, bodyTemplate: p.body ?? '' })
     setMode('http')
+  }
+
+  const importPluginManifest = async (file?: File) => {
+    if (!file) return
+    setMsg(null); setProbe(null)
+    try {
+      if (file.size <= 0 || file.size > 64 * 1024) throw new Error('invalid_size')
+      const manifest = JSON.parse(await file.text()) as Record<string, unknown>
+      if (manifest.kind !== 'mcp') throw new Error('invalid_kind')
+      const name = String(manifest.name ?? '').trim().slice(0, 60)
+      const mcpUrl = String(manifest.mcp_url ?? manifest.url ?? '').trim()
+      if (name.length < 2 || !/^https:\/\//i.test(mcpUrl)) throw new Error('invalid_manifest')
+      setF({
+        name,
+        description: String(manifest.description ?? '').trim().slice(0, 500),
+        mcpUrl,
+        headerName: String(manifest.header_name ?? 'Authorization').trim().slice(0, 100) || 'Authorization',
+      })
+      setMode('mcp')
+      setMsg({ ok: true, text: t('customTools.manifestReady') })
+    } catch {
+      setMsg({ ok: false, text: t('customTools.manifestInvalid') })
+    } finally {
+      if (manifestRef.current) manifestRef.current.value = ''
+    }
   }
 
   const refresh = async () => {
@@ -96,7 +122,7 @@ export function CustomToolsManager() {
 
   return (
     <div className="card rounded-2xl p-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet/15 text-violet"><Wrench size={17} /></span>
           <div>
@@ -105,7 +131,9 @@ export function CustomToolsManager() {
           </div>
         </div>
         {mode === 'none' && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
+            <input ref={manifestRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => importPluginManifest(event.target.files?.[0])} />
+            <Button size="sm" variant="subtle" onClick={() => manifestRef.current?.click()}><Upload size={14} /> {t('customTools.importPlugin')}</Button>
             <Button size="sm" variant="subtle" onClick={() => { resetForm(); setMode('http') }}><Globe size={14} /> {t('customTools.addHttp')}</Button>
             <Button size="sm" variant="subtle" onClick={() => { resetForm(); setMode('mcp') }}><Server size={14} /> {t('customTools.addMcp')}</Button>
           </div>

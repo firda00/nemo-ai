@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
+import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 
 const live = isSupabaseEnabled
 
@@ -133,6 +134,7 @@ export default function FollowUpsPage() {
 
   return (
     <div className="container-page max-w-4xl py-8">
+      <ContentSalesNav active="followups" />
       <div className="flex flex-wrap items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Repeat size={20} /></span>
         <div className="flex-1">

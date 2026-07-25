@@ -79,6 +79,7 @@ export interface PlatformAgent {
   voiceEnabled?: boolean
   voiceMode?: 'tts' | 'stt' | 'both'
   voiceId?: string
+  sttModel?: 'auto' | 'ovozify-whisper-small-uz' | 'gemini-openrouter'
   // personal-assistant mode: the agent answers in Telegram AS one individual (not the company)
   personaMode?: 'business' | 'personal'
   ownerName?: string
@@ -99,6 +100,7 @@ export interface SubAgent {
   role: string
   name: string
   prompt: AgentPrompt
+  skills?: string[]
   model?: string
   status?: string
 }

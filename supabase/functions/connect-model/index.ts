@@ -7,7 +7,7 @@
 //   { action:'disconnect' }               -> removes the key
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret, sealSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext, sealSecret } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     if (!data?.api_key) return json({ ok: true, connected: false })
     // fetch label/limit for a friendly display (never return the key)
     try {
-      const info = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${await openSecret(data.api_key)}` } }).then((r) => r.json())
+      const info = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${await openSecret(data.api_key, providerSecretContext(accountId, 'openrouter'))}` } }).then((r) => r.json())
       return json({ ok: true, connected: true, label: info?.data?.label ?? null, limit: info?.data?.limit ?? null, usage: info?.data?.usage ?? null, since: data.created_at })
     } catch {
       return json({ ok: true, connected: true, since: data.created_at })
@@ -54,7 +54,11 @@ Deno.serve(async (req) => {
       const r = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${key}` } })
       if (!r.ok) return json({ ok: false, error: 'Ключ не принят OpenRouter — проверьте, что скопировали верно.' }, 400)
       const info = await r.json() as { data?: { label?: string; limit?: number | null; usage?: number } }
-      await admin.from('provider_keys').upsert({ account_id: accountId, provider: 'openrouter', api_key: await sealSecret(key) }, { onConflict: 'account_id,provider' })
+      await admin.from('provider_keys').upsert({
+        account_id: accountId,
+        provider: 'openrouter',
+        api_key: await sealSecret(key, providerSecretContext(accountId, 'openrouter')),
+      }, { onConflict: 'account_id,provider' })
       return json({ ok: true, connected: true, label: info?.data?.label ?? null, limit: info?.data?.limit ?? null, usage: info?.data?.usage ?? null })
     } catch {
       return json({ ok: false, error: 'Не удалось проверить ключ (сеть). Повторите.' }, 502)

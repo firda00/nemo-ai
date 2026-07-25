@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { CalendarDays, CheckCircle2, GraduationCap, Mail, Phone, Send, User } from 'lucide-react'
+import { CalendarDays, CheckCircle2, Building2, Mail, Phone, Send, User } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 
 const fieldCls = 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-muted focus:border-violet/50'
@@ -20,15 +20,15 @@ export default function WaitlistPage() {
       <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="rounded-3xl border border-white/10 bg-panel/80 p-8">
           <p className="mono-label">Pilot waitlist</p>
-          <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-text">Book a demo for your education center</h1>
+          <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-text">Book a demo for your business</h1>
           <p className="mt-4 text-sm leading-relaxed text-muted">
-            We are onboarding education businesses that lose leads because follow-up and CRM are manual. The pilot focuses on one workflow: qualify student leads, write follow-ups, update CRM, and send daily reports.
+            We are onboarding high-growth businesses that lose leads because follow-up and CRM are manual. The pilot focuses on one workflow: qualify business leads, write follow-ups, update CRM, and send daily reports.
           </p>
           <div className="mt-6 space-y-3">
             {[
               ['30-minute demo', 'See the AI Sales Team process your lead examples.'],
               ['Pilot setup', 'Telegram/Sheets/CRM can be connected after the demo.'],
-              ['Founder-led onboarding', 'We work directly with the first education centers.'],
+              ['Founder-led onboarding', 'We work directly with our pilot companies.'],
             ].map(([title, desc]) => (
               <div key={title} className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-teal" />
@@ -56,9 +56,9 @@ export default function WaitlistPage() {
               </div>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 <Field icon={User} label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldCls} placeholder="Founder / manager" /></Field>
-                <Field icon={Mail} label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fieldCls} placeholder="you@center.com" /></Field>
+                <Field icon={Mail} label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fieldCls} placeholder="you@company.com" /></Field>
                 <Field icon={Phone} label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fieldCls} placeholder="+998..." /></Field>
-                <Field icon={GraduationCap} label="Education center"><input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className={fieldCls} placeholder="Center name" /></Field>
+                <Field icon={Building2} label="Company"><input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className={fieldCls} placeholder="Company name" /></Field>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1.5"><span className="text-xs text-muted">Monthly leads</span><select value={form.leads} onChange={(e) => setForm({ ...form, leads: e.target.value })} className={fieldCls}><option>0-100/month</option><option>100-300/month</option><option>300-1000/month</option><option>1000+/month</option></select></label>

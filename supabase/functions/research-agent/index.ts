@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
 
     // account usage + persist the run
     if (tokens) {
-      await admin.from('usage').insert({ account_id: accountId, tokens, model: 'research-agent' })
+      await admin.from('usage').insert({ account_id: accountId, tokens, model: null, stage: 'research-agent' })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
     }
     const { data: run } = await userDb

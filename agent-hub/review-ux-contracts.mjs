@@ -6,6 +6,14 @@ const page = read('src/pages/app/AutonomousPage.tsx')
 const i18n = read('src/i18n/extra.ts')
 const orchestrate = read('supabase/functions/orchestrate/index.ts')
 const llm = read('supabase/functions/_shared/llm.ts')
+const contentNav = read('src/components/platform/ContentSalesNav.tsx')
+const contentPage = read('src/pages/app/ContentStudioPage.tsx')
+const autopostPage = read('src/pages/app/AutopostPage.tsx')
+const followupsPage = read('src/pages/app/FollowUpsPage.tsx')
+const coordinator = read('src/components/platform/CoordinatorAgentPanel.tsx')
+const dashboard = read('src/pages/app/DashboardPage.tsx')
+const companyBrain = read('src/pages/app/CompanyBrainPage.tsx')
+const appLayout = read('src/components/layout/AppLayout.tsx')
 
 let failed = 0
 const check = (name, ok) => {
@@ -13,10 +21,11 @@ const check = (name, ok) => {
   if (!ok) failed++
 }
 
-const autonomousBlocks = [...i18n.matchAll(/"autonomousRunner":\s*\{([\s\S]*?)\n\s*\},\n\s*"autopostPage"/g)].map((m) => m[1])
+// \r?\n: working-tree files may be CRLF on Windows (core.autocrlf), LF in CI
+const autonomousBlocks = [...i18n.matchAll(/"autonomousRunner":\s*\{([\s\S]*?)\r?\n\s*\},\r?\n\s*"autopostPage"/g)].map((m) => m[1])
 check('all three autonomous-runner dictionaries contain escalation copy', autonomousBlocks.length === 3 && autonomousBlocks.every((b) => b.includes('"escalatedNote"') && b.includes('"escalatedBanner"')))
-check('department choice preserves a non-empty user draft', page.includes("setStarterGoal((current) => current.trim() ? current : p.goal)"))
-check('example choice also preserves a non-empty user draft', page.includes("setStarterGoal((current) => current.trim() ? current : e)"))
+check('department choice replaces the generated prompt for the newly selected department', page.includes('setStarterGoal(p.goal)'))
+check('example choice replaces the generated prompt predictably', page.includes('setStarterGoal(e)'))
 check('autonomous goal input is controlled without remounting', page.includes('goalValue={starterGoal}') && page.includes('onGoalChange={setStarterGoal}') && !page.includes("key={starterGoal || 'blank-team'}"))
 check('review loop keeps the highest-scoring version', runner.includes('bestReview') && runner.includes('review.score > bestReview.score') && runner.includes('done[i].output = bestOutput'))
 check('revision review receives the prior verdict', runner.includes('previous_score: previousReview?.score') && orchestrate.includes('prior verdict scored'))
@@ -25,6 +34,11 @@ check('researcher explicitly enables grounded web search', runner.includes("web_
 check('web citations flow into synthesis and persistence', runner.includes('runSources.add') && runner.includes('sources: [...runSources]') && orchestrate.includes('r.citations'))
 check('LLM gateway supports request-scoped plugins', llm.includes('plugins?: Array<Record<string, unknown>>') && llm.includes('{ plugins: opts.plugins }'))
 check('unsupported facts and placeholders are rejected', orchestrate.includes('Never output placeholder names') && orchestrate.includes('Unsupported numbers'))
+check('content, autoposting and funnel share reversible navigation', contentNav.includes('/app/content') && contentNav.includes('/app/autopost') && contentNav.includes('/app/followups') && contentPage.includes('ContentSalesNav') && autopostPage.includes('ContentSalesNav') && followupsPage.includes('ContentSalesNav'))
+check('coordinator is compact by default and expands workflow stages on demand', coordinator.includes('const [expanded, setExpanded]') && coordinator.includes('aria-expanded={expanded}') && coordinator.includes('line-clamp-2'))
+check('dashboard always exposes separate team and standalone-agent counts', dashboard.includes('standaloneAgents') && dashboard.includes("mvp.dashboard.activeAgents"))
+check('business profile collects company email and employee count without showing Google Sheet setup', companyBrain.includes("'company_email'") && companyBrain.includes("'employee_count'") && !/FIELDS[\s\S]{0,220}tasks_sheet_id/.test(companyBrain))
+check('collapsed desktop sidebar keeps a rotated Nemo logo', appLayout.includes('showWordmark={false}') && appLayout.includes('rotate-90') && appLayout.includes("'--sb': collapsed ? '64px'"))
 
 if (failed) {
   console.error(`Review/UX contracts failed: ${failed}`)

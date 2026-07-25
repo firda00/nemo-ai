@@ -54,6 +54,8 @@ Apply-Migration .\supabase\migrations\20260713150000_product_intelligence.sql
 Apply-Migration .\supabase\migrations\20260714090000_leads_concurrency.sql
 Apply-Migration .\supabase\migrations\20260714100000_team_shared_rag.sql
 Apply-Migration .\supabase\migrations\20260714110000_transcribe_jobs.sql
+Apply-Migration .\supabase\migrations\20260723183000_telegram_worker_reliability.sql
+Apply-Migration .\supabase\migrations\20260723193000_agent_stt_model.sql
 
 $schemaCheckSql = @'
 select
@@ -302,7 +304,7 @@ foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','operator-send','google-tools') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','connect-provider','operator-send','google-tools') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Activity, MessageSquare, PlayCircle, Plus, Table2, Users, Zap } from 'lucide-react'
+import { Activity, Bot, MessageSquare, PlayCircle, Plus, Users, Zap } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -20,9 +20,11 @@ function readLocalStorage(key: string): string {
 export default function DashboardPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const backend = useBackendStatus()
+  const isAdmin = useAgentStore((s) => s.isAdmin)
+  const backend = useBackendStatus(isAdmin)
   const agents = useAgentStore((s) => s.agents)
   const teams = agents.filter((a) => a.type === 'workflow')
+  const standaloneAgents = agents.filter((a) => a.type !== 'workflow')
   const savedTeamId = readLocalStorage('nemo-current-team-id')
   const savedTeamName = readLocalStorage('nemo-team-name')
 
@@ -46,11 +48,11 @@ export default function DashboardPage() {
 
   const createCourseConsultant = () => {
     localStorage.setItem('nemo-selected-agent-template', JSON.stringify({
-      name: 'Course Consultant',
+      name: 'Sales Consultant',
       type: 'qualifier',
-      role: 'AI course consultant for IT Academy',
-      tasks: 'Recommend courses based on student goal, age, schedule, budget and language preference. Collect phone number and next action.',
-      tone: 'Friendly, practical, admissions-focused.',
+      role: 'AI Sales Consultant',
+      tasks: 'Recommend products or services based on customer goals, budget, and language preference. Collect contact details and next actions.',
+      tone: 'Professional, friendly, and solution-oriented.',
     }))
     navigate('/app/create-agent')
   }
@@ -89,12 +91,12 @@ export default function DashboardPage() {
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Metric icon={Users} label={t('mvp.dashboard.activeTeams')} value={String(Math.max(teams.length, savedTeamId ? 1 : 0))} />
+        <Metric icon={Bot} label={t('mvp.dashboard.activeAgents')} value={String(standaloneAgents.length)} />
         <Metric icon={PlayCircle} label={t('mvp.dashboard.workflowsRun')} value={String(stats.runs)} />
-        <Metric icon={Table2} label={t('mvp.dashboard.leadsProcessed')} value={String(stats.leads)} />
         <Metric icon={MessageSquare} label={t('mvp.dashboard.dialogues')} value={String(stats.dialogues)} />
       </div>
 
-      <section className="card mt-6 rounded-3xl p-5">
+      {isAdmin && <section className="card mt-6 rounded-3xl p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="mono-label">Backend status</p>
@@ -113,7 +115,7 @@ export default function DashboardPage() {
           <Status label="Workflow mode" ok={backend.liveWorkflowReady} good="live backend" bad="local simulation" />
           <Status label="Provider keys" ok={backend.providerKeysSecure} good="secure storage" bad="demo-only" />
         </div>
-      </section>
+      </section>}
 
       <section className="card mt-8 rounded-3xl p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

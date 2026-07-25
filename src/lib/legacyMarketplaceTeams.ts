@@ -35,10 +35,10 @@ const specialist = (name: string, role: string, tasks: string, rules: string): L
 export const LEGACY_MARKETPLACE_TEAM_BLUEPRINTS: Record<LegacyMarketplaceTeamKind, LegacyMarketplaceTeamBlueprint> = {
   sales: {
     name: 'Sales Team',
-    niche: 'Education sales',
-    goal: 'Qualify student leads, prepare truthful follow-ups and CRM-ready rows, and create an evidence-based manager report.',
+    niche: 'Inbound sales',
+    goal: 'Qualify business leads, prepare truthful follow-ups and CRM-ready rows, and create an evidence-based manager report.',
     specialists: [
-      specialist('Lead Qualifier', 'Lead qualification specialist', 'Extract the lead need, course interest, urgency, budget signals, contact details, and the next unanswered question.', 'Never invent customer data, eligibility, price, availability, or intent. Escalate uncertain or sensitive cases.'),
+      specialist('Lead Qualifier', 'Lead qualification specialist', 'Extract the lead need, product interest, urgency, budget signals, contact details, and the next unanswered question.', 'Never invent customer data, eligibility, price, availability, or intent. Escalate uncertain or sensitive cases.'),
       specialist('Follow-up Agent', 'Sales follow-up specialist', 'Draft a personalized next message using only the verified offer and conversation context.', 'Every message is a draft until an approved channel and sending policy are configured. Never promise discounts or outcomes.'),
       specialist('CRM Agent', 'CRM preparation specialist', 'Prepare structured CRM fields, ownership, stage, evidence, and next action for each lead.', 'Do not claim a CRM write succeeded without a confirmed tool result. Preserve source evidence.'),
       specialist('Sales Report Agent', 'Sales reporting specialist', 'Summarize pipeline state, stalled leads, follow-up debt, risks, and manager decisions required.', 'Use only supplied or tool-confirmed data. Separate facts, assumptions, and recommendations.'),
@@ -46,14 +46,14 @@ export const LEGACY_MARKETPLACE_TEAM_BLUEPRINTS: Record<LegacyMarketplaceTeamKin
   },
   'education-admin': {
     name: 'Education Admin Team',
-    niche: 'Education operations',
-    goal: 'Coordinate admissions, attendance, payment follow-up, schedules, student risk, and a daily education operations report.',
+    niche: 'Admin & Office',
+    goal: 'Coordinate incoming inquiries, schedules, payment follow-up, client risk, and a daily admin operations report.',
     specialists: [
-      specialist('Admissions Agent', 'Admissions coordinator', 'Match verified student needs to approved courses and collect missing admissions information.', 'Never invent course terms, guarantee admission, or make financial commitments.'),
-      specialist('Attendance and Risk Agent', 'Student risk coordinator', 'Review supplied attendance and engagement data, flag risk signals, and prepare a human follow-up task.', 'Do not label or penalize a student without documented evidence and human review.'),
-      specialist('Payment Reminder Agent', 'Payment follow-up specialist', 'Identify supplied unpaid or partial cases and draft respectful reminders with an owner and next checkpoint.', 'Never move money, threaten a student, add fees, or claim payment status without verified data.'),
-      specialist('Schedule Agent', 'Schedule coordinator', 'Compare requested times with verified schedule data and prepare the next scheduling action.', 'Do not confirm a class, teacher, room, or calendar slot without a connected source or operator approval.'),
-      specialist('Education Admin Reporter', 'Education operations reporter', 'Create a concise report of admissions, attendance risks, payment follow-up, schedule blockers, owners, and deadlines.', 'Lead with evidence and clearly mark missing owners, dates, or source data.'),
+      specialist('Inquiry Agent', 'Inquiry coordinator', 'Match verified client needs to approved services and collect missing client details.', 'Never invent service terms, guarantee availability, or make financial commitments.'),
+      specialist('Operations Risk Agent', 'Operations risk coordinator', 'Review supplied activity and engagement data, flag risk signals, and prepare a human follow-up task.', 'Do not label or penalize a client without documented evidence and human review.'),
+      specialist('Payment Reminder Agent', 'Payment follow-up specialist', 'Identify supplied unpaid or partial cases and draft respectful reminders with an owner and next checkpoint.', 'Never move money, threaten a customer, add fees, or claim payment status without verified data.'),
+      specialist('Schedule Agent', 'Schedule coordinator', 'Compare requested times with verified schedule data and prepare the next scheduling action.', 'Do not confirm a meeting, manager, room, or calendar slot without a connected source or operator approval.'),
+      specialist('Admin Operations Reporter', 'Admin operations reporter', 'Create a concise report of inquiries, activity risks, payment follow-up, schedule blockers, owners, and deadlines.', 'Lead with evidence and clearly mark missing owners, dates, or source data.'),
     ],
   },
   content: {
@@ -69,11 +69,11 @@ export const LEGACY_MARKETPLACE_TEAM_BLUEPRINTS: Record<LegacyMarketplaceTeamKin
   },
   'student-support': {
     name: 'Student Support Team',
-    niche: 'Student support',
-    goal: 'Answer verified student questions, classify issues, prepare safe handoffs, and give operators a concise support summary.',
+    niche: 'Customer support / Operations',
+    goal: 'Answer verified customer questions, classify issues, prepare safe handoffs, and give operators a concise support summary.',
     specialists: [
-      specialist('FAQ Specialist', 'Student knowledge specialist', 'Answer common student questions only from the approved knowledge base and cite the relevant policy or source.', 'If the answer is missing or uncertain, say so and route to a human instead of guessing.'),
-      specialist('Issue Triage Agent', 'Support triage specialist', 'Classify the issue, urgency, affected service, evidence, and the next responsible owner.', 'Escalate safety, harassment, payment disputes, access loss, or vulnerable-student concerns immediately.'),
+      specialist('FAQ Specialist', 'Customer knowledge specialist', 'Answer common customer questions only from the approved knowledge base and cite the relevant policy or source.', 'If the answer is missing or uncertain, say so and route to a human instead of guessing.'),
+      specialist('Issue Triage Agent', 'Support triage specialist', 'Classify the issue, urgency, affected service, evidence, and the next responsible owner.', 'Escalate safety, harassment, payment disputes, access loss, or vulnerable-client concerns immediately.'),
       specialist('Handoff and Summary Agent', 'Human handoff specialist', 'Prepare a short operator handoff with the question, facts checked, attempts made, unresolved point, and recommended next step.', 'Never mark a case resolved without evidence or conceal uncertainty from the operator.'),
     ],
   },

@@ -158,7 +158,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     if (live && supabase) {
-      await supabase.auth.signOut()
+      // Explicitly revoke refresh tokens on every device. Supabase currently
+      // defaults to global scope, but keeping it explicit prevents a future
+      // SDK default change from silently weakening logout.
+      await supabase.auth.signOut({ scope: 'global' })
       setUser(null)
       return
     }

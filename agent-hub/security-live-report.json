@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-14T08:39:46.773Z",
+  "generated_at": "2026-07-23T12:44:51.324Z",
   "failed": 0,
   "report": [
     {
@@ -18,12 +18,22 @@
       "detail": ""
     },
     {
-      "name": "New provider credential is AES-GCM encrypted at rest",
+      "name": "New provider credential is tenant-bound AES-GCM encrypted at rest",
       "ok": true,
       "detail": ""
     },
     {
       "name": "Browser role cannot select provider secrets",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browser role cannot bypass encryption with direct provider-key writes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Database rejects plaintext provider credentials even from a privileged writer",
       "ok": true,
       "detail": ""
     },

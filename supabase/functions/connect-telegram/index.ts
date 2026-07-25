@@ -93,13 +93,7 @@ Deno.serve(async (req) => {
   const webhookUrl = `${SUPABASE_URL}/functions/v1/telegram-webhook/${channel.id}`
   const wh = await tgSetWebhook(botToken, webhookUrl, secret)
 
-  if (wh.ok === true) {
-    // One target owns one active bot. Remove the old row only after Telegram
-    // accepted the replacement webhook, so a failed replacement is harmless.
-    let old = db.from('channels').delete().eq('agent_id', agentId).eq('type', 'telegram').eq('scope', scope).neq('id', channel.id)
-    old = subAgentId ? old.eq('sub_agent_id', subAgentId) : old.is('sub_agent_id', null)
-    await old
-  } else {
+  if (wh.ok !== true) {
     // Never retain a row that falsely claims the webhook is connected.
     await db.from('channels').delete().eq('id', channel.id)
   }

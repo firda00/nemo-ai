@@ -6,7 +6,7 @@
 //   POST /functions/v1/test-agent   (Authorization: Bearer <user jwt>)
 //   body { "agent": {...}, "message": "...", "history": [{author, content}] }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, buildSystemPrompt, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, buildSystemPrompt, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { loadMemory, saveMemory } from '../_shared/memory.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { retrieveKnowledge, retrieveTeamKnowledge } from '../_shared/knowledge.ts'
@@ -139,13 +139,13 @@ Deno.serve(async (req) => {
     // execute it for real (create Google Sheet/Doc, send email, browse) and return the REAL result
     const toolRun = await runAgentTools(admin, apiKey, accountId, message, [], agent?.type, undefined, Array.isArray(agent?.skills) ? agent.skills : [])
     if (toolRun?.ran) {
-      if (toolRun.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: toolRun.tokens, model: 'tool' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: toolRun.tokens }) }
+      if (toolRun.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: toolRun.tokens, model: null, stage: 'tool' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: toolRun.tokens }) }
       return json({ ok: true, tool: toolRun.tool, reply: toolRun.result, dialogue_id: dialogueId })
     }
 
     const out = await callOpenRouter({ apiKey, model, messages, temperature, fallbackModel: FALLBACK_MODEL })
     if (out.tokens) {
-      await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model })
+      await admin.from('usage').insert({ account_id: accountId, tokens: out.tokens, model, cost: estimateCostUsd(model, out.tokens) })
       await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: out.tokens })
     }
 
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
       const tmodel = gateModel(tgt.model, premiumAllowed)
       const tout = await callOpenRouter({ apiKey, model: tmodel, messages: tmsgs, temperature: Number(tgt.temperature) || 0.5, fallbackModel: FALLBACK_MODEL })
       if (tout.tokens) {
-        await admin.from('usage').insert({ account_id: accountId, tokens: tout.tokens, model: tmodel })
+        await admin.from('usage').insert({ account_id: accountId, tokens: tout.tokens, model: tmodel, cost: estimateCostUsd(tmodel, tout.tokens) })
         await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tout.tokens })
       }
       const tesc = parseEscalation(tout.content)

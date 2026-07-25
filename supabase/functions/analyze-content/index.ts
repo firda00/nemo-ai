@@ -6,7 +6,7 @@
 //   POST /functions/v1/analyze-content  (Bearer jwt)
 //   { platform, url?, handle?, transcript?, caption?, metrics?, goal? } -> { ok, analysis, retention, plan, id }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
     const plan = s.content
 
     // account usage + save to Library
-    await admin.from('usage').insert({ account_id: accountId, tokens, model: PRIMARY_MODEL })
+    await admin.from('usage').insert({ account_id: accountId, tokens, model: PRIMARY_MODEL, cost: estimateCostUsd(PRIMARY_MODEL, tokens) })
     if (tokens) await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: tokens })
     const report = `## Разбор контента\n${analysis}\n\n## Прогноз удержания и виральности\n${retention}\n\n## План для вашего бизнеса\n${plan}`
     const { data: run } = await admin.from('research_runs').insert({ account_id: accountId, task: `Анализ конкурента: ${handle || url || platform}`, kind: 'analysis', status: 'done', report, model: PRIMARY_MODEL }).select('id').single()

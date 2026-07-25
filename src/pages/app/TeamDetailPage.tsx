@@ -16,7 +16,7 @@ import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustu
 import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
 
-interface Sub { id: string; role: string; name: string; prompt: { role?: string; tasks?: string } }
+interface Sub { id: string; role: string; name: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
 interface Task { id: string; title: string; owner?: string; deadline?: string; priority?: string; status?: string }
 interface Notif { id: string; title: string; body?: string; risk?: string; target?: string; created_at: string }
@@ -193,7 +193,7 @@ export default function TeamDetailPage() {
             <div className="mt-4">
               <AutonomousRunner
                 key={dept?.id ?? 'team'}
-                presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, prompt: s.prompt }))}
+                presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))}
                 contextHint={goal}
                 placeholder={t('teamDetailPage.taskToTeamPlaceholder')}
                 departmentId={dept?.id}

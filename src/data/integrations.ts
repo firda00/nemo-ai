@@ -1,6 +1,14 @@
-// Integrations catalog — a broad, region-aware directory. A handful are live
-// (real connect flow); the rest are "soon" cards so the catalog reflects the
-// full roadmap across UZ / RU / US / EU / MENA / Africa / Global.
+// Integrations catalog — a broad, region-aware directory across UZ / RU / US / EU / MENA /
+// Africa / Global.
+//
+// Three states, and the difference between the first two is deliberate:
+//   live — a real connect flow AND a verified production run. Working code is not enough:
+//          pg_cron was configured correctly and its job was still dead for twelve days.
+//   beta — connects today with the account's own key, executor exists, production never
+//          verified it. Honest about being usable without claiming it is proven.
+//   soon — roadmap card. No connect flow.
+// This is hand-maintained for now; the durable fix is deriving `live` from a real
+// last_verified_at written by successful calls and production smokes.
 
 export type IntCategory =
   | 'messenger'
@@ -25,7 +33,7 @@ export interface CatalogItem {
   name: string
   category: IntCategory
   regions: IntRegion[]
-  status: 'live' | 'soon'
+  status: 'live' | 'beta' | 'soon'
 }
 
 export const INT_CATEGORIES: IntCategory[] = [
@@ -51,17 +59,19 @@ export const INTEGRATIONS: CatalogItem[] = [
   { id: 'gmail', name: 'Gmail', category: 'tools', regions: ['global'], status: 'live' },
   { id: 'gsheets', name: 'Google Sheets', category: 'tools', regions: ['global'], status: 'live' },
   { id: 'gdocs', name: 'Google Docs', category: 'tools', regions: ['global'], status: 'live' },
-  { id: 'github', name: 'GitHub', category: 'tools', regions: ['global'], status: 'live' },
+  // A server executor exists, but GitHub stays unavailable until a configured
+  // production smoke proves authentication and an end-to-end tool call.
+  { id: 'github', name: 'GitHub', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'slack', name: 'Slack', category: 'tools', regions: ['global'], status: 'live' },
   { id: 'browser', name: 'AI-браузер (веб-агент)', category: 'tools', regions: ['global'], status: 'live' },
-  { id: 'notion', name: 'Notion', category: 'tools', regions: ['global'], status: 'soon' },
-  { id: 'airtable', name: 'Airtable', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'notion', name: 'Notion', category: 'tools', regions: ['global'], status: 'beta' },
+  { id: 'airtable', name: 'Airtable', category: 'tools', regions: ['global'], status: 'beta' },
   { id: 'gdrive', name: 'Google Drive', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'obsidian', name: 'Obsidian', category: 'tools', regions: ['global'], status: 'soon' },
 
   // AI-генерация: голоса, аватары, дубляж (подключи ключ провайдера)
-  { id: 'elevenlabs', name: 'ElevenLabs — голоса и дубляж', category: 'tools', regions: ['global'], status: 'soon' },
-  { id: 'heygen', name: 'HeyGen — аватары и видео-дубляж', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'elevenlabs', name: 'ElevenLabs — голоса и дубляж', category: 'tools', regions: ['global'], status: 'beta' },
+  { id: 'heygen', name: 'HeyGen — аватары и видео-дубляж', category: 'tools', regions: ['global'], status: 'beta' },
   { id: 'higgsfield', name: 'Higgsfield — видео и аватары', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'did', name: 'D-ID — говорящие аватары', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'synthesia', name: 'Synthesia — видео с аватаром', category: 'tools', regions: ['global'], status: 'soon' },
@@ -92,9 +102,9 @@ export const INTEGRATIONS: CatalogItem[] = [
   { id: 'uztelecom', name: 'Uztelecom', category: 'telephony', regions: ['uz'], status: 'soon' },
 
   // marketplaces
-  { id: 'uzum', name: 'Uzum Market', category: 'marketplace', regions: ['uz'], status: 'soon' },
-  { id: 'wildberries', name: 'Wildberries', category: 'marketplace', regions: ['ru'], status: 'soon' },
-  { id: 'ozon', name: 'Ozon', category: 'marketplace', regions: ['ru'], status: 'soon' },
+  { id: 'uzum', name: 'Uzum Market', category: 'marketplace', regions: ['uz'], status: 'live' },
+  { id: 'wildberries', name: 'Wildberries', category: 'marketplace', regions: ['ru'], status: 'beta' },
+  { id: 'ozon', name: 'Ozon', category: 'marketplace', regions: ['ru'], status: 'beta' },
   { id: 'yandexmarket', name: 'Yandex Market', category: 'marketplace', regions: ['ru'], status: 'soon' },
   { id: 'amazon', name: 'Amazon', category: 'marketplace', regions: ['us', 'global'], status: 'soon' },
   { id: 'etsy', name: 'Etsy', category: 'marketplace', regions: ['us', 'global'], status: 'soon' },
@@ -866,7 +876,7 @@ export const INTEGRATIONS: CatalogItem[] = [
   { id: 'xai-grok', name: 'xAI Grok', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'deepseek', name: 'DeepSeek', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'hugging-face', name: 'Hugging Face', category: 'tools', regions: ['global'], status: 'soon' },
-  { id: 'replicate', name: 'Replicate', category: 'tools', regions: ['global'], status: 'soon' },
+  { id: 'replicate', name: 'Replicate', category: 'tools', regions: ['global'], status: 'beta' },
   { id: 'groq', name: 'Groq', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'together-ai', name: 'Together AI', category: 'tools', regions: ['global'], status: 'soon' },
   { id: 'fireworks-ai', name: 'Fireworks AI', category: 'tools', regions: ['global'], status: 'soon' },

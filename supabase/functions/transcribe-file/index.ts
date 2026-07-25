@@ -464,7 +464,7 @@ Deno.serve(async (req) => {
     if (!transcript) return json({ ok: false, code: 'TRANSCRIPTION_FAILED', message: `Не удалось расшифровать аудио. ${providerError}`.trim() }, 200)
 
     const billableTokens = Math.max(providerTokens, Math.ceil(transcript.length / 4), 1)
-    await admin.from('usage').insert({ account_id: accountId, tokens: billableTokens, model: `audio-transcription:${engine}` })
+    await admin.from('usage').insert({ account_id: accountId, tokens: billableTokens, model: null, stage: `audio-transcription:${engine}` })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: billableTokens })
 
     if (transcript.length > MAX_TRANSCRIPT_CHARS) {

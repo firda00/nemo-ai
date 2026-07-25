@@ -103,6 +103,7 @@ export async function handleTaskBot(
 
   // only act when the bot is addressed: @mention, /command, or a reply to the bot
   const addressed =
+    msg.chat?.type === 'private' ||
     (botUsername && text.toLowerCase().includes('@' + botUsername.toLowerCase())) ||
     text.startsWith('/') ||
     (msg.reply_to_message?.from?.username && botUsername && msg.reply_to_message.from.username.toLowerCase() === botUsername.toLowerCase())

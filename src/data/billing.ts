@@ -7,7 +7,7 @@ export interface TokenPackage {
 }
 
 export interface SaasPlan {
-  id: 'starter' | 'growth' | 'business'
+  id: 'starter' | 'pro' | 'business' | 'agency' | 'enterprise'
   usd: number
   teams: number
   includedCredits: number
@@ -90,24 +90,38 @@ export const TOKEN_PACKAGES: TokenPackage[] = [
 export const SAAS_PLANS: SaasPlan[] = [
   {
     id: 'starter',
-    usd: 59,
-    teams: 3,
-    includedCredits: 6_000,
+    usd: 25,
+    teams: 1,
+    includedCredits: 500,
     features: ['team_builder', 'company_brain', 'agent_trace'],
   },
   {
-    id: 'growth',
-    usd: 249,
-    teams: 10,
-    includedCredits: 30_000,
+    id: 'pro',
+    usd: 59,
+    teams: 2,
+    includedCredits: 2_000,
     popular: true,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff'],
   },
   {
     id: 'business',
-    usd: 699,
+    usd: 119,
+    teams: 10,
+    includedCredits: 6_000,
+    features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff', 'priority_support'],
+  },
+  {
+    id: 'agency',
+    usd: 350,
     teams: 30,
-    includedCredits: 90_000,
+    includedCredits: 20_000,
+    features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff', 'priority_support'],
+  },
+  {
+    id: 'enterprise',
+    usd: 0,
+    teams: 100,
+    includedCredits: 60_000,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff', 'priority_support'],
   },
 ]

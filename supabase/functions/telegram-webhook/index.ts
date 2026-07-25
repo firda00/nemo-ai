@@ -27,9 +27,28 @@ Deno.serve(async (req) => {
     if (!channel.secret_token || !timingSafeEqual(secret, channel.secret_token)) return new Response('forbidden', { status: 403 })
 
     const update = await req.json()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rt = (globalThis as any).EdgeRuntime
 
-    // Idempotency (Telegram re-delivers without a fast 200). Skip a recent duplicate.
+    // Queue mode performs dedupe + enqueue atomically in the database. If enqueue
+    // fails we return non-2xx so Telegram retries instead of silently losing work.
     const updateId = update?.update_id
+    if (TG_QUEUE) {
+      if (!update?.message) return new Response('ok')
+      const { data: enqueued, error: queueError } = await db.rpc('enqueue_telegram_job', {
+        p_channel_id: channelId,
+        p_update_id: typeof updateId === 'number' ? updateId : null,
+        p_payload: { kind: 'telegram', channel_id: channelId, update },
+      })
+      if (queueError) throw new Error(`telegram enqueue failed: ${queueError.message}`)
+      if (enqueued !== true) return new Response('ok')
+
+      const nudge = fetch(WORKER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET }, body: JSON.stringify({ action: 'drain' }) }).then(() => {}).catch(() => {})
+      if (rt?.waitUntil) rt.waitUntil(nudge)
+      return new Response('ok')
+    }
+
+    // Legacy inline mode keeps the old short-window dedupe path.
     if (typeof updateId === 'number') {
       const GRACE_MS = 120_000
       const { data: seen } = await db.from('tg_updates').select('created_at').eq('channel_id', channelId).eq('update_id', updateId).maybeSingle()
@@ -38,22 +57,12 @@ Deno.serve(async (req) => {
     }
     if (!update?.message) return new Response('ok')
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rt = (globalThis as any).EdgeRuntime
-    if (TG_QUEUE) {
-      // DURABLE QUEUE: persist the job, nudge the worker, ack immediately (no inline LLM work).
-      await db.rpc('q_send', { payload: { kind: 'telegram', channel_id: channelId, update } })
-      const nudge = fetch(WORKER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET }, body: JSON.stringify({ action: 'drain' }) }).then(() => {}).catch(() => {})
-      if (rt?.waitUntil) rt.waitUntil(nudge)
-      return new Response('ok')
-    }
-
     // Legacy: ack-then-process inline in the background.
     const run = processTelegramUpdate(db, channelId, update).catch((e: unknown) => console.error('tg bg error:', e))
     if (rt?.waitUntil) rt.waitUntil(run); else await run
     return new Response('ok')
   } catch (e) {
     console.error('telegram webhook error:', e)
-    return new Response('ok')
+    return new Response('retry', { status: 503 })
   }
 })

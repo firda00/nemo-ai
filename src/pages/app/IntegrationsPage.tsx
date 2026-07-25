@@ -117,6 +117,9 @@ const NAME_I18N: Record<string, string> = {
 
 const GOOGLE_IDS = ['google', 'gmail', 'gsheets', 'gdocs'] as const
 const CHANNEL_IDS = ['telegram', 'instagram', 'whatsapp', 'widget'] as const
+// Every catalog entry marked `live` must appear here (or in CONNECTABLE / GOOGLE_IDS),
+// otherwise its card renders with no way to connect at all. These providers are configured
+// with the account's own key on the AI tools page, which is where the link points.
 const PROVIDER_UI_TO_KEY: Record<string, string> = {
   github: 'github',
   slack: 'slack',
@@ -124,6 +127,15 @@ const PROVIDER_UI_TO_KEY: Record<string, string> = {
   hubspot: 'hubspot',
   amocrm: 'amocrm',
   bitrix24: 'bitrix24',
+  uzum: 'uzum',
+  stripe: 'stripe',
+  notion: 'notion',
+  airtable: 'airtable',
+  elevenlabs: 'elevenlabs',
+  heygen: 'heygen',
+  replicate: 'replicate',
+  wildberries: 'wildberries',
+  ozon: 'ozon',
 }
 
 export default function IntegrationsPage() {
@@ -182,6 +194,7 @@ export default function IntegrationsPage() {
     },
     widget: { id: 'widget', name: t('platform.channels.widget'), icon: Globe, color: '#22D3EE', method: 'widget' },
     google: { id: 'google', name: 'Google', icon: Calendar, color: '#EA4335', method: 'oauth' },
+    uzum: { id: 'uzum', name: 'Uzum Market', icon: ShoppingBag, color: '#7C3AED', method: 'token', fields: [{ key: 'token', label: 'API-ключ Uzum', placeholder: 'Вставьте ключ из кабинета Uzum Seller' }] },
   }
 
   const filtered = useMemo(() => {
@@ -246,6 +259,17 @@ export default function IntegrationsPage() {
       toast(t('platform.integrations.connectedMsg'))
       return
     }
+    if (isSupabaseEnabled && supabase && PROVIDER_UI_TO_KEY[def.id]) {
+      setBusy(true)
+      const { data, error } = await supabase.functions.invoke('connect-provider', {
+        body: { action: 'connect', provider: PROVIDER_UI_TO_KEY[def.id], api_key: form.token },
+      })
+      setBusy(false)
+      const p = data as { ok?: boolean; error?: string } | null
+      if (error || !p?.ok) { toast(p?.error ?? error?.message ?? t('platform.integrations.statusError')); return }
+      finishConnect(def.id)
+      return
+    }
     finishConnect(def.id)
   }
 
@@ -254,7 +278,7 @@ export default function IntegrationsPage() {
     if (!isSupabaseEnabled || !supabase) return
     ;(async () => {
       // Clear all cached/demo state first. Only records returned by the backend become connected.
-      for (const item of INTEGRATIONS) if (item.status === 'live') disconnect(item.id)
+      for (const item of INTEGRATIONS) if (item.status !== 'soon') disconnect(item.id)
       try {
         const { data } = await supabase!.functions.invoke('google-oauth', { body: { action: 'status' } })
         if ((data as { connected?: boolean } | null)?.connected) for (const id of GOOGLE_IDS) connect(id)
@@ -430,8 +454,8 @@ export default function IntegrationsPage() {
             const Icon = directDef?.icon ?? CAT_META[it.category].Icon
             const color = directDef?.color ?? CAT_META[it.category].color
             const st = status[it.id] ?? 'disconnected'
-            const isOn = it.status === 'live' && st === 'connected'
-            const isErr = it.status === 'live' && st === 'error'
+            const isOn = it.status !== 'soon' && st === 'connected'
+            const isErr = it.status !== 'soon' && st === 'error'
             return (
               <div key={it.id} className="card flex flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -443,9 +467,16 @@ export default function IntegrationsPage() {
                       <Clock size={12} /> {t('platform.integrations.soon')}
                     </span>
                   ) : (
-                    <span className={cn('inline-flex items-center gap-1.5 rounded-pill px-2.5 py-0.5 text-[11px] font-medium', statusStyle[st])}>
-                      <span className={cn('h-1.5 w-1.5 rounded-full', isOn ? 'bg-teal' : isErr ? 'bg-danger' : 'bg-midnight/60')} />
-                      {isOn ? (PROVIDER_UI_TO_KEY[it.id] ? t('integrationsToolsPage.badgeConnected') : t('platform.integrations.statusConnected')) : isErr ? t('platform.integrations.statusError') : t('platform.integrations.statusDisconnected')}
+                    <span className="flex flex-wrap items-center justify-end gap-1.5">
+                      {it.status === 'beta' && (
+                        <span className="inline-flex items-center gap-1.5 rounded-pill bg-violet/10 px-2.5 py-0.5 text-[11px] font-medium text-violet">
+                          {t('platform.integrations.statusBeta')}
+                        </span>
+                      )}
+                      <span className={cn('inline-flex items-center gap-1.5 rounded-pill px-2.5 py-0.5 text-[11px] font-medium', statusStyle[st])}>
+                        <span className={cn('h-1.5 w-1.5 rounded-full', isOn ? 'bg-teal' : isErr ? 'bg-danger' : 'bg-midnight/60')} />
+                        {isOn ? (PROVIDER_UI_TO_KEY[it.id] ? t('integrationsToolsPage.badgeConnected') : t('platform.integrations.statusConnected')) : isErr ? t('platform.integrations.statusError') : t('platform.integrations.statusDisconnected')}
+                      </span>
                     </span>
                   )}
                 </div>

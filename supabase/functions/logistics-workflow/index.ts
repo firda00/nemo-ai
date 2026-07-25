@@ -329,7 +329,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, code: 'WORKFLOW_FAILED', message: 'Logistics analysis failed before completion. No external message was sent.' }, 502)
   } finally {
     if (totalTokens) {
-      const { error: usageError } = await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: 'logistics-workflow' })
+      const { error: usageError } = await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: null, stage: 'logistics-workflow' })
       if (usageError) console.error('logistics usage accounting failed', usageError.message)
     }
     if (creditReserved) {

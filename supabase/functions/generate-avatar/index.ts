@@ -3,7 +3,7 @@
 //   POST /functions/v1/generate-avatar  (Bearer jwt)  { text, avatar_id?, voice_id? } -> { ok, job_id, status }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { planOf } from '../_shared/plans.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   // avatar video is a budgeted feature — only Plus / Pro / Max tiers (admins exempt)
   if (!planOf(acc?.plan).video && !prof?.is_admin) return json({ ok: false, code: 'PLAN', message: 'Видео с аватаром доступно на тарифах Плюс, Про и Макс.' }, 200)
   const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'heygen').maybeSingle()
-  const key = await openSecret(keyRow?.api_key)
+  const key = await openSecret(keyRow?.api_key, providerSecretContext(accountId, 'heygen'))
   if (!key) return json({ ok: false, code: 'NO_KEY', message: 'Подключите HeyGen в разделе «Медиа», чтобы делать видео с аватаром.' }, 200)
 
   const body = await req.json().catch(() => ({}))

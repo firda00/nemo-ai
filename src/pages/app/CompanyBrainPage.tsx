@@ -11,15 +11,23 @@ import { Button } from '../../components/ui/Button'
  * describes their company; the facts are stored per-account and injected into EVERY
  * agent, team, marketing strategy and content run (server-side), so nothing is generic.
  */
-type Key = 'name' | 'industry' | 'about' | 'offerings' | 'audience' | 'tone' | 'cities' | 'links' | 'extra' | 'phone' | 'notify_chat_id' | 'tasks_sheet_id'
+type Key = 'name' | 'company_email' | 'employee_count' | 'industry' | 'about' | 'offerings' | 'audience' | 'tone' | 'cities' | 'links' | 'extra' | 'phone' | 'notify_chat_id' | 'tasks_sheet_id'
 type Profile = Record<Key, string>
-const EMPTY: Profile = { name: '', industry: '', about: '', offerings: '', audience: '', tone: '', cities: '', links: '', extra: '', phone: '', notify_chat_id: '', tasks_sheet_id: '' }
+const EMPTY: Profile = { name: '', company_email: '', employee_count: '', industry: '', about: '', offerings: '', audience: '', tone: '', cities: '', links: '', extra: '', phone: '', notify_chat_id: '', tasks_sheet_id: '' }
+const META_KEYS = ['company_email', 'employee_count'] as const
+const readMeta = (extra: string, key: typeof META_KEYS[number]) => extra.split(/\r?\n/).find((line) => line.startsWith(`[${key}] `))?.slice(key.length + 3).trim() ?? ''
+const stripMeta = (extra: string) => extra.split(/\r?\n/).filter((line) => !META_KEYS.some((key) => line.startsWith(`[${key}] `))).join('\n').trim()
+const withMeta = (extra: string, companyEmail: string, employeeCount: string) => [
+  stripMeta(extra),
+  companyEmail.trim() ? `[company_email] ${companyEmail.trim()}` : '',
+  employeeCount.trim() ? `[employee_count] ${employeeCount.trim()}` : '',
+].filter(Boolean).join('\n')
 
 const FIELDS: { k: Key; area?: boolean }[] = [
   { k: 'name' },
+  { k: 'company_email' },
   { k: 'phone' },
-  { k: 'notify_chat_id' },
-  { k: 'tasks_sheet_id' },
+  { k: 'employee_count' },
   { k: 'industry' },
   { k: 'about', area: true },
   { k: 'offerings', area: true },
@@ -43,7 +51,15 @@ export default function CompanyBrainPage() {
     ;(async () => {
       try {
         const { data } = await supabase!.from('business_profiles').select('*').maybeSingle()
-        if (data) { const next = { ...EMPTY }; for (const k of Object.keys(EMPTY) as Key[]) next[k] = (data as Record<string, string>)[k] ?? ''; setP(next) }
+        if (data) {
+          const row = data as Record<string, string>
+          const next = { ...EMPTY }
+          for (const k of Object.keys(EMPTY) as Key[]) next[k] = row[k] ?? ''
+          next.company_email = row.company_email ?? readMeta(row.extra ?? '', 'company_email')
+          next.employee_count = row.employee_count ?? readMeta(row.extra ?? '', 'employee_count')
+          next.extra = stripMeta(row.extra ?? '')
+          setP(next)
+        }
       } catch { /* ignore */ }
       setLoading(false)
     })()
@@ -55,12 +71,18 @@ export default function CompanyBrainPage() {
     if (!supabase || !accountId || saving) return
     setSaving(true); setSaved(false)
     try {
-      await supabase.from('business_profiles').upsert({ account_id: accountId, ...p, updated_at: new Date().toISOString() }, { onConflict: 'account_id' })
+      const { company_email, employee_count, ...storedProfile } = p
+      await supabase.from('business_profiles').upsert({
+        account_id: accountId,
+        ...storedProfile,
+        extra: withMeta(storedProfile.extra, company_email, employee_count),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'account_id' })
       setSaved(true)
     } finally { setSaving(false) }
   }
 
-  const filled = (Object.keys(EMPTY) as Key[]).filter((k) => p[k].trim()).length
+  const filled = FIELDS.filter(({ k }) => p[k].trim()).length
 
   return (
     <div className="container-page max-w-4xl py-8">
@@ -75,6 +97,11 @@ export default function CompanyBrainPage() {
       <div className="card mt-5 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5"><Sparkles size={14} className="text-violet" /> {t('companyBrainPage.filledLabel')} <b className="text-text">{filled}/{FIELDS.length}</b></span>
         <span className="inline-flex items-center gap-1.5"><ShieldCheck size={13} className="text-teal" /> {t('companyBrainPage.usedEverywhere')} <Link to="/app/marketing" className="text-violet hover:underline"><Target size={11} className="inline" /> {t('companyBrainPage.strategyLink')}</Link>, <Link to="/app/content" className="text-violet hover:underline"><PenLine size={11} className="inline" /> {t('companyBrainPage.contentLink')}</Link></span>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-violet/20 bg-violet/[0.06] p-4">
+        <h2 className="text-sm font-semibold text-text">{t('companyBrainPage.problemTitle')}</h2>
+        <p className="mt-1 text-sm leading-relaxed text-muted">{t('companyBrainPage.problemBody')}</p>
       </div>
 
       {loading ? (

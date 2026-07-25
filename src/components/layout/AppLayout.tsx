@@ -7,25 +7,22 @@ import {
   Wand2,
   PenLine,
   Building2,
-  Send,
   BarChart3,
   Archive,
   Blocks,
   CreditCard,
   ClipboardList,
-  Repeat,
   Activity,
   Workflow,
   Wrench,
   Settings as SettingsIcon,
+  ShieldCheck,
   Menu,
   X,
   LogOut,
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
-  MessageSquare,
-  UserRoundSearch,
   Mail,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
@@ -40,8 +37,7 @@ import { featureEnabled, trackEvent } from '../../lib/telemetry'
 
 export function AppLayout() {
   const { t } = useI18n()
-  const { user, logout, live, isAuthed } = useAuth()
-  const accountId = useAgentStore((s) => s.accountId)
+  const { user, logout, isAuthed } = useAuth()
   const isAdmin = useAgentStore((s) => s.isAdmin)
   const navigate = useNavigate()
   const location = useLocation()
@@ -106,15 +102,12 @@ export function AppLayout() {
     void featureEnabled('feedback_agent', user?.id).then(setFeedbackEnabled)
   }, [isAuthed, user?.id])
 
-  // Grouped nav — a few labeled sections instead of one long flat list, so the
-  // sidebar is scannable (fixes the "too complex" feeling).
+  // Grouping is useful, but every released workflow must remain reachable.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
-    { title: t('appLayout.groupMain'), items: [
+      { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
       { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
-      { to: '/app/autopost', label: t('appLayout.navAutopost'), icon: Send },
-      { to: '/app/followups', label: t('appLayout.navFollowups'), icon: Repeat },
     ] },
     { title: t('appLayout.groupAiTeams'), items: [
       { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
@@ -129,17 +122,14 @@ export function AppLayout() {
     { title: t('appLayout.groupResults'), items: [
       // Monitoring (system/site health) is an admin-only view.
       ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
-      { to: '/app/dialogues', label: t('platform.nav.dialogues'), icon: MessageSquare },
-      ...(emailEnabled ? [{ to: '/app/email-assistant', label: 'Email Assistant', icon: Mail }] : []),
-      { to: '/app/lead-forms', label: t('platform.nav.leadForms'), icon: UserRoundSearch },
-      { to: '/app/analytics', label: t('platform.nav.analytics'), icon: BarChart3 },
+      ...(emailEnabled ? [{ to: '/app/email-assistant', label: t('appLayout.navEmailAssistant'), icon: Mail }] : []),
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
       { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
-      { to: '/app/results', label: t('mvp.sidebar.results'), icon: ClipboardList },
     ] },
     { title: t('appLayout.groupAccount'), items: [
       { to: '/app/billing', label: t('appLayout.navBilling'), icon: CreditCard },
       { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },
+      ...(isAdmin ? [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] : []),
     ] },
   ]
   const nav = navGroups.flatMap((g) => g.items)
@@ -205,19 +195,29 @@ export function AppLayout() {
   )
 
   return (
-    <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '0px' : `${width}px` } as CSSProperties}>
-      <aside className={cn('fixed inset-y-0 left-0 z-30', collapsed ? 'hidden' : 'hidden lg:block')} style={{ width }}>
-        {SidebarBody}
-        {/* drag handle to resize the sidebar */}
-        <div
-          onMouseDown={startDrag}
-          className="group absolute inset-y-0 -right-1 z-40 hidden w-2 cursor-col-resize lg:block"
-          title={t('appLayout.resizeSidebar')}
-          role="separator"
-          aria-orientation="vertical"
-        >
-          <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-violet/50" />
-        </div>
+    <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '64px' : `${width}px` } as CSSProperties}>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-white/[0.07] bg-panel lg:block" style={{ width: collapsed ? 64 : width }}>
+        {collapsed ? (
+          <div className="flex h-full flex-col items-center gap-3 py-4">
+            <button onClick={toggleCollapse} className="group flex flex-col items-center gap-3 rounded-2xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
+              <Logo showWordmark={false} size={30} className="rotate-90 transition-transform group-hover:rotate-0" />
+              <PanelLeftOpen size={18} />
+            </button>
+          </div>
+        ) : (
+          <>
+            {SidebarBody}
+            <div
+              onMouseDown={startDrag}
+              className="group absolute inset-y-0 -right-1 z-40 hidden w-2 cursor-col-resize lg:block"
+              title={t('appLayout.resizeSidebar')}
+              role="separator"
+              aria-orientation="vertical"
+            >
+              <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-violet/50" />
+            </div>
+          </>
+        )}
       </aside>
 
       {open && (
@@ -227,30 +227,22 @@ export function AppLayout() {
         </div>
       )}
 
-      <div className={cn('flex min-w-0 flex-1 flex-col', !collapsed && 'lg:pl-[var(--sb)]')}>
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-[var(--sb)]">
         {!online && (
           <div role="status" className="sticky top-0 z-50 border-b border-amber/30 bg-amber/15 px-4 py-2 text-center text-xs font-medium text-amber">
             {t('common.offline')}
           </div>
         )}
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/[0.07] bg-bg/80 px-4 backdrop-blur sm:px-6">
-          <div className="flex items-center gap-3">
+          <div className="min-w-0 flex items-center gap-2 sm:gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>
               <Menu size={22} />
             </button>
-            {collapsed && (
-              <button onClick={toggleCollapse} className="hidden rounded-full p-2 text-muted hover:bg-white/5 hover:text-text lg:inline-flex" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
-                <PanelLeftOpen size={22} />
-              </button>
-            )}
-            <h1 className="text-xl font-semibold tracking-tight text-text">{current?.label ?? 'Nemo AI'}</h1>
-            <span className={cn('hidden rounded-pill border px-2.5 py-1 text-[11px] font-medium sm:inline-flex', live && isAuthed && accountId !== 'demo' ? 'border-teal/20 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber')}>
-              {live && isAuthed && accountId !== 'demo' ? 'Live workspace' : 'Demo mode · local simulation'}
-            </span>
+            <h1 className="truncate text-base font-semibold tracking-tight text-text sm:text-xl">{current?.label ?? 'Nemo AI'}</h1>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <LanguageToggle />
+            <div className="hidden sm:block"><LanguageToggle /></div>
             <div className="relative">
               <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-1.5 rounded-pill p-0.5 pr-1.5 hover:bg-white/5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-medium text-white">

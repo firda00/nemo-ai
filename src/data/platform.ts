@@ -503,4 +503,6 @@ export const analytics = {
     { label: 'leads', value: 128 },
     { label: 'orders', value: 54 },
   ],
+  // multi-agent efficiency (same shape as SwarmEfficiency from live traces)
+  swarm: { tracedReplies: 126, avgHops: 1.4, delegatedPct: 38, unresolvedPct: 2 },
 }

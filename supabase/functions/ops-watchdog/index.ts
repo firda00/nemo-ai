@@ -16,6 +16,10 @@ const RENDER_WORKER_URL = (Deno.env.get('RENDER_WORKER_URL') ?? '').replace(/\/$
 const RENDER_SECRET = Deno.env.get('RENDER_SECRET') ?? ''
 const ALERT_BOT = Deno.env.get('OPS_ALERT_BOT_TOKEN') ?? ''
 const ALERT_CHAT = Deno.env.get('OPS_ALERT_CHAT_ID') ?? ''
+// Mirrors src/lib/opsHealth.ts — the UI calls a status stale on the same schedule.
+const CHECK_INTERVAL_MINUTES = 10
+const MISSED_INTERVALS_BEFORE_ALERT = 3
+const STUCK_JOB_MINUTES = 30
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Check = { ok: boolean; info: string }
@@ -76,24 +80,50 @@ Deno.serve(async (req) => {
     return { ok: !spike, info: `${total.toLocaleString('ru-RU')} tok bugun · top hisob ${top.toLocaleString('ru-RU')}` }
   })
 
-  // overall status: down if site/DB down; warn if worker/support/cost need attention
+  // 6) dead-letter sweep — a browser task that returned pending wrote result='running' and
+  // nothing ever revisited it, so one has been "running" since 18 July. Close them out here:
+  // a job with no owner and no timeout is indistinguishable from a job still doing work.
+  details.stuck_jobs = await timed(async () => {
+    const cutoff = new Date(Date.now() - STUCK_JOB_MINUTES * 60_000).toISOString()
+    const { data: swept, error } = await db.from('tool_runs')
+      .update({ result: 'timeout', ok: false })
+      .eq('tool', 'browser_task').eq('result', 'running').lt('created_at', cutoff)
+      .select('id')
+    if (error) return { ok: false, info: `sweep failed: ${error.message.slice(0, 80)}` }
+    const n = swept?.length ?? 0
+    return { ok: true, info: n ? `${n} ta osilgan vazifa yopildi` : 'osilgan vazifa yo`q' }
+  })
+
+  // The monitor's own liveness, read BEFORE writing this tick. pg_cron was configured
+  // correctly and still stopped writing for twelve days while the newest row said `ok` —
+  // so a gap in this table is itself an incident and must alert even when nothing changed.
+  const { data: previous } = await db.from('ops_checks')
+    .select('status, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const prevStatus = previous?.status ?? 'ok'
+  const gapMinutes = previous?.created_at
+    ? Math.round((Date.now() - Date.parse(String(previous.created_at))) / 60_000)
+    : null
+  const missedRuns = gapMinutes != null && gapMinutes > CHECK_INTERVAL_MINUTES * MISSED_INTERVALS_BEFORE_ALERT
+
+  // overall status: down if site/DB down; warn if worker/support/cost/sweep need attention
   const hard = details.database.ok && details.site.ok
-  const status = !hard ? 'down' : (details.worker.ok && details.support.ok && details.cost.ok) ? 'ok' : 'warn'
+  const soft = details.worker.ok && details.support.ok && details.cost.ok && details.stuck_jobs.ok
+  const status = !hard ? 'down' : soft ? 'ok' : 'warn'
   const failing = Object.entries(details).filter(([, c]) => !c.ok).map(([k]) => k)
   const summary = status === 'ok' ? 'Hammasi ishlayapti' : `Muammo: ${failing.join(', ')}`
 
   await db.from('ops_checks').insert({ status, summary, details })
 
-  // alert only on status CHANGE (incl. recovery) to avoid spam every tick
+  // Alert on a status CHANGE (incl. recovery) or on a monitoring gap — the second one is how
+  // a dead watchdog announces itself once it comes back, instead of resuming silently.
   let alerted = false
-  const { data: prev } = await db.from('ops_checks').select('status').order('created_at', { ascending: false }).range(1, 1).maybeSingle()
-  const prevStatus = prev?.status ?? 'ok'
-  if (status !== prevStatus && ALERT_BOT && ALERT_CHAT) {
+  if ((status !== prevStatus || missedRuns) && ALERT_BOT && ALERT_CHAT) {
     const icon = status === 'down' ? '🔴' : status === 'warn' ? '🟡' : '✅'
     const lines = Object.entries(details).map(([k, c]) => `${c.ok ? '✅' : '❌'} ${k}: ${c.info}`).join('\n')
-    await tgSend(ALERT_BOT, ALERT_CHAT, `${icon} Nemo holati: ${status.toUpperCase()}\n${summary}\n\n${lines}`)
+    const gapLine = missedRuns ? `\n⚠️ Monitoring ${gapMinutes} daqiqa yozmagan — tekshiruvlar to'xtagan edi.` : ''
+    await tgSend(ALERT_BOT, ALERT_CHAT, `${icon} Nemo holati: ${status.toUpperCase()}\n${summary}${gapLine}\n\n${lines}`)
     alerted = true
   }
 
-  return json({ ok: true, status, summary, details, alerted, changedFrom: prevStatus })
+  return json({ ok: true, status, summary, details, alerted, changedFrom: prevStatus, gapMinutes, missedRuns })
 })

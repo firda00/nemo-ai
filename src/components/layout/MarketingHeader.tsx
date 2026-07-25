@@ -18,10 +18,10 @@ export function MarketingHeader() {
     en: ['Capabilities', 'Use cases', 'How it works', 'Pricing'],
   }[lang]
   const links = [
-    { href: '#capabilities', label: labels[0] },
-    { href: '#templates', label: labels[1] },
-    { href: '#product', label: labels[2] },
-    { href: '/app/billing', label: labels[3] },
+    { href: '/#capabilities', label: labels[0] },
+    { href: '/#templates', label: labels[1] },
+    { href: '/#product', label: labels[2] },
+    { href: '/pricing', label: labels[3] },
   ]
 
   return (
@@ -42,7 +42,7 @@ export function MarketingHeader() {
           </nav>
 
           <div className="hidden items-center gap-3 lg:flex">
-            <LanguageToggle />
+            <div className="mr-2"><LanguageToggle /></div>
             {isAuthed ? (
               <Button to="/app" size="sm">
                 {t('nav.openApp')}

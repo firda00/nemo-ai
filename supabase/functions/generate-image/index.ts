@@ -7,7 +7,7 @@ import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
 import { nemoImage, uploadImage, imgModelDef } from '../_shared/media.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
   if (nemo.image) image = nemo.image
   else {
     const { data: keyRow } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
-    const key = await openSecret(keyRow?.api_key)
+    const key = await openSecret(keyRow?.api_key, providerSecretContext(accountId, 'openai'))
     if (key) {
       try {
         const r = await fetch('https://api.openai.com/v1/images/generations', {
@@ -69,6 +69,6 @@ Deno.serve(async (req) => {
 
   const hosted = image.startsWith('data:') ? await uploadImage(admin, accountId, image) : image
   await admin.from('media_assets').insert({ account_id: accountId, kind: 'image', prompt, provider, data: image.startsWith('data:') ? image : null, url: hosted || (image.startsWith('http') ? image : null) })
-  if (nemo.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: nemo.tokens, model: 'media-image' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: nemo.tokens }) }
+  if (nemo.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: nemo.tokens, model: null, stage: 'media-image' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: nemo.tokens }) }
   return json({ ok: true, image, url: hosted || undefined, provider, model: provider === 'nemo' ? imageModel : 'gpt-image-1' })
 })

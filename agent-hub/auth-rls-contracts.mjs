@@ -33,6 +33,20 @@ const check = (name, cond, detail = '') => {
 
 // ---------- A. supabase.ts config validation ----------
 const supabaseSrc = read('src/lib/supabase.ts')
+const mfaSetup = read('src/components/platform/MfaSetupPanel.tsx')
+const mfaGate = read('src/components/auth/MfaChallengeGate.tsx')
+const adminMfaGate = read('src/components/auth/AdminMfaGate.tsx')
+const adminApi = read('supabase/functions/admin-api/index.ts')
+const assurance = read('supabase/functions/_shared/authAssurance.ts')
+const appSrc = read('src/App.tsx')
+const authContext = read('src/context/AuthContext.tsx')
+
+check('TOTP enrollment requires a verified six-digit challenge', /mfa\.enroll\(\{ factorType: 'totp'/.test(mfaSetup) && /mfa\.challenge/.test(mfaSetup) && /mfa\.verify/.test(mfaSetup) && /\^\\d\{6\}\$/.test(mfaSetup))
+check('authenticated app is gated on AAL2 when a verified factor exists', /getAuthenticatorAssuranceLevel/.test(mfaGate) && /nextLevel === 'aal2'/.test(mfaGate) && /currentLevel !== 'aal2'/.test(mfaGate) && /MfaChallengeGate/.test(appSrc))
+check('MFA assurance inspection fails closed', /aalError \|\| factorsError/.test(mfaGate) && /setCheckFailed\(true\)/.test(mfaGate) && /if \(checkFailed\) return/.test(mfaGate))
+check('super-admin enrollment is mandatory before the admin UI opens', /AdminMfaGate/.test(appSrc) && /state === 'enroll'/.test(adminMfaGate) && /MfaSetupPanel/.test(adminMfaGate))
+check('super-admin API requires a validated AAL2 session', /auth\.getUser\(\)/.test(adminApi) && /hasAal2\(authHeader\)/.test(adminApi) && /claims\.aal === 'aal2'/.test(assurance))
+check('logout explicitly revokes sessions on all devices', /signOut\(\{ scope: 'global' \}\)/.test(authContext))
 
 // Extract PLACEHOLDER_RE and both validator functions from the actual source,
 // strip the two TS annotations they use, and evaluate them as real JS.
@@ -100,6 +114,8 @@ const migrationFiles = fs.readdirSync(migrationDir).filter((n) => n.endsWith('.s
 const stripSql = (sql) => sql.replace(/--[^\n]*/g, '')
 
 check('hardening migration file exists', migrationFiles.includes('20260710120000_messages_system_trace_rls.sql'))
+const blockedAccountGuard = read('supabase/migrations/20260723121000_blocked_accounts_fail_closed.sql')
+check('blocked accounts fail closed for all tenant RLS access', /create or replace function public\.current_account_id/.test(blockedAccountGuard) && /join public\.accounts/.test(blockedAccountGuard) && /coalesce\(a\.blocked, false\) = false/.test(blockedAccountGuard))
 
 // Replay create/drop policy statements in migration order → final policy set.
 const policies = new Map()

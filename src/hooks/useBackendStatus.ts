@@ -24,7 +24,7 @@ interface StatusResponse {
   message?: string
 }
 
-export function useBackendStatus(): BackendStatus {
+export function useBackendStatus(enabled = true): BackendStatus {
   const { live, isAuthed } = useAuth()
   const accountId = useAgentStore((s) => s.accountId)
   const profileResolved = useAgentStore((s) => s.profileResolved)
@@ -35,6 +35,7 @@ export function useBackendStatus(): BackendStatus {
   const [serverReason, setServerReason] = useState('Backend status endpoint is not confirmed.')
 
   useEffect(() => {
+    if (!enabled) return
     let active = true
     getAccessToken().then((token) => {
       if (active) setAuthReady(Boolean(token))
@@ -42,9 +43,10 @@ export function useBackendStatus(): BackendStatus {
     return () => {
       active = false
     }
-  }, [isAuthed])
+  }, [enabled, isAuthed])
 
   useEffect(() => {
+    if (!enabled) return
     if (!isSupabaseEnabled || !supabase || !authReady) {
       window.setTimeout(() => {
         setServerChecked(false)
@@ -66,7 +68,7 @@ export function useBackendStatus(): BackendStatus {
     return () => {
       active = false
     }
-  }, [authReady])
+  }, [authReady, enabled])
 
   return useMemo(() => {
     const supabaseReady = isSupabaseEnabled && live

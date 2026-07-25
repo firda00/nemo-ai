@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useAuth } from './context/AuthContext'
 import { AppLayout } from './components/layout/AppLayout'
 import LandingPage from './pages/LandingPage'
+import PricingPage from './pages/PricingPage'
 import PitchPage from './pages/PitchPage'
 import AuthPage from './pages/AuthPage'
 import OnboardingPage from './pages/OnboardingPage'
@@ -43,6 +44,8 @@ import IntegrationsToolsPage from './pages/app/IntegrationsToolsPage'
 import FollowUpsPage from './pages/app/FollowUpsPage'
 import ObservabilityPage from './pages/app/ObservabilityPage'
 import EmailAssistantPage from './pages/app/EmailAssistantPage'
+import { MfaChallengeGate } from './components/auth/MfaChallengeGate'
+import { AdminMfaGate } from './components/auth/AdminMfaGate'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthed, loading, live } = useAuth()
@@ -53,13 +56,14 @@ function RequireAuth({ children }: { children: ReactNode }) {
   if (live && !isAuthed && (location.pathname === '/onboarding' || location.pathname.startsWith('/app'))) {
     return <Navigate to="/auth" state={{ from: location.pathname }} replace />
   }
-  return <>{children}</>
+  return <MfaChallengeGate>{children}</MfaChallengeGate>
 }
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pitch" element={<PitchPage />} />
       <Route path="/demo" element={<DemoPage />} />
       <Route path="/waitlist" element={<WaitlistPage />} />
@@ -102,7 +106,7 @@ export default function App() {
         <Route path="teams/education-sales" element={<EducationSalesWorkflowPage />} />
         <Route path="teams/:id" element={<TeamDetailPage />} />
         <Route path="run-workflow" element={<EducationSalesWorkflowPage />} />
-        <Route path="results" element={<EducationSalesWorkflowPage />} />
+        <Route path="results" element={<Navigate to="/app/activity" replace />} />
         <Route path="waitlist" element={<WaitlistPage />} />
         <Route path="demo" element={<DemoPage />} />
         <Route path="swarms" element={<SwarmsPage />} />
@@ -126,7 +130,7 @@ export default function App() {
         <Route path="lead-forms" element={<LeadsPage />} />
         <Route path="templates" element={<MarketplacePage />} />
         <Route path="billing" element={<BillingPage />} />
-        <Route path="admin" element={<AdminPage />} />
+        <Route path="admin" element={<AdminMfaGate><AdminPage /></AdminMfaGate>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

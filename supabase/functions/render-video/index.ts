@@ -10,7 +10,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { planOf, monthlyVideo } from '../_shared/plans.ts'
 import { elevenTTS, openaiTTS, uploadAudio } from '../_shared/media.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { openSecret } from '../_shared/secretBox.ts'
+import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -83,10 +83,10 @@ Deno.serve(async (req) => {
     // ElevenLabs if connected, else the cheaper OpenAI TTS — so voiceover works on either key
     let audio = '', provider = ''
     const { data: vk } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'elevenlabs').maybeSingle()
-    if (vk?.api_key) { audio = await elevenTTS(await openSecret(vk.api_key), voiceText, String(body?.voice_id ?? '').trim() || undefined); provider = 'elevenlabs' }
+    if (vk?.api_key) { audio = await elevenTTS(await openSecret(vk.api_key, providerSecretContext(accountId, 'elevenlabs')), voiceText, String(body?.voice_id ?? '').trim() || undefined); provider = 'elevenlabs' }
     if (!audio) {
       const { data: ok } = await admin.from('provider_keys').select('api_key').eq('account_id', accountId).eq('provider', 'openai').maybeSingle()
-      if (ok?.api_key) { audio = await openaiTTS(await openSecret(ok.api_key), voiceText); provider = 'openai' }
+      if (ok?.api_key) { audio = await openaiTTS(await openSecret(ok.api_key, providerSecretContext(accountId, 'openai')), voiceText); provider = 'openai' }
     }
     const url = audio ? await uploadAudio(admin, accountId, audio) : ''
     if (url) {

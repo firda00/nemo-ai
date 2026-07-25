@@ -5,7 +5,8 @@
 //   { action:'connect', provider, api_key } | { action:'status' } | { action:'disconnect', provider }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { sealSecret } from '../_shared/secretBox.ts'
+import { providerSecretContext, sealSecret } from '../_shared/secretBox.ts'
+import { uzumShops } from '../_shared/uzum.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -87,7 +88,17 @@ Deno.serve(async (req) => {
     const def = provider_def(provider)
     if (!def) return json({ ok: false, error: 'Неизвестный провайдер.' }, 200)
     if (!def.ok(key)) return json({ ok: false, error: `Ключ выглядит некорректно для ${def.label}.` }, 200)
-    await admin.from('provider_keys').upsert({ account_id: accountId, provider, api_key: await sealSecret(key) }, { onConflict: 'account_id,provider' })
+    // A key is not marked connected until the official Uzum read-only endpoint
+    // accepts it. This prevents a misleading "connected" state for bad keys.
+    if (provider === 'uzum') {
+      const smoke = await uzumShops(key)
+      if (!smoke.ok) return json({ ok: false, error: smoke.result }, 200)
+    }
+    await admin.from('provider_keys').upsert({
+      account_id: accountId,
+      provider,
+      api_key: await sealSecret(key, providerSecretContext(accountId, provider)),
+    }, { onConflict: 'account_id,provider' })
     return json({ ok: true, connected: true, provider, label: def.label })
   }
 

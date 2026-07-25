@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
   const charge = async () => {
     if (charged || !totalTokens) return
     charged = true
-    await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: 'ops-workflow' })
+    await admin.from('usage').insert({ account_id: accountId, tokens: totalTokens, model: null, stage: 'ops-workflow' })
     await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: totalTokens })
   }
 

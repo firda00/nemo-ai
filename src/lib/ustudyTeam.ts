@@ -173,7 +173,7 @@ export async function saveDynamicTeam(
   opts: {
     name: string
     goal: string
-    specialists: { role: string; name: string; prompt: AgentPrompt; model?: string; status?: 'active' | 'inactive' }[]
+    specialists: { role: string; name: string; prompt: AgentPrompt; skills?: string[]; model?: string; status?: 'active' | 'inactive' }[]
     workflowMode?: 'generic' | 'operations' | 'logistics'
     niche?: string
     riskTier?: 'standard' | 'regulated'
@@ -202,6 +202,7 @@ export async function saveDynamicTeam(
     model: opts.lead?.model?.trim() || OPS_MODEL,
     status: 'active',
     channels: [],
+    skills: [...new Set(opts.specialists.flatMap((specialist) => specialist.skills ?? []))].slice(0, 6),
     prompt: opts.lead?.prompt ?? {
       role: 'Team lead coordinating specialists to achieve the goal.',
       tasks: opts.goal.slice(0, 700),
@@ -273,6 +274,7 @@ export async function saveDynamicTeam(
     role: s.role,
     name: s.name,
     prompt: s.prompt,
+    skills: Array.isArray(s.skills) ? s.skills.slice(0, 6) : [],
     model: s.model?.trim() || OPS_MODEL,
     status: s.status === 'inactive' ? 'inactive' : 'active',
   }))

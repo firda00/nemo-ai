@@ -5,7 +5,7 @@
 //     and (if auto_publish + a Telegram target) publish the post to Telegram right away.
 // YouTube only for now — its per-channel RSS feed is free and needs no API key.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
+import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
@@ -136,7 +136,7 @@ async function processSource(admin: any, src: any, force = false): Promise<{ dra
     drafts++
   }
   if (spent > 0) {
-    await admin.from('usage').insert({ account_id: src.account_id, tokens: spent, model: PRIMARY_MODEL })
+    await admin.from('usage').insert({ account_id: src.account_id, tokens: spent, model: PRIMARY_MODEL, cost: estimateCostUsd(PRIMARY_MODEL, spent) })
     await admin.rpc('decrement_token_balance', { p_account: src.account_id, p_amount: spent })
   }
   await admin.from('watched_sources').update({ last_video_id: newest.id, last_checked_at: new Date().toISOString() }).eq('id', src.id)

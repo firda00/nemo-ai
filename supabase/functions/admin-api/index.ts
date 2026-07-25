@@ -4,9 +4,10 @@
 // admin check, so a normal user can never reach these even with a forged body.
 //
 //   POST /functions/v1/admin-api   (Authorization: Bearer <admin jwt>)
-//   body { "action": "list_accounts" | "grant" | "set" | "create_gift" | "list_gifts", ... }
+//   body { "action": "list_accounts" | "list_feedback" | "grant" | "set" | "create_gift" | "list_gifts", ... }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsPreflight, json } from '../_shared/cors.ts'
+import { hasAal2 } from '../_shared/authAssurance.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -37,6 +38,9 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const { data: me } = await admin.from('users').select('is_admin').eq('id', user.id).single()
   if (!me?.is_admin) return json({ error: 'forbidden' }, 403)
+  // getUser() above validates the bearer token. Only after that validation do
+  // we trust its AAL claim and require a second factor for every admin action.
+  if (!hasAal2(authHeader)) return json({ error: 'mfa_required' }, 403)
 
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')
@@ -73,7 +77,53 @@ Deno.serve(async (req) => {
           last_login: u ? lastLogin.get(u.id) ?? null : null,
         }
       })
-      return json({ ok: true, accounts: rows })
+      return json({ ok: true, accounts: rows, capabilities: { set_admin: true, moderate_agents: true } })
+    }
+
+    if (action === 'list_agents') {
+      const { data: agents, error } = await admin
+        .from('agents')
+        .select('id, account_id, name, status, type, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(500)
+      if (error) return json({ error: error.message }, 400)
+      const { data: users } = await admin.from('users').select('account_id,email')
+      const emailByAccount = new Map((users ?? []).map((row: { account_id: string; email: string }) => [row.account_id, row.email]))
+      return json({ ok: true, agents: (agents ?? []).map((agent: { account_id: string }) => ({ ...agent, email: emailByAccount.get(agent.account_id) ?? null })) })
+    }
+
+    if (action === 'set_admin') {
+      const userId = String(body?.user_id ?? '')
+      const enabled = Boolean(body?.enabled)
+      if (!userId) return json({ error: 'user_id required' }, 400)
+      if (userId === user.id && !enabled) return json({ error: 'cannot remove your own admin access' }, 400)
+      const { error } = await admin.from('users').update({ is_admin: enabled }).eq('id', userId)
+      if (error) return json({ error: error.message }, 400)
+      return json({ ok: true, enabled })
+    }
+
+    if (action === 'quarantine_agent') {
+      const agentId = String(body?.agent_id ?? '')
+      const quarantined = Boolean(body?.quarantined)
+      if (!agentId) return json({ error: 'agent_id required' }, 400)
+      const { error } = await admin.from('agents').update({ status: quarantined ? 'paused' : 'active' }).eq('id', agentId)
+      if (error) return json({ error: error.message }, 400)
+      return json({ ok: true, quarantined })
+    }
+
+    if (action === 'list_feedback') {
+      const { data, error } = await admin
+        .from('customer_feedback')
+        .select('id, account_id, user_id, rating, category, comment, path, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (error) return json({ error: error.message }, 400)
+      const userIds = [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
+      const { data: users } = userIds.length
+        ? await admin.from('users').select('id,email').in('id', userIds)
+        : { data: [] as Array<{ id: string; email: string }> }
+      const emailByUser = new Map((users ?? []).map((row: { id: string; email: string }) => [row.id, row.email]))
+      return json({ ok: true, feedback: (data ?? []).map((row: { user_id: string }) => ({ ...row, email: emailByUser.get(row.user_id) ?? null })) })
     }
 
     if (action === 'block') {
@@ -91,11 +141,14 @@ Deno.serve(async (req) => {
       const banned = Boolean(body?.banned)
       if (!userId) return json({ error: 'user_id required' }, 400)
       // hard ban — GoTrue prevents login entirely ('none' to lift it)
-      await admin.auth.admin.updateUserById(userId, { ban_duration: banned ? '876000h' : 'none' })
       const { data: u } = await admin.from('users').select('account_id').eq('id', userId).single()
       if (u?.account_id) {
+        const { data: accountUsers } = await admin.from('users').select('id').eq('account_id', u.account_id)
+        await Promise.all((accountUsers ?? []).map((row: { id: string }) => admin.auth.admin.updateUserById(row.id, { ban_duration: banned ? '876000h' : 'none' })))
         await admin.from('accounts').update({ blocked: banned }).eq('id', u.account_id)
         if (banned) await admin.from('agents').update({ status: 'paused' }).eq('account_id', u.account_id)
+      } else {
+        await admin.auth.admin.updateUserById(userId, { ban_duration: banned ? '876000h' : 'none' })
       }
       return json({ ok: true, banned })
     }

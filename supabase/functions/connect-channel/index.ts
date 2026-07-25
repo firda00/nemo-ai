@@ -52,8 +52,6 @@ Deno.serve(async (req) => {
     creds = { page_token: inCreds.page_token, ig_id: inCreds.ig_id, verify_token }
   } // widget: no credentials
 
-  // replace any existing channel of this type for the agent (one per type)
-  await db.from('channels').delete().eq('agent_id', agentId).eq('type', type)
   const { data: channel, error } = await db
     .from('channels')
     // secret_token MUST mirror the Meta verify_token: the WA/IG webhook GET handshake compares the

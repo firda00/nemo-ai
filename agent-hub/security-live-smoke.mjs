@@ -12,9 +12,32 @@ for (const line of fs.readFileSync(path.join(root, '.secrets.local'), 'utf8').sp
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '')
 }
 const ref = process.env.SUPABASE_PROJECT_REF
-const serviceKey = process.env.SUPABASE_SECRET_KEY
-const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY
+let serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY
+let anonKey = process.env.SUPABASE_PUBLISHABLE_KEY
 if (!ref || !serviceKey || !anonKey) throw new Error('Missing isolated-test Supabase configuration')
+
+// Supabase `sb_secret_...` keys are opaque API keys, not JWTs. The Auth admin
+// client still needs the legacy service_role JWT in its Authorization header.
+// Resolve it only in memory through the authenticated Management API so local
+// smoke runs remain compatible without logging or persisting the credential.
+if (serviceKey.startsWith('sb_secret_')) {
+  const accessToken = process.env.SUPABASE_ACCESS_TOKEN
+  if (!accessToken) throw new Error('SUPABASE_ACCESS_TOKEN is required to resolve the live smoke service role')
+  const response = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) throw new Error(`Could not resolve live smoke API keys (HTTP ${response.status})`)
+  const payload = await response.json()
+  const keys = Array.isArray(payload) ? payload : Array.isArray(payload?.keys) ? payload.keys : []
+  const legacyService = keys.find((key) => key?.type === 'legacy' && key?.name === 'service_role')
+  const currentPublic = keys.find((key) => key?.type === 'publishable') ??
+    keys.find((key) => key?.type === 'legacy' && key?.name === 'anon')
+  if (!legacyService?.api_key || !currentPublic?.api_key) {
+    throw new Error('Management API did not return the required live smoke keys')
+  }
+  serviceKey = legacyService.api_key
+  anonKey = currentPublic.api_key
+}
 const url = `https://${ref}.supabase.co`
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -62,9 +85,21 @@ try {
   const connectSecret = await fetch(`${url}/functions/v1/connect-provider`, { method: 'POST', headers: { Authorization: `Bearer ${b.jwt}`, apikey: anonKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'connect', provider: 'sentry', api_key: 'test-secret-never-selectable' }) })
   const connectPayload = await connectSecret.json()
   const { data: encryptedProvider } = await admin.from('provider_keys').select('api_key').eq('account_id', b.accountId).eq('provider', 'sentry').single()
-  ok('New provider credential is AES-GCM encrypted at rest', connectPayload?.ok === true && encryptedProvider?.api_key?.startsWith('enc:v1:'))
+  ok('New provider credential is tenant-bound AES-GCM encrypted at rest', connectPayload?.ok === true && encryptedProvider?.api_key?.startsWith('enc:v2:'))
   const providerRead = await a.client.from('provider_keys').select('api_key').eq('account_id', b.accountId)
   ok('Browser role cannot select provider secrets', Boolean(providerRead.error) || (providerRead.data ?? []).length === 0)
+  const directPlaintext = await b.client.from('provider_keys').upsert({
+    account_id: b.accountId,
+    provider: 'plaintext-probe',
+    api_key: 'must-never-reach-storage',
+  })
+  ok('Browser role cannot bypass encryption with direct provider-key writes', Boolean(directPlaintext.error))
+  const adminPlaintext = await admin.from('provider_keys').upsert({
+    account_id: b.accountId,
+    provider: 'plaintext-probe',
+    api_key: 'must-never-reach-storage',
+  })
+  ok('Database rejects plaintext provider credentials even from a privileged writer', Boolean(adminPlaintext.error))
 
   const { data: dialogueB } = await admin.from('dialogues').insert({ agent_id: agentB.id, channel: 'widget', external_id: `sec-${stamp}` }).select('id').single()
   const takeover = await fetch(`${url}/functions/v1/operator-send`, { method: 'POST', headers: { Authorization: `Bearer ${a.jwt}`, apikey: anonKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ dialogue_id: dialogueB.id, text: 'forged takeover' }) })
@@ -162,7 +197,11 @@ try {
 
   await admin.from('google_accounts').upsert({ account_id: a.accountId, google_email: 'security@example.invalid', refresh_token: 'temporary-refresh-token' })
   await admin.from('google_oauth_apps').upsert({ account_id: a.accountId, client_id: 'temporary-client', client_secret: 'temporary-secret' })
-  await admin.from('provider_keys').upsert({ account_id: a.accountId, provider: 'sentry', api_key: 'temporary-provider-secret' })
+  await admin.from('provider_keys').upsert({
+    account_id: a.accountId,
+    provider: 'sentry',
+    api_key: 'enc:v2:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==',
+  })
   const deletedAccount = a.accountId
   await admin.from('accounts').delete().eq('id', deletedAccount)
   const [pk, ga, go] = await Promise.all([

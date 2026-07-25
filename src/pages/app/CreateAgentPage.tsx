@@ -26,11 +26,11 @@ const agentTypes: { label: string; value: AgentKind; role: string; tasks: string
 const pilotTemplates = [
   {
     id: 'ustudy-course-consultant',
-    name: 'Course Consultant',
+    name: 'Sales Consultant',
     type: 'qualifier' as AgentKind,
-    role: 'AI course consultant for IT Academy',
-    tasks: 'Recommend Frontend, Python, SMM, Robotics, IELTS or other courses based on student goal, age, schedule, budget and language preference. Collect phone number and next action.',
-    tone: 'Friendly, practical, admissions-focused.',
+    role: 'AI Sales Consultant',
+    tasks: 'Recommend products or services based on customer goals, budget, and language preference. Collect contact details and next actions.',
+    tone: 'Professional, friendly, and solution-oriented.',
   },
 ]
 
@@ -40,7 +40,7 @@ export default function CreateAgentPage() {
   const addAgent = useAgentStore((s) => s.addAgent)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [name, setName] = useState('Course Consultant')
+  const [name, setName] = useState('Sales Consultant')
   const [type, setType] = useState<AgentKind>('qualifier')
   const [role, setRole] = useState(pilotTemplates[0].role)
   const [tasks, setTasks] = useState(pilotTemplates[0].tasks)
@@ -48,7 +48,7 @@ export default function CreateAgentPage() {
   const [rules, setRules] = useState('Do not invent prices. If information is missing, ask one short question and offer human handoff.')
   const [language, setLanguage] = useState<AgentLang>('auto')
   const [model, setModel] = useState(MODELS[0]?.id ?? 'openai/gpt-4o-mini')
-  const [knowledge, setKnowledge] = useState('IT Academy courses, schedules, prices, mentors, trial lessons, Telegram/Instagram lead context.')
+  const [knowledge, setKnowledge] = useState('Company services, price lists, team members, integrations, and lead details.')
   // AI composer — describe the business once, AI writes name/role/tasks/tone/rules.
   const [aiDesc, setAiDesc] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
@@ -165,7 +165,7 @@ export default function CreateAgentPage() {
               value={aiDesc}
               onChange={(e) => setAiDesc(e.target.value)}
               rows={2}
-              placeholder="e.g. IT academy in Tashkent with Frontend, Python, IELTS courses — answer student questions and collect phone numbers."
+              placeholder="e.g. SaaS company with Startup and Enterprise plans — answer pricing questions, qualify leads, and collect phone numbers."
               className={`${fieldCls} mt-2.5 resize-y`}
             />
             {aiError && <p className="mt-2 text-xs text-danger">{aiError}</p>}
