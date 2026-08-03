@@ -27,6 +27,12 @@ const FIELDS: { k: Key; area?: boolean }[] = [
   { k: 'name' },
   { k: 'company_email' },
   { k: 'phone' },
+  // notify_chat_id was in the type, loaded, saved and translated — but missing from this list, so
+  // the form never drew an input and the value stayed empty for every account. It now decides two
+  // things: where escalations go, and which Telegram chat the runtime treats as the owner (and may
+  // therefore show connected store data to). tasks_sheet_id stays out on purpose: PlanerkaSheetCard
+  // owns that field with its own create/link flow.
+  { k: 'notify_chat_id' },
   { k: 'employee_count' },
   { k: 'industry' },
   { k: 'about', area: true },

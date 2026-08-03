@@ -220,9 +220,11 @@ assert.doesNotMatch(runner, /ctx\.slice\(-4000\)/)
 assert.match(orchestrator, /orchestrationSkillCatalog\(\)/)
 assert.match(orchestrator, /marketplace-growth-manager/)
 assert.match(orchestrator, /artifactContext\(artifacts/)
-assert.match(orchestrator, /marketplaceEvidence\(goal, artifacts\)/)
+// The evidence now carries both halves: what the server computed from the owner's file and what
+// it fetched from their connected store (see store-access-contracts).
+assert.match(orchestrator, /marketplaceEvidence\(goal, artifacts, store\.block\)/)
 assert.equal(
-  (orchestrator.match(/marketplaceEvidence\(goal, artifacts\)/g) ?? []).length,
+  (orchestrator.match(/marketplaceEvidence\(goal, artifacts, store\.block\)/g) ?? []).length,
   3,
   'work, review and synth must each receive the evidence — never gated on which skills the architect happened to assign',
 )
@@ -232,7 +234,8 @@ assert.match(
   'the reviewer must recompute stated arithmetic instead of judging the formula by taste',
 )
 assert.match(orchestrator, /server-calculated values as the numeric source of truth/)
-assert.match(orchestrator, /Nemo does not have a verified production Uzum executor/)
+assert.match(orchestrator, /verified READ-ONLY Uzum connector/)
+assert.match(orchestrator, /CONNECTED MARKETPLACE OPERATING CONTRACT/)
 assert.match(orchestrator, /prioritized 7-day experiment plan/)
 assert.match(orchestrator, /NO SOURCE DATA IS ATTACHED/)
 assert.match(orchestrator, /Do not require this author to perform work explicitly assigned to a downstream specialist/)

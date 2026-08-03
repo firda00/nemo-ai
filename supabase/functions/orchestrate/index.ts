@@ -21,6 +21,7 @@ import { MARKETING_SKILLS, skillCatalog, skillBlock } from '../_shared/marketing
 import { CAPABILITY_SKILLS, selectedSkillBlock } from '../_shared/capabilitySkills.ts'
 import { safeFetch } from '../_shared/net.ts'
 import { marketplaceEvidenceBlock } from '../_shared/marketplaceData.ts'
+import { storeSnapshot, type StoreSnapshot } from '../_shared/marketplaceSnapshot.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -85,9 +86,15 @@ function artifactContext(artifacts: InputArtifact[], maxChars = MAX_ARTIFACT_CON
     .slice(0, maxChars)
 }
 
-function marketplaceEvidence(goal: string, artifacts: InputArtifact[]): string {
-  return marketplaceEvidenceBlock([goal, ...artifacts.map((artifact) => artifact.content)].join('\n'))
+// A run's factual base: numbers the server computed from what the owner pasted or uploaded, plus
+// rows the server fetched from their connected store. Both are evidence; neither is model output.
+function marketplaceEvidence(goal: string, artifacts: InputArtifact[], storeBlock = ''): string {
+  const calculated = marketplaceEvidenceBlock([goal, ...artifacts.map((artifact) => artifact.content)].join('\n'))
+  return [storeBlock, calculated].filter(Boolean).join('\n\n')
 }
+
+// Only reach for the store when the task is about it — an unrelated run must not pay for an API call.
+const STORE_GOAL_RE = /(uzum|marketplace|маркетплейс|sku|артикул|товар|остатк|закуп|магазин|ассортимент|продаж|выручк|бюджет|assortment|inventory|budget)/i
 
 function deterministicSkills(goal: string): string[] {
   if (/(uzum|marketplace|маркетплейс|sku|артикул|товар|остатк|закуп|assortment|inventory)/i.test(goal)) {
@@ -288,6 +295,14 @@ Deno.serve(async (req) => {
   const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
   if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
 
+  // LIVE STORE DATA. The caller holds the owner's JWT, so this run is owner context by
+  // construction — no chat-id check is needed here. Fetched once per action and handed to every
+  // stage, so specialists reason about the real catalogue instead of writing a plan to obtain it.
+  const goalText = String(body?.goal ?? '')
+  const store: StoreSnapshot = STORE_GOAL_RE.test(goalText)
+    ? await storeSnapshot(admin, accountId)
+    : { connected: false, provider: null, block: '', rowCount: 0, missing: [] }
+
   const action = String(body?.action ?? '')
 
   // the account's business profile — grounds every action in the real business
@@ -405,15 +420,16 @@ Deno.serve(async (req) => {
       // equips each specialist with 1-3 method briefs from Nemo's skill library, and
       // 'step' later injects those briefs into the specialist's system prompt.
       const useSkills = Boolean(body?.use_skills)
-      const marketplaceNoExecutorRule = deterministicSkills(goal).includes('marketplace-growth-manager')
+      const marketplaceRuntimeRule = deterministicSkills(goal).includes('marketplace-growth-manager')
         ? `
 MARKETPLACE EXECUTION BOUNDARY:
-- Nemo does not have a verified production Uzum executor in this workflow. Never claim that a specialist will publish cards, change prices or stock, configure ads, place orders, or report achieved sales results.
-- If the user supplied no marketplace export, build a useful growth diagnostic: a prioritized 7-day experiment plan, product-card and offer improvements that can be drafted from verified facts, the exact minimum data checklist, and measurable acceptance criteria. Label every platform-side change as a draft or human-approved action.
-- If source data is supplied, analyze it and produce evidence-based recommendations, but keep every marketplace mutation behind explicit human approval and a separately verified executor.
+- Nemo has a verified READ-ONLY Uzum connector for connected accounts. During a marketplace run, use the server-supplied store snapshot when it is present; it can contain shops, catalogue, stock and a limited sales period. Do not ask the owner to upload the same catalogue again.
+- Never claim that a specialist published cards, changed prices or stock, configured ads, placed orders, selected delivery locations, or achieved sales results. Every marketplace mutation remains a draft or a human-approved action.
+- If a field is absent from the connector (for example cost, fee, return, lead time, FBS/FBO fulfilment status or competitor facts), name it as missing. Do not convert missing data into zero or invent it.
+- Build a useful growth diagnostic: prioritized 7-day actions, product-card drafts from verified facts, and measurable acceptance criteria. A growth target is a scenario, never a guarantee.
 ${artifacts.length === 0
-  ? '- NO SOURCE DATA IS ATTACHED. No specialist may claim to analyze current sales, stock, reviews, ads, SKU performance or achieved results. Assign one specialist to produce the exact export/data request and a fillable diagnostic framework; all numeric conclusions remain pending that input.'
-  : '- Source data is attached. Every factual conclusion must trace to supplied rows; name missing fields instead of estimating them.'}
+  ? '- NO SOURCE FILE IS ATTACHED. Use the server snapshot if it is supplied; otherwise produce the exact export/data request and a fillable diagnostic framework. Any conclusion without evidence remains pending.'
+  : '- Source data is attached. Every factual conclusion must trace to supplied rows or the server snapshot; name missing fields instead of estimating them.'}
 `
         : ''
       const skillsRule = useSkills
@@ -460,7 +476,7 @@ OUTPUT CONTRACT:
 
 `
       const msgs: ChatMsg[] = [
-        { role: 'system', content: staffSystem + skillsRule + marketplaceNoExecutorRule + langRule + bizBlock },
+        { role: 'system', content: staffSystem + skillsRule + marketplaceRuntimeRule + langRule + bizBlock },
         { role: 'user', content: `${ctx || goal || 'A general business assistant team.'}${enBrief ? `\n\nGoal in English (for precise understanding — design the team around THIS outcome, not the domain):\n${enBrief}` : ''}` },
         ...(artifacts.length
           ? [{
@@ -528,13 +544,19 @@ OUTPUT CONTRACT:
         : []
       // Not gated on the assigned skills: the architect can label a numeric task anything,
       // and a silent miss here is what lets a specialist do purchase math in prose.
-      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts, store.block)
+      const marketplaceOperatingContract = store.connected && STORE_GOAL_RE.test(goal)
+        ? '\n\nCONNECTED MARKETPLACE OPERATING CONTRACT: A server-fetched Uzum snapshot is included below when the connector returned data. Start from that evidence, identify what is known and what is missing, and turn it into concrete owner decisions rather than a generic plan. For every SKU recommendation, state the class (scale, keep, fix, clear, pause, or insufficient data) and its evidence. Separate facts, calculations and hypotheses. End with a prioritized 7-day experiment plan whose acceptance criteria can be measured from the next snapshot. Prepare only drafts and approval requests for price, stock, listing, promotion, purchases, FBS/FBO fulfilment or delivery actions. Never claim a 300% result or any completed marketplace mutation.'
+        : ''
+      const missingMarketplaceSource = STORE_GOAL_RE.test(goal) && !store.connected && !artifacts.length
+        ? '\n\nNO SOURCE DATA IS ATTACHED: do not invent a catalogue, sales, stock, prices, competitors, commissions or recommendations disguised as facts. Produce only a clearly labelled analysis framework, list the exact data needed, and keep every unsupported statement marked as a hypothesis.'
+        : ''
       const webResearch = role === 'researcher' && body?.web_research === true
       const model = workModel
       const msgs: ChatMsg[] = [
         {
           role: 'system',
-          content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + orchestrationSkillBlock(skills) + bizBlock +
+          content: (customSystem || roleSystem[role]) + UNIVERSAL_CONTRACT + orchestrationSkillBlock(skills) + bizBlock + marketplaceOperatingContract + missingMarketplaceSource +
             (webResearch
               ? '\n\nLIVE RESEARCH IS ENABLED. Search the web for current evidence. Cite every external factual claim with a Markdown link. Never invent metrics, traffic, customers, growth percentages, quotes, tools used by a company, or competitor facts. If reliable evidence is unavailable, write "Not verified" instead of guessing.'
               : '\n\nGROUNDING RULE: Use only facts present in the goal, business profile, knowledge/context, or cited sources. Never invent metrics, growth percentages, named competitors, testimonials, traffic, dates, or tool usage. Mark missing facts as "Not verified".'),
@@ -579,7 +601,7 @@ OUTPUT CONTRACT:
         ? (body.previous_issues as unknown[]).map(String).slice(0, 8)
         : []
       const revisionRound = Math.max(0, Math.min(3, Number(body?.revision_round) || 0))
-      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts, store.block)
       const lang = String(body?.lang ?? '').trim()
       const langRule = lang && LANG_NAME[lang] ? ` Write "issues" and "fix" in ${LANG_NAME[lang]}.` : ''
       // Rubric-based review (advanced-evaluation): score fixed DIMENSIONS instead of a vague
@@ -629,7 +651,7 @@ OUTPUT CONTRACT:
     if (action === 'synth') {
       const goal = String(body?.goal ?? '').trim()
       const artifacts = inputArtifacts(body?.input_artifacts)
-      const calculatedEvidence = marketplaceEvidence(goal, artifacts)
+      const calculatedEvidence = marketplaceEvidence(goal, artifacts, store.block)
       type SynthStep = {
         role: string
         task: string

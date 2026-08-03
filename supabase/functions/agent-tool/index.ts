@@ -6,7 +6,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { PRIMARY_MODEL } from '../_shared/llm.ts'
-import { runBrowserTask, looksAbusive } from '../_shared/browser.ts'
+import { runBrowserTask, validateReadOnlyMarketplaceBrowserTask } from '../_shared/browser.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { redactText, redactValue } from '../_shared/redact.ts'
@@ -27,7 +27,7 @@ const TOOLS: Record<string, { provider: string; spec: any }> = {
   github_list_repos: { provider: 'github', spec: { type: 'function', function: { name: 'github_list_repos', description: "List the user's GitHub repositories", parameters: { type: 'object', properties: {} } } } },
   slack_send_message: { provider: 'slack', spec: { type: 'function', function: { name: 'slack_send_message', description: 'Send a message to a Slack channel', parameters: { type: 'object', properties: { channel: { type: 'string', description: '#channel or channel id' }, text: { type: 'string' } }, required: ['channel', 'text'] } } } },
   hubspot_create_contact: { provider: 'hubspot', spec: { type: 'function', function: { name: 'hubspot_create_contact', description: 'Create a contact in HubSpot CRM', parameters: { type: 'object', properties: { email: { type: 'string' }, firstname: { type: 'string' }, lastname: { type: 'string' }, phone: { type: 'string' } }, required: ['email'] } } } },
-  browser_task: { provider: 'hyperbrowser', spec: { type: 'function', function: { name: 'browser_task', description: 'Visit a website and perform a task the user authorized (fill a form, submit an application, post a listing, look something up). Use only data the user provided.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'target website' }, task: { type: 'string', description: 'what to do on the site, with the exact data to enter' } }, required: ['task'] } } } },
+  browser_task: { provider: 'hyperbrowser', spec: { type: 'function', function: { name: 'browser_task', description: 'Read verified marketplace information from an allowed URL. Never log in, fill forms, submit, publish, change listings, buy, pay, or create accounts.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'allowed marketplace URL' }, task: { type: 'string', description: 'read-only audit or data lookup' } }, required: ['url', 'task'] } } } },
 }
 
 async function execTool(name: string, args: any, key: string): Promise<{ ok: boolean; result: string }> {
@@ -51,8 +51,11 @@ async function execTool(name: string, args: any, key: string): Promise<{ ok: boo
       return r?.id ? { ok: true, result: `Контакт создан в HubSpot (id ${r.id})` } : { ok: false, result: r?.message ?? 'HubSpot error' }
     }
     if (name === 'browser_task') {
-      if (looksAbusive(String(args.task ?? ''))) return { ok: false, result: 'Задача нарушает правила сайтов (массовая регистрация / обход защит) — не выполняем.' }
-      const task = (args.url ? `Open ${args.url}. ` : '') + String(args.task ?? '') + '\nRules: only this task, only user-provided data, do not create extra accounts, do not bypass CAPTCHAs.'
+      const url = String(args.url ?? '')
+      const taskText = String(args.task ?? '')
+      const blocked = validateReadOnlyMarketplaceBrowserTask(url, taskText)
+      if (blocked) return { ok: false, result: blocked }
+      const task = `Open ${url}. ${taskText}`
       const out = await runBrowserTask(key, task, 55000)
       if (out.pending) return { ok: true, result: `Агент работает в браузере (job ${out.jobId}) — результат появится позже.` }
       return out.ok ? { ok: true, result: out.result ?? 'Готово' } : { ok: false, result: out.error ?? 'Не выполнено' }

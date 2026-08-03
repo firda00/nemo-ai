@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X, MessageSquare, Paperclip, FileSpreadsheet, AlertTriangle } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
@@ -119,6 +119,21 @@ export function AutonomousRunner({
   const [saveSphere, setSaveSphere] = useState('')
   const [inputArtifacts, setInputArtifacts] = useState<AutonomousInputArtifact[]>([])
   const [filesBusy, setFilesBusy] = useState(false)
+  // A connected marketplace IS source data — the server fetches the catalogue for the run. Asking
+  // the owner to upload a file while their store is connected was the loudest wrong thing on this
+  // screen, so the warning must know whether a connection exists.
+  const [storeConnected, setStoreConnected] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      if (!live || !supabase) return
+      const { data } = await supabase.functions.invoke('connect-provider', { body: { action: 'status' } })
+      const connected = ((data as { connected?: string[] } | null)?.connected ?? []) as string[]
+      if (active) setStoreConnected(connected.some((provider) => ['uzum', 'wildberries', 'ozon'].includes(provider)))
+    })()
+    return () => { active = false }
+  }, [live])
 
   const addInputFiles = async (files: FileList | null) => {
     if (!files?.length || filesBusy) return
@@ -171,7 +186,7 @@ export function AutonomousRunner({
     const task = goal.trim()
     if (task.length < 4 || running) return
     runRef.current = crypto.randomUUID()
-    const marketplaceDataMissing = marketplaceInputMissing(task, inputArtifacts, contextHint)
+    const marketplaceDataMissing = !storeConnected && marketplaceInputMissing(task, inputArtifacts, contextHint)
     // the manager reasons on the task; a saved team also gets its team context
     const g = contextHint ? `${contextHint}\n\nЗадача: ${task}` : task
     setError('')
