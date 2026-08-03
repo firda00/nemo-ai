@@ -1,0 +1,22 @@
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0a0d1c; color: #eaecf6; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #0a0d1c; }
+main { min-height: 100vh; padding: 20px; }
+header { display: flex; align-items: center; gap: 10px; }
+.mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #fff; font-weight: 800; background: linear-gradient(135deg, #8b7cf8, #22d3ee); }
+h1, h2, p { margin: 0; }
+h1 { font-size: 16px; } header p { margin-top: 2px; color: #98a2bc; font-size: 11px; }
+.notice { display: grid; gap: 5px; margin: 22px 0 12px; padding: 13px; border: 1px solid rgba(34, 211, 238, .22); border-radius: 14px; background: rgba(34, 211, 238, .07); font-size: 12px; line-height: 1.45; color: #b7c3dd; }
+.notice strong { color: #22d3ee; }
+button { width: 100%; border: 0; border-radius: 12px; padding: 12px 14px; color: #fff; font: inherit; font-weight: 700; cursor: pointer; background: linear-gradient(135deg, #8b7cf8, #5b7cf6, #22d3ee); }
+button:disabled { cursor: wait; opacity: .6; }
+input { width: 100%; margin-top: 6px; border: 1px solid rgba(234, 236, 246, .14); border-radius: 10px; padding: 10px 12px; outline: 0; background: rgba(255, 255, 255, .05); color: #eaecf6; font: 12px ui-monospace, SFMono-Regular, monospace; }
+#save { margin-top: 8px; background: #263044; }
+#status { min-height: 32px; margin: 10px 2px; color: #98a2bc; font-size: 12px; line-height: 1.4; }
+#observation { margin-top: 20px; padding: 14px; border: 1px solid rgba(234, 236, 246, .1); border-radius: 16px; background: rgba(255, 255, 255, .04); }
+.eyebrow { color: #98a2bc; font-size: 10px; font-weight: 700; letter-spacing: .11em; }
+h2 { margin-top: 6px; font-size: 14px; overflow-wrap: anywhere; }
+a { display: block; margin-top: 5px; overflow-wrap: anywhere; color: #22d3ee; font-size: 11px; }
+.observation-label { margin-top: 18px; }
+pre { max-height: 260px; margin: 7px 0 0; overflow: auto; white-space: pre-wrap; color: #c9d2f2; font: 11px/1.5 ui-monospace, SFMono-Regular, monospace; }
+footer { margin-top: 24px; color: #6b7392; font-size: 11px; line-height: 1.5; }

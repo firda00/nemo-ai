@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Nemo Browser",
+  "description": "Read-only marketplace observation for supervised Nemo AI workflows.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Open Nemo Browser"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://uzum.uz/*",
+    "https://seller.uzum.uz/*",
+    "https://ogfmyjiuqmgroobckdyw.supabase.co/*"
+  ]
+}

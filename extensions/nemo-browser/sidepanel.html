@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nemo Browser</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark">N</div>
+        <div><h1>Nemo Browser</h1><p>Supervised marketplace agent</p></div>
+      </header>
+
+      <section class="notice">
+        <strong>Observe mode</strong>
+        <span>Nemo читает только открытую вкладку. Изменения, формы и платежи недоступны.</span>
+      </section>
+
+        <button id="connect" type="button">Подключить текущую вкладку</button>
+        <label class="eyebrow" for="pairing">КОД СВЯЗКИ NEMO</label>
+        <input id="pairing" type="password" autocomplete="off" spellcheck="false" placeholder="Вставьте временный код из Nemo AI">
+        <button id="save" type="button" disabled>Сохранить snapshot в Nemo</button>
+        <p id="status" role="status">Откройте Uzum Market или Seller.</p>
+
+      <section id="observation" hidden>
+        <p class="eyebrow">ПОДКЛЮЧЕННАЯ ВКЛАДКА</p>
+        <h2 id="title"></h2>
+        <a id="url" target="_blank" rel="noreferrer"></a>
+        <p class="eyebrow observation-label">ПРЕДПРОСМОТР ДАННЫХ</p>
+        <pre id="body"></pre>
+      </section>
+
+      <footer>Snapshot сохраняется только после вашего нажатия. Изменения, формы и платежи недоступны.</footer>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

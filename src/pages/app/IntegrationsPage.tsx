@@ -155,6 +155,7 @@ export default function IntegrationsPage() {
   // for Meta channels (Instagram/WhatsApp): the account's agents + the webhook result to paste into Meta
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
   const [connResult, setConnResult] = useState<{ channel_id?: string; webhook?: string; verify_token?: string } | null>(null)
+  const [browserPairing, setBrowserPairing] = useState<{ secret: string; expiresAt: string } | null>(null)
 
   // filters
   const [query, setQuery] = useState('')
@@ -363,6 +364,18 @@ export default function IntegrationsPage() {
     }
   }
 
+  const createBrowserPairing = async () => {
+    if (!supabase || !isSupabaseEnabled) return
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('browser-bridge', { body: { action: 'create' } })
+      if (error || !(data as { ok?: boolean; secret?: string; pairing?: { expires_at?: string } } | null)?.ok) throw error ?? new Error('pairing failed')
+      const result = data as { secret: string; pairing: { expires_at: string } }
+      setBrowserPairing({ secret: result.secret, expiresAt: result.pairing.expires_at })
+    } catch { toast('Не удалось создать код связки Browser Agent.') }
+    finally { setBusy(false) }
+  }
+
   return (
     <div className="container-page max-w-6xl py-8">
       {/* hero */}
@@ -399,6 +412,20 @@ export default function IntegrationsPage() {
           </Link>
         </div>
       </div>
+
+      <section className="card mt-6 rounded-3xl p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-text">Nemo Browser: связка с аккаунтом</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted">Создайте временный код, вставьте его в расширение Nemo Browser и вручную сохраните snapshot. Агент получает только read-only данные Uzum, без паролей, cookies, форм, платежей или изменений.</p>
+          </div>
+          <button onClick={createBrowserPairing} disabled={busy || !isSupabaseEnabled} className="rounded-xl border border-violet/35 bg-violet/10 px-4 py-2 text-sm font-semibold text-violet disabled:opacity-50">Создать код</button>
+        </div>
+        {browserPairing && <div className="mt-4 rounded-2xl border border-ice/10 bg-black/20 p-4">
+          <p className="text-xs text-muted">Код действует до {new Date(browserPairing.expiresAt).toLocaleString('ru-RU')}. Скопируйте его в Nemo Browser. Не передавайте его другим.</p>
+          <code className="mt-2 block break-all rounded-xl bg-black/30 p-3 text-xs text-teal">{browserPairing.secret}</code>
+        </div>}
+      </section>
 
       {/* sticky filter bar */}
       <div className="sticky top-16 z-10 mt-6 space-y-3 rounded-2xl border border-white/[0.07] bg-panel/95 p-3 shadow-lg shadow-black/20 backdrop-blur">
