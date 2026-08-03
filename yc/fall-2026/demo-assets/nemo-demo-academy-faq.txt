@@ -1,0 +1,18 @@
+Nemo Demo Academy - demonstration knowledge base
+
+Course: Frontend Start
+Format: online live classes twice per week.
+Audience: beginners and small business teams.
+The course covers HTML, CSS, JavaScript, React basics, and a final project.
+
+For a corporate inquiry, collect:
+- contact person's name;
+- phone number;
+- number of learners;
+- preferred start date;
+- current technical level.
+
+Pricing, discounts, and the exact date of the next cohort must be confirmed by a human manager.
+Do not promise availability, a discount, a start date, or a commercial offer without manager confirmation.
+
+If the inquiry is outside this knowledge base, say that a manager needs to confirm the answer.

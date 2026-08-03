@@ -4,6 +4,11 @@ Complete this with exact facts. If an answer is unknown, write `unknown` rather 
 
 ## Founders
 
+### Known founder roles
+
+- Founder 1: CEO and lead developer. Equity: 70%.
+- Sarvar: COO and head of business-process automation. Equity: 30%. Experience: ERP systems and process automation. Confirm full legal name, exact employment history, dates, and availability before submission.
+
 For every founder:
 
 - Full legal name:

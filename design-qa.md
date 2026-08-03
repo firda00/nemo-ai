@@ -1,25 +1,31 @@
-# Nemo Directory — design QA
+# Design QA — Team detail overflow
 
-Source references:
+- Source visual truth: `C:/Users/firda/AppData/Local/Temp/codex-clipboard-f5e9f4f6-2041-4152-9dfc-b8202ce0f695.png`
+- Implementation screenshot: `C:/Users/firda/nemo-ai/design-qa-implementation.png`
+- Target viewport: 1564 × 670 CSS px
+- Screenshot dimensions: 1564 × 670 px
+- Density normalization: 1 screenshot pixel per CSS pixel
+- Target state: authenticated Team detail page, collapsed run row
 
-- Claude Directory navigation with Skills, Connectors, and Plugins.
-- Connector grid with add controls.
-- Connector detail view with capabilities, authorization, and setup fields.
+## Evidence
 
-Verified implementation:
+- Full-view source inspection identified horizontal clipping in the two-column Team detail layout.
+- Production DOM check after deployment: `documentElement.clientWidth = 1564`, `documentElement.scrollWidth = 1564`.
+- No content element overflowed the right edge of the viewport. The two reported left-edge elements are the intentionally collapsed sidebar logo/link.
+- Code-level checks cover the focused region: both grid tracks use `minmax(0, ...)`, children use `min-w-0`, long run text truncates, and expanded reports scroll internally.
 
-- Route: `/app/tools`, Directory modal.
-- Desktop viewport: two-column connector grid, persistent left navigation, bounded modal height, internal scroll.
-- Mobile viewport: 390 × 844, single-column cards, compact tab navigation, no horizontal overflow.
-- Interactions: Directory opens and closes; tabs switch; connector details open; Google detail exposes tools and an on-demand authorization explanation; setup remains inside the selected connector.
-- Product-system adaptation: the reference's white surface was intentionally translated to Nemo's existing dark tokens, typography, borders, radii, and Lucide icon system.
-- Security truthfulness: built-in skills do not claim external access; connectors explain when authorization is required; secrets remain server-side; unavailable executors are not presented as working.
+## Comparison history
 
-Issues:
+1. Source: right-side coordinator/run panels extend beyond the visible viewport; long run text has no bounded flex width.
+2. Implementation: CSS containment and truncation were added and production reports no horizontal document overflow.
+3. Visual state limitation: the available Chrome profile is authenticated as another user, so the referenced team ID renders “Команда не найдена”. The exact populated state could not be re-captured without changing account/session data.
+
+## Findings
 
 - P0: none.
 - P1: none.
-- P2: none.
-- P3: provider brand logos use the existing Nemo icon system instead of external logo assets.
+- P2: exact populated-state screenshot is blocked by account ownership; functional layout containment is verified in production.
 
-final result: passed
+## Final result
+
+blocked
