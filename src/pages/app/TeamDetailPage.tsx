@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck } from 'lucide-react'
+import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck, Loader2 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
+import { PROVIDERS } from '../../data/platform'
 import { useAgentStore } from '../../store/useAgentStore'
 import { Markdown } from '../../components/ui/Markdown'
 import { OpsWorkflowRunner, type OpsKind } from '../../components/platform/OpsWorkflowRunner'
@@ -16,7 +17,7 @@ import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustu
 import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
 
-interface Sub { id: string; role: string; name: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
+interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
 interface Task { id: string; title: string; owner?: string; deadline?: string; priority?: string; status?: string }
 interface Notif { id: string; title: string; body?: string; risk?: string; target?: string; created_at: string }
@@ -52,6 +53,9 @@ export default function TeamDetailPage() {
   const [notifs, setNotifs] = useState<Notif[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [openRun, setOpenRun] = useState<string | null>(null)
+  const [savingSubModel, setSavingSubModel] = useState<string | null>(null)
+  const [modelMsg, setModelMsg] = useState('')
+  const [modelOk, setModelOk] = useState(false)
   const [tgConnected, setTgConnected] = useState(false)
   const [groupConnected, setGroupConnected] = useState(false)
   const [subBots, setSubBots] = useState<Set<string>>(new Set())
@@ -108,11 +112,37 @@ export default function TeamDetailPage() {
   const explicitWorkflowMode = teamBlob.match(/nemo-workflow:(generic|operations|logistics)/)?.[1]
   const isRegulated = team?.riskTier === 'regulated' || /nemo-risk:regulated/.test(teamBlob)
   const isLogistics = explicitWorkflowMode === 'logistics' || (!explicitWorkflowMode && /logistics?|логист|shipment|carrier|доставк|fulfillment|sla monitor/.test(teamBlob))
-  const isCommerceWorkspace = /marketplace seller team|dropshipping team|online store team/.test(teamBlob)
+  const isMarketplaceWorkspace = /uzum|marketplace|маркетплейс|маркетплейс|marketplace seller team/.test(teamBlob)
+  const isCommerceWorkspace = isMarketplaceWorkspace || /dropshipping team|online store team/.test(teamBlob)
   const isOps = isLogistics
     || explicitWorkflowMode === 'operations'
     || (!explicitWorkflowMode && !isCommerceWorkspace && /\boperations?\b|\bops\b|оплат|payment|платеж|ученик|студент|student|посещ|attendance|retention|churn|уход|неоплат|meeting|совещ|встреч|отчёт по задач|task manager|admin control|payment reminder/.test(teamBlob))
   const workflowKind: OpsKind = isLogistics ? 'logistics_control' : kind === 'logistics_control' ? 'payment_control' : kind
+  const marketplaceDefaultGoal = isMarketplaceWorkspace
+    ? lang === 'uz'
+      ? 'Ulangan Uzum do‘konimning boshlang‘ich auditini o‘tkazing. Server Uzumdan olgan faktlar bilan ishlang: do‘konlar, SKU, narx, qoldiq va mavjud bo‘lsa 7 kunlik sotuvni ko‘rsating. Har SKU uchun scale, keep, fix, clear, pause yoki insufficient data tasnifini va dalilni bering. 7 kunlik aniq harakatlar rejasini, xarid uchun yetishmayotgan ma’lumotlar ro‘yxatini hamda tasdiqlashimni kutadigan qarorlarni tayyorlang. Narx, qoldiq, karta, reklama, xarid, FBS/FBO yoki yetkazib berishni o‘zgartirmang. 300% o‘sishni va’da qilmang.'
+      : lang === 'en'
+        ? 'Run the first audit of my connected Uzum store. Use only server-fetched Uzum facts: shops, SKUs, price, stock and, if available, seven-day sales. Classify every SKU as scale, keep, fix, clear, pause or insufficient data and cite the evidence. Produce a concrete seven-day action plan, the missing data needed for purchase decisions, and a list of decisions awaiting my approval. Do not change prices, stock, listings, ads, purchases, FBS/FBO or delivery settings. Do not promise 300% growth.'
+        : 'Проведите стартовый аудит подключённого магазина Uzum. Используйте только факты, которые сервер получил из Uzum: магазины, SKU, цену, остаток и, если доступны, продажи за 7 дней. Для каждого SKU укажите класс scale, keep, fix, clear, pause или insufficient data и основание. Подготовьте конкретный план на 7 дней, список недостающих данных для закупок и решения, ожидающие моего подтверждения. Не меняйте цены, остатки, карточки, рекламу, закупки, FBS/FBO и настройки доставки. Не обещайте рост на 300%.'
+    : undefined
+
+  const updateSubModel = async (subId: string, model: string) => {
+    if (!supabase || !dept || !model) return
+    const previous = dept.subs.find((sub) => sub.id === subId)?.model
+    if (!previous || previous === model) return
+    setSavingSubModel(subId)
+    setModelMsg('')
+    const { error } = await supabase.from('sub_agents').update({ model }).eq('id', subId).eq('department_id', dept.id)
+    if (error) {
+      setModelOk(false)
+      setModelMsg(t('teamDetailPage.teamModelError'))
+    } else {
+      setDept((current) => current ? { ...current, subs: current.subs.map((sub) => sub.id === subId ? { ...sub, model } : sub) } : current)
+      setModelOk(true)
+      setModelMsg(t('teamDetailPage.teamModelSaved'))
+    }
+    setSavingSubModel(null)
+  }
   const safetyCopy = lang === 'ru' ? {
     badge: 'Безопасная бета · только Nemo',
     specialist: 'Только Nemo',
@@ -157,9 +187,9 @@ export default function TeamDetailPage() {
         </div>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="mt-8 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         {/* LEFT — team structure + workflow runner */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><Users size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.teamStructure')}</h2></div>
             {dept && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{t('teamDetailPage.subBotOptionalNote')}</p>}
@@ -167,10 +197,24 @@ export default function TeamDetailPage() {
               {(dept?.subs ?? []).map((sa, i) => {
                 const color = COLORS[i % COLORS.length]
                 return (
-                  <div key={sa.id} className="flex items-center gap-2.5 rounded-xl border border-ice/[0.07] px-3.5 py-2.5">
+                  <div key={sa.id} className="flex min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border border-ice/[0.07] px-3.5 py-2.5">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${color}22`, color }}><Bot size={14} /></span>
                     <span className="min-w-0 flex-1 truncate text-sm text-text">{sa.name}</span>
-                    <span className="hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] sm:inline" style={{ background: `${color}1a`, color }}>{sa.role}</span>
+                    <span title={sa.role} className="hidden max-w-28 shrink truncate rounded-full px-2 py-0.5 text-[10px] sm:inline" style={{ background: `${color}1a`, color }}>{sa.role}</span>
+                    <select
+                      aria-label={`${sa.name} model`}
+                      value={sa.model}
+                      disabled={savingSubModel === sa.id}
+                      onChange={(e) => void updateSubModel(sa.id, e.target.value)}
+                      className="glass max-w-32 shrink rounded-lg px-2 py-1.5 text-[10px] text-text outline-none focus:border-violet/50 disabled:opacity-60"
+                    >
+                      {PROVIDERS.map((provider) => (
+                        <optgroup key={provider.id} label={provider.name} className="bg-panel">
+                          {provider.models.map((model) => <option key={model.id} value={model.id} className="bg-panel">{model.label}{model.premium ? ' 💎' : ''}</option>)}
+                        </optgroup>
+                      ))}
+                    </select>
+                    {savingSubModel === sa.id && <Loader2 size={13} className="shrink-0 animate-spin text-violet" />}
                     {isRegulated
                       ? <span className="shrink-0 rounded-pill border border-amber/20 bg-amber/10 px-2 py-0.5 text-[10px] text-amber">{safetyCopy.specialist}</span>
                       : <TelegramBotConnect compact target={{ sub_agent_id: sa.id }} connected={subBots.has(sa.id)} onConnected={() => setSubBots((prev) => new Set(prev).add(sa.id))} />}
@@ -179,6 +223,9 @@ export default function TeamDetailPage() {
               })}
               {!dept && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noSavedStructure')}</p>}
             </div>
+
+            <p className="mt-4 text-[11px] leading-relaxed text-fog">Each specialist has an independent model. Plan limits are enforced by the server when the team runs.</p>
+            {modelMsg && <p className={cn('mt-2 text-[11px]', modelOk ? 'text-teal' : 'text-danger')}>{modelMsg}</p>}
           </section>
 
           {/* Universal: give the SAVED team any task (make a post, write a plan, etc.) */}
@@ -193,6 +240,7 @@ export default function TeamDetailPage() {
             <div className="mt-4">
               <AutonomousRunner
                 key={dept?.id ?? 'team'}
+                defaultGoal={marketplaceDefaultGoal}
                 presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))}
                 contextHint={goal}
                 placeholder={t('teamDetailPage.taskToTeamPlaceholder')}
@@ -301,7 +349,7 @@ export default function TeamDetailPage() {
         </div>
 
         {/* RIGHT — live results from the DB */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <CoordinatorAgentPanel
             mode={isOps ? 'planner' : 'general'}
             context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
@@ -349,26 +397,26 @@ export default function TeamDetailPage() {
             </div>
           </section>}
 
-          <section className="card rounded-3xl p-6">
+          <section className="card min-w-0 overflow-hidden rounded-3xl p-6">
             <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
             <div className="mt-4 space-y-2">
               {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}
               {runs.map((run) => {
                 const isOpen = openRun === run.id
                 return (
-                  <div key={run.id} className="rounded-xl border border-ice/[0.07]">
-                    <button onClick={() => setOpenRun(isOpen ? null : run.id)} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left">
-                      <span className="rounded-full bg-violet/10 px-2 py-0.5 text-[10px] text-violet">{run.kind}</span>
-                      {run.status === 'needs_review' && <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
-                      <span className="min-w-0 flex-1 truncate text-sm text-text">{run.task}</span>
-                      <span className="shrink-0 text-[11px] text-muted">{new Date(run.created_at).toLocaleString()}</span>
+                  <div key={run.id} className="min-w-0 overflow-hidden rounded-xl border border-ice/[0.07]">
+                    <button onClick={() => setOpenRun(isOpen ? null : run.id)} className="flex w-full min-w-0 items-center gap-2.5 px-3.5 py-2.5 text-left">
+                      <span className="shrink-0 rounded-full bg-violet/10 px-2 py-0.5 text-[10px] text-violet">{run.kind}</span>
+                      {run.status === 'needs_review' && <span className="shrink-0 rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
+                      <span title={run.task} className="min-w-0 flex-1 truncate text-sm text-text">{run.task}</span>
+                      <span className="hidden shrink-0 text-[11px] text-muted min-[1800px]:inline">{new Date(run.created_at).toLocaleString()}</span>
                       <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
                     </button>
                     {isOpen && (
-                      <div className="space-y-3 border-t border-ice/[0.07] px-3.5 py-3">
+                      <div className="min-w-0 space-y-3 overflow-hidden border-t border-ice/[0.07] px-3.5 py-3">
                         {(run.steps ?? []).map((s, i) => (
                           <div key={i} className="rounded-lg bg-white/[0.02] p-2.5">
-                            <p className="mb-1 text-[11px] font-medium text-cyan">{s.query}</p>
+                            <p className="mb-1 break-words text-[11px] font-medium text-cyan">{s.query}</p>
                             {s.review && (s.review.reviewed_by || s.review.needs_human_review) && (
                               <p className={cn('mb-1.5 text-[10.5px]', s.review.needs_human_review ? 'text-amber' : s.review.approved ? 'text-teal' : 'text-muted')}>
                                 {s.review.reviewed_by ? `Peer: ${s.review.reviewed_by} / ${s.review.score ?? 0}/100` : 'Peer review'}
@@ -376,13 +424,13 @@ export default function TeamDetailPage() {
                                 {s.review.needs_human_review ? ' / human review required' : ''}
                               </p>
                             )}
-                            <div className="text-[12px] text-muted"><Markdown content={(s.findings || '—').slice(0, 1200)} /></div>
+                            <div className="min-w-0 overflow-x-auto text-[12px] text-muted"><Markdown content={(s.findings || '—').slice(0, 1200)} /></div>
                           </div>
                         ))}
                         {run.report && (
                           <div className="rounded-lg border border-ice/[0.07] p-3">
                             <p className="mb-1 text-[11px] font-medium text-text">{t('teamDetailPage.managerSummary')}</p>
-                            <Markdown content={run.report} />
+                            <div className="min-w-0 overflow-x-auto"><Markdown content={run.report} /></div>
                           </div>
                         )}
                       </div>

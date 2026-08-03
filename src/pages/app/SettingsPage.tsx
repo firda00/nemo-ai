@@ -1,4 +1,5 @@
-import { Check, CreditCard, Globe, Users, User as UserIcon, ShieldCheck } from 'lucide-react'
+import { Check, CreditCard, Globe, Monitor, Moon, Sun, Users, User as UserIcon, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
 import { Button } from '../../components/ui/Button'
@@ -6,6 +7,7 @@ import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import { cn } from '../../lib/cn'
 import type { Lang } from '../../types'
 import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
+import { applyTheme, themePreference, type ThemePreference } from '../../lib/theme'
 
 const langOptions: { code: Lang; label: string; native: string }[] = [
   { code: 'uz', label: "O‘zbekcha", native: 'UZ' },
@@ -18,6 +20,17 @@ const inputCls = 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2
 export default function SettingsPage() {
   const { lang, setLang, t } = useI18n()
   const { user, updateUser } = useAuth()
+  const [theme, setTheme] = useState<ThemePreference>(themePreference)
+  const themeCopy = lang === 'ru'
+    ? { title: 'Оформление', desc: 'Выберите светлую, тёмную тему или настройку устройства.', light: 'Светлая', dark: 'Тёмная', system: 'Как в системе' }
+    : lang === 'uz'
+      ? { title: 'Ko‘rinish', desc: 'Yorug‘, qorong‘i yoki qurilma mavzusini tanlang.', light: 'Yorug‘', dark: 'Qorong‘i', system: 'Tizimga mos' }
+      : { title: 'Appearance', desc: 'Choose light, dark, or your device preference.', light: 'Light', dark: 'Dark', system: 'System' }
+
+  const changeTheme = (next: ThemePreference) => {
+    setTheme(next)
+    applyTheme(next)
+  }
 
   return (
     <div className="container-page max-w-4xl py-8">
@@ -45,6 +58,22 @@ export default function SettingsPage() {
                   {active && <Check size={18} className="text-violet" />}
                 </button>
               )
+            })}
+          </div>
+        </Section>
+
+        <Section icon={Monitor} title={themeCopy.title} desc={themeCopy.desc}>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              { id: 'light' as const, label: themeCopy.light, icon: Sun },
+              { id: 'dark' as const, label: themeCopy.dark, icon: Moon },
+              { id: 'system' as const, label: themeCopy.system, icon: Monitor },
+            ].map(({ id, label, icon: Icon }) => {
+              const active = theme === id
+              return <button key={id} type="button" onClick={() => changeTheme(id)} className={cn('flex items-center justify-between rounded-xl border p-4 text-left transition-all', active ? 'border-violet/60 bg-violet/10 shadow-glow' : 'border-ice/10 hover:border-ice/25')}>
+                <span className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg border border-ice/10 text-violet"><Icon size={17} /></span><span className="text-sm font-normal text-text">{label}</span></span>
+                {active && <Check size={18} className="text-violet" />}
+              </button>
             })}
           </div>
         </Section>

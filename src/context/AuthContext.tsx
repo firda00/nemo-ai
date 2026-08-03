@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -66,11 +67,12 @@ function loadUser(): User | null {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function userFromSession(sessionUser: any): User {
   const email = sessionUser?.email ?? ''
+  const savedLang = sessionUser?.user_metadata?.lang
   return {
     id: sessionUser?.id ?? 'unknown',
     email,
     name: sessionUser?.user_metadata?.name ?? nameFromEmail(email),
-    lang: 'uz',
+    lang: savedLang === 'ru' || savedLang === 'en' || savedLang === 'uz' ? savedLang : 'uz',
     role: 'user',
     createdAt: (sessionUser?.created_at ?? '').slice(0, 10) || '2026-06-01',
     quotaUsed: 0,
@@ -82,17 +84,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const live = isSupabaseEnabled
   const [user, setUser] = useState<User | null>(() => (live ? null : loadUser()))
   const [loading, setLoading] = useState<boolean>(live)
+  const profileSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMetadata = useRef<Record<string, string>>({})
+
+  useEffect(() => () => {
+    if (profileSaveTimer.current) clearTimeout(profileSaveTimer.current)
+  }, [])
 
   // --- live session bootstrap + subscription ---
   useEffect(() => {
-    if (!live || !supabase) return
+    const client = supabase
+    if (!live || !client) return
     let active = true
-    supabase.auth.getSession().then(({ data }) => {
+    client.auth.getSession().then(({ data }) => {
       if (!active) return
       setUser(data.session ? userFromSession(data.session.user) : null)
       setLoading(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = client.auth.onAuthStateChange((_event, session) => {
       setUser(session ? userFromSession(session.user) : null)
       setLoading(false)
     })
@@ -177,7 +186,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return next
     })
-  }, [])
+    const client = supabase
+    if (!live || !client) return
+
+    if (typeof patch.name === 'string') pendingMetadata.current.name = patch.name
+    if (patch.lang === 'uz' || patch.lang === 'ru' || patch.lang === 'en') pendingMetadata.current.lang = patch.lang
+    if (!Object.keys(pendingMetadata.current).length) return
+    if (profileSaveTimer.current) clearTimeout(profileSaveTimer.current)
+    profileSaveTimer.current = setTimeout(() => {
+      const data = pendingMetadata.current
+      pendingMetadata.current = {}
+      profileSaveTimer.current = null
+      void client.auth.updateUser({ data })
+    }, 400)
+  }, [live])
 
   const value = useMemo<AuthContextValue>(
     () => ({

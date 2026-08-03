@@ -9,11 +9,11 @@ export default {
     extend: {
       colors: {
         // --- Spec core tokens (§3) ---
-        bg: '#0A0D1C', // page background
-        panel: '#10162E', // panels, sidebar, topbar
-        card: 'rgba(255,255,255,0.045)', // glass card surface
-        text: '#EAECF6', // primary text
-        muted: '#98A2BC', // secondary text
+        bg: 'rgb(var(--color-bg) / <alpha-value>)', // page background
+        panel: 'rgb(var(--color-panel) / <alpha-value>)', // panels, sidebar, topbar
+        card: 'rgb(var(--color-card) / <alpha-value>)', // glass card surface
+        text: 'rgb(var(--color-text) / <alpha-value>)', // primary text
+        muted: 'rgb(var(--color-muted) / <alpha-value>)', // secondary text
         violet: '#8B7CF8', // gradient start / primary accent
         blue: '#5B7CF6', // gradient mid
         cyan: '#22D3EE', // gradient end / accent
@@ -22,33 +22,33 @@ export default {
         danger: '#F2545B',
 
         // --- Accent aliases used across app pages ---
-        ice: '#EAECF6', // light text + hairline border base
+        ice: 'rgb(var(--color-ice) / <alpha-value>)', // light text + hairline border base
         cobalt: '#5B7CF6', // accent (blue)
         orange: '#F59F00', // warm accent (amber)
 
         // --- Legacy / August token names remapped onto the dark system,
         //     so existing components cascade without per-file rewrites ---
-        cream: '#0A0D1C', // page bg
-        ink: '#EAECF6', // light text / hairline border base
+        cream: 'rgb(var(--color-bg) / <alpha-value>)', // page bg
+        ink: 'rgb(var(--color-ice) / <alpha-value>)', // light text / hairline border base
         indigo: '#8B7CF8', // -> violet (primary accent)
         forest: '#13C5B4', // -> teal (success)
         ember: '#F59F00', // -> amber (warning)
         blossom: '#22D3EE', // -> cyan
         petal: '#5B7CF6', // -> blue
         lavender: 'rgba(255,255,255,0.14)', // hairline border
-        stone: '#98A2BC', // -> muted text
-        fog: '#6B7392', // dimmer muted text
+        stone: 'rgb(var(--color-muted) / <alpha-value>)', // -> muted text
+        fog: 'rgb(var(--color-fog) / <alpha-value>)', // dimmer muted text
         infoblue: 'rgba(91,124,246,0.16)', // soft info chip bg
-        midnight: '#C9D2F2', // text on info chips
+        midnight: 'rgb(var(--color-midnight) / <alpha-value>)', // text on info chips
         meadow: '#13C5B4',
 
         // Atlantic surface names remapped to dark
-        void: '#0A0D1C',
-        carbon: '#10162E',
-        graphite: '#161D38',
-        slate: '#10162E',
-        iron: '#98A2BC',
-        steel: '#6B7392',
+        void: 'rgb(var(--color-bg) / <alpha-value>)',
+        carbon: 'rgb(var(--color-panel) / <alpha-value>)',
+        graphite: 'rgb(var(--color-panel) / <alpha-value>)',
+        slate: 'rgb(var(--color-panel) / <alpha-value>)',
+        iron: 'rgb(var(--color-muted) / <alpha-value>)',
+        steel: 'rgb(var(--color-fog) / <alpha-value>)',
       },
       fontFamily: {
         // Inter everywhere (spec §3). `serif` aliases to Inter so any leftover
