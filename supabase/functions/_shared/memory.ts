@@ -6,11 +6,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /** Recent memory lines for an agent, newest last, joined for the prompt. */
-export async function loadMemory(db: any, agentId: string, dialogueId: string | null = null, limit = 8): Promise<string> {
-  if (!agentId) return ''
+export async function loadMemory(db: any, accountId: string, agentId: string, dialogueId: string | null = null, limit = 8): Promise<string> {
+  if (!accountId || !agentId) return ''
   let query = db
     .from('agent_memory')
     .select('summary, created_at')
+    .eq('account_id', accountId)
     .eq('agent_id', agentId)
   query = dialogueId ? query.eq('dialogue_id', dialogueId) : query.is('dialogue_id', null)
   const { data } = await query

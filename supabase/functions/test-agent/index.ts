@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
 
   // self-improving agents recall memory from past chats (and learn from this one)
   const isLearning = agent?.type === 'learning'
-  const memory = isLearning && agentId ? await loadMemory(userDb, agentId, null) : ''
+  const memory = isLearning && agentId ? await loadMemory(userDb, accountId, agentId, null) : ''
 
   const messages: ChatMsg[] = [
     {

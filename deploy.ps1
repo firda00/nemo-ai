@@ -56,6 +56,10 @@ Apply-Migration .\supabase\migrations\20260714100000_team_shared_rag.sql
 Apply-Migration .\supabase\migrations\20260714110000_transcribe_jobs.sql
 Apply-Migration .\supabase\migrations\20260723183000_telegram_worker_reliability.sql
 Apply-Migration .\supabase\migrations\20260723193000_agent_stt_model.sql
+Apply-Migration .\supabase\migrations\20260729110000_worker_lease_rls.sql
+Apply-Migration .\supabase\migrations\20260730110000_queue_and_tenant_integrity.sql
+Apply-Migration .\supabase\migrations\20260801100000_ops_checks_admin_only.sql
+Apply-Migration .\supabase\migrations\20260803100000_browser_observations.sql
 
 $schemaCheckSql = @'
 select
@@ -261,7 +265,7 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily');
+select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent');
 select cron.schedule(
   'nemo-autopost-every-minute',
   '* * * * *',
@@ -289,6 +293,24 @@ select cron.schedule(
       body := '{"action":"auto-run"}'::jsonb
     );$$
 );
+select cron.schedule(
+  'nemo-ops-watchdog-every-ten-minutes',
+  '*/10 * * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/ops-watchdog',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
+select cron.schedule(
+  'nemo-daily-digest-tashkent',
+  '5 3 * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/daily-digest',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
 '@
   Apply-Sql ($cronSql.Replace('__REF__', $ref).Replace('__SECRET__', $safeCron))
 }
@@ -297,14 +319,14 @@ Write-Host "     migrations applied." -ForegroundColor Green
 $failed = @()
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
-foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent','google-oauth') {
+foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent','ops-watchdog','daily-digest','google-oauth') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','connect-provider','operator-send','google-tools') {
+foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','connect-provider','operator-send','google-tools','browser-bridge') {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
@@ -312,7 +334,7 @@ foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistic
 
 # Verify the two previously-missing functions now respond (not 404)
 Write-Host "`nVerifying..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','evolve-agent','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','setup-telegram','setup-meta') {
+foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','evolve-agent','ops-watchdog','daily-digest','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','setup-telegram','setup-meta') {
   $code = -1
   $responseBody = ''
   $isInboundWebhook = $fn -in @('telegram-webhook','whatsapp-webhook','instagram-webhook')

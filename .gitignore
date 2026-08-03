@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Environment files and deployment credentials. Keep only documented examples tracked.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Supabase / build artifacts
 supabase/.temp
 supabase/.branches

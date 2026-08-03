@@ -101,19 +101,44 @@ export async function callOpenRouter(opts: {
   maxTokens?: number
   responseFormat?: Record<string, unknown>
   plugins?: Array<Record<string, unknown>>
-  // If the primary model fails, retry once with this model (reliability degrade).
+  // Last resort in the degrade chain (see below).
   fallbackModel?: string
 }): Promise<{ content: string; tokens: number; citations: string[] }> {
-  try {
-    return await attemptModel(opts)
-  } catch (e) {
-    const fb = opts.fallbackModel
-    if (fb && fb !== opts.model) {
-      console.warn(`primary model "${opts.model}" failed (${String((e as Error)?.message ?? e)}); falling back to "${fb}"`)
-      return await attemptModel({ ...opts, model: fb })
+  // The degrade chain used to be exactly two links: the requested model, then FALLBACK_MODEL —
+  // which is a `:free` tier that OpenRouter rate-limits routinely. So the safety net was the least
+  // reliable component in the system, and one 429 on it ended the whole reply in silence.
+  //
+  // Now: requested -> PRIMARY_MODEL (paid, cheap, reliable) -> the free tier. Plus one retry per
+  // model on transient errors, because a 429 says "retry shortly" and we never did.
+  const chain: string[] = [opts.model]
+  if (PRIMARY_MODEL !== opts.model) chain.push(PRIMARY_MODEL)
+  if (opts.fallbackModel && !chain.includes(opts.fallbackModel)) chain.push(opts.fallbackModel)
+
+  let lastError: unknown
+  for (const model of chain) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await attemptModel({ ...opts, model })
+      } catch (e) {
+        lastError = e
+        if (attempt === 0 && isTransientModelError(e)) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+          continue
+        }
+        break
+      }
     }
-    throw e
+    console.warn(`model "${model}" failed (${String((lastError as Error)?.message ?? lastError)}); next in chain`)
   }
+  throw lastError
+}
+
+const RETRY_DELAY_MS = 900
+
+// Errors that mean "ask again in a moment", not "this request is wrong".
+export function isTransientModelError(e: unknown): boolean {
+  return /(^|\D)(429|408|500|502|503|504)(\D|$)|rate.?limit|temporarily|overloaded|capacity|timeout/i
+    .test(String((e as Error)?.message ?? e))
 }
 
 interface PromptAgent {

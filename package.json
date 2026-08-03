@@ -32,6 +32,13 @@
     "test:review-ux": "node agent-hub/review-ux-contracts.mjs",
     "test:autonomous-inputs": "node --experimental-strip-types agent-hub/autonomous-input-behavior.mjs",
     "test:run-telemetry": "node --experimental-strip-types agent-hub/run-telemetry-contracts.mjs",
+    "test:owner-context": "node agent-hub/owner-context-contracts.mjs",
+    "test:store-access": "node agent-hub/store-access-contracts.mjs",
+    "test:model-degrade": "node agent-hub/model-degrade-contracts.mjs",
+    "test:team-model": "node agent-hub/team-model-contracts.mjs",
+    "test:schema-drift": "node agent-hub/schema-drift-contracts.mjs",
+    "test:growth-plan": "node --experimental-strip-types agent-hub/growth-plan-behavior.mjs",
+    "test:catalog-audit": "node --experimental-strip-types agent-hub/catalog-audit-behavior.mjs",
     "test:swarm-efficiency": "node --experimental-strip-types agent-hub/swarm-efficiency-behavior.mjs",
     "test:secret-box": "node --experimental-strip-types agent-hub/secret-box-behavior.mjs",
     "test:telegram-worker": "node --experimental-strip-types agent-hub/telegram-worker-contracts.mjs",
@@ -40,7 +47,8 @@
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview",
     "demo:swarm": "node agent-hub/demo-simulation.mjs",
-    "test:showcase": "node agent-hub/demo-showcase-tests.mjs"
+    "test:showcase": "node agent-hub/demo-showcase-tests.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",

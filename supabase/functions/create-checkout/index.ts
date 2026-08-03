@@ -6,7 +6,7 @@
 //   body { "package": "starter" | "pro" | "business" }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { PLAN_LIMITS } from '../_shared/plans.ts'
-import { corsPreflight, json } from '../_shared/cors.ts'
+import { corsPreflight, json, trustedAppOrigin } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
   const { data: prof0 } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId0 = prof0?.account_id
   if (!accountId0) return json({ error: 'no account' }, 403)
-  const origin0 = req.headers.get('origin') || 'https://nemo.185.8.213.144.sslip.io'
+  const origin0 = trustedAppOrigin(req)
 
   // SUBSCRIPTION — a Nemo plan. Recurring payment to Nemo's Stripe; the webhook sets the
   // account's plan. Inline price_data (recurring) means no pre-created Price IDs needed.
@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
 
-  const origin = req.headers.get('origin') || 'http://localhost:5173'
+  const origin = trustedAppOrigin(req)
   const body = form({
     mode: 'payment',
     success_url: `${origin}/app/billing?paid=1`,

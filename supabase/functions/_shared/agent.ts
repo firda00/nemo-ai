@@ -639,12 +639,25 @@ export async function buildSubAgentReply(
   return { text: out.content, tokens: tokens + out.tokens }
 }
 
-export async function buildReply(db: any, openrouterKey: string, agent: any, dialogueId: string): Promise<string> {
+/**
+ * Why a reply is empty. Six different conditions used to produce the same silent "" and the same
+ * "an operator will join shortly" message to the writer: a paused agent, off-hours, a rate limit,
+ * an exhausted balance, a session cap and a genuine escalation. The owner could not tell them
+ * apart, and neither could anyone reading the database. The caller fills this in and can say what
+ * actually happened — to the OWNER only; customers still get the graceful handoff line.
+ */
+export interface ReplyDiagnostics {
+  reason?: 'agent_paused' | 'outside_work_hours' | 'rate_limited' | 'no_tokens' | 'session_cap' | 'escalated' | 'error' | 'no_output'
+  detail?: string
+  ownerContext?: boolean
+}
+
+export async function buildReply(db: any, openrouterKey: string, agent: any, dialogueId: string, diag: ReplyDiagnostics = {}): Promise<string> {
   // Paused/blocked agents don't reply (admin block pauses all of an account's agents).
-  if (agent.status && agent.status !== 'active') return ''
+  if (agent.status && agent.status !== 'active') { diag.reason = 'agent_paused'; return '' }
 
   // Honor custom work hours — 24/7 always replies; 'work-hours' only inside the window.
-  if (agent.schedule === 'work-hours' && !withinWorkHours(agent.timezone, agent.work_start, agent.work_end)) return ''
+  if (agent.schedule === 'work-hours' && !withinWorkHours(agent.timezone, agent.work_start, agent.work_end)) { diag.reason = 'outside_work_hours'; return '' }
 
   // Cost guard — per-customer rate limit (a dialogue maps 1:1 to an external_id).
   const since = new Date(Date.now() - 60_000).toISOString()
@@ -654,11 +667,11 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     .eq('dialogue_id', dialogueId)
     .eq('author', 'customer')
     .gte('created_at', since)
-  if ((recent ?? 0) > RATE_LIMIT_PER_MIN) return ''
+  if ((recent ?? 0) > RATE_LIMIT_PER_MIN) { diag.reason = 'rate_limited'; return '' }
 
   // Cost guard — stop when the account has no AI tokens left.
   const { data: acc } = await db.from('accounts').select('token_balance, plan').eq('id', agent.account_id).single()
-  if (acc && Number(acc.token_balance) <= 0) return ''
+  if (acc && Number(acc.token_balance) <= 0) { diag.reason = 'no_tokens'; return '' }
 
   // Per-session cost guard — cap cumulative tokens for THIS dialogue; on exceed, hand off to a
   // human instead of billing a runaway/troll thread forever. Uses usage.dialogue_id.
@@ -666,6 +679,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
   const sessionTokens = (sessUsage ?? []).reduce((s: number, u: any) => s + (Number(u.tokens) || 0), 0)
   if (sessionTokens > SESSION_TOKEN_CAP) {
     await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
+    diag.reason = 'session_cap'
     return ''
   }
 
@@ -691,7 +705,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
   // remembers its owner across chats
   const isLearning = agent.type === 'learning'
   const personal = agent.persona_mode === 'personal'
-  const memory = (isLearning || personal) ? await loadMemory(db, agent.id, dialogueId) : ''
+  const memory = (isLearning || personal) ? await loadMemory(db, agent.account_id, agent.id, dialogueId) : ''
 
   try {
     // use the account's own OpenRouter key if they set one, else Nemo's shared key
@@ -738,7 +752,19 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     // pass the Telegram chat context so task tools can create remindable DB tasks in this chat
     const { data: dia } = await db.from('dialogues').select('channel_id, external_id, channel').eq('id', dialogueId).maybeSingle()
     const tgCtx = { dialogueId, ...(dia?.channel === 'telegram' && dia?.external_id ? { channelId: dia.channel_id as string, chatId: String(dia.external_id) } : {}) }
-    const toolRun = lastCustomer ? await runAgentTools(db, apiKey, agent.account_id, String(lastCustomer), history ?? [], agent.type, tgCtx, Array.isArray(agent.skills) ? agent.skills : []) : null
+    // OWNER CONTEXT. The same bot serves the owner and unknown customers on the same channel, so
+    // the runtime assumed "customer" for everyone and denied the read-only store tools — the owner
+    // asking their own bot about their own shop got an operator handoff instead of the numbers.
+    // The chat id comes from Telegram's update envelope, not from message text, so nothing the
+    // writer types can forge it.
+    let ownerContext = false
+    if (tgCtx.chatId) {
+      const { data: ownerProfile } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', agent.account_id).maybeSingle()
+      const ownerChat = String(ownerProfile?.notify_chat_id ?? '').trim()
+      ownerContext = ownerChat.length > 0 && ownerChat === tgCtx.chatId
+      diag.ownerContext = ownerContext
+    }
+    const toolRun = lastCustomer ? await runAgentTools(db, apiKey, agent.account_id, String(lastCustomer), history ?? [], agent.type, tgCtx, Array.isArray(agent.skills) ? agent.skills : [], ownerContext) : null
     if (toolRun?.ran) {
       replyText = String(toolRun.result ?? 'Готово.')
       tokensUsed = toolRun.tokens
@@ -832,6 +858,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
           await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
           await notifyEscalation(db, agent, String(lastCustomer), esc.reason)
           if (tokensUsed) { await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model, dialogue_id: dialogueId, cost: estimateCostUsd(model, tokensUsed) }); await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed }) }
+          diag.reason = 'escalated'
           return '' // caller sends the graceful "operator will join" message to the customer
         }
         replyText = out.content
@@ -875,7 +902,10 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     }
     return replyText
   } catch (e) {
+    // A thrown error looked exactly like a deliberate handoff to everyone downstream.
     console.error('buildReply error:', e)
+    diag.reason = 'error'
+    diag.detail = String((e as Error)?.message ?? e).slice(0, 200)
     return ''
   }
 }

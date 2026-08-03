@@ -121,7 +121,7 @@ async function buildProposal(db: Any, agent: Any, autoMode: boolean) {
 async function createEvolution(db: Any, agent: Any, autoMode: boolean) {
   if (autoMode) {
     const since = new Date(Date.now() - AUTO_COOLDOWN_DAYS * 86400000).toISOString()
-    const { data: recent } = await db.from('agent_evolutions').select('id').eq('agent_id', agent.id)
+    const { data: recent } = await db.from('agent_evolutions').select('id').eq('account_id', agent.account_id).eq('agent_id', agent.id)
       .eq('auto_applied', true).gte('applied_at', since).limit(1)
     if (recent?.length) return { ok: true, skipped: 'cooldown' }
   }

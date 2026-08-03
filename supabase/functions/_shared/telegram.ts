@@ -1,5 +1,6 @@
 // Telegram Bot API helpers.
 import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts'
+import { formatTelegramHtml, splitTelegramText } from './telegramFormat.ts'
 
 // Download a Telegram file (photo/document) by file_id and return it base64-encoded (for the
 // vision model to inspect a submitted proof). Returns '' on any failure.
@@ -14,24 +15,39 @@ export async function tgDownloadFileB64(botToken: string, fileId: string): Promi
 }
 
 export async function tgSend(botToken: string, chatId: number | string, text: string): Promise<boolean> {
-  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text }),
-  })
-  return res.ok
+  for (const chunk of splitTelegramText(text)) {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: formatTelegramHtml(chunk),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+    })
+    if (!res.ok) return false
+  }
+  return true
 }
 
 // Same as tgSend but returns Telegram's real error text (for surfacing to the user).
 export async function tgSendDetailed(botToken: string, chatId: number | string, text: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data?.ok) return { ok: true }
-    return { ok: false, error: String(data?.description ?? `HTTP ${res.status}`) }
+    for (const chunk of splitTelegramText(text)) {
+      const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: formatTelegramHtml(chunk),
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data?.ok) return { ok: false, error: String(data?.description ?? `HTTP ${res.status}`) }
+    }
+    return { ok: true }
   } catch (e) { return { ok: false, error: String(e).slice(0, 160) } }
 }
 

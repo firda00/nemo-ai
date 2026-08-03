@@ -2,7 +2,7 @@
 // the queue worker (durable pgmq path). Given a channel id + the raw Telegram update, it runs the
 // full flow: voice transcription, group task-bot, DM task-completion, customer dialogue + reply.
 // Extracted so the webhook can just enqueue and a rate-capped worker does the heavy LLM work.
-import { buildReply, buildSubAgentReply } from './agent.ts'
+import { buildReply, buildSubAgentReply, type ReplyDiagnostics } from './agent.ts'
 import { tgSend } from './telegram.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
 import { resolveOpenRouterKey } from './keys.ts'
@@ -55,6 +55,14 @@ async function downloadTelegramFile(token: string, fileId: string): Promise<stri
   } catch { return '' }
 }
 
+function decodeTextAttachment(base64: string): string {
+  try {
+    const binary = atob(base64)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    return new TextDecoder('utf-8').decode(bytes).split(String.fromCharCode(0)).join('').trim()
+  } catch { return '' }
+}
+
 // Full processing of ONE Telegram update for a channel. Safe to run in the background / a worker.
 export async function processTelegramUpdate(db: any, channelId: string, update: any): Promise<void> {
   const { data: channel } = await db.from('channels').select('*, agents(*)').eq('id', channelId).single()
@@ -74,6 +82,14 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   }
 
   let text = msg.text ? String(msg.text).slice(0, MAX_MSG) : (msg.caption ? String(msg.caption).slice(0, MAX_MSG) : '')
+
+  // A chat id is not a password, but it is the stable Telegram identity used to bind a private
+  // owner chat to the account. Expose it through the bot so owners do not need a third-party bot
+  // and do not mistype it. This command performs no LLM call and reveals only the caller's id.
+  if (!isGroupChat && /^\/myid(?:@\w+)?$/i.test(text.trim())) {
+    if (botToken) await tgSend(botToken, chatId, `Ваш Telegram chat_id: ${chatId}\nВставьте его в Nemo → «Мой бизнес» → «Telegram chat_id владельца» и сохраните профиль.`)
+    return
+  }
   const voice = msg.voice ?? msg.audio
   let voiceProblem: 'long' | 'fail' | null = null
   if (!text && voice?.file_id && botToken && OPENROUTER_API_KEY && agent?.account_id) {
@@ -106,6 +122,31 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
     const vlang: 'uz' | 'ru' | 'en' = agent?.default_lang === 'ru' ? 'ru' : agent?.default_lang === 'en' ? 'en' : 'uz'
     await tgSend(botToken, chatId, VOICE_MSG[vlang][voiceProblem])
     return
+  }
+
+  // Uzum's published seller API does not expose reviews/comments. Let the owner supply a small
+  // CSV/TXT export (or paste its contents) so the agent can analyse the real text instead of
+  // inventing customer feedback. Binary office files are deliberately not guessed as text.
+  const document = msg.document
+  if (document?.file_id && botToken && !isGroupChat) {
+    const fileName = String(document.file_name ?? 'export').slice(0, 160)
+    const textFile = /\.(csv|tsv|txt)$/i.test(fileName) || /^text\/(csv|plain|tab-separated-values)$/i.test(String(document.mime_type ?? ''))
+    const tooLarge = Number(document.file_size ?? 0) > 2 * 1024 * 1024
+    if (textFile && !tooLarge) {
+      const data = decodeTextAttachment(await downloadTelegramFile(botToken, document.file_id))
+      if (data) {
+        const caption = text ? `${text}\n\n` : ''
+        text = `${caption}[ВЛОЖЕНИЕ ВЛАДЕЛЬЦА: ${fileName}]\n${data.slice(0, 12_000)}`
+      } else if (!text) {
+        await tgSend(botToken, chatId, 'Не смог прочитать текстовый файл. Пришлите экспорт отзывов в CSV/TXT или вставьте текст сообщения.')
+        return
+      }
+    } else if (/(отзыв|комментар|review|feedback)/i.test(`${text}\n${fileName}`)) {
+      await tgSend(botToken, chatId, tooLarge
+        ? 'Файл с отзывами больше 2 МБ для анализа в чате. Экспортируйте CSV/TXT меньшего размера или пришлите частями.'
+        : 'Сейчас для отзывов можно прислать CSV/TXT или вставить текст. XLSX и другие бинарные файлы бот не будет читать как текст, чтобы не исказить данные.')
+      return
+    }
   }
   const hasAttachment = (Array.isArray(msg.photo) && msg.photo.length > 0) || Boolean(msg.document?.file_id)
   if (!text && !hasAttachment) return
@@ -155,15 +196,57 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
     if (ra && (ra.status ?? 'active') === 'active') effectiveAgent = ra
   }
 
+  const diag: ReplyDiagnostics = {}
   const reply = channel.sub_agent_id
     ? await subAgentReply(db, agent, channel.sub_agent_id, dialogue.id)
-    : await buildReply(db, OPENROUTER_API_KEY, effectiveAgent, dialogue.id)
+    : await buildReply(db, OPENROUTER_API_KEY, effectiveAgent, dialogue.id, diag)
 
   if (reply) {
     if (botToken) await tgSend(botToken, chatId, reply)
   } else {
     await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogue.id)
-    if (botToken) await tgSend(botToken, chatId, 'Bir lahza, operator ulanadi. / Секунду, оператор скоро подключится.')
+    // Persist WHY, so the failure is visible in the app's trace view and in the database — not
+    // only in a Telegram line nobody can query afterwards. Every silent handoff so far left no
+    // record at all, which is why diagnosing one needed database archaeology.
+    await db.from('messages').insert({
+      dialogue_id: dialogue.id,
+      author: 'agent',
+      agent_id: effectiveAgent.id ?? null,
+      message_type: 'system_trace',
+      content: JSON.stringify({
+        version: 2,
+        replyMessageId: null,
+        escalated: true,
+        steps: [{
+          kind: 'human_review',
+          agentId: effectiveAgent.id ?? null,
+          agentName: String(effectiveAgent.name ?? 'agent').slice(0, 80),
+          reason: `${diag.reason ?? 'no_output'}${diag.detail ? `: ${diag.detail}` : ''}`.slice(0, 300),
+        }],
+      }),
+    })
+    // A customer gets the graceful handoff. The OWNER gets the actual cause: eight different
+    // conditions used to produce this one sentence, so a paused agent, an empty balance and a
+    // crash were indistinguishable from a real decision to involve a human.
+    if (botToken) await tgSend(botToken, chatId, diag.ownerContext ? ownerReason(diag) : WAIT_LINE)
   }
+}
+
+const WAIT_LINE = 'Bir lahza, operator ulanadi. / Секунду, оператор скоро подключится.'
+
+const OWNER_REASON: Record<string, string> = {
+  agent_paused: 'Агент на паузе — включите его на странице «Агенты».',
+  outside_work_hours: 'Сейчас вне рабочих часов агента. Поставьте расписание 24/7 или измените часы.',
+  rate_limited: 'Слишком много сообщений подряд — сработала защита от флуда. Повторите через минуту.',
+  no_tokens: 'Закончились токены аккаунта. Пополните лимит на странице «Тарифы и лимиты».',
+  session_cap: 'Достигнут лимит токенов на этот диалог. Начните новый диалог.',
+  escalated: 'Команда не сошлась во мнениях и передала вопрос человеку — это осознанное решение, а не сбой.',
+  error: 'Внутренняя ошибка при подготовке ответа.',
+  no_output: 'Агент не выдал ответ.',
+}
+
+function ownerReason(diag: ReplyDiagnostics): string {
+  const base = OWNER_REASON[diag.reason ?? 'no_output'] ?? OWNER_REASON.no_output
+  return `⚠️ Ответа нет. Причина: ${base}${diag.detail ? `\nДетали: ${diag.detail}` : ''}`
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

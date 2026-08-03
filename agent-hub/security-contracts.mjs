@@ -59,7 +59,7 @@ check(11, 'Agent creation rate limit', /guard_agent_creation_rate[\s\S]*pg_advis
 check(12, 'Provider 429 retry', /res\.status === 429[\s\S]*retry-after[\s\S]*breakerUntil/i.test(llm), 'bounded retry, jitter and circuit breaker are present')
 check(13, 'Voice balance limit', /token_balance, blocked/.test(makeCall) && /NO_CREDITS/.test(makeCall), 'blocked/zero-balance accounts cannot start paid calls')
 check(14, 'Forged Stripe webhook', /stripe-signature/i.test(stripe) && /timingSafeEqual|crypto\.subtle\.verify|hmac/i.test(stripe), 'signature, timestamp and event id are verified')
-check(15, 'Lead memory isolation', /dialogueId \? query\.eq\('dialogue_id'/.test(memory) && /loadMemory\(db, agent\.id, dialogueId\)/.test(read('supabase/functions/_shared/agent.ts')), 'memory is scoped to one dialogue/lead')
+check(15, 'Lead memory isolation', /dialogueId \? query\.eq\('dialogue_id'/.test(memory) && /loadMemory\(db, agent\.account_id, agent\.id, dialogueId\)/.test(read('supabase/functions/_shared/agent.ts')), 'memory is scoped to one account, agent, and dialogue/lead')
 check(16, 'Malicious knowledge file', /UNSUPPORTED_FILE_TYPE/.test(read('src/lib/extractText.ts')) && /knowledge_docs_content_size_check/.test(migrations), 'allowlist plus database content bound')
 check(17, '500 MB upload limit', /20 \* 1024 \* 1024/.test(read('src/lib/extractText.ts')) && /char_length\(content\) <= 200000/.test(migrations), 'browser rejects above 20 MB; DB rejects oversized extracted content')
 check(18, 'Loop injection', /MAX_STEPS|MAX_ROUNDS|maxSteps|slice\(0, [345]\)/.test(fn('orchestrate')) || /for \(let .*< [345]/.test(fn('orchestrate')), 'orchestrator/tool execution has a bounded step count')
@@ -98,7 +98,50 @@ check(29, 'Concurrent CRM subagents',
     && ['merge_lead_fields(uuid,uuid,jsonb)', 'claim_lead_crm_push(uuid,uuid)', 'finish_lead_crm_push(uuid,uuid,uuid,text)'].every((sig) => deploy.includes(sig)),
   'same-dialogue lead writes are serialized and merged atomically in SQL, browser DML on leads is revoked, and the CRM push is single-claimant behind a self-expiring lease')
 check(30, 'Empty/broken knowledge JSON', /req\.json\(\)\.catch\(\(\) => \(\{\}\)\)/.test(knowledge), 'invalid bodies are bounded and rejected without raw SQL')
+check(31, 'Worker lease browser access',
+  /alter table public\.worker_lease enable row level security/i.test(migrations)
+    && /revoke all on table public\.worker_lease from anon, authenticated/i.test(migrations),
+  'worker lease is service-role infrastructure and cannot be accessed directly by browser roles')
+check(32, 'Telegram queue RPC access',
+  /revoke all on function public\.q_send\(jsonb\) from public, anon, authenticated/i.test(migrations)
+    && /revoke all on function public\.q_read\(int,\s*int\) from public, anon, authenticated/i.test(migrations)
+    && /revoke all on function public\.q_delete\(bigint\) from public, anon, authenticated/i.test(migrations)
+    && /revoke all on function public\.q_len\(\) from public, anon, authenticated/i.test(migrations)
+    && /grant execute on function public\.q_send\(jsonb\), public\.q_read\(int,\s*int\), public\.q_delete\(bigint\), public\.q_len\(\) to service_role/i.test(migrations),
+  'queue payloads and queue controls are service-role only')
+check(33, 'Agent memory tenant integrity',
+  /enforce_agent_memory_tenant[\s\S]*agent does not belong to memory account/i.test(migrations)
+    && /revoke insert, update, delete on public\.agent_memory from anon, authenticated/i.test(migrations)
+    && /eq\('account_id', accountId\)[\s\S]*eq\('agent_id', agentId\)/.test(memory),
+  'memory references are account-consistent and browser roles cannot inject durable prompt context')
+check(34, 'Agent evolution tenant integrity',
+  /enforce_agent_evolution_tenant[\s\S]*agent does not belong to evolution account/i.test(migrations)
+    && /revoke insert, update, delete on public\.agent_evolutions from anon, authenticated/i.test(migrations),
+  'evolution audit rows are server-generated and cannot reference a foreign agent')
+check(35, 'Checkout redirect origin',
+  /trustedAppOrigin\(req\)/.test(read('supabase/functions/create-checkout/index.ts')),
+  'Stripe return URLs use the configured application origin, never an arbitrary Origin header')
+check(36, 'Operations health visibility',
+  /create or replace function public\.is_platform_admin\(\)/i.test(migrations)
+    && /where id = auth\.uid\(\)/i.test(migrations)
+    && /using \(public\.is_platform_admin\(\)\)/i.test(migrations)
+    && /grant execute on function public\.is_platform_admin\(\) to authenticated, service_role/i.test(migrations),
+  'operations health is visible only to the authenticated platform administrator')
+check(37, 'Operations monitoring scheduling',
+  /'nemo-ops-watchdog-every-ten-minutes'/.test(deploy)
+    && /'\*\/10 \* \* \* \*'/.test(deploy)
+    && /functions\/v1\/ops-watchdog/.test(deploy)
+    && /'nemo-daily-digest-tashkent'/.test(deploy)
+    && /'5 3 \* \* \*'/.test(deploy)
+    && /functions\/v1\/daily-digest/.test(deploy),
+  'watchdog and daily digest are deployed and scheduled through pg_cron')
+check(38, 'Browser task write barrier',
+  /validateReadOnlyMarketplaceBrowserTask/.test(read('supabase/functions/_shared/browser.ts'))
+    && /READ_ONLY_MARKETPLACE_HOSTS/.test(read('supabase/functions/_shared/browser.ts'))
+    && /validateReadOnlyMarketplaceBrowserTask\(url, taskText\)/.test(fn('agent-tool'))
+    && /validateReadOnlyMarketplaceBrowserTask\(url, taskText\)/.test(read('supabase/functions/_shared/tools.ts')),
+  'browser tasks are limited to approved marketplace domains and read-only work until owner approvals exist')
 
 fs.writeFileSync(path.join(root, 'agent-hub/security-contracts-report.json'), JSON.stringify({ generated_at: new Date().toISOString(), failed, partial, rows }, null, 2))
-console.log(`Security contracts: ${30 - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
+console.log(`Security contracts: ${rows.length - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
 if (failed) process.exit(1)
