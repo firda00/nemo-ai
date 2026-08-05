@@ -27,6 +27,8 @@ const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
 const telegramHelper = read('supabase/functions/_shared/telegram.ts')
 const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
 const i18nExtra = read('src/i18n/extra.ts')
+const feeProposalsMigration = read('supabase/migrations/20260805160000_commerce_fee_proposals.sql')
+const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -143,6 +145,14 @@ const checks = [
   ['extraction does not depend on the agent chat model', /Deliberately NOT agent\.model/.test(tgProcess) && /parseEconomicsMessage\(apiKey, PRIMARY_MODEL, text\)/.test(tgProcess)],
   ['a fenced or chatty JSON reply is still parsed', /function stripFence/.test(economicsChat) && /text\.slice\(start, end \+ 1\)/.test(economicsChat)],
   ['matching survives real marketplace whitespace and either name field', /replace\(\/\\s\+\/g, ' '\)/.test(economicsChat) && /normalize\(sku\.external_sku\) === needle \|\| normalize\(sku\.title\) === needle/.test(economicsChat) && /external\.includes\(needle\)/.test(economicsChat)],
+  ['cabinet fees are read deterministically, never by a model', /Deliberately NOT an LLM call/.test(uzumFees) && /(?<!\d)/.test(uzumFees) && !/callOpenRouter|openai/i.test(uzumFees)],
+  ['an unrecognised fees page yields nothing rather than a guess', /returns nothing when it is unsure/.test(uzumFees) && /value < 0 || value > max/.test(uzumFees)],
+  ['catalogue-wide fees only fill blanks', /only FILL BLANKS/.test(feeProposalsMigration)
+    && feeProposalsMigration.includes('coalesce(s.commission_percent, v_proposal.commission_percent)')
+    && feeProposalsMigration.includes('v_proposal.commission_percent is not null and s.commission_percent is null')],
+  ['a browser proposal still needs an owner and a confirmation', /action === 'propose_fees' || action === 'apply_proposal'/.test(commerceControl) && /Ownership is re-checked here/.test(commerceControl) && /source: 'browser'/.test(commerceControl)],
+  ['the owner sees the evidence behind a scraped number', /Echo the exact lines the numbers were read from/.test(commercePage) && /evidence/.test(commerceControl)],
+  ['every commerce migration is registered for deploy', ['20260805140000','20260805150000','20260805160000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

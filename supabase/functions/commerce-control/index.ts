@@ -3,6 +3,7 @@ import { corsPreflight, json } from '../_shared/cors.ts'
 import { uzumShopList } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
+import { extractUzumFees, hasAnyFee } from '../_shared/uzumFees.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -100,7 +101,7 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}))
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
-  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics'
+  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'apply_proposal' || action === 'reject_proposal'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -269,6 +270,58 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'could not update SKU economics' }, 500)
     if (!updated?.length) return json({ error: 'SKU was updated concurrently, reload and retry' }, 409)
     return json({ ok: true, sku_id: sku.id, updated: providedKeys, estimated_fields: estimatedFields })
+  }
+
+  if (action === 'propose_fees') {
+    const catalog = await catalogForAccount(admin, profile.account_id, body?.catalog_id)
+    if (!catalog) return json({ error: 'catalog not found' }, 404)
+    // Only the seller cabinet can state a seller's fees, so only an observation of it counts.
+    const { data: observation } = await admin.from('browser_observations')
+      .select('id, source_url, body_text, observed_at')
+      .eq('account_id', profile.account_id).gt('expires_at', new Date().toISOString())
+      .order('observed_at', { ascending: false }).limit(1).maybeSingle()
+    if (!observation?.body_text) return json({ error: 'no recent seller-cabinet observation' }, 409)
+
+    const fees = extractUzumFees(observation.body_text)
+    if (!hasAnyFee(fees)) return json({ error: 'no fees recognised on that page', evidence: [] }, 422)
+
+    const { data: proposal, error } = await admin.from('commerce_economics_proposals').insert({
+      account_id: profile.account_id,
+      catalog_id: catalog.id,
+      source: 'browser',
+      product_query: 'catalogue fees',
+      source_text: observation.source_url ?? 'seller cabinet',
+      commission_percent: fees.commission_percent,
+      fulfillment_tiyin: fees.fulfillment_tiyin,
+      returns_reserve_percent: fees.returns_reserve_percent,
+    }).select('id, commission_percent, fulfillment_tiyin, returns_reserve_percent, expires_at').single()
+    if (error || !proposal) return json({ error: 'could not prepare the fee proposal' }, 500)
+    return json({ ok: true, proposal, evidence: fees.evidence, observed_at: observation.observed_at })
+  }
+
+  if (action === 'list_proposals') {
+    const { data, error } = await admin.from('commerce_economics_proposals')
+      .select('id, source, status, product_query, source_text, sku_id, catalog_id, unit_cost_tiyin, lead_time_days, safety_stock, min_margin_percent, commission_percent, fulfillment_tiyin, returns_reserve_percent, expires_at, created_at, commerce_skus(title, external_sku)')
+      .eq('account_id', profile.account_id).eq('status', 'pending')
+      .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(20)
+    return error ? json({ error: 'could not load proposals' }, 500) : json({ ok: true, proposals: data ?? [] })
+  }
+
+  if (action === 'apply_proposal' || action === 'reject_proposal') {
+    if (typeof body?.proposal_id !== 'string' || !UUID.test(body.proposal_id)) return json({ error: 'invalid proposal_id' }, 400)
+    // Ownership is re-checked here rather than trusted from the client: the RPC runs as
+    // service_role and would otherwise apply any account's proposal.
+    const { data: proposal } = await admin.from('commerce_economics_proposals')
+      .select('id, status').eq('id', body.proposal_id).eq('account_id', profile.account_id).maybeSingle()
+    if (!proposal || proposal.status !== 'pending') return json({ error: 'pending proposal not found' }, 404)
+
+    if (action === 'reject_proposal') {
+      const { error } = await admin.from('commerce_economics_proposals')
+        .update({ status: 'rejected' }).eq('id', proposal.id).eq('status', 'pending')
+      return error ? json({ error: 'could not reject the proposal' }, 500) : json({ ok: true, rejected: true })
+    }
+    const { data, error } = await admin.rpc('apply_commerce_economics_proposal', { p_proposal_id: proposal.id })
+    return error ? json({ error: 'could not apply the proposal' }, 409) : json({ ok: true, result: data })
   }
 
   if (action === 'resolve_import_row') {

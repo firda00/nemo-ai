@@ -9,6 +9,7 @@ import { useI18n } from '../../i18n'
 
 type Catalog = { id: string; name: string; source: string; external_shop_id: string | null; status: string; last_synced_at: string | null; last_sync_error: string | null }
 type Pilot = { status: string; started_at: string | null; expires_at: string | null; read_only_at: string | null }
+type Proposal = { id: string; source: string; sku_id: string | null; catalog_id: string | null; unit_cost_tiyin: number | null; lead_time_days: number | null; commission_percent: number | null; fulfillment_tiyin: number | null; returns_reserve_percent: number | null; commerce_skus?: { title: string; external_sku: string } | null }
 type Batch = { id: string; status: string; total_rows: number; valid_rows: number; unmatched_rows: number; error_rows: number; created_at: string }
 
 const headers = ['external_sku', 'unit_cost_uzs', 'commission_percent', 'fulfillment_uzs', 'returns_reserve_percent', 'lead_time_days', 'moq', 'safety_stock', 'min_margin_percent'] as const
@@ -57,7 +58,8 @@ export default function CommercePage() {
   const [telegramConnected, setTelegramConnected] = useState(false)
   const [telegramLink, setTelegramLink] = useState<string | null>(null)
   const [skus, setSkus] = useState<CommerceSku[]>([])
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | null>(null)
+  const [proposals, setProposals] = useState<Proposal[]>([])
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'proposal' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
@@ -67,12 +69,20 @@ export default function CommercePage() {
     setSkus(result?.ok ? result.skus ?? [] : [])
   }, [])
 
+  const loadProposals = useCallback(async () => {
+    if (!supabase) { setProposals([]); return }
+    const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_proposals' } })
+    const result = data as { ok?: boolean; proposals?: Proposal[] } | null
+    setProposals(result?.ok ? result.proposals ?? [] : [])
+  }, [])
+
   const load = useCallback(async (selectedCatalogId = catalogId) => {
     if (!supabase) { setLoading(false); return }
     const [statusResult, listResult] = await Promise.all([
       supabase.functions.invoke('commerce-control', { body: { action: 'status' } }),
       supabase.functions.invoke('commerce-control', { body: { action: 'list', ...(selectedCatalogId ? { catalog_id: selectedCatalogId } : {}) } }),
       loadSkus(selectedCatalogId),
+      loadProposals(),
     ])
     const status = statusResult.data as { ok?: boolean; pilot?: Pilot | null; catalogs?: Catalog[]; telegram_connected?: boolean; error?: string } | null
     const list = listResult.data as { ok?: boolean; batches?: Batch[]; error?: string } | null
@@ -85,7 +95,7 @@ export default function CommercePage() {
     if (listResult.error || !list?.ok) setMessage({ ok: false, text: list?.error ?? listResult.error?.message ?? t('commerce.errImports') })
     else setBatches(list.batches ?? [])
     setLoading(false)
-  }, [catalogId, loadSkus])
+  }, [catalogId, loadSkus, loadProposals])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void load() }, 0)
@@ -133,6 +143,42 @@ export default function CommercePage() {
     await loadSkus(catalogId)
     return true
   }
+
+  const proposeFees = async () => {
+    if (!supabase || !catalogId || busy) return
+    setBusy('fees'); setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'propose_fees', catalog_id: catalogId } })
+    const result = data as { ok?: boolean; evidence?: string[]; error?: string } | null
+    if (error || !result?.ok) {
+      const key = result?.error === 'no recent seller-cabinet observation' ? 'commerce.feesNoObs' : 'commerce.feesNone'
+      setMessage({ ok: false, text: t(key) })
+    } else {
+      // Echo the exact lines the numbers were read from: the owner is confirming a scrape,
+      // and cannot judge it without seeing what was actually on the page.
+      setMessage({ ok: true, text: (result.evidence ?? []).join(' · ') })
+      await loadProposals()
+    }
+    setBusy(null)
+  }
+
+  const decideProposal = async (proposalId: string, action: 'apply_proposal' | 'reject_proposal') => {
+    if (!supabase || busy) return
+    setBusy('proposal'); setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action, proposal_id: proposalId } })
+    const result = data as { ok?: boolean; result?: { skus_touched?: number }; error?: string } | null
+    if (error || !result?.ok) setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.errSaveSku') })
+    else setMessage({ ok: true, text: action === 'apply_proposal' ? t('commerce.proposalApplied', { count: result.result?.skus_touched ?? 0 }) : t('commerce.proposalRejected') })
+    await Promise.all([loadProposals(), loadSkus(catalogId)])
+    setBusy(null)
+  }
+
+  const describeProposal = (proposal: Proposal) => [
+    proposal.commission_percent != null ? `${t('commerce.commission')} ${proposal.commission_percent}%` : null,
+    proposal.fulfillment_tiyin != null ? `${t('commerce.fulfillment')} ${(proposal.fulfillment_tiyin / 100).toLocaleString('ru-RU')}` : null,
+    proposal.returns_reserve_percent != null ? `${t('commerce.returns')} ${proposal.returns_reserve_percent}%` : null,
+    proposal.unit_cost_tiyin != null ? `${t('commerce.sku.cost')} ${(proposal.unit_cost_tiyin / 100).toLocaleString('ru-RU')}` : null,
+    proposal.lead_time_days != null ? `${t('commerce.sku.lead')} ${proposal.lead_time_days}` : null,
+  ].filter(Boolean).join(' · ')
 
   const connectTelegram = async () => {
     // Without claiming `busy` a double click minted several one-time links in the same second.
@@ -199,6 +245,37 @@ export default function CommercePage() {
         <Card className="lg:col-span-2" padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.pilotStatus')}</p><p className="mt-2 text-lg font-semibold text-text">{loading ? t('common.loading') : pilot?.status ?? t('commerce.notStarted')}</p><p className="mt-1 text-xs text-muted">{pilot?.expires_at ? t('commerce.expires', { date: new Date(pilot.expires_at).toLocaleDateString() }) : t('commerce.noPilot')}</p></Card>
         <Card padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalogs')}</p><p className="mt-2 text-lg font-semibold text-text">{catalogs.length}</p><p className="mt-1 text-xs text-muted">{selectedCatalog ? `${selectedCatalog.name} · ${selectedCatalog.status}` : t('commerce.discoverFirst')}</p></Card>
       </div>
+
+      {proposals.length > 0 && (
+        <Card className="mt-4" padding="md">
+          <p className="text-sm font-semibold text-text">{t('commerce.proposalsTitle')}</p>
+          <p className="mt-1 text-xs text-muted">{t('commerce.proposalsHint')}</p>
+          <div className="mt-4 space-y-2">
+            {proposals.map((proposal) => (
+              <div key={proposal.id} className="flex flex-col gap-2 rounded-xl border border-ice/10 bg-panel/60 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-text">
+                    {proposal.commerce_skus?.title ?? t('commerce.proposalCatalog')}
+                    {proposal.commerce_skus?.external_sku && <span className="ml-2 text-xs text-muted">{proposal.commerce_skus.external_sku}</span>}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted">{describeProposal(proposal)}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" onClick={() => void decideProposal(proposal.id, 'apply_proposal')} disabled={busy === 'proposal'}>{t('commerce.proposalApply')}</Button>
+                  <Button size="sm" variant="outline" onClick={() => void decideProposal(proposal.id, 'reject_proposal')} disabled={busy === 'proposal'}>{t('commerce.proposalReject')}</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card className="mt-4" padding="md">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div><p className="text-sm font-semibold text-text">{t('commerce.feesTitle')}</p><p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.feesHint')}</p></div>
+          <Button variant="outline" onClick={proposeFees} loading={busy === 'fees'} disabled={!catalogId}>{t('commerce.feesRead')}</Button>
+        </div>
+      </Card>
 
       <Card className="mt-4" padding="md"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{t('commerce.tgTitle')}</p><p className="mt-1 text-xs text-muted">{t('commerce.tgSubtitle')}</p></div>{telegramConnected ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1.5 text-xs font-medium text-teal"><CheckCircle2 size={14} /> {t('commerce.tgConnected')}</span> : <Button onClick={connectTelegram}>{t('commerce.tgConnect')}</Button>}</div>{telegramLink && <a href={telegramLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-medium text-accent-cyan underline">{t('commerce.tgOpen')}</a>}{!telegramConnected && !telegramLink && <p className="mt-3 text-xs text-amber">{t('commerce.tgHint')}</p>}</Card>
 
