@@ -50,7 +50,7 @@ export async function parseEconomicsMessage(apiKey: string, model: string, text:
   if (!raw || typeof raw !== 'object') return null
 
   const num = (value: unknown, min: number, max: number): number | null => {
-    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[\s ]/g, '').replace(',', '.')) : NaN
+    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[\s\u00a0]/g, '').replace(',', '.')) : NaN
     return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null
   }
   const product = typeof raw.product === 'string' ? raw.product.trim().slice(0, 200) : ''
