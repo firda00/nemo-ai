@@ -26,6 +26,7 @@ const economicsChat = read('supabase/functions/_shared/commerceEconomicsChat.ts'
 const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
 const telegramHelper = read('supabase/functions/_shared/telegram.ts')
 const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
+const i18nExtra = read('src/i18n/extra.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -80,9 +81,14 @@ const checks = [
   ['commerce money is stored as integer tiyin', /unit_cost_tiyin: integer\(/.test(commerceControl) && /row\.price \* 100/.test(commerceWorker) && /Math\.round\(Number\(normalized\) \* 100\)/.test(commercePage) && /unit_cost_tiyin bigint/.test(commerceMigration)],
   ['SKU matching is exact with an unmatched queue', /matching is intentionally exact/.test(commerceControl) && /'unmatched'/.test(commerceControl) && /unique \(catalog_id, external_sku\)/.test(commerceMigration)],
   ['import staging is atomic, hashed and capped', /SHA256\.test\(fileHash\)/.test(commerceControl) && /inputRows\.length < 1 \|\| inputRows\.length > 500/.test(commerceControl) && /'import already staged'/.test(commerceControl) && /commerce_import_batches'\)\.delete\(\)\.eq\('id', batch\.id\)/.test(commerceControl) && /unique \(account_id, catalog_id, file_sha256\)/.test(commerceMigration)],
-  ['Uzum stays read-only with approval-gated recommendations', /Read-only Uzum catalogue synchronizer/.test(commerceWorker) && /no recommendation is executed/.test(commerceDigest) && /never change Uzum prices/.test(commercePage) && /'reorder', 'price_guard', 'missing_data'/.test(commerceMigration)],
+  // The read-only promise now lives in the dictionaries, so it is asserted in every language
+  // a seller can actually read — a translation that quietly dropped it would ship a page
+  // claiming less than the system guarantees.
+  ['Uzum stays read-only with approval-gated recommendations', /Read-only Uzum catalogue synchronizer/.test(commerceWorker) && /no recommendation is executed/.test(commerceDigest) && /'reorder', 'price_guard', 'missing_data'/.test(commerceMigration)
+    && /never changes Uzum prices/.test(i18nExtra) && /не меняет цены на Uzum/.test(i18nExtra) && /Uzumda narxni o‘zgartirmaydi/.test(i18nExtra)],
   ['production E2E accounts cannot trigger external commerce actions', /blocksExternalActions\(admin, profile\.account_id\)/.test(commerceControl) && /blocksExternalActions\(db, accountId\)/.test(commerceDigest)],
-  ['commerce UI exposes the Telegram connect flow honestly', /telegram_connected/.test(commercePage) && /create_telegram_link/.test(commercePage) && /Open Telegram and press Start/.test(commercePage) && /Connect a Telegram bot in AI Teams first/.test(commerceControl)],
+  ['commerce UI exposes the Telegram connect flow honestly', /telegram_connected/.test(commercePage) && /create_telegram_link/.test(commercePage) && /commerce\.tgOpen/.test(commercePage) && /Connect a Telegram bot in AI Teams first/.test(commerceControl)
+    && /Open Telegram and press Start/.test(i18nExtra) && /Откройте Telegram и нажмите Start/.test(i18nExtra) && /Telegramni ochib, Start bosing/.test(i18nExtra)],
   ['worker slots are floored to four Tashkent hours', /Tashkent has no DST/.test(commerceWorker) && /getUTCHours\(\) % 4/.test(commerceWorker)],
   ['commerce cron schedules run on Tashkent time', /nemo-commerce-worker-tashkent/.test(deploy) && /0 19,23,3,7,11,15 \* \* \*/.test(deploy) && /nemo-commerce-digest-tashkent/.test(deploy) && /'0 4 \* \* \*'/.test(deploy)],
   ['all three commerce migrations are deployed and probed', /20260805090000_commerce_control_center\.sql/.test(deploy) && /20260805100000_commerce_alert_delivery\.sql/.test(deploy) && /20260805110000_commerce_telegram_links\.sql/.test(deploy) && /to_regclass\('public\.commerce_telegram_links'\) is not null/.test(deploy)],
@@ -97,7 +103,14 @@ const checks = [
   ['owner edits confirm a field and clear its estimate mark', /An explicit owner value confirms the field/.test(commerceControl) && /!providedKeys\.includes\(field\)/.test(commerceControl) && /economics_revision: sku\.economics_revision \+ 1/.test(commerceControl)],
   ['SKU economics edits are validated and concurrency-safe', /`\$\{field\} is invalid`/.test(commerceControl) && /eq\('economics_revision', sku\.economics_revision\)/.test(commerceControl) && /updated concurrently, reload and retry/.test(commerceControl)],
   ['auto-fill and inline editing are owner-gated actions', /action === 'autofill_economics' \|\| action === 'update_sku_economics'/.test(commerceControl) && /userDb\.rpc\('autofill_commerce_economics'/.test(commerceControl)],
-  ['UI marks estimates and explains the alert cap', /Auto-fill estimates/.test(commercePage) && /never trigger critical alerts until you confirm them/.test(commercePage) && /Estimated by Nemo — confirm to enable critical alerts/.test(skuTable) && /Bulk alternative to the table above/.test(commercePage)],
+  // The estimate cap is the one promise that stops a guessed number from paging someone at
+  // night. Every language must still say it, and the CSV path must still read as optional.
+  ['UI marks estimates and explains the alert cap', /commerce\.autofill/.test(commercePage) && /commerce\.economicsHint/.test(commercePage) && /commerce\.sku\.estimatedTitle/.test(skuTable) && /commerce\.bulkHint/.test(commercePage)
+    && /never trigger critical alerts until you confirm them/.test(i18nExtra) && /не вызывает срочных оповещений, пока вы её не подтвердите/.test(i18nExtra) && /shoshilinch ogohlantirish yubormaydi/.test(i18nExtra)],
+  ['commerce copy exists in all three languages', ['extraUz', 'extraRu', 'extraEn'].every((name) => {
+    const at = i18nExtra.indexOf(`export const ${name} = {`)
+    return at >= 0 && i18nExtra.slice(at, at + 6000).includes('"commerce":')
+  })],
   ['inline editing keeps money in tiyin', /Math\.round\(Number\(value\) \* 100\)/.test(skuTable) && /sku\.unit_cost_tiyin \/ 100/.test(skuTable)],
 
   // --- Telegram onboarding must never fail silently or through the wrong bot ---

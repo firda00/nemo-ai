@@ -153,6 +153,25 @@
       0 0 46px -10px rgba(6, 182, 212, 0.6);
   }
 
+  /* The marketing page commits to one visual world — navy, like the brand's own ground —
+     rather than following the OS theme. It was already trying to: it overrode four colour
+     variables inline while its background, panel token and color-scheme kept following the
+     theme, so a light-theme visitor got a light page frame around dark sections and light
+     native controls on a dark form. This scope finishes the job on brand values. */
+  .theme-dark-scope {
+    --color-bg: 15 23 42;
+    --color-panel: 30 41 59;
+    --color-card: 255 255 255;
+    --color-text: 234 236 246;
+    --color-muted: 148 163 184;
+    --color-fog: 107 115 146;
+    --color-ice: 234 236 246;
+    --color-midnight: 201 210 242;
+    color-scheme: dark;
+    background-color: rgb(var(--color-bg));
+    color: rgb(var(--color-text));
+  }
+
   /* Buttons: radius 12 (spec §3). Primary = brand gradient (set in Button.tsx).
      No transition here: `.lift` owns it. This rule is declared after `.lift`, so at equal
      specificity its `transition-all` would win the cascade and re-introduce the layout

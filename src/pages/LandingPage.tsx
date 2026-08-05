@@ -18,7 +18,6 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import type { CSSProperties } from 'react'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
 import { Accordion } from '../components/ui/Accordion'
@@ -390,15 +389,10 @@ export default function LandingPage() {
   const c = copy[lang]
 
   return (
-    <div
-      className="min-h-screen overflow-x-hidden bg-[#060b14]"
-      style={{
-        '--color-text': '234 236 246',
-        '--color-muted': '152 162 188',
-        '--color-fog': '107 115 146',
-        '--color-ice': '234 236 246',
-      } as CSSProperties}
-    >
+    // Deliberately single-theme: the marketing page always renders on the brand's navy
+    // ground. `theme-dark-scope` carries every colour token plus color-scheme, so native
+    // controls and the page frame stay dark for a light-theme visitor too.
+    <div className="theme-dark-scope min-h-screen overflow-x-hidden">
       <MarketingHeader />
 
       <main>
