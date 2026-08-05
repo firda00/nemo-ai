@@ -127,6 +127,8 @@ const checks = [
   ['owner DM handling runs before the group-bot branch', tgProcess.indexOf('const owner = await ownerChatFor') < tgProcess.indexOf('// GROUP task-bot') && /has to run BEFORE the group branch/.test(tgProcess)],
   ['a bare /start is answered instead of ignored', /\^\\\/start\(\?:@\\w\+\)\?\$/.test(tgProcess) && /Здравствуйте! Это Nemo/.test(tgProcess) && /Connect Telegram notifications/.test(tgProcess)],
   ['only internal bots get Nemo-branded greetings', /customer-facing DM bot, which must keep its persona/.test(tgProcess) && /channel\.scope === 'group' && \/\^\\\/start/.test(tgProcess)],
+  ['extraction does not depend on the agent chat model', /Deliberately NOT agent\.model/.test(tgProcess) && /parseEconomicsMessage\(apiKey, PRIMARY_MODEL, text\)/.test(tgProcess)],
+  ['a fenced or chatty JSON reply is still parsed', /function stripFence/.test(economicsChat) && /text\.slice\(start, end \+ 1\)/.test(economicsChat)],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

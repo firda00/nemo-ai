@@ -3,6 +3,7 @@
 // full flow: voice transcription, group task-bot, DM task-completion, customer dialogue + reply.
 // Extracted so the webhook can just enqueue and a rate-capped worker does the heavy LLM work.
 import { buildReply, buildSubAgentReply, type ReplyDiagnostics } from './agent.ts'
+import { PRIMARY_MODEL } from './llm.ts'
 import { tgSend, tgSendHtml, tgSendKeyboard } from './telegram.ts'
 import { escapeHtml } from './telegramFormat.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
@@ -95,7 +96,10 @@ async function handleEconomicsMessage(
   owner: OwnerChat,
   text: string,
 ): Promise<boolean> {
-  const parsed = await parseEconomicsMessage(apiKey, agent?.model ?? 'openai/gpt-4o-mini', text)
+  // Deliberately NOT agent.model: an agent may be configured with a free-tier chat model that
+  // ignores response_format. Extraction is a structured task where reliability beats persona, and
+  // a silent parse failure here looks to the owner like the feature simply does not work.
+  const parsed = await parseEconomicsMessage(apiKey, PRIMARY_MODEL, text)
   if (!parsed) return false
 
   const skus = await accountSkus(db, owner.accountId)

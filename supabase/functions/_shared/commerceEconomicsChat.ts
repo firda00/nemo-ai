@@ -31,6 +31,15 @@ export function looksLikeEconomics(text: string): boolean {
 
 const SCHEMA = `{"product":"string, the product name or SKU code exactly as the owner said it","unit_cost_uzs":"number or null, supplier purchase cost per unit in UZS","lead_time_days":"number or null, supplier delivery time in days","safety_stock":"number or null, buffer units","min_margin_percent":"number or null, minimum acceptable margin percent"}`
 
+// Models that ignore response_format wrap JSON in a ```json fence or add a sentence around it.
+// Extracting the outermost object costs nothing and saves an otherwise silent parse failure.
+function stripFence(content: string): string {
+  const text = String(content ?? '').replace(/```(?:json)?/gi, '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  return start >= 0 && end > start ? text.slice(start, end + 1) : text
+}
+
 export async function parseEconomicsMessage(apiKey: string, model: string, text: string): Promise<Parsed | null> {
   const raw = await callOpenRouter({
     apiKey,
@@ -46,7 +55,7 @@ export async function parseEconomicsMessage(apiKey: string, model: string, text:
       { role: 'user', content: text.slice(0, 1000) },
     ],
   })
-    .then((res) => JSON.parse(res.content) as Record<string, unknown>)
+    .then((res) => JSON.parse(stripFence(res.content)) as Record<string, unknown>)
     .catch(() => null)
   if (!raw || typeof raw !== 'object') return null
 
