@@ -124,10 +124,12 @@ Deno.serve(async (req) => {
   if (action === 'create_telegram_link') {
     const { data: agents } = await admin.from('agents').select('id').eq('account_id', profile.account_id).limit(20)
     const ids = (agents ?? []).map((agent: { id: string }) => agent.id)
-    const { data: channel } = ids.length ? await admin.from('channels').select('credentials').eq('type', 'telegram').in('agent_id', ids).eq('status', 'connected').limit(1).maybeSingle() : { data: null }
+    // Deterministic choice (oldest connected bot) so the link always points at the same bot and the
+    // owner is not sent to a different one on every click.
+    const { data: channel } = ids.length ? await admin.from('channels').select('id, credentials').eq('type', 'telegram').in('agent_id', ids).eq('status', 'connected').order('created_at', { ascending: true }).limit(1).maybeSingle() : { data: null }
     const username = typeof channel?.credentials?.username === 'string' ? channel.credentials.username.replace(/^@/, '') : ''
     if (!username) return json({ error: 'Connect a Telegram bot in AI Teams first' }, 409)
-    const { data: link, error } = await admin.from('commerce_telegram_links').insert({ account_id: profile.account_id }).select('token').single()
+    const { data: link, error } = await admin.from('commerce_telegram_links').insert({ account_id: profile.account_id, channel_id: channel?.id ?? null }).select('token').single()
     if (error || !link) return json({ error: 'could not create Telegram link' }, 500)
     return json({ ok: true, url: `https://t.me/${username}?start=commerce_${link.token}` })
   }

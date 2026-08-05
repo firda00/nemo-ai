@@ -77,6 +77,7 @@ Apply-Migration .\supabase\migrations\20260805090000_commerce_control_center.sql
 Apply-Migration .\supabase\migrations\20260805100000_commerce_alert_delivery.sql
 Apply-Migration .\supabase\migrations\20260805110000_commerce_telegram_links.sql
 Apply-Migration .\supabase\migrations\20260805120000_commerce_economics_autofill.sql
+Apply-Migration .\supabase\migrations\20260805130000_commerce_notify_channel.sql
 
 $schemaCheckSql = @'
 select

@@ -5,6 +5,7 @@
 // canary. Public (verify_jwt = false) — authenticity is Telegram's secret token.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { processTelegramUpdate } from '../_shared/tgProcess.ts'
+import { tgSend } from '../_shared/telegram.ts'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
@@ -21,7 +22,7 @@ Deno.serve(async (req) => {
     if (!channelId) return new Response('no channel', { status: 400 })
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE)
-    const { data: channel } = await db.from('channels').select('id, secret_token, agent_id').eq('id', channelId).single()
+    const { data: channel } = await db.from('channels').select('id, secret_token, agent_id, credentials').eq('id', channelId).single()
     if (!channel) return new Response('channel not found', { status: 404 })
 
     const secret = req.headers.get('x-telegram-bot-api-secret-token')
@@ -35,12 +36,26 @@ Deno.serve(async (req) => {
     const update = await req.json()
     const startToken = String(update?.message?.text ?? '').match(/^\/start\s+commerce_([0-9a-f-]{36})$/i)?.[1]
     if (startToken && update?.message?.chat?.id) {
+      const chatId = String(update.message.chat.id)
+      const botToken = channel.credentials?.bot_token
       const { data: link } = await db.from('commerce_telegram_links').select('account_id, expires_at, used_at').eq('token', startToken).maybeSingle()
-      if (link && !link.used_at && new Date(link.expires_at) > new Date()) {
-        await db.from('business_profiles').upsert({ account_id: link.account_id, notify_chat_id: String(update.message.chat.id), updated_at: new Date().toISOString() })
-        await db.from('commerce_telegram_links').update({ used_at: new Date().toISOString() }).eq('token', startToken).is('used_at', null)
+      const expired = link ? new Date(link.expires_at) <= new Date() : false
+      if (link && !link.used_at && !expired) {
+        // Bind notifications to THIS channel: the bot that received /start is by construction the
+        // one the owner can receive messages from. Picking any other bot on the account would be
+        // rejected by Telegram and the digest would silently never arrive.
+        await db.from('business_profiles').upsert({ account_id: link.account_id, notify_chat_id: chatId, notify_channel_id: channelId, updated_at: new Date().toISOString() })
+        await db.from('commerce_telegram_links').update({ used_at: new Date().toISOString(), channel_id: channelId }).eq('token', startToken).is('used_at', null)
+        if (botToken) await tgSend(botToken, chatId, '✅ <b>Nemo Commerce подключён.</b>\nСюда придут ежедневный дайджест в 09:00 по Ташкенту и срочные оповещения об остатках.\n\nNemo не меняет цены и не оформляет заказы автоматически — только рекомендации.')
         return new Response('ok')
       }
+      // A dead link must say so. Staying silent here looked exactly like a broken bot.
+      if (botToken) {
+        await tgSend(botToken, chatId, link
+          ? '⚠️ Эта ссылка уже использована или истекла (срок действия — 15 минут).\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.'
+          : '⚠️ Ссылка не распознана.\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.')
+      }
+      return new Response('ok')
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rt = (globalThis as any).EdgeRuntime

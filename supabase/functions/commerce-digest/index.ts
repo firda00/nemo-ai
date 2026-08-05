@@ -10,12 +10,22 @@ const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON = Deno.env.get('CRON_SECRET') ?? ''
 
 async function telegramTarget(db: any, accountId: string) {
-  const { data: profile } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', accountId).maybeSingle()
+  const { data: profile } = await db.from('business_profiles').select('notify_chat_id, notify_channel_id').eq('account_id', accountId).maybeSingle()
   if (!profile?.notify_chat_id) return null
+  // Send through the bot the owner actually pressed Start on. Any other bot on the account cannot
+  // open a conversation, so Telegram would reject the message and the digest would vanish silently.
+  if (profile.notify_channel_id) {
+    const { data: bound } = await db.from('channels').select('credentials').eq('id', profile.notify_channel_id).maybeSingle()
+    const boundToken = bound?.credentials?.bot_token
+    if (boundToken) return { token: String(boundToken), chatId: String(profile.notify_chat_id) }
+  }
   const { data: agents } = await db.from('agents').select('id').eq('account_id', accountId).limit(20)
   const ids = (agents ?? []).map((agent: { id: string }) => agent.id)
   if (!ids.length) return null
-  const { data: channel } = await db.from('channels').select('credentials').eq('type', 'telegram').in('agent_id', ids).limit(1).maybeSingle()
+  // Legacy chats bound before notify_channel_id existed: pick deterministically, oldest connected
+  // bot first, so behaviour is at least reproducible instead of arbitrary.
+  const { data: channel } = await db.from('channels').select('credentials').eq('type', 'telegram').in('agent_id', ids)
+    .eq('status', 'connected').order('created_at', { ascending: true }).limit(1).maybeSingle()
   const token = channel?.credentials?.bot_token
   return token ? { token: String(token), chatId: String(profile.notify_chat_id) } : null
 }

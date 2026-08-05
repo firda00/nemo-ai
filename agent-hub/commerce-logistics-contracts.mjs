@@ -20,6 +20,7 @@ const commercePage = read('src/pages/app/CommercePage.tsx')
 const commerceMigration = read('supabase/migrations/20260805090000_commerce_control_center.sql')
 const telegramLinksMigration = read('supabase/migrations/20260805110000_commerce_telegram_links.sql')
 const autofillMigration = read('supabase/migrations/20260805120000_commerce_economics_autofill.sql')
+const notifyChannelMigration = read('supabase/migrations/20260805130000_commerce_notify_channel.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -70,7 +71,7 @@ const checks = [
   ['reorder alerts wait for seven full days of history', /7 \* 86_400_000/.test(commerceWorker) && /historyReady && stock != null/.test(commerceWorker)],
   ['critical alerts are deduplicated and marked only after Telegram accepts', /severity === 'critical' && !item\.alerted_at/.test(commerceDigest) && /if \(await tgSend\(target\.token, target\.chatId, criticalText\(row\)\)\)/.test(commerceDigest) && /\.is\('alerted_at', null\)/.test(commerceDigest)],
   ['daily digest is sent once per Tashkent day', /timeZone: 'Asia\/Tashkent'/.test(commerceDigest) && /digest_sent_at !== today/.test(commerceDigest) && /unsent\.length && await tgSend/.test(commerceDigest)],
-  ['telegram deep links are short-lived and single-use', /interval '15 minutes'/.test(telegramLinksMigration) && /revoke all on public\.commerce_telegram_links from public, anon, authenticated/.test(telegramLinksMigration) && telegramWebhook.includes('commerce_([0-9a-f-]{36})') && /!link\.used_at && new Date\(link\.expires_at\) > new Date\(\)/.test(telegramWebhook) && /\.is\('used_at', null\)/.test(telegramWebhook)],
+  ['telegram deep links are short-lived and single-use', /interval '15 minutes'/.test(telegramLinksMigration) && /revoke all on public\.commerce_telegram_links from public, anon, authenticated/.test(telegramLinksMigration) && telegramWebhook.includes('commerce_([0-9a-f-]{36})') && /const expired = link \? new Date\(link\.expires_at\) <= new Date\(\) : false/.test(telegramWebhook) && /if \(link && !link\.used_at && !expired\)/.test(telegramWebhook) && /\.is\('used_at', null\)/.test(telegramWebhook)],
   ['commerce money is stored as integer tiyin', /unit_cost_tiyin: integer\(/.test(commerceControl) && /row\.price \* 100/.test(commerceWorker) && /Math\.round\(Number\(normalized\) \* 100\)/.test(commercePage) && /unit_cost_tiyin bigint/.test(commerceMigration)],
   ['SKU matching is exact with an unmatched queue', /matching is intentionally exact/.test(commerceControl) && /'unmatched'/.test(commerceControl) && /unique \(catalog_id, external_sku\)/.test(commerceMigration)],
   ['import staging is atomic, hashed and capped', /SHA256\.test\(fileHash\)/.test(commerceControl) && /inputRows\.length < 1 \|\| inputRows\.length > 500/.test(commerceControl) && /'import already staged'/.test(commerceControl) && /commerce_import_batches'\)\.delete\(\)\.eq\('id', batch\.id\)/.test(commerceControl) && /unique \(account_id, catalog_id, file_sha256\)/.test(commerceMigration)],
@@ -93,6 +94,14 @@ const checks = [
   ['auto-fill and inline editing are owner-gated actions', /action === 'autofill_economics' \|\| action === 'update_sku_economics'/.test(commerceControl) && /userDb\.rpc\('autofill_commerce_economics'/.test(commerceControl)],
   ['UI marks estimates and explains the alert cap', /Auto-fill estimates/.test(commercePage) && /never trigger critical alerts until you confirm them/.test(commercePage) && /Estimated by Nemo — confirm to enable critical alerts/.test(skuTable) && /Bulk alternative to the table above/.test(commercePage)],
   ['inline editing keeps money in tiyin', /Math\.round\(Number\(value\) \* 100\)/.test(skuTable) && /sku\.unit_cost_tiyin \/ 100/.test(skuTable)],
+
+  // --- Telegram onboarding must never fail silently or through the wrong bot ---
+  ['a dead or unknown deep link gets an answer, not silence', /must say so\. Staying silent here/.test(telegramWebhook) && /уже использована или истекла/.test(telegramWebhook) && /Ссылка не распознана/.test(telegramWebhook)],
+  ['successful linking confirms in chat', /Nemo Commerce подключён/.test(telegramWebhook) && /не меняет цены и не оформляет заказы автоматически/.test(telegramWebhook)],
+  ['notifications bind to the channel that received /start', /notify_channel_id: channelId/.test(telegramWebhook) && /channel_id: channelId/.test(telegramWebhook) && /notify_channel_id uuid references public\.channels\(id\)/.test(notifyChannelMigration)],
+  ['digest sends through the bound bot first', /notify_chat_id, notify_channel_id/.test(commerceDigest) && /eq\('id', profile\.notify_channel_id\)/.test(commerceDigest) && /cannot\s*\n?\s*\/\/ open a conversation|cannot/.test(commerceDigest)],
+  ['bot fallback is deterministic and connected-only', /eq\('status', 'connected'\)\.order\('created_at', \{ ascending: true \}\)/.test(commerceDigest) && /order\('created_at', \{ ascending: true \}\)/.test(commerceControl)],
+  ['notify channel migration is deployed', /20260805130000_commerce_notify_channel\.sql/.test(deploy)],
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
 ]
 
