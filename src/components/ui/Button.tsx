@@ -6,7 +6,8 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'danger' | 'succe
 type Size = 'sm' | 'md' | 'lg' | 'icon'
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-gradient-to-r from-violet to-cyan text-white shadow-[0_4px_14px_0_rgb(139,124,248,0.4)] hover:shadow-[0_6px_20px_0_rgb(139,124,248,0.5)] hover:brightness-105 active:brightness-95',
+  // Brand Identity 2026.1 flow gradient: cyan where the action starts, indigo where it lands.
+  primary: 'bg-gradient-to-r from-accent-cyan to-accent-indigo text-white font-medium shadow-sm hover:opacity-90 active:opacity-100',
   secondary: 'bg-white/5 text-text border border-white/10 hover:bg-white/10 hover:border-white/20 active:bg-white/5',
   ghost: 'text-muted hover:text-text hover:bg-white/5 active:bg-white/5',
   outline: 'border border-white/15 bg-transparent text-text hover:bg-white/5 hover:border-white/30 active:bg-white/5',

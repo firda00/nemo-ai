@@ -1,0 +1,47 @@
+{
+  "name": "Nemo AI",
+  "version": "2026.1",
+  "note": "Brand tokens. The product UI still runs the NEMO_AI_SPEC §3 palette; migrating the app to these values is a separate decision.",
+  "color": {
+    "core": {
+      "navy": { "value": "#0F172A", "use": "ground: app icon, hero, dark surfaces" },
+      "cyan": { "value": "#06B6D4", "use": "flow start: gradient origin, live state" },
+      "indigo": { "value": "#6366F1", "use": "structure: stems, primary action, links" },
+      "white": { "value": "#FFFFFF", "use": "wordmark and primary text on dark" }
+    },
+    "neutral": {
+      "surface": { "value": "#1E293B", "use": "raised panel on navy" },
+      "line": { "value": "#334155", "use": "hairline borders and dividers" },
+      "muted": { "value": "#94A3B8", "use": "secondary text on dark" }
+    },
+    "onLight": {
+      "cyan": { "value": "#0891B2", "use": "cyan on white grounds" },
+      "indigo": { "value": "#4F46E5", "use": "indigo on white grounds" }
+    }
+  },
+  "gradient": {
+    "flow": { "value": "linear-gradient(135deg, #06B6D4 0%, #6366F1 100%)", "use": "the only brand gradient; always runs cyan to indigo" }
+  },
+  "type": {
+    "sans": "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+    "wordmarkWeight": 700,
+    "wordmarkTracking": "-0.032em"
+  },
+  "geometry": {
+    "markGrid": 48,
+    "markStroke": 5,
+    "iconRadiusPercent": 22.4,
+    "clearSpaceRatio": 0.5,
+    "minimumMarkSizePx": 16,
+    "networkVariantMinimumPx": 64
+  },
+  "assets": {
+    "mark": "nemo-mark.svg",
+    "markMono": "nemo-mark-mono.svg",
+    "markNetwork": "nemo-mark-network.svg",
+    "lockupDark": "nemo-logo-horizontal.svg",
+    "lockupLight": "nemo-logo-horizontal-light.svg",
+    "appIcon": "nemo-app-icon.svg"
+  }
+}

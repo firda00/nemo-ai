@@ -1,0 +1,36 @@
+/* Nemo AI brand tokens — 2026 identity.
+ *
+ * These are BRAND values. The running app still ships the NEMO_AI_SPEC §3 product
+ * palette (bg #0A0D1C, violet #8B7CF8, cyan #22D3EE); adopting these across the UI is a
+ * separate, deliberate migration because every screen inherits from those tokens.
+ * Until that migration happens, use this file for brand surfaces only: logo assets,
+ * decks, the marketing site, partner kits, and app icons.
+ */
+:root {
+  /* Core — the four values that define the identity */
+  --nemo-navy: #0F172A;   /* ground: app icon, hero sections, dark surfaces */
+  --nemo-cyan: #06B6D4;   /* flow start: gradient origin, live/active state */
+  --nemo-indigo: #6366F1; /* structure: stems, primary actions, links */
+  --nemo-white: #FFFFFF;  /* wordmark on dark, primary text on dark */
+
+  /* Neutrals — biased toward the navy so grey never reads as unconsidered */
+  --nemo-surface: #1E293B; /* raised panel on navy */
+  --nemo-line: #334155;    /* hairline borders, dividers */
+  --nemo-muted: #94A3B8;   /* secondary text on dark */
+
+  /* Light-ground pair — the display hues lose contrast on white, so step them down */
+  --nemo-cyan-on-light: #0891B2;
+  --nemo-indigo-on-light: #4F46E5;
+
+  /* The one gradient. Always cyan to indigo, always along the flow direction. */
+  --nemo-gradient: linear-gradient(135deg, var(--nemo-cyan) 0%, var(--nemo-indigo) 100%);
+
+  /* Type */
+  --nemo-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --nemo-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --nemo-wordmark-tracking: -0.032em; /* the lockup is set tight; do not loosen it */
+
+  /* Geometry */
+  --nemo-icon-radius: 22.4%; /* app icon squircle */
+  --nemo-clear-space: 0.5;   /* clear space = 0.5x the mark height on every side */
+}

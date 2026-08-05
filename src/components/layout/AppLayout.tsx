@@ -12,6 +12,7 @@ import {
   Blocks,
   CreditCard,
   ClipboardList,
+  ClipboardCheck,
   Activity,
   Workflow,
   Wrench,
@@ -24,6 +25,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Mail,
+  Database,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -108,6 +110,7 @@ export function AppLayout() {
       { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
       { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
+      { to: '/app/commerce', label: 'Commerce', icon: Database },
     ] },
     { title: t('appLayout.groupAiTeams'), items: [
       { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
@@ -124,6 +127,7 @@ export function AppLayout() {
       ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
       ...(emailEnabled ? [{ to: '/app/email-assistant', label: t('appLayout.navEmailAssistant'), icon: Mail }] : []),
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
+      { to: '/app/approvals', label: 'Approvals', icon: ClipboardCheck },
       { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
     ] },
     { title: t('appLayout.groupAccount'), items: [
@@ -149,7 +153,7 @@ export function AppLayout() {
   }
 
   const SidebarBody = (
-    <div className="flex h-full flex-col border-r border-white/[0.07] bg-panel">
+    <div className="flex h-full flex-col border-r border-navy-line/60 bg-navy-ground">
       <div className="flex h-16 items-center justify-between px-5">
         <Link to="/" onClick={() => setOpen(false)}>
           <Logo />
@@ -173,20 +177,29 @@ export function AppLayout() {
                 onClick={() => setOpen(false)}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
-                    isActive ? 'bg-brand text-white shadow-btn' : 'text-muted hover:bg-white/5 hover:text-text',
+                    // The active item is marked by a cyan rail and a raised surface rather than a
+                    // filled block: at sidebar density a solid fill on every visit reads as noise.
+                    'relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
+                    'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-accent-cyan before:opacity-0 before:transition-opacity',
+                    isActive
+                      ? 'bg-navy-surface text-text before:opacity-100'
+                      : 'text-muted hover:bg-navy-surface/50 hover:text-text',
                   )
                 }
               >
-                <item.icon size={17} />
-                <span className="flex-1">{item.label}</span>
-                {item.badge && <span className="rounded-full border border-amber/30 bg-amber/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber">{item.badge}</span>}
+                {({ isActive }) => (
+                  <>
+                    <item.icon size={17} className={cn('transition-colors', isActive && 'text-accent-cyan')} />
+                    <span className="flex-1">{item.label}</span>
+                    {item.badge && <span className="rounded-full border border-amber/30 bg-amber/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber">{item.badge}</span>}
+                  </>
+                )}
               </NavLink>
             ))}
           </div>
         ))}
       </nav>
-      <div className="border-t border-white/[0.07] p-3">
+      <div className="border-t border-navy-line/60 p-3">
         <Button to="/app/create-team" fullWidth size="sm">
           {t('mvp.sidebar.createTeam')}
         </Button>
@@ -196,7 +209,7 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '64px' : `${width}px` } as CSSProperties}>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-white/[0.07] bg-panel lg:block" style={{ width: collapsed ? 64 : width }}>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-navy-line/60 bg-navy-ground lg:block" style={{ width: collapsed ? 64 : width }}>
         {collapsed ? (
           <div className="flex h-full flex-col items-center gap-3 py-4">
             <button onClick={toggleCollapse} className="group flex flex-col items-center gap-3 rounded-2xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
@@ -233,7 +246,7 @@ export function AppLayout() {
             {t('common.offline')}
           </div>
         )}
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/[0.07] bg-bg/80 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-navy-line/60 bg-navy-ground/80 px-4 backdrop-blur sm:px-6">
           <div className="min-w-0 flex items-center gap-2 sm:gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>
               <Menu size={22} />

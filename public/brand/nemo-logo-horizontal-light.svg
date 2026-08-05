@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" width="200" height="48" role="img" aria-label="Nemo AI">
+  <title>Nemo AI horizontal lockup, light ground</title>
+  <defs>
+    <linearGradient id="lockFlowLight" x1="13" y1="13" x2="35" y2="35" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0891B2"/>
+      <stop offset="1" stop-color="#4F46E5"/>
+    </linearGradient>
+  </defs>
+  <!-- Both hues drop one step in lightness: the display values are tuned for a navy
+       ground and lose contrast against white. -->
+  <path d="M13 35V13M35 35V13" stroke="#4F46E5" stroke-width="5" stroke-linecap="round"/>
+  <path d="M13 13L35 35" stroke="url(#lockFlowLight)" stroke-width="5" stroke-linecap="round"/>
+  <text x="56" y="32" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="25" font-weight="700" letter-spacing="-0.8" fill="#0F172A">Nemo<tspan fill="#4F46E5" dx="7">AI</tspan></text>
+</svg>

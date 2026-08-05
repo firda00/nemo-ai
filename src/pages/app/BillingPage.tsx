@@ -58,7 +58,7 @@ export default function BillingPage() {
   return (
     <div className="container-page max-w-6xl py-8">
       <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><CreditCard size={20} /></span>
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-indigo/15 text-accent-indigo"><CreditCard size={20} /></span>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-text">{t('billingPage.title')}</h1>
           <p className="text-sm text-muted">{t('billingPage.subtitle')}</p>
@@ -82,14 +82,14 @@ export default function BillingPage() {
               </div>
             </div>
             <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
-              <div className={cn('h-full rounded-full transition-all', pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-amber' : 'bg-brand-gradient')} style={{ width: `${pct}%` }} />
+              <div className={cn('h-full rounded-full transition-all', pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-amber' : 'bg-flow-gradient')} style={{ width: `${pct}%` }} />
             </div>
             {pct >= 90 && <p className="mt-2 text-xs text-danger">{t('billingPage.limitNearlyReached')}</p>}
           </>
         )}
       </div>
 
-      {notice && <p className="mt-4 rounded-xl bg-violet/10 px-4 py-2.5 text-sm text-text">{notice}</p>}
+      {notice && <p className="mt-4 rounded-xl bg-accent-indigo/10 px-4 py-2.5 text-sm text-text">{notice}</p>}
 
       {/* tiers */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -98,8 +98,8 @@ export default function BillingPage() {
           const current = id === plan
           const popular = id === 'pro'
           return (
-            <div key={id} className={cn('relative flex flex-col rounded-3xl border p-6', current ? 'border-teal/50 bg-teal/[0.05]' : popular ? 'border-violet/50 bg-violet/[0.07] shadow-btn' : 'border-white/10 bg-white/[0.035]')}>
-              {popular && !current && <span className="absolute -top-3 left-6 rounded-pill bg-brand px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.popular')}</span>}
+            <div key={id} className={cn('relative flex flex-col rounded-3xl border p-6', current ? 'border-teal/50 bg-teal/[0.05]' : popular ? 'border-accent-indigo/50 bg-accent-indigo/[0.07]' : 'border-navy-line bg-navy-surface/40')}>
+              {popular && !current && <span className="absolute -top-3 left-6 rounded-pill bg-gradient-to-r from-accent-cyan to-accent-indigo px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.popular')}</span>}
               {current && <span className="absolute -top-3 left-6 rounded-pill bg-teal px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.yourPlan')}</span>}
               <h2 className="text-lg font-bold text-text">{p.label}</h2>
               <p className="mt-2 text-3xl font-extrabold text-text">{id === 'enterprise' ? t('billingPage.customPrice') : `$${p.price}`}<span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span></p>
@@ -107,7 +107,7 @@ export default function BillingPage() {
                 <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-fog">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
                 <Feat icon={Users} ok>{t('billingPage.teamsCount', { count: p.teams })}</Feat>
                 <Feat icon={Cpu} ok={p.premium}>{p.premium ? t('billingPage.premiumModel') : t('billingPage.basicModel')}</Feat>
-                <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly })}</Feat>
+                <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : p.mediaTrialWeekly > 0 ? t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly }) : t('billingPage.mediaByo')}</Feat>
                 <Feat icon={Globe2} ok={p.browserMonthly > 0}>{t('billingPage.browserTasksCount', { count: p.browserMonthly })}</Feat>
                 <Feat icon={Video} ok={p.video}>{p.video ? t('billingPage.videoCount', { count: p.videoMonthly }) : t('billingPage.videoNotIncluded')}</Feat>
                 <Feat icon={Search} ok>{t('billingPage.competitorsCount', { count: p.competitors })}</Feat>
@@ -124,8 +124,8 @@ export default function BillingPage() {
         })}
       </div>
 
-      <section className="mt-8 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025]">
-        <div className="border-b border-white/10 px-5 py-5 sm:px-6">
+      <section className="mt-8 overflow-hidden rounded-3xl border border-navy-line bg-navy-surface/30">
+        <div className="border-b border-navy-line px-5 py-5 sm:px-6">
           <h2 className="text-xl font-semibold text-text">{t('billingPage.compareTitle')}</h2>
           <p className="mt-1 text-sm text-muted">{t('billingPage.compareSubtitle')}</p>
           <p className="mt-2 text-xs text-fog lg:hidden">{t('billingPage.tableScrollHint')}</p>
@@ -133,10 +133,10 @@ export default function BillingPage() {
         <div className="overflow-x-auto" tabIndex={0} role="region" aria-label={t('billingPage.compareTitle')}>
           <table className="min-w-[900px] w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-white/10 bg-white/[0.025]">
-                <th className="sticky left-0 z-10 min-w-48 bg-[#111526] px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
+              <tr className="border-b border-navy-line bg-navy-surface/50">
+                <th className="sticky left-0 z-10 min-w-48 bg-navy-surface px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
                 {PLAN_ORDER.map((id) => (
-                  <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-violet' : 'text-text')}>{PLANS[id].label}</th>
+                  <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-accent-indigo' : 'text-text')}>{PLANS[id].label}</th>
                 ))}
               </tr>
             </thead>
@@ -146,7 +146,7 @@ export default function BillingPage() {
               <CompareRow label={t('billingPage.compareTokens')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].tokens))} />
               <CompareRow label={t('billingPage.compareTeams')} values={PLAN_ORDER.map((id) => String(PLANS[id].teams))} />
               <CompareRow label={t('billingPage.compareModel')} values={PLAN_ORDER.map((id) => PLANS[id].premium ? t('billingPage.premiumShort') : t('billingPage.basicShort'))} />
-              <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].mediaTrialWeekly > 0 ? t('billingPage.mediaTrialShort', { count: PLANS[id].mediaTrialWeekly }) : t('billingPage.notIncluded'))} />
+              <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].media ? t('billingPage.mediaByoShort') : t('billingPage.notIncluded'))} />
               <CompareRow label={t('billingPage.compareBrowser')} values={PLAN_ORDER.map((id) => String(PLANS[id].browserMonthly))} />
               <CompareRow label={t('billingPage.compareVideos')} values={PLAN_ORDER.map((id) => String(PLANS[id].videoMonthly))} />
               <CompareRow label={t('billingPage.compareCompetitors')} values={PLAN_ORDER.map((id) => String(PLANS[id].competitors))} />
@@ -155,8 +155,8 @@ export default function BillingPage() {
         </div>
       </section>
 
-      <div className="mt-6 flex items-start gap-2 rounded-2xl border border-ice/[0.08] bg-white/[0.02] p-4 text-[12.5px] leading-relaxed text-muted">
-        <Sparkles size={15} className="mt-0.5 shrink-0 text-violet" />
+      <div className="mt-6 flex items-start gap-2 rounded-2xl border border-navy-line bg-navy-surface/30 p-4 text-[12.5px] leading-relaxed text-muted">
+        <Sparkles size={15} className="mt-0.5 shrink-0 text-accent-cyan" />
         <span>{t('billingPage.footer1')}<span className="text-text">{t('billingPage.footerHighlight')}</span>{t('billingPage.footer2')}</span>
       </div>
     </div>
@@ -165,8 +165,8 @@ export default function BillingPage() {
 
 function CompareRow({ label, values }: { label: string; values: string[] }) {
   return (
-    <tr className="hover:bg-white/[0.02]">
-      <th className="sticky left-0 z-10 bg-[#111526] px-5 py-4 font-medium text-muted">{label}</th>
+    <tr className="hover:bg-navy-surface/50 transition-colors">
+      <th className="sticky left-0 z-10 bg-navy-surface px-5 py-4 font-medium text-muted">{label}</th>
       {values.map((value, index) => <td key={`${label}-${index}`} className="px-4 py-4 text-text">{value}</td>)}
     </tr>
   )

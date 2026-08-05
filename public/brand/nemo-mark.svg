@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Nemo AI">
+  <title>Nemo AI mark</title>
+  <defs>
+    <linearGradient id="nemoFlow" x1="13" y1="13" x2="35" y2="35" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06B6D4"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+  <!-- Stems: two agents holding position. -->
+  <path d="M13 35V13M35 35V13" stroke="#6366F1" stroke-width="5" stroke-linecap="round"/>
+  <!-- Diagonal: the handoff between them, drawn in the direction work flows. -->
+  <path d="M13 13L35 35" stroke="url(#nemoFlow)" stroke-width="5" stroke-linecap="round"/>
+</svg>

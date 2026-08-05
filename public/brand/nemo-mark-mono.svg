@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Nemo AI">
+  <title>Nemo AI mark, single colour</title>
+  <!-- Inherits the surrounding text colour. Use for print, embroidery, favicons,
+       partner sheets, and anywhere the gradient cannot be reproduced faithfully. -->
+  <path d="M13 35V13M35 35V13M13 13L35 35" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+</svg>

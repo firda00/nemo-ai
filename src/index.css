@@ -5,12 +5,16 @@
 @tailwind utilities;
 
 @layer base {
+  /* Brand Identity 2026.1 lands here: repointing the dark theme's ground, surface and
+     muted values moves every existing screen onto the new palette at once. `muted` stays
+     a variable rather than a flat token because the light theme overrides it below — a
+     fixed #94A3B8 would leave secondary text washed out on the light ground. */
   :root {
-    --color-bg: 10 13 28;
-    --color-panel: 16 22 46;
+    --color-bg: 15 23 42; /* #0F172A Deep Space Navy */
+    --color-panel: 30 41 59; /* #1E293B raised surface */
     --color-card: 255 255 255;
     --color-text: 234 236 246;
-    --color-muted: 152 162 188;
+    --color-muted: 148 163 184; /* #94A3B8 */
     --color-fog: 107 115 146;
     --color-ice: 234 236 246;
     --color-midnight: 201 210 242;

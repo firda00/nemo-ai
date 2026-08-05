@@ -8,6 +8,22 @@ export default {
   theme: {
     extend: {
       colors: {
+        // --- Brand Identity 2026.1 ---
+        // Added alongside the existing palette, never in place of it: `violet`, `panel`,
+        // `ice` and friends are referenced by hundreds of class names across the app, and
+        // replacing the `colors` object outright would silently drop every one of them.
+        // The rebrand instead lands through the dark-theme CSS variables in index.css, so
+        // existing surfaces inherit the new ground without a per-file rewrite.
+        navy: {
+          ground: '#0F172A', // Deep Space Navy — page ground
+          surface: '#1E293B', // raised panel
+          line: '#334155', // dividers and hairlines
+        },
+        accent: {
+          cyan: '#06B6D4', // flow start, live/active state
+          indigo: '#6366F1', // primary action, stems
+        },
+
         // --- Spec core tokens (§3) ---
         bg: 'rgb(var(--color-bg) / <alpha-value>)', // page background
         panel: 'rgb(var(--color-panel) / <alpha-value>)', // panels, sidebar, topbar
@@ -71,6 +87,8 @@ export default {
         pill: '9999px', // avatars / pills
       },
       backgroundImage: {
+        // The one brand gradient: always cyan -> indigo, always 135deg.
+        'flow-gradient': 'linear-gradient(135deg,#06B6D4 0%,#6366F1 100%)',
         'brand-gradient': 'linear-gradient(135deg,#8B7CF8 0%,#5B7CF6 45%,#22D3EE 100%)',
         'brand-radial': 'radial-gradient(60% 60% at 50% 0%, rgba(139,124,248,0.22) 0%, transparent 70%)',
       },
