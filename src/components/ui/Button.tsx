@@ -57,9 +57,10 @@ export function Button(props: AllButtonProps) {
   } = props
 
   const classes = cn(
-    'btn inline-flex items-center justify-center font-medium transition-all duration-200 ease-out',
-    'rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
-    'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100',
+    'btn lift inline-flex items-center justify-center font-medium',
+    'rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+    // A disabled control must not answer the pointer — the lift would imply it is live.
+    'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:brightness-100',
     variants[variant], 
     sizes[size], 
     fullWidth && 'w-full', 

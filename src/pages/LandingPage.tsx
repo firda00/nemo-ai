@@ -18,6 +18,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
+import type { CSSProperties } from 'react'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
 import { Accordion } from '../components/ui/Accordion'
@@ -349,11 +350,11 @@ function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
           </span>
         </div>
         <div className="grid gap-4 p-4 sm:grid-cols-[0.72fr_1.28fr] sm:p-5">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+          <div className="glass-card lift rounded-2xl p-4">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">{preview.team}</p>
             <div className="mt-4 space-y-2.5">
               {preview.agents.map((agent, index) => (
-                <div key={agent} className="flex items-center gap-2.5 rounded-xl border border-white/8 bg-black/20 px-3 py-2.5 text-xs font-semibold text-text">
+                <div key={agent} className="lift flex items-center gap-2.5 rounded-xl border border-navy-line/50 bg-navy-ground/60 px-3 py-2.5 text-xs font-semibold text-text">
                   <span className={cn('h-2.5 w-2.5 rounded-full', index === 0 ? 'bg-cyan' : index === 1 ? 'bg-emerald-400' : index === 2 ? 'bg-amber' : 'bg-blue')} />
                   {agent}
                 </div>
@@ -361,12 +362,12 @@ function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
             </div>
           </div>
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+            <div className="glass-card lift rounded-2xl p-4">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-fog">{preview.message}</p>
               <p className="mt-2 text-sm font-semibold leading-relaxed text-text">{preview.quote}</p>
             </div>
             <div className="grid gap-4 md:grid-cols-[1.25fr_0.75fr]">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+              <div className="glass-card lift rounded-2xl p-4">
                 <p className="text-sm font-bold text-text">{preview.history}</p>
                 <div className="mt-3 space-y-2.5">
                   {preview.steps.map((item) => <div key={item} className="flex items-center gap-2 text-xs text-muted"><CheckCircle2 size={15} className="shrink-0 text-cyan" />{item}</div>)}
@@ -389,7 +390,15 @@ export default function LandingPage() {
   const c = copy[lang]
 
   return (
-    <div className="min-h-screen bg-[#060b14]">
+    <div
+      className="min-h-screen overflow-x-hidden bg-[#060b14]"
+      style={{
+        '--color-text': '234 236 246',
+        '--color-muted': '152 162 188',
+        '--color-fog': '107 115 146',
+        '--color-ice': '234 236 246',
+      } as CSSProperties}
+    >
       <MarketingHeader />
 
       <main>
@@ -402,7 +411,7 @@ export default function LandingPage() {
               <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
-                <Button to="/auth?mode=signup" size="lg" className="!bg-cyan !bg-none !text-[#041018] shadow-[0_8px_28px_rgba(34,211,238,0.2)] hover:!brightness-110">
+                <Button to="/auth?mode=signup" size="lg" className="cta-glow lift !bg-accent-cyan !bg-none !text-[#041018] hover:!brightness-110">
                   {c.primaryCta}<ArrowRight size={17} />
                 </Button>
                 <Button href="#workflow" variant="outline" size="lg">{c.secondaryCta}</Button>

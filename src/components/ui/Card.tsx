@@ -30,10 +30,12 @@ interface CardProps {
 
 export function Card({ children, className, variant = 'default', padding = 'md', hover = false, onClick }: CardProps) {
   const classes = cn(
-    'rounded-2xl transition-all duration-300 ease-out',
+    // `lift` replaces `transition-all`: the old rule animated every changed property,
+    // including layout ones, so a hovered card could nudge its neighbours.
+    'lift rounded-2xl',
     variants[variant],
     paddings[padding],
-    hover && 'hover:border-violet/50 hover:shadow-[0_8px_30px_0_rgb(139,124,248,0.12)] cursor-pointer',
+    hover && 'cursor-pointer hover:border-accent-cyan/40 hover:shadow-[0_10px_30px_-12px_rgba(6,182,212,0.25)]',
     onClick && 'cursor-pointer active:scale-[0.98]',
     className
   )
