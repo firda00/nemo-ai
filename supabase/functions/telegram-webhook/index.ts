@@ -75,8 +75,10 @@ async function handleCommerceCallback(db: any, channelId: string, botToken: stri
 
   const { data: result, error } = await db.rpc('apply_commerce_economics_proposal', { p_proposal_id: proposal.id })
   if (error) {
-    await tgAnswerCallback(botToken, cb.id, 'Не удалось сохранить.')
-    await tgEditMessage(botToken, chatId, messageId, '⚠️ Не удалось сохранить. Внесите цифры в таблице Commerce.')
+    // Leave the keyboard in place: the proposal is still pending, so a retry must not require the
+    // owner to dictate everything again. Editing the message away used to strip the buttons.
+    console.error('commerce proposal apply failed:', error)
+    await tgAnswerCallback(botToken, cb.id, 'Не удалось сохранить, попробуйте ещё раз.')
     return
   }
   const applied = Array.isArray(result?.applied_fields) ? result.applied_fields.length : 0

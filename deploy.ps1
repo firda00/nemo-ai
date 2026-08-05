@@ -328,6 +328,62 @@ $leads_probe$;
 Apply-Sql $leadsProbeSql
 Write-Host '     leads concurrency behavior probe passed.' -ForegroundColor Green
 
+# A plpgsql body is not validated when the function is created: an array-append typo shipped and
+# every Telegram confirmation failed in production while the SQL read fine. Execute the RPC for
+# real against throwaway rows so that class of bug cannot reach an owner again.
+$commerceProbeSql = @'
+do $commerce_probe$
+declare
+  probe_account uuid;
+  probe_agent uuid;
+  probe_channel uuid;
+  probe_catalog uuid;
+  probe_sku uuid;
+  probe_proposal uuid;
+  probe_result jsonb;
+  probe_cost bigint;
+  probe_lead integer;
+  probe_estimated jsonb;
+begin
+  insert into public.accounts (name) values ('Nemo commerce proposal deploy probe') returning id into probe_account;
+  insert into public.agents (account_id, name) values (probe_account, 'Commerce probe agent') returning id into probe_agent;
+  insert into public.channels (agent_id, type) values (probe_agent, 'telegram') returning id into probe_channel;
+  insert into public.commerce_catalogs (account_id, source, external_shop_id, name)
+    values (probe_account, 'uzum', '999999', 'Commerce probe catalog') returning id into probe_catalog;
+  insert into public.commerce_skus (catalog_id, external_sku, title, estimated_fields)
+    values (probe_catalog, 'PROBE-SKU', 'Commerce probe SKU', '["unit_cost_tiyin","safety_stock"]'::jsonb)
+    returning id into probe_sku;
+  insert into public.commerce_economics_proposals
+    (account_id, channel_id, chat_id, sku_id, product_query, source_text, unit_cost_tiyin, lead_time_days)
+    values (probe_account, probe_channel, 'probe-chat', probe_sku, 'PROBE-SKU', 'probe', 123456, 7)
+    returning id into probe_proposal;
+
+  probe_result := public.apply_commerce_economics_proposal(probe_proposal);
+  if probe_result->>'sku_id' is null then raise exception 'commerce proposal apply returned no sku'; end if;
+
+  select unit_cost_tiyin, lead_time_days, estimated_fields
+    into probe_cost, probe_lead, probe_estimated
+    from public.commerce_skus where id = probe_sku;
+  if probe_cost <> 123456 or probe_lead <> 7 then
+    raise exception 'confirmed economics were not written';
+  end if;
+  if probe_estimated ? 'unit_cost_tiyin' then
+    raise exception 'confirmed field kept its estimate mark';
+  end if;
+  if not probe_estimated ? 'safety_stock' then
+    raise exception 'untouched field lost its estimate mark';
+  end if;
+  if (select status from public.commerce_economics_proposals where id = probe_proposal) <> 'applied' then
+    raise exception 'proposal was not marked applied';
+  end if;
+
+  delete from public.accounts where id = probe_account;
+end
+$commerce_probe$;
+'@
+Apply-Sql $commerceProbeSql
+Write-Host '     commerce proposal apply probe passed.' -ForegroundColor Green
+
 if ($cronLine) {
   $safeCron = $cronValue.Replace("'", "''")
   $cronSql = @'
