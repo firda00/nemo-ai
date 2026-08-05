@@ -43,19 +43,25 @@ import LibraryPage from './pages/app/LibraryPage'
 import IntegrationsToolsPage from './pages/app/IntegrationsToolsPage'
 import FollowUpsPage from './pages/app/FollowUpsPage'
 import ObservabilityPage from './pages/app/ObservabilityPage'
+import ApprovalsPage from './pages/app/ApprovalsPage'
+import SetupPage from './pages/SetupPage'
+import { PrivacyPage, TermsPage } from './pages/LegalPage'
 import EmailAssistantPage from './pages/app/EmailAssistantPage'
+import CommercePage from './pages/app/CommercePage'
 import { MfaChallengeGate } from './components/auth/MfaChallengeGate'
 import { AdminMfaGate } from './components/auth/AdminMfaGate'
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isAuthed, loading, live } = useAuth()
+  const { user, isAuthed, loading, live } = useAuth()
   const location = useLocation()
   if (loading) {
     return <div className="grid min-h-screen place-items-center bg-bg text-sm text-muted">…</div>
   }
-  if (live && !isAuthed && (location.pathname === '/onboarding' || location.pathname.startsWith('/app'))) {
+  if (live && !isAuthed && (location.pathname === '/setup' || location.pathname === '/onboarding' || location.pathname.startsWith('/app'))) {
     return <Navigate to="/auth" state={{ from: location.pathname }} replace />
   }
+  if (isAuthed && !user?.onboardingCompleted && location.pathname !== '/setup') return <Navigate to="/setup" replace />
+  if (isAuthed && user?.onboardingCompleted && location.pathname === '/setup') return <Navigate to="/app" replace />
   return <MfaChallengeGate>{children}</MfaChallengeGate>
 }
 
@@ -67,10 +73,17 @@ export default function App() {
       <Route path="/pitch" element={<PitchPage />} />
       <Route path="/demo" element={<DemoPage />} />
       <Route path="/waitlist" element={<WaitlistPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route path="/auth" element={<AuthPage />} />
       <Route path="/auth/signin" element={<AuthPage />} />
       <Route path="/auth/signup" element={<AuthPage />} />
       <Route path="/auth/reset" element={<AuthPage />} />
+
+      <Route
+        path="/setup"
+        element={<RequireAuth><SetupPage /></RequireAuth>}
+      />
 
       <Route
         path="/onboarding"
@@ -95,9 +108,11 @@ export default function App() {
         <Route path="content" element={<ContentStudioPage />} />
         <Route path="marketing" element={<MarketingStrategyPage />} />
         <Route path="autopost" element={<AutopostPage />} />
+        <Route path="commerce" element={<CommercePage />} />
         <Route path="followups" element={<FollowUpsPage />} />
         <Route path="monitor" element={<ObservabilityPage />} />
         <Route path="activity" element={<ActivityPage />} />
+        <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="tools" element={<IntegrationsToolsPage />} />
         <Route path="create-agent" element={<CreateAgentPage />} />

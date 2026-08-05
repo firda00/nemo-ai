@@ -60,6 +60,23 @@ Apply-Migration .\supabase\migrations\20260729110000_worker_lease_rls.sql
 Apply-Migration .\supabase\migrations\20260730110000_queue_and_tenant_integrity.sql
 Apply-Migration .\supabase\migrations\20260801100000_ops_checks_admin_only.sql
 Apply-Migration .\supabase\migrations\20260803100000_browser_observations.sql
+Apply-Migration .\supabase\migrations\20260803110000_owner_approval_queue.sql
+Apply-Migration .\supabase\migrations\20260803120000_agent_action_policy.sql
+Apply-Migration .\supabase\migrations\20260803130000_mandatory_onboarding.sql
+Apply-Migration .\supabase\migrations\20260803140000_atomic_agent_teams.sql
+Apply-Migration .\supabase\migrations\20260803150000_data_leakage_hardening.sql
+Apply-Migration .\supabase\migrations\20260803160000_production_test_account.sql
+Apply-Migration .\supabase\migrations\20260803170000_autonomous_run_checkpoints.sql
+Apply-Migration .\supabase\migrations\20260803180000_autonomous_run_worker.sql
+Apply-Migration .\supabase\migrations\20260804120000_idempotent_usage_accounting.sql
+Apply-Migration .\supabase\migrations\20260804130000_research_review_inbox.sql
+Apply-Migration .\supabase\migrations\20260804140000_token_usage_reservations.sql
+Apply-Migration .\supabase\migrations\20260804150000_agent_eval_publish_gate.sql
+Apply-Migration .\supabase\migrations\20260804160000_team_draft_and_usage_aggregate.sql
+Apply-Migration .\supabase\migrations\20260805090000_commerce_control_center.sql
+Apply-Migration .\supabase\migrations\20260805100000_commerce_alert_delivery.sql
+Apply-Migration .\supabase\migrations\20260805110000_commerce_telegram_links.sql
+Apply-Migration .\supabase\migrations\20260805120000_commerce_economics_autofill.sql
 
 $schemaCheckSql = @'
 select
@@ -132,15 +149,64 @@ select
     and not exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'transcribe_jobs')
     and to_regprocedure('public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)') is not null
     and not has_function_privilege('authenticated', 'public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)', 'execute')
-    and not has_function_privilege('anon', 'public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)', 'execute') as transcribe_jobs_locked;
+    and not has_function_privilege('anon', 'public.finalize_transcribe_job(uuid,uuid,uuid,integer,text,bigint)', 'execute') as transcribe_jobs_locked,
+  to_regclass('public.approval_requests') is not null
+    and (select relrowsecurity from pg_class where oid = 'public.approval_requests'::regclass) as approval_queue_ready,
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agents' and column_name = 'action_policy')
+    and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'business_profiles' and column_name = 'default_action_policy') as action_policies_ready,
+  to_regclass('public.user_consents') is not null
+    and not has_table_privilege('authenticated', 'public.user_consents', 'insert')
+    and not has_table_privilege('authenticated', 'public.user_consents', 'update')
+    and not has_table_privilege('authenticated', 'public.user_consents', 'delete') as consent_records_locked,
+  exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'business_profiles' and policyname = 'Owners read onboarding business profile') as onboarding_profile_policy,
+  to_regprocedure('public.create_agent_team(jsonb,jsonb,jsonb)') is not null
+    and has_function_privilege('authenticated', 'public.create_agent_team(jsonb,jsonb,jsonb)', 'execute')
+    and not has_function_privilege('anon', 'public.create_agent_team(jsonb,jsonb,jsonb)', 'execute') as atomic_team_rpc,
+  to_regprocedure('public.monthly_token_usage(uuid)') is not null
+    and has_function_privilege('service_role', 'public.monthly_token_usage(uuid)', 'execute')
+    and not has_function_privilege('authenticated', 'public.monthly_token_usage(uuid)', 'execute')
+    and not has_function_privilege('anon', 'public.monthly_token_usage(uuid)', 'execute') as monthly_usage_rpc,
+  to_regclass('public.commerce_catalogs') is not null
+    and to_regclass('public.commerce_skus') is not null
+    and to_regclass('public.commerce_import_batches') is not null
+    and to_regclass('public.commerce_inventory_snapshots') is not null
+    and to_regclass('public.commerce_recommendations') is not null
+    and to_regprocedure('public.claim_commerce_sync_runs(integer)') is not null
+    and not has_function_privilege('authenticated', 'public.claim_commerce_sync_runs(integer)', 'execute')
+    and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'commerce_recommendations' and column_name = 'alerted_at')
+    and to_regclass('public.commerce_telegram_links') is not null
+    and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'commerce_skus' and column_name = 'estimated_fields')
+    and to_regprocedure('public.autofill_commerce_economics(uuid)') is not null
+    and not has_function_privilege('anon', 'public.autofill_commerce_economics(uuid)', 'execute') as commerce_control_ready,
+  to_regclass('public.google_oauth_transactions') is not null
+    and to_regprocedure('public.consume_google_oauth_transaction(text)') is not null
+    and not has_function_privilege('authenticated', 'public.consume_google_oauth_transaction(text)', 'execute') as oauth_state_hardened,
+  exists(select 1 from storage.buckets where id = 'private-audio' and public = false) as private_audio_ready,
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'browser_observations' and column_name = 'expires_at')
+    and to_regprocedure('public.purge_expired_browser_observations()') is not null as browser_retention_ready,
+  exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'accounts' and column_name = 'is_production_e2e')
+    and to_regclass('public.accounts_single_production_e2e_idx') is not null
+    and 11 = (
+      select count(distinct cls.relname)
+      from pg_trigger trg
+      join pg_class cls on cls.oid = trg.tgrelid
+      join pg_namespace ns on ns.oid = cls.relnamespace
+      join pg_proc proc on proc.oid = trg.tgfoid
+      where ns.nspname = 'public'
+        and cls.relname = any(array['provider_keys','google_accounts','google_oauth_apps','social_accounts','custom_tools','scheduled_posts','follow_ups','watched_sources','channels','business_profiles','user_consents'])
+        and trg.tgname = 'production_e2e_external_config_guard'
+        and trg.tgenabled <> 'D'
+        and not trg.tgisinternal
+        and proc.proname = 'guard_production_e2e_external_config'
+    ) as production_e2e_guard;
 '@
 $schemaCheckBody = $jsonSer.Serialize(@{ query = $schemaCheckSql })
 $schemaCheck = Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/database/query" -Method Post -Headers $hdr -Body $schemaCheckBody
 $schemaRow = @($schemaCheck)[0]
-if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.governed_evolution -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard -or -not $schemaRow.lead_claim_columns -or -not $schemaRow.leads_latest_index -or -not $schemaRow.lead_rpcs -or -not $schemaRow.lead_rpcs_locked -or -not $schemaRow.leads_dml_locked -or -not $schemaRow.team_rag_rpc -or -not $schemaRow.team_rag_locked -or -not $schemaRow.team_docs_policy -or -not $schemaRow.team_tenant_guards -or -not $schemaRow.transcribe_jobs_locked) {
+if (-not $schemaRow.subject_key -or -not $schemaRow.task_unique_index -or -not $schemaRow.reserve_rpc -or -not $schemaRow.finalize_rpc -or -not $schemaRow.risk_tier -or -not $schemaRow.template_key -or -not $schemaRow.quarantined_credentials -or -not $schemaRow.governed_evolution -or -not $schemaRow.safe_channel_metadata -or -not $schemaRow.channel_credentials_hidden -or -not $schemaRow.risk_tier_guard -or -not $schemaRow.channel_guard -or -not $schemaRow.lead_claim_columns -or -not $schemaRow.leads_latest_index -or -not $schemaRow.lead_rpcs -or -not $schemaRow.lead_rpcs_locked -or -not $schemaRow.leads_dml_locked -or -not $schemaRow.team_rag_rpc -or -not $schemaRow.team_rag_locked -or -not $schemaRow.team_docs_policy -or -not $schemaRow.team_tenant_guards -or -not $schemaRow.transcribe_jobs_locked -or -not $schemaRow.approval_queue_ready -or -not $schemaRow.action_policies_ready -or -not $schemaRow.consent_records_locked -or -not $schemaRow.onboarding_profile_policy -or -not $schemaRow.atomic_team_rpc -or -not $schemaRow.monthly_usage_rpc -or -not $schemaRow.commerce_control_ready -or -not $schemaRow.oauth_state_hardened -or -not $schemaRow.private_audio_ready -or -not $schemaRow.browser_retention_ready -or -not $schemaRow.production_e2e_guard) {
   throw 'Schema verification failed after migrations.'
 }
-Write-Host '     logistics, billing, governed evolution, safe channel metadata, regulated-channel and leads-concurrency schema verified.' -ForegroundColor Green
+Write-Host '     logistics, approvals, onboarding, atomic teams, private data retention and test-tenant isolation verified.' -ForegroundColor Green
 
 $riskProbeSql = @'
 do $risk_probe$
@@ -265,7 +331,34 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent');
+  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent');
+select cron.schedule(
+  'nemo-autonomous-worker-every-minute',
+  '* * * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/autonomous-worker',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
+select cron.schedule(
+  'nemo-commerce-worker-tashkent',
+  '0 19,23,3,7,11,15 * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/commerce-worker',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
+select cron.schedule(
+  'nemo-commerce-digest-tashkent',
+  '0 4 * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/commerce-digest',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
 select cron.schedule(
   'nemo-autopost-every-minute',
   '* * * * *',
@@ -317,16 +410,18 @@ select cron.schedule(
 Write-Host "     migrations applied." -ForegroundColor Green
 
 $failed = @()
+$edgeManifestPath = Join-Path $PSScriptRoot 'supabase\functions\deployment-manifest.json'
+$edgeManifest = Get-Content -LiteralPath $edgeManifestPath -Raw | ConvertFrom-Json
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
-foreach ($fn in 'whatsapp-webhook','instagram-webhook','widget-webhook','stripe-webhook','telegram-webhook','setup-telegram','setup-meta','agent-worker','autopost','follow-up','evolve-agent','ops-watchdog','daily-digest','google-oauth') {
+foreach ($fn in @($edgeManifest.public)) {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistics-workflow','orchestrate','research-agent','test-agent','compose-agent','agent-tool','analyze-content','automations','content-visual','edit-file','localize','ops-autopilot','watch-sources','transcribe-file','connect-social','connect-telegram','connect-channel','connect-provider','operator-send','google-tools','browser-bridge') {
+foreach ($fn in @($edgeManifest.authenticated)) {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
   npx supabase functions deploy $fn --project-ref $ref --use-api
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
@@ -334,7 +429,7 @@ foreach ($fn in 'backend-status','fetch-url','crm-push','ops-workflow','logistic
 
 # Verify the two previously-missing functions now respond (not 404)
 Write-Host "`nVerifying..." -ForegroundColor Cyan
-foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','evolve-agent','ops-watchdog','daily-digest','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','setup-telegram','setup-meta') {
+foreach ($fn in 'backend-status','ops-workflow','logistics-workflow','autopost','follow-up','evolve-agent','ops-watchdog','daily-digest','connect-social','connect-telegram','connect-channel','operator-send','telegram-webhook','whatsapp-webhook','instagram-webhook','widget-webhook','agent-worker','autonomous-worker','setup-telegram','setup-meta','approval-queue','complete-onboarding') {
   $code = -1
   $responseBody = ''
   $isInboundWebhook = $fn -in @('telegram-webhook','whatsapp-webhook','instagram-webhook')

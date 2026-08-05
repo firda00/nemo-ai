@@ -3,9 +3,10 @@
 // worker does the heavy LLM work, so a burst can never fan out into 1000 concurrent calls) OR
 // processes it inline in the background (legacy waitUntil path). The flag makes this a reversible
 // canary. Public (verify_jwt = false) — authenticity is Telegram's secret token.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { processTelegramUpdate } from '../_shared/tgProcess.ts'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -20,13 +21,27 @@ Deno.serve(async (req) => {
     if (!channelId) return new Response('no channel', { status: 400 })
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE)
-    const { data: channel } = await db.from('channels').select('id, secret_token').eq('id', channelId).single()
+    const { data: channel } = await db.from('channels').select('id, secret_token, agent_id').eq('id', channelId).single()
     if (!channel) return new Response('channel not found', { status: 404 })
 
     const secret = req.headers.get('x-telegram-bot-api-secret-token')
     if (!channel.secret_token || !timingSafeEqual(secret, channel.secret_token)) return new Response('forbidden', { status: 403 })
 
+    const { data: agent } = channel.agent_id
+      ? await db.from('agents').select('account_id').eq('id', channel.agent_id).maybeSingle()
+      : { data: null }
+    if (!agent?.account_id || await blocksExternalActions(db, agent.account_id)) return new Response('ok')
+
     const update = await req.json()
+    const startToken = String(update?.message?.text ?? '').match(/^\/start\s+commerce_([0-9a-f-]{36})$/i)?.[1]
+    if (startToken && update?.message?.chat?.id) {
+      const { data: link } = await db.from('commerce_telegram_links').select('account_id, expires_at, used_at').eq('token', startToken).maybeSingle()
+      if (link && !link.used_at && new Date(link.expires_at) > new Date()) {
+        await db.from('business_profiles').upsert({ account_id: link.account_id, notify_chat_id: String(update.message.chat.id), updated_at: new Date().toISOString() })
+        await db.from('commerce_telegram_links').update({ used_at: new Date().toISOString() }).eq('token', startToken).is('used_at', null)
+        return new Response('ok')
+      }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rt = (globalThis as any).EdgeRuntime
 

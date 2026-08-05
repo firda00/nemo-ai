@@ -26,6 +26,9 @@ verify_jwt = true
 [functions.compose-agent]
 verify_jwt = true
 
+[functions.agent-evals]
+verify_jwt = true
+
 # Test sandbox — runs an agent config through the LLM (no persistence).
 [functions.test-agent]
 verify_jwt = true
@@ -50,9 +53,9 @@ verify_jwt = true
 [functions.create-planerka-sheet]
 verify_jwt = true
 
-# Self-evolving agent — analyze recent conversations + owner growth direction, propose an upgrade.
+# Self-evolving agent — user actions validate JWT in-function; auto-run uses a cron secret.
 [functions.evolve-agent]
-verify_jwt = true
+verify_jwt = false
 
 [functions.review-skill]
 verify_jwt = true
@@ -131,6 +134,35 @@ verify_jwt = false
 [functions.agent-worker]
 verify_jwt = false
 
+# Claim-fenced autonomous team worker. Service-role self-dispatch and CRON_SECRET
+# are verified inside the function; browser callers cannot invoke transitions.
+[functions.autonomous-worker]
+verify_jwt = false
+
+# Read-only commerce sync worker. PUBLIC for pg_cron; authorization is checked in-function.
+[functions.commerce-worker]
+verify_jwt = false
+
+# Commerce digest and alerts are cron/service-role only.
+[functions.commerce-digest]
+verify_jwt = false
+
+# Public cron backfill/admin-search branches use CRON_SECRET; user actions validate JWT in-function.
+[functions.knowledge-index]
+verify_jwt = false
+
+# Public cron polling uses CRON_SECRET; user status checks validate JWT in-function.
+[functions.media-poll]
+verify_jwt = false
+
+# Extension observations use a pairing secret; owner actions validate JWT in-function.
+[functions.browser-bridge]
+verify_jwt = false
+
+# Cron/service-role only reminder dispatcher.
+[functions.task-reminders]
+verify_jwt = false
+
 # Website widget inbound — PUBLIC (embedded on the client's site, no Supabase JWT).
 # Returns the agent reply as JSON; the agent runtime runs via buildReply.
 [functions.widget-webhook]
@@ -166,4 +198,8 @@ verify_jwt = false
 # Visual RAG (PixelRAG/OCR) pilot — authenticated submit/status only; worker
 # RPCs are service-role only; feature-flagged off by default (503 until enabled).
 [functions.visual-rag]
+verify_jwt = true
+
+# Commerce import staging and owner confirmation (panel, authenticated).
+[functions.commerce-control]
 verify_jwt = true
