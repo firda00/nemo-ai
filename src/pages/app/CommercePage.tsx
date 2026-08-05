@@ -11,7 +11,7 @@ type Pilot = { status: string; started_at: string | null; expires_at: string | n
 type Batch = { id: string; status: string; total_rows: number; valid_rows: number; unmatched_rows: number; error_rows: number; created_at: string }
 
 const headers = ['external_sku', 'unit_cost_uzs', 'commission_percent', 'fulfillment_uzs', 'returns_reserve_percent', 'lead_time_days', 'moq', 'safety_stock', 'min_margin_percent'] as const
-const inputClass = 'w-full rounded-xl border border-navy-line bg-navy-ground/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60'
+const inputClass = 'w-full rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60'
 
 function parseDelimited(text: string): string[][] {
   const rows: string[][] = []
@@ -216,7 +216,7 @@ export default function CommercePage() {
         <p className="mt-3 text-xs leading-relaxed text-muted">Bulk alternative to the table above — optional. Required canonical headers: <code className="text-fog">{headers.join(', ')}</code>. <code className="text-fog">unit_cost_uzs</code> and <code className="text-fog">fulfillment_uzs</code> are converted to integer tiyin before staging.</p>
       </Card>
 
-      <Card className="mt-4" padding="md"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">Staged imports</p><p className="text-xs text-muted">{staged.length} staged batch{staged.length === 1 ? '' : 'es'} in this catalog.</p></div><span className="rounded-full bg-accent-indigo/10 px-3 py-1 text-sm font-semibold text-accent-indigo border border-accent-indigo/20">{staged.reduce((sum, batch) => sum + batch.total_rows, 0)} rows</span></div>{staged.length > 0 && <div className="mt-4 space-y-2">{staged.map((batch) => <div key={batch.id} className="flex flex-col gap-1 rounded-xl border border-navy-line bg-navy-surface/40 px-3 py-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"><span>{new Date(batch.created_at).toLocaleString()}</span><span>{batch.total_rows} rows · {batch.valid_rows} valid · {batch.unmatched_rows} unmatched · {batch.error_rows} invalid</span></div>)}</div>}</Card>
+      <Card className="mt-4" padding="md"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">Staged imports</p><p className="text-xs text-muted">{staged.length} staged batch{staged.length === 1 ? '' : 'es'} in this catalog.</p></div><span className="rounded-full bg-accent-indigo/10 px-3 py-1 text-sm font-semibold text-accent-indigo border border-accent-indigo/20">{staged.reduce((sum, batch) => sum + batch.total_rows, 0)} rows</span></div>{staged.length > 0 && <div className="mt-4 space-y-2">{staged.map((batch) => <div key={batch.id} className="flex flex-col gap-1 rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"><span>{new Date(batch.created_at).toLocaleString()}</span><span>{batch.total_rows} rows · {batch.valid_rows} valid · {batch.unmatched_rows} unmatched · {batch.error_rows} invalid</span></div>)}</div>}</Card>
     </div>
   )
 }

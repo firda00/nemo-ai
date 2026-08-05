@@ -98,13 +98,16 @@ export default function BillingPage() {
           const current = id === plan
           const popular = id === 'pro'
           return (
-            <div key={id} className={cn('relative flex flex-col rounded-3xl border p-6', current ? 'border-teal/50 bg-teal/[0.05]' : popular ? 'border-accent-indigo/50 bg-accent-indigo/[0.07]' : 'border-navy-line bg-navy-surface/40')}>
+            <div key={id} className={cn('relative flex flex-col rounded-3xl border p-6', current ? 'border-teal/50 bg-teal/[0.05]' : popular ? 'border-accent-indigo/50 bg-accent-indigo/[0.07]' : 'border-ice/10 bg-panel/60')}>
               {popular && !current && <span className="absolute -top-3 left-6 rounded-pill bg-gradient-to-r from-accent-cyan to-accent-indigo px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.popular')}</span>}
               {current && <span className="absolute -top-3 left-6 rounded-pill bg-teal px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.yourPlan')}</span>}
               <h2 className="text-lg font-bold text-text">{p.label}</h2>
               <p className="mt-2 text-3xl font-extrabold text-text">{id === 'enterprise' ? t('billingPage.customPrice') : `$${p.price}`}<span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span></p>
-              <div className="mt-5 space-y-2.5 text-[13px] text-muted">
-                <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-fog">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
+              {/* Included features carry primary text, excluded ones drop to `muted` inside
+                  Feat. That step IS the hierarchy — a uniformly dim list makes the reader
+                  compare rows one by one to work out what they actually get. */}
+              <div className="mt-5 space-y-2.5 text-[13px] text-text">
+                <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-muted">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
                 <Feat icon={Users} ok>{t('billingPage.teamsCount', { count: p.teams })}</Feat>
                 <Feat icon={Cpu} ok={p.premium}>{p.premium ? t('billingPage.premiumModel') : t('billingPage.basicModel')}</Feat>
                 <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : p.mediaTrialWeekly > 0 ? t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly }) : t('billingPage.mediaByo')}</Feat>
@@ -124,8 +127,8 @@ export default function BillingPage() {
         })}
       </div>
 
-      <section className="mt-8 overflow-hidden rounded-3xl border border-navy-line bg-navy-surface/30">
-        <div className="border-b border-navy-line px-5 py-5 sm:px-6">
+      <section className="mt-8 overflow-hidden rounded-3xl border border-ice/10 bg-panel/50">
+        <div className="border-b border-ice/10 px-5 py-5 sm:px-6">
           <h2 className="text-xl font-semibold text-text">{t('billingPage.compareTitle')}</h2>
           <p className="mt-1 text-sm text-muted">{t('billingPage.compareSubtitle')}</p>
           <p className="mt-2 text-xs text-fog lg:hidden">{t('billingPage.tableScrollHint')}</p>
@@ -133,8 +136,8 @@ export default function BillingPage() {
         <div className="overflow-x-auto" tabIndex={0} role="region" aria-label={t('billingPage.compareTitle')}>
           <table className="min-w-[900px] w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-navy-line bg-navy-surface/50">
-                <th className="sticky left-0 z-10 min-w-48 bg-navy-surface px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
+              <tr className="border-b border-ice/10 bg-panel/70">
+                <th className="sticky left-0 z-10 min-w-48 bg-panel px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
                 {PLAN_ORDER.map((id) => (
                   <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-accent-indigo' : 'text-text')}>{PLANS[id].label}</th>
                 ))}
@@ -155,7 +158,7 @@ export default function BillingPage() {
         </div>
       </section>
 
-      <div className="mt-6 flex items-start gap-2 rounded-2xl border border-navy-line bg-navy-surface/30 p-4 text-[12.5px] leading-relaxed text-muted">
+      <div className="mt-6 flex items-start gap-2 rounded-2xl border border-ice/10 bg-panel/50 p-4 text-[12.5px] leading-relaxed text-muted">
         <Sparkles size={15} className="mt-0.5 shrink-0 text-accent-cyan" />
         <span>{t('billingPage.footer1')}<span className="text-text">{t('billingPage.footerHighlight')}</span>{t('billingPage.footer2')}</span>
       </div>
@@ -165,8 +168,8 @@ export default function BillingPage() {
 
 function CompareRow({ label, values }: { label: string; values: string[] }) {
   return (
-    <tr className="hover:bg-navy-surface/50 transition-colors">
-      <th className="sticky left-0 z-10 bg-navy-surface px-5 py-4 font-medium text-muted">{label}</th>
+    <tr className="hover:bg-panel/70 transition-colors">
+      <th className="sticky left-0 z-10 bg-panel px-5 py-4 font-medium text-muted">{label}</th>
       {values.map((value, index) => <td key={`${label}-${index}`} className="px-4 py-4 text-text">{value}</td>)}
     </tr>
   )
@@ -175,8 +178,10 @@ function CompareRow({ label, values }: { label: string; values: string[] }) {
 function Feat({ icon: Icon, ok, children }: { icon: typeof Zap; ok?: boolean; children: React.ReactNode }) {
   return (
     <p className="flex items-start gap-2">
-      {ok ? <Icon size={15} className="mt-0.5 shrink-0 text-teal" /> : <Minus size={15} className="mt-0.5 shrink-0 text-fog" />}
-      <span className={ok ? '' : 'text-fog'}>{children}</span>
+      {ok ? <Icon size={15} className="mt-0.5 shrink-0 text-teal" /> : <Minus size={15} className="mt-0.5 shrink-0 text-muted" />}
+      {/* Not-included rows stay dimmer than included ones, but at 'muted' rather than 'fog':
+         at 13px 'fog' measured 3.13:1, under the 4.5:1 floor for text that still says something. */}
+      <span className={ok ? '' : 'text-muted'}>{children}</span>
     </p>
   )
 }

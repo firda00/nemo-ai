@@ -153,7 +153,7 @@ export function AppLayout() {
   }
 
   const SidebarBody = (
-    <div className="flex h-full flex-col border-r border-navy-line/60 bg-navy-ground">
+    <div className="flex h-full flex-col border-r border-ice/10 bg-bg">
       <div className="flex h-16 items-center justify-between px-5">
         <Link to="/" onClick={() => setOpen(false)}>
           <Logo />
@@ -182,8 +182,8 @@ export function AppLayout() {
                     'relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
                     'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-accent-cyan before:opacity-0 before:transition-opacity',
                     isActive
-                      ? 'bg-navy-surface text-text before:opacity-100'
-                      : 'text-muted hover:bg-navy-surface/50 hover:text-text',
+                      ? 'bg-panel text-text before:opacity-100'
+                      : 'text-muted hover:bg-panel/70 hover:text-text',
                   )
                 }
               >
@@ -199,7 +199,7 @@ export function AppLayout() {
           </div>
         ))}
       </nav>
-      <div className="border-t border-navy-line/60 p-3">
+      <div className="border-t border-ice/10 p-3">
         <Button to="/app/create-team" fullWidth size="sm">
           {t('mvp.sidebar.createTeam')}
         </Button>
@@ -209,7 +209,7 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '64px' : `${width}px` } as CSSProperties}>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-navy-line/60 bg-navy-ground lg:block" style={{ width: collapsed ? 64 : width }}>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-ice/10 bg-bg lg:block" style={{ width: collapsed ? 64 : width }}>
         {collapsed ? (
           <div className="flex h-full flex-col items-center gap-3 py-4">
             <button onClick={toggleCollapse} className="group flex flex-col items-center gap-3 rounded-2xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
@@ -246,7 +246,7 @@ export function AppLayout() {
             {t('common.offline')}
           </div>
         )}
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-navy-line/60 bg-navy-ground/80 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-ice/10 bg-bg/80 px-4 backdrop-blur sm:px-6">
           <div className="min-w-0 flex items-center gap-2 sm:gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>
               <Menu size={22} />

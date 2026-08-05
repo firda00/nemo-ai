@@ -26,7 +26,7 @@ const fields: Array<{ key: EditableField; label: string; hint: string; toInput: 
   { key: 'min_margin_percent', label: 'Min margin, %', hint: 'Price Guard threshold', toInput: (sku) => (sku.min_margin_percent == null ? '' : String(sku.min_margin_percent)), toPayload: (value) => value },
 ]
 
-const cellClass = 'w-24 rounded-lg border border-navy-line bg-navy-ground/60 px-2 py-1 text-sm text-text outline-none focus:border-accent-cyan/60'
+const cellClass = 'w-24 rounded-lg border border-ice/12 bg-bg/60 px-2 py-1 text-sm text-text outline-none focus:border-accent-cyan/60'
 const money = (tiyin: number | null) => (tiyin == null ? '—' : `${(tiyin / 100).toLocaleString('ru-RU')} сум`)
 
 export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave: (skuId: string, payload: Record<string, number | string>) => Promise<boolean> }) {
@@ -74,7 +74,7 @@ export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave
           {skus.map((sku) => {
             const estimated = sku.estimated_fields ?? []
             return (
-              <tr key={sku.id} className="border-t border-navy-line align-middle transition-colors hover:bg-navy-surface/50">
+              <tr key={sku.id} className="border-t border-ice/10 align-middle transition-colors hover:bg-panel/70">
                 <td className="py-2 pr-3"><p className="max-w-[220px] truncate text-text" title={sku.title}>{sku.title}</p><p className="text-xs text-muted">{sku.external_sku}</p></td>
                 <td className="py-2 pr-3 text-xs text-muted">{money(sku.snapshot?.price_tiyin ?? null)}<br />{sku.snapshot?.stock_total ?? '—'} шт · {sku.snapshot?.sold_units_7d ?? '—'}/7д</td>
                 {fields.map((field) => (
