@@ -3,8 +3,12 @@
 // full flow: voice transcription, group task-bot, DM task-completion, customer dialogue + reply.
 // Extracted so the webhook can just enqueue and a rate-capped worker does the heavy LLM work.
 import { buildReply, buildSubAgentReply, type ReplyDiagnostics } from './agent.ts'
-import { tgSend } from './telegram.ts'
+import { tgSend, tgSendKeyboard } from './telegram.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
+import {
+  accountSkus, applyKeyboard, looksLikeEconomics, matchSkus, ownerChatFor,
+  parseEconomicsMessage, pickKeyboard, proposalRow, proposalText, type OwnerChat,
+} from './commerceEconomicsChat.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { planOf } from './plans.ts'
 import { transcribeAudio } from './transcribe.ts'
@@ -64,6 +68,47 @@ function decodeTextAttachment(base64: string): string {
 }
 
 // Full processing of ONE Telegram update for a channel. Safe to run in the background / a worker.
+// Returns true when the message was handled as a commerce economics proposal. Never writes to
+// commerce_skus — it only stores a pending proposal and asks the owner to confirm it.
+async function handleEconomicsMessage(
+  db: any,
+  apiKey: string,
+  agent: any,
+  botToken: string,
+  owner: OwnerChat,
+  text: string,
+): Promise<boolean> {
+  const parsed = await parseEconomicsMessage(apiKey, agent?.model ?? 'openai/gpt-4o-mini', text)
+  if (!parsed) return false
+
+  const skus = await accountSkus(db, owner.accountId)
+  if (!skus.length) {
+    await tgSend(botToken, owner.chatId, 'Каталог ещё не синхронизирован с Uzum, поэтому не к чему привязать себестоимость. Откройте Commerce и дождитесь первой синхронизации.')
+    return true
+  }
+  const candidates = matchSkus(parsed.product, skus)
+  if (!candidates.length) {
+    await tgSend(botToken, owner.chatId, `Не нашёл товар «${parsed.product}» в каталоге. Пришлите точное название из Uzum или артикул (SKU) — я не подставляю похожие товары, чтобы не записать цифры не туда.`)
+    return true
+  }
+
+  const single = candidates.length === 1 ? candidates[0] : null
+  const { data: proposal, error } = await db.from('commerce_economics_proposals')
+    .insert(proposalRow(owner, parsed, text, single ? [] : candidates.slice(0, 5), single?.id ?? null))
+    .select('id').single()
+  if (error || !proposal) {
+    await tgSend(botToken, owner.chatId, 'Не смог подготовить подтверждение. Попробуйте ещё раз или внесите цифры в таблице Commerce.')
+    return true
+  }
+
+  if (single) {
+    await tgSendKeyboard(botToken, owner.chatId, proposalText(single, parsed), applyKeyboard(proposal.id))
+  } else {
+    await tgSendKeyboard(botToken, owner.chatId, `Нашёл несколько товаров по запросу «${parsed.product}». Какой имели в виду?`, pickKeyboard(proposal.id, candidates))
+  }
+  return true
+}
+
 export async function processTelegramUpdate(db: any, channelId: string, update: any): Promise<void> {
   const { data: channel } = await db.from('channels').select('*, agents(*)').eq('id', channelId).single()
   if (!channel) return
@@ -153,7 +198,7 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
 
   // GROUP task-bot
   if (channel.scope === 'group' || isGroupChat) {
-    if (botToken && OPENROUTER_API_KEY && agent?.account_id) {
+    if (botToken && OPENROUTER_API_KEY && agent?.account_id && agent.status === 'active') {
       const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
       await handleTaskBot(db, apiKey, channel, agent.account_id, botToken, botUsername, msg)
     }
@@ -161,13 +206,26 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   }
 
   // DM task-completion report
-  if (botToken && OPENROUTER_API_KEY && agent?.account_id && !channel.sub_agent_id) {
+  if (botToken && OPENROUTER_API_KEY && agent?.account_id && agent.status === 'active' && !channel.sub_agent_id) {
     try {
       const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
       if (await handleTeamCompletionDM(db, apiKey, channel, agent.account_id, botToken, msg)) return
     } catch { /* fall through to normal reply flow */ }
   }
   if (!text) return
+
+  // Commerce owner chat: a dictated or typed cost becomes a confirmable proposal, never a write.
+  // Runs after transcription so a voice note works exactly like text. Anything that is not
+  // economics falls through to the normal agent reply below.
+  if (!isGroupChat && botToken && OPENROUTER_API_KEY && agent?.account_id && looksLikeEconomics(text)) {
+    try {
+      const owner = await ownerChatFor(db, channelId, chatId)
+      if (owner) {
+        const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
+        if (await handleEconomicsMessage(db, apiKey, agent, botToken, owner, text)) return
+      }
+    } catch (e) { console.error('commerce economics chat failed:', e) }
+  }
 
   let { data: dialogue } = await db.from('dialogues').select('*').eq('channel_id', channelId).eq('external_id', chatId).maybeSingle()
   if (!dialogue) {
@@ -182,7 +240,7 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   await db.from('dialogues').update({ status: dialogue.status === 'resolved' ? 'open' : dialogue.status }).eq('id', dialogue.id)
 
   if (dialogue.operator_takeover) return
-  if (agent.status === 'paused') return
+  if (agent.status !== 'active') return
   if (!OPENROUTER_API_KEY) {
     await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogue.id)
     if (botToken) await tgSend(botToken, chatId, 'OpenRouter key is not configured on the server. Operator will join shortly.')

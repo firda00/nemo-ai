@@ -31,6 +31,52 @@ export async function tgSend(botToken: string, chatId: number | string, text: st
   return true
 }
 
+// Send a single message carrying an inline keyboard. Not chunked: an approval prompt must stay
+// one message so the buttons cannot end up detached from the numbers they approve.
+export async function tgSendKeyboard(
+  botToken: string,
+  chatId: number | string,
+  text: string,
+  replyMarkup: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text.slice(0, 4000),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: replyMarkup,
+      }),
+    })
+    return res.ok
+  } catch { return false }
+}
+
+// Acknowledge a button press so Telegram stops showing the spinner on the client.
+export async function tgAnswerCallback(botToken: string, callbackId: string, text = ''): Promise<void> {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackId, text: text.slice(0, 200) }),
+    })
+  } catch { /* the visible reply is what matters */ }
+}
+
+// Replace a prompt's text and drop its keyboard, so a decided proposal cannot be pressed twice.
+export async function tgEditMessage(botToken: string, chatId: number | string, messageId: number, text: string): Promise<void> {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text: text.slice(0, 4000), parse_mode: 'HTML' }),
+    })
+  } catch { /* best effort */ }
+}
+
 // Same as tgSend but returns Telegram's real error text (for surfacing to the user).
 export async function tgSendDetailed(botToken: string, chatId: number | string, text: string): Promise<{ ok: boolean; error?: string }> {
   try {

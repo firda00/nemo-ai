@@ -21,6 +21,9 @@ const commerceMigration = read('supabase/migrations/20260805090000_commerce_cont
 const telegramLinksMigration = read('supabase/migrations/20260805110000_commerce_telegram_links.sql')
 const autofillMigration = read('supabase/migrations/20260805120000_commerce_economics_autofill.sql')
 const notifyChannelMigration = read('supabase/migrations/20260805130000_commerce_notify_channel.sql')
+const proposalsMigration = read('supabase/migrations/20260805140000_commerce_economics_proposals.sql')
+const economicsChat = read('supabase/functions/_shared/commerceEconomicsChat.ts')
+const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -102,6 +105,22 @@ const checks = [
   ['digest sends through the bound bot first', /notify_chat_id, notify_channel_id/.test(commerceDigest) && /eq\('id', profile\.notify_channel_id\)/.test(commerceDigest) && /cannot\s*\n?\s*\/\/ open a conversation|cannot/.test(commerceDigest)],
   ['bot fallback is deterministic and connected-only', /eq\('status', 'connected'\)\.order\('created_at', \{ ascending: true \}\)/.test(commerceDigest) && /order\('created_at', \{ ascending: true \}\)/.test(commerceControl)],
   ['notify channel migration is deployed', /20260805130000_commerce_notify_channel\.sql/.test(deploy)],
+  ['connect button cannot mint duplicate links', /setBusy\('connect'\)/.test(commercePage) && /a double click minted several one-time links/.test(commercePage)],
+
+  // --- Telegram economics input: parse, confirm, only then write ---
+  ['only the bound owner chat can propose economics', /eq\('notify_chat_id', chatId\)\.eq\('notify_channel_id', channelId\)/.test(economicsChat) && /const owner = await ownerChatFor\(db, channelId, chatId\)/.test(tgProcess) && /const owner = await ownerChatFor\(db, channelId, chatId\)/.test(telegramWebhook)],
+  ['the model only parses, it never writes', /The LLM only PARSES/.test(economicsChat) && /Never writes to\r?\n\/\/ commerce_skus/.test(tgProcess) && /never invent a number that was not stated/.test(economicsChat)],
+  ['proposals are stored pending and expire', /status text not null default 'pending'/.test(proposalsMigration) && /interval '1 hour'/.test(proposalsMigration) && /proposal expired/.test(proposalsMigration)],
+  ['a proposal that changes nothing is rejected by the schema', /check \(unit_cost_tiyin is not null or lead_time_days is not null or safety_stock is not null or min_margin_percent is not null\)/.test(proposalsMigration)],
+  ['applying is service-role only and re-checks ownership', /revoke all on function public\.apply_commerce_economics_proposal\(uuid\) from public, anon, authenticated/.test(proposalsMigration) && /grant execute on function public\.apply_commerce_economics_proposal\(uuid\) to service_role/.test(proposalsMigration) && /SKU does not belong to this account/.test(proposalsMigration) && /for update;/.test(proposalsMigration)],
+  ['confirming clears estimate marks and bumps the revision', /estimated_fields = v_estimated/.test(proposalsMigration) && /economics_revision = s\.economics_revision \+ 1/.test(proposalsMigration) && /field <> all \(v_applied\)/.test(proposalsMigration)],
+  ['money moves only on an explicit Yes', /if \(arg !== 'y'\)/.test(telegramWebhook) && /status: 'rejected'/.test(telegramWebhook) && /apply_commerce_economics_proposal/.test(telegramWebhook) && /only place money moves/.test(telegramWebhook)],
+  ['a button press is bound to its own chat and account', /proposal\.chat_id !== chatId \|\| proposal\.account_id !== owner\.accountId/.test(telegramWebhook) && /Это подтверждение недоступно/.test(telegramWebhook)],
+  ['a decided or expired proposal cannot be pressed again', /proposal\.status !== 'pending'/.test(telegramWebhook) && /eq\('status', 'pending'\)/.test(telegramWebhook) && /Срок подтверждения истёк/.test(telegramWebhook)],
+  ['SKU matching stays exact with disambiguation buttons', /matching stays exact/.test(economicsChat) && /external_sku\.toLowerCase\(\) === needle/.test(economicsChat) && /pickKeyboard/.test(tgProcess) && /я не подставляю похожие товары/.test(tgProcess)],
+  ['voice works because parsing runs after transcription', /Runs after transcription so a voice note works exactly like text/.test(tgProcess)],
+  ['non-economics owner messages still reach the agent', /looksLikeEconomics\(text\)/.test(tgProcess) && /falls through to the normal agent reply/.test(tgProcess)],
+  ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
 ]
 

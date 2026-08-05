@@ -55,7 +55,7 @@ export default function CommercePage() {
   const [telegramConnected, setTelegramConnected] = useState(false)
   const [telegramLink, setTelegramLink] = useState<string | null>(null)
   const [skus, setSkus] = useState<CommerceSku[]>([])
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
@@ -133,11 +133,13 @@ export default function CommercePage() {
   }
 
   const connectTelegram = async () => {
+    // Without claiming `busy` a double click minted several one-time links in the same second.
     if (!supabase || busy) return
-    setMessage(null)
+    setBusy('connect'); setMessage(null)
     const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'create_telegram_link' } })
     if (error || !data?.ok) setMessage({ ok: false, text: data?.error ?? error?.message ?? 'Could not create Telegram link.' })
     else setTelegramLink(data.url)
+    setBusy(null)
   }
 
   const stageFile = async (file: File) => {

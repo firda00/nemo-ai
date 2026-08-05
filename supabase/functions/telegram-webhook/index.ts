@@ -5,7 +5,10 @@
 // canary. Public (verify_jwt = false) — authenticity is Telegram's secret token.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { processTelegramUpdate } from '../_shared/tgProcess.ts'
-import { tgSend } from '../_shared/telegram.ts'
+import { tgAnswerCallback, tgEditMessage, tgSend, tgSendKeyboard } from '../_shared/telegram.ts'
+import { applyKeyboard, CB_APPLY, CB_PICK, ownerChatFor, proposalText } from '../_shared/commerceEconomicsChat.ts'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
@@ -14,6 +17,71 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('WATCH_CRON_SECRET') ?? Deno.env.get('CRON_SECRET') ?? ''
 const TG_QUEUE = Deno.env.get('TG_QUEUE') === '1'
 const WORKER_URL = `${SUPABASE_URL}/functions/v1/agent-worker`
+
+async function handleCommerceCallback(db: any, channelId: string, botToken: string | undefined, cb: any): Promise<void> {
+  const data = String(cb?.data ?? '')
+  const chatId = String(cb?.message?.chat?.id ?? '')
+  const messageId = Number(cb?.message?.message_id ?? 0)
+  const parts = data.split(':')
+  if (!botToken || !chatId || (parts[0] !== CB_APPLY && parts[0] !== CB_PICK)) return
+  const [kind, proposalId, arg] = parts
+  if (!UUID.test(proposalId ?? '')) return
+
+  // The presser must be the chat this proposal was created for. A forwarded button from another
+  // chat must never be able to move another account's numbers.
+  const owner = await ownerChatFor(db, channelId, chatId)
+  const { data: proposal } = await db.from('commerce_economics_proposals')
+    .select('id, account_id, chat_id, status, expires_at, candidates, sku_id, unit_cost_tiyin, lead_time_days, safety_stock, min_margin_percent, product_query')
+    .eq('id', proposalId).maybeSingle()
+  if (!owner || !proposal || proposal.chat_id !== chatId || proposal.account_id !== owner.accountId) {
+    await tgAnswerCallback(botToken, cb.id, 'Это подтверждение недоступно.')
+    return
+  }
+  if (proposal.status !== 'pending') {
+    await tgAnswerCallback(botToken, cb.id, 'Уже обработано.')
+    return
+  }
+  if (new Date(proposal.expires_at) <= new Date()) {
+    await db.from('commerce_economics_proposals').update({ status: 'expired' }).eq('id', proposal.id).eq('status', 'pending')
+    await tgAnswerCallback(botToken, cb.id, 'Срок подтверждения истёк.')
+    await tgEditMessage(botToken, chatId, messageId, '⌛ Срок подтверждения истёк. Продиктуйте цифры ещё раз.')
+    return
+  }
+
+  if (kind === CB_PICK) {
+    const candidates = Array.isArray(proposal.candidates) ? proposal.candidates : []
+    const chosen = candidates[Number(arg)]
+    if (!chosen?.id) { await tgAnswerCallback(botToken, cb.id, 'Вариант не найден.'); return }
+    await db.from('commerce_economics_proposals').update({ sku_id: chosen.id, candidates: [] }).eq('id', proposal.id).eq('status', 'pending')
+    await tgAnswerCallback(botToken, cb.id)
+    await tgEditMessage(botToken, chatId, messageId, `Выбрано: <b>${chosen.title}</b> (${chosen.external_sku})`)
+    await tgSendKeyboard(botToken, chatId, proposalText(chosen, {
+      product: proposal.product_query,
+      unit_cost_uzs: proposal.unit_cost_tiyin == null ? null : proposal.unit_cost_tiyin / 100,
+      lead_time_days: proposal.lead_time_days,
+      safety_stock: proposal.safety_stock,
+      min_margin_percent: proposal.min_margin_percent,
+    }), applyKeyboard(proposal.id))
+    return
+  }
+
+  if (arg !== 'y') {
+    await db.from('commerce_economics_proposals').update({ status: 'rejected' }).eq('id', proposal.id).eq('status', 'pending')
+    await tgAnswerCallback(botToken, cb.id, 'Отменено.')
+    await tgEditMessage(botToken, chatId, messageId, '✖️ Не сохранено. Цифры остались прежними.')
+    return
+  }
+
+  const { data: result, error } = await db.rpc('apply_commerce_economics_proposal', { p_proposal_id: proposal.id })
+  if (error) {
+    await tgAnswerCallback(botToken, cb.id, 'Не удалось сохранить.')
+    await tgEditMessage(botToken, chatId, messageId, '⚠️ Не удалось сохранить. Внесите цифры в таблице Commerce.')
+    return
+  }
+  const applied = Array.isArray(result?.applied_fields) ? result.applied_fields.length : 0
+  await tgAnswerCallback(botToken, cb.id, 'Сохранено')
+  await tgEditMessage(botToken, chatId, messageId, `✅ Сохранено (${applied} показател${applied === 1 ? 'ь' : 'я'}).\nЭти цифры теперь подтверждены вами — по ним включены критические оповещения.`)
+}
 
 Deno.serve(async (req) => {
   try {
@@ -34,6 +102,14 @@ Deno.serve(async (req) => {
     if (!agent?.account_id || await blocksExternalActions(db, agent.account_id)) return new Response('ok')
 
     const update = await req.json()
+
+    // Button presses on a commerce economics proposal. This is the only place money moves, and it
+    // moves only for the bound owner chat pressing Yes on a proposal it owns.
+    if (update?.callback_query) {
+      await handleCommerceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      return new Response('ok')
+    }
+
     const startToken = String(update?.message?.text ?? '').match(/^\/start\s+commerce_([0-9a-f-]{36})$/i)?.[1]
     if (startToken && update?.message?.chat?.id) {
       const chatId = String(update.message.chat.id)
