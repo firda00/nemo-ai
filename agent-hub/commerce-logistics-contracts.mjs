@@ -119,7 +119,7 @@ const checks = [
   ['money moves only on an explicit Yes', /if \(arg !== 'y'\)/.test(telegramWebhook) && /status: 'rejected'/.test(telegramWebhook) && /apply_commerce_economics_proposal/.test(telegramWebhook) && /only place money moves/.test(telegramWebhook)],
   ['a button press is bound to its own chat and account', /proposal\.chat_id !== chatId \|\| proposal\.account_id !== owner\.accountId/.test(telegramWebhook) && /Это подтверждение недоступно/.test(telegramWebhook)],
   ['a decided or expired proposal cannot be pressed again', /proposal\.status !== 'pending'/.test(telegramWebhook) && /eq\('status', 'pending'\)/.test(telegramWebhook) && /Срок подтверждения истёк/.test(telegramWebhook)],
-  ['SKU matching stays exact with disambiguation buttons', /matching stays exact/.test(economicsChat) && /external_sku\.toLowerCase\(\) === needle/.test(economicsChat) && /pickKeyboard/.test(tgProcess) && /я не подставляю похожие товары/.test(tgProcess)],
+  ['SKU matching stays exact with disambiguation buttons', /matching stays exact/.test(economicsChat) && /normalize\(sku\.external_sku\) === needle/.test(economicsChat) && /pickKeyboard/.test(tgProcess) && /я не подставляю похожие товары/.test(tgProcess)],
   ['voice works because parsing runs after transcription', /Runs after transcription, so voice behaves like text/.test(tgProcess)],
   ['non-economics owner messages still reach the agent', /looksLikeEconomics\(text\)/.test(tgProcess) && /if \(OPENROUTER_API_KEY && looksLikeEconomics\(text\)\)/.test(tgProcess)],
   // A team bot carries scope='group'; that branch returns for private chats too, so anything
@@ -129,6 +129,7 @@ const checks = [
   ['only internal bots get Nemo-branded greetings', /customer-facing DM bot, which must keep its persona/.test(tgProcess) && /channel\.scope === 'group' && \/\^\\\/start/.test(tgProcess)],
   ['extraction does not depend on the agent chat model', /Deliberately NOT agent\.model/.test(tgProcess) && /parseEconomicsMessage\(apiKey, PRIMARY_MODEL, text\)/.test(tgProcess)],
   ['a fenced or chatty JSON reply is still parsed', /function stripFence/.test(economicsChat) && /text\.slice\(start, end \+ 1\)/.test(economicsChat)],
+  ['matching survives real marketplace whitespace and either name field', /replace\(\/\\s\+\/g, ' '\)/.test(economicsChat) && /normalize\(sku\.external_sku\) === needle \|\| normalize\(sku\.title\) === needle/.test(economicsChat) && /external\.includes\(needle\)/.test(economicsChat)],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

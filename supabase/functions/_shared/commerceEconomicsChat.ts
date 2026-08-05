@@ -78,14 +78,24 @@ export async function parseEconomicsMessage(apiKey: string, model: string, text:
 
 export type SkuCandidate = { id: string; external_sku: string; title: string }
 
+// Marketplace data is typed by humans: codes arrive with trailing and doubled spaces, and which
+// field holds the human-readable name differs per shop — some keep it in title, others in
+// external_sku. Compare against BOTH, on collapsed whitespace, or a seller naming their product
+// exactly as Uzum shows it still gets "not found".
+const normalize = (value: string) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
 // Exact first, then a contained-substring fallback that must still be unambiguous. Anything
 // fuzzier would let "наушники" silently overwrite the economics of the wrong headphone SKU.
 export function matchSkus(query: string, skus: SkuCandidate[]): SkuCandidate[] {
-  const needle = query.trim().toLowerCase()
+  const needle = normalize(query)
   if (!needle) return []
-  const exact = skus.filter((sku) => sku.external_sku.toLowerCase() === needle || sku.title.trim().toLowerCase() === needle)
+  const exact = skus.filter((sku) => normalize(sku.external_sku) === needle || normalize(sku.title) === needle)
   if (exact.length) return exact
-  return skus.filter((sku) => sku.title.toLowerCase().includes(needle) || needle.includes(sku.title.toLowerCase()))
+  return skus.filter((sku) => {
+    const title = normalize(sku.title)
+    const external = normalize(sku.external_sku)
+    return title.includes(needle) || external.includes(needle) || needle.includes(title) || needle.includes(external)
+  })
 }
 
 const money = (uzs: number) => `${Math.round(uzs).toLocaleString('ru-RU')} сум`
