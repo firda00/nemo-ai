@@ -1,6 +1,8 @@
 const TABLE_SEPARATOR = /^:?-{3,}:?$/
 
-function escapeHtml(value: string): string {
+/** Escape a value for Telegram HTML. Exported so hand-written messages can keep their own tags
+ *  while still neutralising interpolated marketplace data (a product title may contain < or &). */
+export function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 

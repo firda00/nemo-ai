@@ -5,7 +5,8 @@
 // canary. Public (verify_jwt = false) — authenticity is Telegram's secret token.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { processTelegramUpdate } from '../_shared/tgProcess.ts'
-import { tgAnswerCallback, tgEditMessage, tgSend, tgSendKeyboard } from '../_shared/telegram.ts'
+import { tgAnswerCallback, tgEditMessage, tgSendHtml, tgSendKeyboard } from '../_shared/telegram.ts'
+import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { applyKeyboard, CB_APPLY, CB_PICK, ownerChatFor, proposalText } from '../_shared/commerceEconomicsChat.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -54,7 +55,7 @@ async function handleCommerceCallback(db: any, channelId: string, botToken: stri
     if (!chosen?.id) { await tgAnswerCallback(botToken, cb.id, 'Вариант не найден.'); return }
     await db.from('commerce_economics_proposals').update({ sku_id: chosen.id, candidates: [] }).eq('id', proposal.id).eq('status', 'pending')
     await tgAnswerCallback(botToken, cb.id)
-    await tgEditMessage(botToken, chatId, messageId, `Выбрано: <b>${chosen.title}</b> (${chosen.external_sku})`)
+    await tgEditMessage(botToken, chatId, messageId, `Выбрано: <b>${escapeHtml(String(chosen.title ?? ''))}</b> (${escapeHtml(String(chosen.external_sku ?? ''))})`)
     await tgSendKeyboard(botToken, chatId, proposalText(chosen, {
       product: proposal.product_query,
       unit_cost_uzs: proposal.unit_cost_tiyin == null ? null : proposal.unit_cost_tiyin / 100,
@@ -122,14 +123,28 @@ Deno.serve(async (req) => {
         // rejected by Telegram and the digest would silently never arrive.
         await db.from('business_profiles').upsert({ account_id: link.account_id, notify_chat_id: chatId, notify_channel_id: channelId, updated_at: new Date().toISOString() })
         await db.from('commerce_telegram_links').update({ used_at: new Date().toISOString(), channel_id: channelId }).eq('token', startToken).is('used_at', null)
-        if (botToken) await tgSend(botToken, chatId, '✅ <b>Nemo Commerce подключён.</b>\nСюда придут ежедневный дайджест в 09:00 по Ташкенту и срочные оповещения об остатках.\n\nNemo не меняет цены и не оформляет заказы автоматически — только рекомендации.')
+        if (botToken) {
+          await tgSendHtml(botToken, chatId, [
+            '✅ <b>Nemo Commerce подключён</b>',
+            '',
+            'Что будет приходить сюда:',
+            '☀️ сводка каждое утро в 09:00 по Ташкенту',
+            '🔴 срочное сообщение, когда товар вот-вот закончится',
+            '',
+            '<b>Можно отвечать прямо сюда.</b> Напишите или наговорите голосом, например:',
+            '<i>«XALTA 50*60 себестоимость 20000, доставка 12 дней»</i>',
+            'Я покажу, что понял, и сохраню только после вашего подтверждения.',
+            '',
+            '<i>Nemo не меняет цены и не оформляет заказы на Uzum.</i>',
+          ].join('\n'))
+        }
         return new Response('ok')
       }
       // A dead link must say so. Staying silent here looked exactly like a broken bot.
       if (botToken) {
-        await tgSend(botToken, chatId, link
-          ? '⚠️ Эта ссылка уже использована или истекла (срок действия — 15 минут).\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.'
-          : '⚠️ Ссылка не распознана.\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.')
+        await tgSendHtml(botToken, chatId, link
+          ? '⚠️ <b>Ссылка уже использована или истекла</b>\nОна действует 15 минут.\n\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.'
+          : '⚠️ <b>Ссылка не распознана</b>\n\nОткройте Nemo → Commerce и нажмите «Connect Telegram notifications», чтобы получить новую.')
       }
       return new Response('ok')
     }

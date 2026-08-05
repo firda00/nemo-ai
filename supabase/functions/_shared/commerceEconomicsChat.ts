@@ -7,6 +7,7 @@
 //      cost silently poisons every margin calculation downstream.
 //   3. SKU matching stays exact. Several candidates -> ask with buttons. None -> say so.
 import { callOpenRouter } from './llm.ts'
+import { escapeHtml } from './telegramFormat.ts'
 
 export const CB_APPLY = 'ce'
 export const CB_PICK = 'cs'
@@ -80,14 +81,26 @@ export function matchSkus(query: string, skus: SkuCandidate[]): SkuCandidate[] {
 
 const money = (uzs: number) => `${Math.round(uzs).toLocaleString('ru-RU')} сум`
 
+export function skuLabel(sku: SkuCandidate): string {
+  return `<b>${escapeHtml(sku.title)}</b> <code>${escapeHtml(sku.external_sku)}</code>`
+}
+
 export function proposalText(sku: SkuCandidate, parsed: Parsed): string {
   const lines = [
-    parsed.unit_cost_uzs != null ? `• Себестоимость: <b>${money(parsed.unit_cost_uzs)}</b>` : null,
-    parsed.lead_time_days != null ? `• Срок поставки: <b>${parsed.lead_time_days} дн.</b>` : null,
-    parsed.safety_stock != null ? `• Страховой запас: <b>${parsed.safety_stock} шт.</b>` : null,
-    parsed.min_margin_percent != null ? `• Мин. маржа: <b>${parsed.min_margin_percent}%</b>` : null,
+    parsed.unit_cost_uzs != null ? `💵 Себестоимость: <b>${money(parsed.unit_cost_uzs)}</b>` : null,
+    parsed.lead_time_days != null ? `🚚 Срок поставки: <b>${parsed.lead_time_days} дн.</b>` : null,
+    parsed.safety_stock != null ? `📦 Страховой запас: <b>${parsed.safety_stock} шт.</b>` : null,
+    parsed.min_margin_percent != null ? `📈 Мин. маржа: <b>${parsed.min_margin_percent}%</b>` : null,
   ].filter(Boolean)
-  return `Понял так:\n\n<b>${sku.title}</b> (${sku.external_sku})\n${lines.join('\n')}\n\nСохранить? После сохранения эти цифры считаются подтверждёнными вами, и по ним включаются критические оповещения.`
+  return [
+    'Проверьте, правильно ли я понял:',
+    '',
+    skuLabel(sku),
+    ...lines,
+    '',
+    'Сохранить эти цифры?',
+    '<i>После сохранения они считаются подтверждёнными вами — по ним включатся срочные оповещения.</i>',
+  ].join('\n')
 }
 
 export function applyKeyboard(proposalId: string) {

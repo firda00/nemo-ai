@@ -31,6 +31,22 @@ export async function tgSend(botToken: string, chatId: number | string, text: st
   return true
 }
 
+// Send a message we authored ourselves as Telegram HTML. tgSend() runs agent output through
+// formatTelegramHtml, which ESCAPES tags — correct for untrusted model text, but it turned our
+// own <b> into visible "<b>". Use this for hand-written copy and escape interpolated values
+// with escapeHtml() at the call site.
+export async function tgSendHtml(botToken: string, chatId: number | string, html: string): Promise<boolean> {
+  for (const chunk of splitTelegramText(html)) {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: 'HTML', disable_web_page_preview: true }),
+    })
+    if (!res.ok) return false
+  }
+  return true
+}
+
 // Send a single message carrying an inline keyboard. Not chunked: an approval prompt must stay
 // one message so the buttons cannot end up detached from the numbers they approve.
 export async function tgSendKeyboard(

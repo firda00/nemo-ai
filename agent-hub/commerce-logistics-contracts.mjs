@@ -24,6 +24,8 @@ const notifyChannelMigration = read('supabase/migrations/20260805130000_commerce
 const proposalsMigration = read('supabase/migrations/20260805140000_commerce_economics_proposals.sql')
 const economicsChat = read('supabase/functions/_shared/commerceEconomicsChat.ts')
 const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
+const telegramHelper = read('supabase/functions/_shared/telegram.ts')
+const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -72,7 +74,7 @@ const checks = [
   ['inventory snapshots are idempotent per four-hour slot', /unique \(sku_id, observed_slot\)/.test(commerceMigration) && /snapshotError\.code !== '23505'/.test(commerceWorker) && /eq\('sku_id', sku\.id\)\.eq\('observed_slot', run\.scheduled_for\)/.test(commerceWorker)],
   ['sync runs are fenced by claim token', /for update of r skip locked/.test(commerceMigration) && /claim_token = gen_random_uuid\(\)/.test(commerceMigration) && /interval '10 minutes'/.test(commerceMigration) && /eq\('claim_token', run\.claim_token\)\.eq\('status', 'running'\)/.test(commerceWorker) && /claim lost/.test(commerceWorker)],
   ['reorder alerts wait for seven full days of history', /7 \* 86_400_000/.test(commerceWorker) && /historyReady && stock != null/.test(commerceWorker)],
-  ['critical alerts are deduplicated and marked only after Telegram accepts', /severity === 'critical' && !item\.alerted_at/.test(commerceDigest) && /if \(await tgSend\(target\.token, target\.chatId, criticalText\(row\)\)\)/.test(commerceDigest) && /\.is\('alerted_at', null\)/.test(commerceDigest)],
+  ['critical alerts are deduplicated and marked only after Telegram accepts', /severity === 'critical' && !item\.alerted_at/.test(commerceDigest) && /if \(await tgSendHtml\(target\.token, target\.chatId, criticalText\(row\)\)\)/.test(commerceDigest) && /\.is\('alerted_at', null\)/.test(commerceDigest)],
   ['daily digest is sent once per Tashkent day', /timeZone: 'Asia\/Tashkent'/.test(commerceDigest) && /digest_sent_at !== today/.test(commerceDigest) && /unsent\.length && await tgSend/.test(commerceDigest)],
   ['telegram deep links are short-lived and single-use', /interval '15 minutes'/.test(telegramLinksMigration) && /revoke all on public\.commerce_telegram_links from public, anon, authenticated/.test(telegramLinksMigration) && telegramWebhook.includes('commerce_([0-9a-f-]{36})') && /const expired = link \? new Date\(link\.expires_at\) <= new Date\(\) : false/.test(telegramWebhook) && /if \(link && !link\.used_at && !expired\)/.test(telegramWebhook) && /\.is\('used_at', null\)/.test(telegramWebhook)],
   ['commerce money is stored as integer tiyin', /unit_cost_tiyin: integer\(/.test(commerceControl) && /row\.price \* 100/.test(commerceWorker) && /Math\.round\(Number\(normalized\) \* 100\)/.test(commercePage) && /unit_cost_tiyin bigint/.test(commerceMigration)],
@@ -100,7 +102,7 @@ const checks = [
 
   // --- Telegram onboarding must never fail silently or through the wrong bot ---
   ['a dead or unknown deep link gets an answer, not silence', /must say so\. Staying silent here/.test(telegramWebhook) && /уже использована или истекла/.test(telegramWebhook) && /Ссылка не распознана/.test(telegramWebhook)],
-  ['successful linking confirms in chat', /Nemo Commerce подключён/.test(telegramWebhook) && /не меняет цены и не оформляет заказы автоматически/.test(telegramWebhook)],
+  ['successful linking confirms in chat', /Nemo Commerce подключён/.test(telegramWebhook) && /не меняет цены и не оформляет заказы на Uzum/.test(telegramWebhook)],
   ['notifications bind to the channel that received /start', /notify_channel_id: channelId/.test(telegramWebhook) && /channel_id: channelId/.test(telegramWebhook) && /notify_channel_id uuid references public\.channels\(id\)/.test(notifyChannelMigration)],
   ['digest sends through the bound bot first', /notify_chat_id, notify_channel_id/.test(commerceDigest) && /eq\('id', profile\.notify_channel_id\)/.test(commerceDigest) && /cannot\s*\n?\s*\/\/ open a conversation|cannot/.test(commerceDigest)],
   ['bot fallback is deterministic and connected-only', /eq\('status', 'connected'\)\.order\('created_at', \{ ascending: true \}\)/.test(commerceDigest) && /order\('created_at', \{ ascending: true \}\)/.test(commerceControl)],
@@ -121,6 +123,13 @@ const checks = [
   ['voice works because parsing runs after transcription', /Runs after transcription so a voice note works exactly like text/.test(tgProcess)],
   ['non-economics owner messages still reach the agent', /looksLikeEconomics\(text\)/.test(tgProcess) && /falls through to the normal agent reply/.test(tgProcess)],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
+
+  // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
+  ['our own markup is sent unescaped, agent output still is not', /tgSend\(\) runs agent output through/.test(telegramHelper) && /export async function tgSendHtml/.test(telegramHelper) && /parse_mode: 'HTML'/.test(telegramHelper)],
+  ['commerce messages never go through the escaping sender', !/\btgSend\(/.test(commerceDigest) && !/\btgSend\(/.test(telegramWebhook) && /tgSendHtml/.test(commerceDigest) && /tgSendHtml/.test(telegramWebhook)],
+  ['interpolated marketplace data is escaped', /export function escapeHtml/.test(telegramFormat) && /escapeHtml\(String\(row\.title/.test(commerceDigest) && /escapeHtml\(sku\.title\)/.test(economicsChat) && /escapeHtml\(parsed\.product\)/.test(tgProcess)],
+  ['the digest tells the owner how to unblock the numbers', /нет себестоимости или срока поставки/.test(commerceDigest) && /Продиктуйте прямо сюда/.test(commerceDigest)],
+  ['the welcome message explains that the chat accepts input', /Можно отвечать прямо сюда/.test(telegramWebhook) && /наговорите голосом/.test(telegramWebhook)],
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
 ]
 

@@ -3,7 +3,8 @@
 // full flow: voice transcription, group task-bot, DM task-completion, customer dialogue + reply.
 // Extracted so the webhook can just enqueue and a rate-capped worker does the heavy LLM work.
 import { buildReply, buildSubAgentReply, type ReplyDiagnostics } from './agent.ts'
-import { tgSend, tgSendKeyboard } from './telegram.ts'
+import { tgSend, tgSendHtml, tgSendKeyboard } from './telegram.ts'
+import { escapeHtml } from './telegramFormat.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
 import {
   accountSkus, applyKeyboard, looksLikeEconomics, matchSkus, ownerChatFor,
@@ -83,12 +84,18 @@ async function handleEconomicsMessage(
 
   const skus = await accountSkus(db, owner.accountId)
   if (!skus.length) {
-    await tgSend(botToken, owner.chatId, 'Каталог ещё не синхронизирован с Uzum, поэтому не к чему привязать себестоимость. Откройте Commerce и дождитесь первой синхронизации.')
+    await tgSendHtml(botToken, owner.chatId, 'Каталог ещё не синхронизирован с Uzum, поэтому себестоимость пока не к чему привязать.\n\nОткройте Commerce и дождитесь первой синхронизации.')
     return true
   }
   const candidates = matchSkus(parsed.product, skus)
   if (!candidates.length) {
-    await tgSend(botToken, owner.chatId, `Не нашёл товар «${parsed.product}» в каталоге. Пришлите точное название из Uzum или артикул (SKU) — я не подставляю похожие товары, чтобы не записать цифры не туда.`)
+    await tgSendHtml(botToken, owner.chatId, [
+      `🔎 Не нашёл в каталоге: «${escapeHtml(parsed.product)}»`,
+      '',
+      'Пришлите точное название из Uzum или артикул — я не подставляю похожие товары, чтобы не записать цифры не туда.',
+      '',
+      `Например: <code>${escapeHtml(skus[0].external_sku)}</code> — ${escapeHtml(skus[0].title)}`,
+    ].join('\n'))
     return true
   }
 
@@ -97,14 +104,14 @@ async function handleEconomicsMessage(
     .insert(proposalRow(owner, parsed, text, single ? [] : candidates.slice(0, 5), single?.id ?? null))
     .select('id').single()
   if (error || !proposal) {
-    await tgSend(botToken, owner.chatId, 'Не смог подготовить подтверждение. Попробуйте ещё раз или внесите цифры в таблице Commerce.')
+    await tgSendHtml(botToken, owner.chatId, 'Не смог подготовить подтверждение. Попробуйте ещё раз или внесите цифры в таблице Commerce.')
     return true
   }
 
   if (single) {
     await tgSendKeyboard(botToken, owner.chatId, proposalText(single, parsed), applyKeyboard(proposal.id))
   } else {
-    await tgSendKeyboard(botToken, owner.chatId, `Нашёл несколько товаров по запросу «${parsed.product}». Какой имели в виду?`, pickKeyboard(proposal.id, candidates))
+    await tgSendKeyboard(botToken, owner.chatId, `Нашёл несколько товаров по запросу «${escapeHtml(parsed.product)}». Какой имели в виду?`, pickKeyboard(proposal.id, candidates))
   }
   return true
 }

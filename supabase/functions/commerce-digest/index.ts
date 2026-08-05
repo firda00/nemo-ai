@@ -2,7 +2,8 @@
 // the message; no recommendation is executed or turned into an external marketplace action.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { tgSend } from '../_shared/telegram.ts'
+import { tgSendHtml } from '../_shared/telegram.ts'
+import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
@@ -30,17 +31,56 @@ async function telegramTarget(db: any, accountId: string) {
   return token ? { token: String(token), chatId: String(profile.notify_chat_id) } : null
 }
 
+const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value).toLocaleString('ru-RU') : '—')
+const name = (row: any) => `${escapeHtml(String(row.title ?? 'Товар'))} <code>${escapeHtml(String(row.external_sku ?? ''))}</code>`
+
 function criticalText(row: any) {
   const calc = row.calculation ?? {}
   const action = row.suggested_action ?? {}
-  return `⚠️ <b>Nemo Commerce: критический риск</b>\n${row.title} (${row.external_sku})\nОстаток: ${calc.stock_total ?? '—'}\nТочка заказа: ${calc.reorder_point ?? '—'}\nРекомендуемая закупка: ${action.units ?? '—'} шт.\n\nЭто рекомендация. Nemo не оформляет заказ и не меняет цену автоматически.`
+  return [
+    '🔴 <b>Товар заканчивается</b>',
+    '',
+    name(row),
+    `Осталось: <b>${num(calc.stock_total)} шт.</b>`,
+    `Хватит примерно на: <b>${num(calc.stock_total != null && calc.daily_velocity ? calc.stock_total / calc.daily_velocity : null)} дн.</b>`,
+    `Точка заказа: ${num(calc.reorder_point)} шт.`,
+    '',
+    `👉 Рекомендуем заказать <b>${num(action.units)} шт.</b>`,
+    '',
+    '<i>Это рекомендация. Nemo не оформляет заказ и не меняет цену.</i>',
+  ].join('\n')
+}
+
+function digestLine(row: any) {
+  if (row.kind === 'reorder') return `🔴 ${name(row)} — заказать ${num(row.suggested_action?.units)} шт.`
+  if (row.kind === 'price_guard') return `💰 ${name(row)} — маржа ниже вашего минимума`
+  return `📝 ${name(row)} — не хватает данных для расчёта`
 }
 
 function digestText(rows: any[]) {
   const critical = rows.filter((row) => row.severity === 'critical').length
-  const warning = rows.filter((row) => row.severity === 'warning').length
-  const lines = rows.slice(0, 5).map((row) => `• ${row.title}: ${row.kind === 'reorder' ? `закупка ${row.suggested_action?.units ?? '—'} шт.` : 'проверьте маржу'}`)
-  return `☀️ <b>Nemo Ecommerce Digest</b>\nКритических рисков: ${critical}\nПредупреждений: ${warning}\n\n${lines.join('\n') || 'Новых рекомендаций нет.'}\n\nВсе рекомендации доступны в Commerce. Внешние действия не выполняются автоматически.`
+  const missing = rows.filter((row) => row.kind === 'missing_data').length
+  const head = critical
+    ? `🔴 Срочно: <b>${critical}</b>`
+    : '✅ Срочных рисков нет'
+  const lines = rows.slice(0, 8).map(digestLine)
+  const tail = rows.length > 8 ? `\n…и ещё ${rows.length - 8} в Commerce.` : ''
+  // Missing economics is the single thing blocking real reorder/price advice, so say what to do.
+  const nudge = missing
+    ? `\n\n💡 У <b>${missing}</b> товар(ов) нет себестоимости или срока поставки — без них Nemo не считает закупку и маржу. Продиктуйте прямо сюда, например: «${escapeHtml('XALTA 50*60 себестоимость 20000, доставка 12 дней')}».`
+    : ''
+  return [
+    '☀️ <b>Nemo Commerce — сводка за сутки</b>',
+    '',
+    head,
+    `Всего рекомендаций: <b>${rows.length}</b>`,
+    '',
+    lines.join('\n') || 'Новых рекомендаций нет.',
+    tail,
+    nudge,
+    '',
+    '<i>Nemo ничего не меняет на Uzum автоматически.</i>',
+  ].filter((part) => part !== '').join('\n')
 }
 
 Deno.serve(async (req) => {
@@ -75,14 +115,14 @@ Deno.serve(async (req) => {
     if (!target) continue
     if (action === 'alerts') {
       for (const row of accountRows.filter((item) => item.severity === 'critical' && !item.alerted_at)) {
-        if (await tgSend(target.token, target.chatId, criticalText(row))) {
+        if (await tgSendHtml(target.token, target.chatId, criticalText(row))) {
           await db.from('commerce_recommendations').update({ alerted_at: new Date().toISOString() }).eq('id', row.id).is('alerted_at', null)
           sent++
         }
       }
     } else {
       const unsent = accountRows.filter((item) => item.digest_sent_at !== today)
-      if (unsent.length && await tgSend(target.token, target.chatId, digestText(unsent))) {
+      if (unsent.length && await tgSendHtml(target.token, target.chatId, digestText(unsent))) {
         await db.from('commerce_recommendations').update({ digest_sent_at: today }).in('id', unsent.map((item) => item.id))
         sent++
       }
