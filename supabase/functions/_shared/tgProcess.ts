@@ -69,6 +69,22 @@ function decodeTextAttachment(base64: string): string {
 }
 
 // Full processing of ONE Telegram update for a channel. Safe to run in the background / a worker.
+const COMMERCE_HELP = [
+  '👋 <b>Здравствуйте! Это Nemo.</b>',
+  '',
+  'Если у вас магазин на Uzum Market, я слежу за остатками и маржой и пишу, когда пора закупать.',
+  '',
+  '<b>Как подключить:</b>',
+  'Откройте Nemo → Commerce и нажмите «Connect Telegram notifications».',
+  '',
+  '<b>Что можно писать сюда:</b>',
+  'Себестоимость и срок поставки — текстом или голосом. Например:',
+  '<i>«XALTA 50*60 себестоимость 20000, доставка 12 дней»</i>',
+  'Я покажу, что понял, и сохраню только после вашего подтверждения.',
+  '',
+  '<i>Nemo не меняет цены и не оформляет заказы на Uzum.</i>',
+].join('\n')
+
 // Returns true when the message was handled as a commerce economics proposal. Never writes to
 // commerce_skus — it only stores a pending proposal and asks the owner to confirm it.
 async function handleEconomicsMessage(
@@ -203,6 +219,32 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
   const hasAttachment = (Array.isArray(msg.photo) && msg.photo.length > 0) || Boolean(msg.document?.file_id)
   if (!text && !hasAttachment) return
 
+  // Commerce owner DM. This has to run BEFORE the group branch: a team bot carries scope='group',
+  // and that branch returns for every message including private ones — which is why dictating a
+  // cost to such a bot did nothing at all. Runs after transcription, so voice behaves like text.
+  if (!isGroupChat && text && botToken && agent?.account_id) {
+    const owner = await ownerChatFor(db, channelId, chatId)
+    if (owner) {
+      // A bare /start used to fall through to a silent path. The owner is our own customer, so
+      // naming Nemo here is correct — unlike a customer-facing DM bot, which must keep its persona.
+      if (/^\/start(?:@\w+)?$/i.test(text.trim())) {
+        await tgSendHtml(botToken, chatId, COMMERCE_HELP)
+        return
+      }
+      if (OPENROUTER_API_KEY && looksLikeEconomics(text)) {
+        try {
+          const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
+          if (await handleEconomicsMessage(db, apiKey, agent, botToken, owner, text)) return
+        } catch (e) { console.error('commerce economics chat failed:', e) }
+      }
+    } else if (channel.scope === 'group' && /^\/start(?:@\w+)?$/i.test(text.trim())) {
+      // A group-scoped bot is an internal team bot: its private chats are with staff, not with a
+      // tenant's customers, so a Nemo-branded pointer is safe here and beats silence.
+      await tgSendHtml(botToken, chatId, COMMERCE_HELP)
+      return
+    }
+  }
+
   // GROUP task-bot
   if (channel.scope === 'group' || isGroupChat) {
     if (botToken && OPENROUTER_API_KEY && agent?.account_id && agent.status === 'active') {
@@ -220,19 +262,6 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
     } catch { /* fall through to normal reply flow */ }
   }
   if (!text) return
-
-  // Commerce owner chat: a dictated or typed cost becomes a confirmable proposal, never a write.
-  // Runs after transcription so a voice note works exactly like text. Anything that is not
-  // economics falls through to the normal agent reply below.
-  if (!isGroupChat && botToken && OPENROUTER_API_KEY && agent?.account_id && looksLikeEconomics(text)) {
-    try {
-      const owner = await ownerChatFor(db, channelId, chatId)
-      if (owner) {
-        const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
-        if (await handleEconomicsMessage(db, apiKey, agent, botToken, owner, text)) return
-      }
-    } catch (e) { console.error('commerce economics chat failed:', e) }
-  }
 
   let { data: dialogue } = await db.from('dialogues').select('*').eq('channel_id', channelId).eq('external_id', chatId).maybeSingle()
   if (!dialogue) {
