@@ -146,7 +146,7 @@ export async function uzumProductRows(
   token: string,
   shopId: string,
   limit = 200,
-): Promise<{ ok: boolean; rows: UzumProductRow[]; missing: string[]; access?: ShopAccess; error?: string }> {
+): Promise<{ ok: boolean; rows: UzumProductRow[]; missing: string[]; access?: ShopAccess; error?: string; status?: number }> {
   const id = String(shopId).trim()
   if (!/^\d{1,18}$/.test(id)) return { ok: false, rows: [], missing: [], access: 'error', error: 'нужен числовой ID магазина' }
   // `size` and `page` are required by Uzum's OpenAPI. A one-page read was the reason a shop with
@@ -159,7 +159,7 @@ export async function uzumProductRows(
     const response = await request(`/v1/product/shop/${encodeURIComponent(id)}?size=${size}&page=${page}`, token)
     if (!response.ok) {
       const message = errorMessage(response.data, response.status)
-      return { ok: false, rows: [], missing: [], access: classify(response.status, message), error: message }
+      return { ok: false, rows: [], missing: [], access: classify(response.status, message), error: message, status: response.status }
     }
     const batch = listOf(response.data)
     products.push(...batch)

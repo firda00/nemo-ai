@@ -4,6 +4,8 @@
 
 export const extraUz = {
   "commerce": {
+    "syncIssuesTitle": "Sinxronizatsiya muammolari",
+    "syncIssuesHint": "Bu do‘konlardan narx va qoldiq olinmayapti, shuning uchun ular bo‘yicha hisob-kitob yo‘q.",
     "feesTitle": "Kabinetdan komissiyalarni olish",
     "feesHint": "Nemo Browser kengaytmasi bilan Uzum kabinetidagi tariflar sahifasini o‘qing — komissiya, yetkazish va qaytarish rezervi Uzum API’sida yo‘q, ularsiz marja hisoblanmaydi.",
     "feesRead": "Oxirgi kuzatuvdan olish",
@@ -1546,6 +1548,8 @@ export const extraUz = {
 
 export const extraRu = {
   "commerce": {
+    "syncIssuesTitle": "Проблемы синхронизации",
+    "syncIssuesHint": "С этих магазинов не забираются цены и остатки, поэтому расчёты по ним не ведутся.",
     "feesTitle": "Забрать комиссии из кабинета",
     "feesHint": "Прочитайте страницу тарифов в кабинете Uzum через расширение Nemo Browser — комиссия, фулфилмент и резерв возвратов не отдаются API, а без них маржа не считается.",
     "feesRead": "Взять из последнего наблюдения",
@@ -3088,6 +3092,8 @@ export const extraRu = {
 
 export const extraEn = {
   "commerce": {
+    "syncIssuesTitle": "Sync problems",
+    "syncIssuesHint": "Prices and stock are not being read from these shops, so nothing is calculated for them.",
     "feesTitle": "Read fees from the cabinet",
     "feesHint": "Read the fees page in your Uzum cabinet through the Nemo Browser extension — commission, fulfillment and the returns reserve are not in the API, and without them margin cannot be computed.",
     "feesRead": "Take from the latest observation",

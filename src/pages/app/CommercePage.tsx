@@ -246,6 +246,21 @@ export default function CommercePage() {
         <Card padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalogs')}</p><p className="mt-2 text-lg font-semibold text-text">{catalogs.length}</p><p className="mt-1 text-xs text-muted">{selectedCatalog ? `${selectedCatalog.name} · ${selectedCatalog.status}` : t('commerce.discoverFirst')}</p></Card>
       </div>
 
+      {catalogs.some((catalog) => catalog.last_sync_error) && (
+        <Card className="mt-4" padding="md">
+          <p className="text-sm font-semibold text-text">{t('commerce.syncIssuesTitle')}</p>
+          <p className="mt-1 text-xs text-muted">{t('commerce.syncIssuesHint')}</p>
+          <div className="mt-3 space-y-2">
+            {catalogs.filter((catalog) => catalog.last_sync_error).map((catalog) => (
+              <div key={catalog.id} className="rounded-xl border border-amber/25 bg-amber/[0.06] px-3 py-2">
+                <p className="text-sm text-text">{catalog.name} <span className="text-xs text-muted">#{catalog.external_shop_id}</span></p>
+                <p className="mt-0.5 text-xs text-amber">{catalog.last_sync_error}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {proposals.length > 0 && (
         <Card className="mt-4" padding="md">
           <p className="text-sm font-semibold text-text">{t('commerce.proposalsTitle')}</p>

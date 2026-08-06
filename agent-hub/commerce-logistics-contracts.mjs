@@ -28,6 +28,7 @@ const telegramHelper = read('supabase/functions/_shared/telegram.ts')
 const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
 const i18nExtra = read('src/i18n/extra.ts')
 const feeProposalsMigration = read('supabase/migrations/20260805160000_commerce_fee_proposals.sql')
+const uzum = read('supabase/functions/_shared/uzum.ts')
 const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
@@ -166,6 +167,10 @@ const checks = [
   ['a reorder states what it costs and returns', commerceWorker.includes('batchOutcome(units') && commerceWorker.includes('investment_tiyin: outcome?.investment_tiyin') && commerceWorker.includes('roi_percent: outcome?.roi_percent')],
   ['price guard states the floor price, not only the breach', commerceWorker.includes('min_selling_price_tiyin: floorTiyin')],
   ['batch valuation is flagged when it rests on estimates', commerceWorker.includes('estimatesUsed(outcome ? valueInputs : reorderInputs)')],
+  ['a failed product read is recorded on the catalogue, not just the run', commerceWorker.includes('Record the reason on the catalogue') && commerceWorker.includes('last_sync_error:')],
+  ['a shop the key cannot read stays queued so it can heal', commerceWorker.includes('Status deliberately stays') && !commerceWorker.includes("status: products.access === 'no_access'")],
+  ['the HTTP status is kept so permissions and shop state stay distinguishable', commerceWorker.includes('(HTTP ${products.status})') && uzum.includes('status: response.status')],
+  ['the owner sees which shops are not syncing', commercePage.includes('commerce.syncIssuesTitle') && commercePage.includes('catalog.last_sync_error')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

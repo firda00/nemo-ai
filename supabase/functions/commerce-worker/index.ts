@@ -163,7 +163,24 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     uzumProductRows(token, typedCatalog.external_shop_id, 200),
     uzumSalesRows(token, typedCatalog.external_shop_id, 7),
   ])
-  if (!products.ok) throw new Error(products.error ?? 'Uzum product read failed')
+  if (!products.ok) {
+    // Record the reason on the catalogue, not only on the run. Without this a shop the key
+    // cannot read stays "active" with an empty error in the UI, and the owner has no way to
+    // learn that two of their four shops never sync.
+    // Keep the HTTP status: 401/403 means the key is not scoped to this shop, while a 4xx with
+    // a body message can mean the shop itself is not open. Without it the two are guesswork.
+    const reason = `${products.error ?? 'Uzum product read failed'}${products.status ? ` (HTTP ${products.status})` : ''}`
+    // Status deliberately stays 'active'. Both the queue and the claim RPC select only active
+    // catalogues, so flipping it to no_access would drop the shop out of sync permanently —
+    // and it would stay dropped after the owner granted access in Uzum. Leaving it active
+    // costs six failed calls a day and lets the shop heal itself the moment access appears.
+    await db.from('commerce_catalogs').update({
+      last_sync_error: products.access === 'no_access'
+        ? `${reason} — выдайте ключу доступ к этому магазину в кабинете Uzum Seller`
+        : reason,
+    }).eq('id', typedCatalog.id)
+    throw new Error(reason)
+  }
   const productRows = [...new Map(products.rows.filter((row) => row.sku).map((row) => [row.sku, row])).values()]
   let skuRows: Sku[] = []
   if (productRows.length) {
