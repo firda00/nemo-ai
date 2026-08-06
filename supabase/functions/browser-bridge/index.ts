@@ -1,9 +1,12 @@
 // The extension submits only bounded read-only Uzum snapshots with an opaque pairing secret.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { redactText } from '../_shared/redact.ts'
 
-const URL = Deno.env.get('SUPABASE_URL')!
+// NOT named URL: that shadowed the global URL constructor with a string, so every
+// `new URL(sourceUrl)` threw and each observation was rejected as 'invalid source url'.
+// The extension could never submit anything at all.
+const PROJECT_URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const HOSTS = new Set(['uzum.uz', 'seller.uzum.uz'])
@@ -14,7 +17,7 @@ const hash = async (value: string) => Array.from(new Uint8Array(await crypto.sub
 async function owner(req: Request) {
   const authorization = req.headers.get('Authorization')
   if (!authorization) return null
-  const db = createClient(URL, ANON, { global: { headers: { Authorization: authorization } } })
+  const db = createClient(PROJECT_URL, ANON, { global: { headers: { Authorization: authorization } } })
   const { data: { user } } = await db.auth.getUser()
   if (!user) return null
   const { data: profile } = await db.from('users').select('account_id').eq('id', user.id).maybeSingle()
@@ -25,7 +28,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers })
   const body = await req.json().catch(() => ({}))
   const action = String(body.action ?? '')
-  const admin = createClient(URL, SERVICE)
+  const admin = createClient(PROJECT_URL, SERVICE)
   if (action === 'observe') {
     const secret = String(body.secret ?? '')
     const sourceUrl = String(body.observation?.url ?? '')
@@ -34,9 +37,12 @@ Deno.serve(async (req) => {
     if (parsed.protocol !== 'https:' || !HOSTS.has(parsed.hostname) || secret.length < 32) return reply({ ok: false, error: 'invalid observation' }, 403)
     const { data: pairing } = await admin.from('browser_pairings').select('id, account_id').eq('secret_hash', await hash(secret)).eq('active', true).gt('expires_at', new Date().toISOString()).maybeSingle()
     if (!pairing) return reply({ ok: false, error: 'pairing expired or revoked' }, 401)
-    const text = redactText(String(body.observation?.bodyText ?? '').replace(/\s+/g, ' ').trim()).slice(0, 20000)
+    parsed.search = ''
+    parsed.hash = ''
+    const text = redactText(String(body.observation?.bodyText ?? '').replace(/\s+/g, ' ').trim()).slice(0, 8000)
     if (!text) return reply({ ok: false, error: 'empty observation' }, 400)
-    const { error } = await admin.from('browser_observations').insert({ account_id: pairing.account_id, pairing_id: pairing.id, source_url: sourceUrl.slice(0, 2000), page_title: redactText(String(body.observation?.title ?? '')).slice(0, 300), body_text: text, observed_at: String(body.observation?.observedAt ?? new Date().toISOString()) })
+    const now = new Date()
+    const { error } = await admin.from('browser_observations').insert({ account_id: pairing.account_id, pairing_id: pairing.id, source_url: parsed.toString().slice(0, 2000), page_title: redactText(String(body.observation?.title ?? '')).slice(0, 300), body_text: text, observed_at: now.toISOString(), expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString() })
     if (error) return reply({ ok: false, error: 'could not store observation' }, 500)
     await admin.from('browser_pairings').update({ last_seen_at: new Date().toISOString() }).eq('id', pairing.id)
     return reply({ ok: true })
@@ -53,6 +59,10 @@ Deno.serve(async (req) => {
   if (action === 'revoke') {
     const { error } = await admin.from('browser_pairings').update({ active: false }).eq('id', String(body.pairing_id ?? '')).eq('account_id', current.accountId)
     return error ? json({ error: 'could not revoke pairing' }, 500) : json({ ok: true })
+  }
+  if (action === 'clear_observations') {
+    const { error } = await admin.from('browser_observations').delete().eq('account_id', current.accountId)
+    return error ? json({ error: 'could not clear observations' }, 500) : json({ ok: true })
   }
   return json({ error: 'unknown action' }, 400)
 })

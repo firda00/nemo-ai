@@ -29,6 +29,7 @@ const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
 const i18nExtra = read('src/i18n/extra.ts')
 const feeProposalsMigration = read('supabase/migrations/20260805160000_commerce_fee_proposals.sql')
 const uzum = read('supabase/functions/_shared/uzum.ts')
+const browserBridge = read('supabase/functions/browser-bridge/index.ts')
 const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
@@ -197,6 +198,8 @@ const checks = [
   ['a reorder in the digest carries its money, not just a count', commerceDigest.includes('action.investment_tiyin != null && action.profit_tiyin != null') && commerceDigest.includes('ROI')],
   ['a margin breach names the floor price', commerceDigest.includes('calc.min_selling_price_tiyin != null') && commerceDigest.includes('Минимальная цена')],
   ['catalogue facts are counted from SKUs, not from recommendations', commerceDigest.includes('Counted from the SKUs themselves rather than') && commerceDigest.includes('statsByAccount')],
+  ['no edge function may shadow the global URL constructor', !browserBridge.includes("const URL = Deno.env.get") && browserBridge.includes('NOT named URL')],
+  ['the bridge still constructs URLs to validate the host', browserBridge.includes('new URL(sourceUrl)') && browserBridge.includes("HOSTS.has(parsed.hostname)")],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
