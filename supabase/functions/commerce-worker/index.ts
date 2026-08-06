@@ -233,6 +233,48 @@ Deno.serve(async (req) => {
   const cron = req.headers.get('x-cron-secret') ?? ''
   if (authorization !== `Bearer ${SERVICE_ROLE}` && (!CRON_SECRET || cron !== CRON_SECRET)) return json({ error: 'forbidden' }, 403)
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
+
+  // Field inspection. Uzum's commission is per category and its logistics fee is a function of
+  // volume, so before modelling either we have to know whether the product payload actually
+  // carries a category and dimensions. Returns FIELD NAMES only — never values — so a schema
+  // question can be answered without copying a seller's catalogue anywhere.
+  const inspectBody = await req.json().catch(() => ({}))
+  if (inspectBody?.action === 'inspect_fields') {
+    const { data: catalog } = await db.from('commerce_catalogs')
+      .select('id, account_id, external_shop_id').eq('id', String(inspectBody.catalog_id ?? '')).maybeSingle()
+    if (!catalog) return json({ error: 'catalog not found' }, 404)
+    const { data: keyRow } = await db.from('provider_keys')
+      .select('api_key').eq('account_id', catalog.account_id).eq('provider', 'uzum').maybeSingle()
+    const token = keyRow?.api_key ? await openSecret(keyRow.api_key, providerSecretContext(catalog.account_id, 'uzum')) : null
+    if (!token) return json({ error: 'no uzum key' }, 409)
+
+    const response = await fetch(
+      `https://api-seller.uzum.uz/api/seller-openapi/v1/product/shop/${encodeURIComponent(catalog.external_shop_id)}?size=1&page=0`,
+      // Raw token, no Bearer prefix — Uzum's OpenAPI specifies it that way, and a Bearer
+      // prefix is silently answered with 403.
+      { headers: { Authorization: token, Accept: 'application/json' } },
+    ).catch(() => null)
+    if (!response?.ok) return json({ error: `uzum responded ${response?.status ?? 'network error'}` }, 502)
+    const payload = await response.json().catch(() => null)
+    const list = ['productList', 'payload', 'data', 'result', 'items', 'content']
+      .map((key) => payload?.[key])
+      .find((value) => Array.isArray(value)) ?? (Array.isArray(payload) ? payload : [])
+    const product = list[0] ?? null
+    const sku = Array.isArray(product?.skuList) ? product.skuList[0] ?? null : null
+    const wanted = ['category', 'categoryId', 'categoryName', 'category_id', 'length', 'width', 'height', 'volume', 'weight', 'dimensions', 'commission', 'commissionPercent']
+    const flatten = (o: unknown) => (o && typeof o === 'object' ? Object.keys(o as Record<string, unknown>) : [])
+    // Names only. Values were sampled once to learn whether `commission` is a percentage or an
+    // amount; that question is answered (it is a percentage), and a diagnostic endpoint should
+    // not keep echoing catalogue data back over the wire.
+    return json({
+      ok: true,
+      envelope_keys: flatten(payload),
+      product_keys: flatten(product),
+      sku_keys: flatten(sku),
+      wanted_present: wanted.filter((k) => flatten(product).includes(k) || flatten(sku).includes(k)),
+    })
+  }
+
   // Tashkent has no DST. Convert to local time before flooring a four-hour slot.
   const now = Date.now()
   const tashkent = new Date(now + 5 * 60 * 60 * 1000)
