@@ -3,7 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
-import { batchOutcome, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
+import { batchOutcome, effectiveFulfillmentTiyin, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
 import { reservesForCatalogue } from '../_shared/returnsReserve.ts'
 
@@ -117,7 +117,10 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
     const priceInputs = ['unit_cost_tiyin', 'fulfillment_tiyin', 'commission_percent', 'returns_reserve_percent', 'min_margin_percent']
     if (marginPercent < sku.min_margin_percent) rows.push({
       ...base, kind: 'price_guard', severity: severityFor(marginPercent <= 0, priceInputs), dedupe_key: `commerce:${sku.id}:price_guard`,
-      calculation: { price_tiyin: priceTiyin, unit_cost_tiyin: sku.unit_cost_tiyin, fulfillment_tiyin: sku.fulfillment_tiyin, commission_percent: sku.commission_percent, returns_reserve_percent: sku.returns_reserve_percent, margin_percent: marginPercent, net_profit_tiyin: Math.round(net), min_margin_percent: sku.min_margin_percent, min_selling_price_tiyin: floorTiyin, estimated_inputs: estimatesUsed(priceInputs) },
+      // effective_fulfillment_tiyin is the fee the margin above actually used: the outbound
+      // shipment plus the returned ones that came with this sale. Without it the owner cannot
+      // reproduce the number from the fields shown next to it.
+      calculation: { price_tiyin: priceTiyin, unit_cost_tiyin: sku.unit_cost_tiyin, fulfillment_tiyin: sku.fulfillment_tiyin, effective_fulfillment_tiyin: Math.round(effectiveFulfillmentTiyin(fees)), commission_percent: sku.commission_percent, returns_reserve_percent: sku.returns_reserve_percent, margin_percent: marginPercent, net_profit_tiyin: Math.round(net), min_margin_percent: sku.min_margin_percent, min_selling_price_tiyin: floorTiyin, estimated_inputs: estimatesUsed(priceInputs) },
       suggested_action: { type: 'review_price', minimum_margin_percent: sku.min_margin_percent, min_selling_price_tiyin: floorTiyin }, last_detected_at: new Date().toISOString(),
     })
   }

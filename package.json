@@ -59,6 +59,7 @@
     "test:exports": "node --experimental-strip-types agent-hub/export-contracts.mjs",
     "test:logistics-live": "node agent-hub/logistics-live-smoke.mjs",
     "test:returns-reserve": "node --experimental-strip-types agent-hub/returns-reserve-behavior.mjs",
+    "test:unit-economics": "node --experimental-strip-types agent-hub/unit-economics-behavior.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview",
     "demo:swarm": "node agent-hub/demo-simulation.mjs",

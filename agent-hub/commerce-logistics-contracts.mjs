@@ -37,6 +37,7 @@ const defaultsMigration = read('supabase/migrations/20260806160000_commerce_cata
 const manualSyncMigration = read('supabase/migrations/20260806170000_commerce_manual_sync.sql')
 const factsMigration = read('supabase/migrations/20260806210000_commerce_returns_sample.sql')
 const returnsReserve = read('supabase/functions/_shared/returnsReserve.ts')
+const economics = read('supabase/functions/_shared/unitEconomics.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
@@ -169,7 +170,8 @@ const checks = [
   ['one definition of margin, shared by alerts and calculators', unitEconomics.includes('The single definition of unit economics')
     && commerceWorker.includes("from '../_shared/unitEconomics.ts'")
     && !commerceWorker.includes('const net = priceTiyin - sku.unit_cost_tiyin')],
-  ['margin accounts for the returns reserve', unitEconomics.includes('fees.commission_percent + fees.returns_reserve_percent') && commerceWorker.includes('returns_reserve_percent')],
+  // Was: the reserve added to commission as a share of price. That is what this replaces.
+  ['margin accounts for the returns reserve', unitEconomics.includes('effectiveFulfillmentTiyin(fees)') && commerceWorker.includes('returns_reserve_percent')],
   ['impossible economics return no answer rather than a negative', unitEconomics.includes('if (load >= 100) return null') && unitEconomics.includes('value > 0 ? Math.round(value) : null')],
   ['a reorder states what it costs and returns', commerceWorker.includes('batchOutcome(units') && commerceWorker.includes('investment_tiyin: outcome?.investment_tiyin') && commerceWorker.includes('roi_percent: outcome?.roi_percent')],
   ['price guard states the floor price, not only the breach', commerceWorker.includes('min_selling_price_tiyin: floorTiyin')],
@@ -221,6 +223,13 @@ const checks = [
   ['the sample behind the reserve is stored for the owner to judge', factsMigration.includes('returns_sample_units integer') && factsMigration.includes('returns_sample_units = v_next_sample')],
   ['rates written by the old unshrunk path are cleared, not left to rot', factsMigration.includes('would repair on its own') && factsMigration.includes('set returns_reserve_percent = null')],
   ['the old nine-argument facts function cannot survive as an overload', factsMigration.includes('drop function if exists public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer)')],
+  // A return costs shipping, not the retail price.
+  ['a return is not charged as a lost sale price', economics.includes('A RETURN IS NOT A LOST SALE PRICE') && economics.includes('const percentageLoad = (fees: Fees) => fees.commission_percent') && !/percentageLoad[^\n]*returns_reserve_percent/.test(economics)],
+  ['returns are charged as repeated shipments per completed sale', economics.includes('export function effectiveFulfillmentTiyin') && economics.includes('(1 + RETURN_FEE_MULTIPLIER * r) / (1 - r)')],
+  ['the floor price and the margin use the same fee', economics.includes('effectiveFulfillmentTiyin(fees)) * 100) / (100 - load)') && economics.includes('/ 100 - effectiveFulfillmentTiyin(fees)')],
+  ['a total-return rate stays finite instead of becoming NaN', economics.includes('RETURN_RATE_CEILING = 0.95') && economics.includes('keeps a bad number from becoming a NaN that silently disables an alert')],
+  ['the unconfirmed return tariff is one named constant, and says so', economics.includes('export const RETURN_FEE_MULTIPLIER') && economics.includes('ASSUMPTION, not an observed tariff') && economics.includes('rendered as a "please enable JavaScript" placeholder')],
+  ['the alert shows the fee its own margin used', commerceWorker.includes('effective_fulfillment_tiyin: Math.round(effectiveFulfillmentTiyin(fees))') && commerceWorker.includes('the owner cannot')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
