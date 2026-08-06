@@ -82,6 +82,7 @@ Apply-Migration .\supabase\migrations\20260805140000_commerce_economics_proposal
 Apply-Migration .\supabase\migrations\20260805150000_fix_proposal_applied_fields.sql
 Apply-Migration .\supabase\migrations\20260805160000_commerce_fee_proposals.sql
 Apply-Migration .\supabase\migrations\20260806150000_commerce_catalog_min_margin.sql
+Apply-Migration .\supabase\migrations\20260806160000_commerce_catalog_defaults.sql
 
 $schemaCheckSql = @'
 select
@@ -388,6 +389,23 @@ begin
   end if;
   if (select min_margin_percent from public.commerce_skus where catalog_id = probe_catalog and external_sku = 'PROBE-SKU-PRICED') is distinct from 35 then
     raise exception 'catalogue margin overwrote a deliberate per-SKU margin';
+  end if;
+
+  -- The reason catalogue defaults exist: a product created by a LATER sync must inherit them
+  -- without anyone repeating the bulk fill. This is the leak that silently dropped new
+  -- products out of Price Guard.
+  if (select default_min_margin_percent from public.commerce_catalogs where id = probe_catalog) is distinct from 20 then
+    raise exception 'the catalogue did not record its default margin';
+  end if;
+  insert into public.commerce_skus (catalog_id, external_sku, title)
+    values (probe_catalog, 'PROBE-SKU-LATER', 'Created after the default was set');
+  if (select min_margin_percent from public.commerce_skus where catalog_id = probe_catalog and external_sku = 'PROBE-SKU-LATER') is distinct from 20 then
+    raise exception 'a later SKU did not inherit the catalogue default margin';
+  end if;
+  insert into public.commerce_skus (catalog_id, external_sku, title, min_margin_percent)
+    values (probe_catalog, 'PROBE-SKU-LATER-EXPLICIT', 'Created later with its own margin', 45);
+  if (select min_margin_percent from public.commerce_skus where catalog_id = probe_catalog and external_sku = 'PROBE-SKU-LATER-EXPLICIT') is distinct from 45 then
+    raise exception 'the catalogue default overwrote an explicit value on insert';
   end if;
   if not probe_estimated ? 'safety_stock' then
     raise exception 'untouched field lost its estimate mark';

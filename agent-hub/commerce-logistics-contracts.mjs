@@ -32,6 +32,7 @@ const uzum = read('supabase/functions/_shared/uzum.ts')
 const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
+const defaultsMigration = read('supabase/migrations/20260806160000_commerce_catalog_defaults.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -177,6 +178,12 @@ const checks = [
   ['setting a catalogue margin is owner-only and only a proposal', commerceControl.includes("action === 'propose_min_margin'") && commerceControl.includes("source: 'ui'") && commercePage.includes('propose_min_margin')],
   ['the margin confirmation counts only blank SKUs', commerceControl.includes(".is('min_margin_percent', null)") && commercePage.includes('commerce.okMargin')],
   ['tenant isolation runs before any function is updated on deploy', deploy.includes('npm run test:security-live') && deploy.includes('TENANT ISOLATION FAILED')],
+  ['catalogue defaults are inherited by a trigger, not by one caller', defaultsMigration.includes('before insert on public.commerce_skus') && defaultsMigration.includes('holds\n-- for every path that can create a SKU')],
+  ['an explicit value always beats the catalogue default', defaultsMigration.includes('coalesce(new.min_margin_percent, d.default_min_margin_percent)') && defaultsMigration.includes('Only fills what the caller left null')],
+  ['unit cost has no catalogue default on purpose', defaultsMigration.includes('Unit cost has no catalogue default on purpose') && !defaultsMigration.includes('default_unit_cost')],
+  ['a catalogue proposal records the default as well as filling blanks', defaultsMigration.includes('default_min_margin_percent = coalesce(v_proposal.min_margin_percent') && defaultsMigration.includes("becomes the catalogue's standing default")],
+  ['the deploy probe proves a later SKU inherits', deploy.includes('a later SKU did not inherit the catalogue default margin') && deploy.includes('the catalogue default overwrote an explicit value on insert')],
+  ['the defaults migration is registered for deploy', deploy.includes('20260806160000_commerce_catalog_defaults.sql')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
