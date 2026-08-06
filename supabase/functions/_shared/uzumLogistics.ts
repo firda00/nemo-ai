@@ -12,9 +12,14 @@ export const LOGISTICS_TARIFF = {
   baseTiyin: 5_250_00, // up to and including 1 litre
   perExtraLitreTiyin: 250_00,
   maxTiyin: 50_000_00,
-  /** A SKU with no declared dimensions is charged the maximum. */
+  /** A SKU with no declared dimensions ("без ВГХ") is charged the maximum. */
   withoutDimensionsTiyin: 50_000_00,
 } as const
+
+// KNOWN GAP: the same table gives SIM cards a flat 20 000 sum regardless of volume. It is not
+// applied, because identifying a SIM card means matching Uzum's category string and inventing
+// that string would put a wrong fee on some other seller's catalogue. No connected shop sells
+// them today; the first one that does needs this branch and the category name to key it on.
 
 export type SkuDimension = {
   length?: number | null

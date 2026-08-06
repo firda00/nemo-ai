@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     const totalLength = Number(body.observation?.totalLength)
     const truncated = Number.isFinite(totalLength) && totalLength > text.length
     const now = new Date()
-    const { error } = await admin.from('browser_observations').insert({ account_id: pairing.account_id, pairing_id: pairing.id, source_url: parsed.toString().slice(0, 2000), page_title: redactText(String(body.observation?.title ?? '')).slice(0, 300), body_text: text, observed_at: now.toISOString(), expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString() })
+    const { error } = await admin.from('browser_observations').insert({ account_id: pairing.account_id, pairing_id: pairing.id, source_url: parsed.toString().slice(0, 2000), page_title: redactText(String(body.observation?.title ?? '')).slice(0, 300), body_text: text, total_length: Number.isFinite(totalLength) ? Math.max(totalLength, text.length) : text.length, observed_at: now.toISOString(), expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString() })
     if (error) return reply({ ok: false, error: 'could not store observation' }, 500)
     await admin.from('browser_pairings').update({ last_seen_at: new Date().toISOString() }).eq('id', pairing.id)
     return reply({ ok: true, stored_characters: text.length, truncated })

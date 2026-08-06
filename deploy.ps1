@@ -89,6 +89,7 @@ Apply-Migration .\supabase\migrations\20260806190000_commerce_uzum_facts_batch.s
 Apply-Migration .\supabase\migrations\20260806200000_commerce_facts_skip_unchanged.sql
 Apply-Migration .\supabase\migrations\20260806210000_commerce_returns_sample.sql
 Apply-Migration .\supabase\migrations\20260806220000_commerce_recommendations_resolved.sql
+Apply-Migration .\supabase\migrations\20260806230000_browser_observation_total_length.sql
 
 $schemaCheckSql = @'
 select
