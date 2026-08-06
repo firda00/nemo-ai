@@ -1,3 +1,5 @@
+import { extractObservation } from './extract.js'
+
 const ALLOWED_HOSTS = new Set(['uzum.uz', 'seller.uzum.uz'])
 
 function isAllowedUrl(url) {
@@ -31,21 +33,19 @@ chrome.runtime.onConnect.addListener((port) => {
       // Inject only after an explicit side-panel click. This is more reliable than
       // a persistent content script on SPA navigations and limits page access to
       // the tab the owner selected.
+      // executeScript serialises `func` and runs the source in the page, so extractObservation
+      // must stay self-contained — see the note at the top of extract.js.
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: true },
-        func: () => ({
-          url: window.location.href,
-          title: document.title,
-          // Seller dashboards can render the visible app inside a nested frame.
-          // textContent is a fallback for layouts where innerText is intentionally empty.
-          bodyText: (document.body?.innerText || document.body?.textContent || document.documentElement?.innerText || document.documentElement?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 20000),
-          observedAt: new Date().toISOString(),
-        }),
+        func: extractObservation,
       })
+      // Seller dashboards can render the visible app inside a nested frame, so every frame is
+      // read and the longest answer wins. totalLength is the extracted content, not the raw page,
+      // so this compares articles rather than letting a frame full of menu outrank a real one.
       const observation = results
         .map(({ result }) => result)
         .filter(Boolean)
-        .sort((a, b) => b.bodyText.length - a.bodyText.length)[0]
+        .sort((a, b) => b.totalLength - a.totalLength)[0]
       if (!observation) throw new Error('empty observation')
       port.postMessage({ type: 'nemo:observation', observation })
     } catch {

@@ -41,7 +41,9 @@ const economics = read('supabase/functions/_shared/unitEconomics.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const resolvedMigration = read('supabase/migrations/20260806220000_commerce_recommendations_resolved.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
-const extensionContent = read('extensions/nemo-browser/content.js')
+const extensionExtract = read('extensions/nemo-browser/extract.js')
+const extensionBackground = read('extensions/nemo-browser/background.js')
+const extensionManifest = read('extensions/nemo-browser/manifest.json')
 
 const checks = [
   ['four commerce team blueprints exist', ['marketplace:', 'dropshipping:', "'online-store':", 'logistics:'].every((key) => blueprints.includes(key))],
@@ -206,10 +208,12 @@ const checks = [
   ['a margin breach names the floor price', commerceDigest.includes('calc.min_selling_price_tiyin != null') && commerceDigest.includes('Минимальная цена')],
   ['catalogue facts are counted from SKUs, not from recommendations', commerceDigest.includes('Counted from the SKUs themselves rather than') && commerceDigest.includes('statsByAccount')],
   // The capture that was supposed to settle the tariff brought back the chapter list instead.
-  ['a snapshot captures the article, not the chapter list', extensionContent.includes('A documentation page is mostly navigation') && extensionContent.includes('MORE PROSE THAN ALL ITS SIBLINGS COMBINED')],
-  ['content is found by prose, so a div-built menu cannot hide as content', extensionContent.includes('is made of links') && extensionContent.includes("querySelectorAll('a')") && extensionContent.includes('prose: Math.max(0, text.length - linked)')],
-  ['a short article is never answered with the whole page', extensionContent.includes('No length floor here') && !/return bestMeasure.length > MIN_CONTENT_LENGTH/.test(extensionContent)],
-  ['a truncated snapshot reports that it was truncated', extensionContent.includes('totalLength: full.length') && browserBridge.includes('const truncated = Number.isFinite(totalLength)') && browserBridge.includes('stored_characters: text.length')],
+  ['a snapshot captures the article, not the chapter list', extensionExtract.includes('a documentation page is mostly navigation') && extensionExtract.includes('MORE PROSE THAN ALL ITS SIBLINGS')],
+  ['content is found by prose, so a div-built menu cannot hide as content', extensionExtract.includes('is made of links') && extensionExtract.includes("querySelectorAll('a')") && extensionExtract.includes('prose: Math.max(0, text.length - linked)')],
+  ['a short article is never answered with the whole page', extensionExtract.includes('No length floor here') && !/return bestMeasure.length > MIN_CONTENT_LENGTH/.test(extensionExtract)],
+  ['the extractor runs on the path the snapshot button actually uses', extensionBackground.includes("import { extractObservation } from './extract.js'") && extensionBackground.includes('func: extractObservation') && !extensionBackground.includes('document.body?.innerText ||')],
+  ['there is no second, unregistered copy of the extractor', !extensionManifest.includes('content_scripts')],
+  ['a truncated snapshot reports that it was truncated', extensionExtract.includes('totalLength: full.length') && browserBridge.includes('const truncated = Number.isFinite(totalLength)') && browserBridge.includes('stored_characters: text.length')],
   ['no edge function may shadow the global URL constructor', !browserBridge.includes("const URL = Deno.env.get") && browserBridge.includes('NOT named URL')],
   ['the bridge still constructs URLs to validate the host', browserBridge.includes('new URL(sourceUrl)') && browserBridge.includes("HOSTS.has(parsed.hostname)")],
   // Uzum facts: the commission, category and dimensions the API already returns.
