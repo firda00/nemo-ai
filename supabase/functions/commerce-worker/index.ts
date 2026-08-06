@@ -4,6 +4,7 @@ import { json } from '../_shared/cors.ts'
 import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { batchOutcome, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
+import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -191,6 +192,40 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     skuRows = (data ?? []) as Sku[]
   }
   const skuByExternal = new Map(skuRows.map((sku) => [sku.external_sku, sku]))
+
+  // Uzum's own facts land before the recommendations are computed, so this run already reasons
+  // with the real commission and the fee derived from real dimensions instead of estimates.
+  // The RPC decides what may be written: it never touches a value the owner set themselves.
+  // One call for the whole catalogue: a per-SKU round trip took 140 of them for a single shop
+  // and exceeded the function's 150-second limit.
+  const facts = productRows.flatMap((row) => {
+    const sku = skuByExternal.get(row.sku)
+    if (!sku) return []
+    if (row.commissionPercent == null && row.dimension == null && row.category == null && row.returnPercent == null) return []
+    return [{
+      sku_id: sku.id,
+      category: row.category,
+      commission: row.commissionPercent,
+      // Charged per sold unit off the published tariff; a SKU without dimensions pays the
+      // maximum rather than nothing, so margin is never flattered by missing data.
+      fulfillment_tiyin: fulfillmentTiyin(row.dimension),
+      return_percent: row.returnPercent,
+      length: row.dimension?.length ?? null,
+      width: row.dimension?.width ?? null,
+      height: row.dimension?.height ?? null,
+      weight: row.dimension?.weight ?? null,
+    }]
+  })
+  if (facts.length) {
+    const { error: factsError } = await db.rpc('commerce_apply_uzum_facts_batch', { p_facts: facts })
+    if (factsError) throw factsError
+  }
+  // Re-read: the recommendations below must see the values the RPC just wrote.
+  const { data: refreshed, error: refreshError } = await db.from('commerce_skus')
+    .select('id, external_sku, external_product_id, title, unit_cost_tiyin, commission_percent, fulfillment_tiyin, returns_reserve_percent, lead_time_days, moq, safety_stock, min_margin_percent, estimated_fields, economics_revision')
+    .eq('catalog_id', typedCatalog.id)
+  if (refreshError) throw refreshError
+  for (const sku of (refreshed ?? []) as Sku[]) skuByExternal.set(sku.external_sku, sku)
   const productIdCounts = productRows.reduce<Record<string, number>>((out, row) => ({ ...out, ...(row.productId ? { [row.productId]: (out[row.productId] ?? 0) + 1 } : {}) }), {})
   const titleCounts = productRows.reduce<Record<string, number>>((out, row) => ({ ...out, ...(row.name ? { [row.name]: (out[row.name] ?? 0) + 1 } : {}) }), {})
 

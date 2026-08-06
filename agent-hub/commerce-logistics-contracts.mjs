@@ -35,6 +35,8 @@ const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
 const defaultsMigration = read('supabase/migrations/20260806160000_commerce_catalog_defaults.sql')
 const manualSyncMigration = read('supabase/migrations/20260806170000_commerce_manual_sync.sql')
+const factsMigration = read('supabase/migrations/20260806200000_commerce_facts_skip_unchanged.sql')
+const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -200,6 +202,16 @@ const checks = [
   ['catalogue facts are counted from SKUs, not from recommendations', commerceDigest.includes('Counted from the SKUs themselves rather than') && commerceDigest.includes('statsByAccount')],
   ['no edge function may shadow the global URL constructor', !browserBridge.includes("const URL = Deno.env.get") && browserBridge.includes('NOT named URL')],
   ['the bridge still constructs URLs to validate the host', browserBridge.includes('new URL(sourceUrl)') && browserBridge.includes("HOSTS.has(parsed.hostname)")],
+  // Uzum facts: the commission, category and dimensions the API already returns.
+  ['the logistics fee comes from the published tariff, not a guess', logistics.includes('seller.uzum.uz/manual/3.tariffs') && logistics.includes('effectiveFrom') && logistics.includes('Math.ceil((l * w * h) / 1_000_000)')],
+  ['a SKU without dimensions pays the maximum, never zero', logistics.includes('withoutDimensionsTiyin') && logistics.includes('would overstate margin on exactly the products whose data is weakest')],
+  ['Uzum commission and dimensions are captured by the worker', uzum.includes('commissionPercent') && uzum.includes('skuDimension') && commerceWorker.includes('commerce_apply_uzum_facts_batch')],
+  ['the observed return rate is stored as an estimate, never as fact', factsMigration.includes('lands as an ESTIMATE and can never raise a critical alert') && factsMigration.includes("'[\"returns_reserve_percent\"]'::jsonb")],
+  ['a sync never overwrites a value the owner set', factsMigration.includes('The owner owns it') && factsMigration.includes('v_owns_commission := v_sku.commission_percent is not null')],
+  ['a value Uzum supplied stops counting as a guess', factsMigration.includes('A value Uzum supplied is no longer a guess')],
+  ['an unchanged sync writes nothing', factsMigration.includes('Nothing moved: no write, no revision bump') && factsMigration.includes('is not distinct from v_sku.commission_percent')],
+  ['facts are applied per catalogue, not per SKU round trip', commerceWorker.includes('One call for the whole catalogue') && !commerceWorker.includes("db.rpc('commerce_apply_uzum_facts',")],
+  ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

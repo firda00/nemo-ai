@@ -84,6 +84,9 @@ Apply-Migration .\supabase\migrations\20260805160000_commerce_fee_proposals.sql
 Apply-Migration .\supabase\migrations\20260806150000_commerce_catalog_min_margin.sql
 Apply-Migration .\supabase\migrations\20260806160000_commerce_catalog_defaults.sql
 Apply-Migration .\supabase\migrations\20260806170000_commerce_manual_sync.sql
+Apply-Migration .\supabase\migrations\20260806180000_commerce_uzum_facts.sql
+Apply-Migration .\supabase\migrations\20260806190000_commerce_uzum_facts_batch.sql
+Apply-Migration .\supabase\migrations\20260806200000_commerce_facts_skip_unchanged.sql
 
 $schemaCheckSql = @'
 select

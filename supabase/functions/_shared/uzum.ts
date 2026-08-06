@@ -84,6 +84,13 @@ export interface UzumProductRow {
   stock: number | null
   stockFbo: number | null
   stockFbs: number | null
+  /** Uzum's own commission for this SKU, as a percentage. Its number, not our estimate. */
+  commissionPercent: number | null
+  category: string | null
+  /** Observed share of returns. History on possibly tiny volume, so it is used as an estimate. */
+  returnPercent: number | null
+  /** Millimetres and grams as Uzum declares them; the logistics fee is derived from these. */
+  dimension: { length: number | null; width: number | null; height: number | null; weight: number | null } | null
 }
 
 /** Structured store list. Unlike the smoke wrapper, this returns the numeric ids callers need. */
@@ -186,6 +193,20 @@ export async function uzumProductRows(
         stock: fbo != null || fbs != null ? (fbo ?? 0) + (fbs ?? 0) : fallbackStock,
         stockFbo: fbo,
         stockFbs: fbs,
+        // Commission comes per SKU; commissionDto on the product is the category band it sits in.
+        commissionPercent: num(sku?.commission) ?? num(product?.commissionDto?.maxCommission) ?? num(product?.commission),
+        category: typeof product?.category === 'string' ? product.category.slice(0, 160) : null,
+        // Product level, not SKU level, on purpose: one return against two sales reads as 100%
+        // per SKU, which is noise rather than a return rate.
+        returnPercent: num(product?.returnedPercentage) ?? num(sku?.returnedPercentage),
+        dimension: sku?.skuDimension && typeof sku.skuDimension === 'object'
+          ? {
+            length: num(sku.skuDimension.length),
+            width: num(sku.skuDimension.width),
+            height: num(sku.skuDimension.height),
+            weight: num(sku.skuDimension.weight),
+          }
+          : null,
       }
     })
   }).slice(0, wanted)
