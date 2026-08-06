@@ -11,6 +11,9 @@ import {
   accountSkus, applyKeyboard, looksLikeEconomics, matchSkus, ownerChatFor,
   parseEconomicsMessage, pickKeyboard, proposalRow, proposalText, type OwnerChat,
 } from './commerceEconomicsChat.ts'
+import {
+  buildListingDraft, draftCard, draftKeyboard, NEW_LISTING_HELP, newListingText,
+} from './commerceListingChat.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { planOf } from './plans.ts'
 import { transcribeAudio } from './transcribe.ts'
@@ -235,6 +238,24 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
         await tgSendHtml(botToken, chatId, COMMERCE_HELP)
         return
       }
+      // BEFORE the economics branch on purpose. "новый товар, себестоимость 18000" satisfies
+      // looksLikeEconomics too, and taking that path would hunt for an existing SKU to edit
+      // instead of drafting the new product the owner just announced.
+      const listingText = newListingText(text)
+      if (listingText !== null) {
+        try {
+          if (!listingText) { await tgSendHtml(botToken, chatId, NEW_LISTING_HELP); return }
+          const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
+          const built = await buildListingDraft(db, apiKey, owner, listingText)
+          if (!built) {
+            await tgSendHtml(botToken, chatId, '🆕 Пока не с чем считать: подключите магазин Uzum в Nemo — комиссия берётся из категорий, в которых вы уже продаёте.')
+            return
+          }
+          await tgSendKeyboard(botToken, chatId, draftCard(built.draft), draftKeyboard(built.draft, built.categories))
+          return
+        } catch (e) { console.error('commerce listing chat failed:', e) }
+      }
+
       if (OPENROUTER_API_KEY && looksLikeEconomics(text)) {
         try {
           const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)

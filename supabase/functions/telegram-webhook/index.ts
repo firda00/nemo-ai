@@ -8,6 +8,9 @@ import { processTelegramUpdate } from '../_shared/tgProcess.ts'
 import { tgAnswerCallback, tgEditMessage, tgSendHtml, tgSendKeyboard } from '../_shared/telegram.ts'
 import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { applyKeyboard, CB_APPLY, CB_PICK, ownerChatFor, proposalText } from '../_shared/commerceEconomicsChat.ts'
+import {
+  applyCategory, catalogueContext, categoryToken, CB_LISTING, CB_LISTING_CATEGORY, draftCard, draftKeyboard,
+} from '../_shared/commerceListingChat.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
@@ -86,6 +89,82 @@ async function handleCommerceCallback(db: any, channelId: string, botToken: stri
   await tgEditMessage(botToken, chatId, messageId, `✅ Сохранено (${applied} показател${applied === 1 ? 'ь' : 'я'}).\nЭти цифры теперь подтверждены вами — по ним включены критические оповещения.`)
 }
 
+/**
+ * Button presses on a listing draft: approve, discard, or pick the category.
+ *
+ * Nothing here reaches Uzum — approving marks the text ready for the owner to paste, which is all
+ * a read-only integration can honestly offer. The same ownership check as the economics handler
+ * applies: a button forwarded out of this chat must not move another account's draft.
+ */
+async function handleListingCallback(db: any, channelId: string, botToken: string | undefined, cb: any): Promise<void> {
+  const data = String(cb?.data ?? '')
+  const chatId = String(cb?.message?.chat?.id ?? '')
+  const messageId = Number(cb?.message?.message_id ?? 0)
+  const separator = data.indexOf(':')
+  const kind = data.slice(0, separator)
+  if (!botToken || !chatId || (kind !== CB_LISTING && kind !== CB_LISTING_CATEGORY)) return
+  const rest = data.slice(separator + 1)
+  const draftId = rest.slice(0, 36)
+  const arg = rest.slice(37)
+  if (!UUID.test(draftId)) return
+
+  const owner = await ownerChatFor(db, channelId, chatId)
+  const { data: draft } = await db.from('commerce_listing_drafts').select('*').eq('id', draftId).maybeSingle()
+  if (!owner || !draft || draft.account_id !== owner.accountId) {
+    await tgAnswerCallback(botToken, cb.id, 'Этот черновик недоступен.')
+    return
+  }
+  if (draft.status !== 'draft') {
+    await tgAnswerCallback(botToken, cb.id, 'Уже обработано.')
+    return
+  }
+
+  if (kind === CB_LISTING_CATEGORY) {
+    const { options } = await catalogueContext(db, owner.accountId)
+    // Resolved against the categories the seller actually sells in, so a stale or tampered button
+    // cannot introduce a commission that exists nowhere in their catalogue.
+    const matches = options.filter((option) => categoryToken(option.category) === arg)
+    // Two names hashing alike is vanishingly unlikely at a dozen categories, but picking one at
+    // random would silently set the wrong commission. Ask instead.
+    if (matches.length !== 1) {
+      await tgAnswerCallback(botToken, cb.id, matches.length ? 'Уточните категорию в интерфейсе.' : 'Категория не найдена.')
+      return
+    }
+    const chosen = matches[0]
+    const updated = await applyCategory(db, draft, chosen)
+    if (!updated) { await tgAnswerCallback(botToken, cb.id, 'Не удалось обновить черновик.'); return }
+    await tgAnswerCallback(botToken, cb.id, chosen.category)
+    await tgEditMessage(botToken, chatId, messageId, draftCard(updated))
+    await tgSendKeyboard(botToken, chatId, `Категория: <b>${escapeHtml(chosen.category)}</b> — комиссия ${chosen.commission_percent}%`, draftKeyboard(updated, options))
+    return
+  }
+
+  if (arg !== 'y') {
+    await db.from('commerce_listing_drafts').update({ status: 'discarded', updated_at: new Date().toISOString() }).eq('id', draft.id).eq('status', 'draft')
+    await tgAnswerCallback(botToken, cb.id, 'Убрано.')
+    await tgEditMessage(botToken, chatId, messageId, '✖️ Черновик убран.')
+    return
+  }
+
+  // Approval is refused while anything is missing, exactly as in the interface: a listing with no
+  // floor price is how a product gets sold below cost.
+  const missing = Array.isArray(draft.missing) ? draft.missing : []
+  if (missing.length) {
+    await tgAnswerCallback(botToken, cb.id, 'Сначала пришлите недостающее.')
+    return
+  }
+  const { error } = await db.from('commerce_listing_drafts')
+    .update({ status: 'ready', approved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', draft.id).eq('status', 'draft')
+  if (error) {
+    console.error('listing draft approve failed:', error)
+    await tgAnswerCallback(botToken, cb.id, 'Не удалось сохранить, попробуйте ещё раз.')
+    return
+  }
+  await tgAnswerCallback(botToken, cb.id, 'Одобрено')
+  await tgEditMessage(botToken, chatId, messageId, `${draftCard(draft)}\n\n✅ <b>Одобрено.</b> Текст готов — перенесите его в кабинет Uzum. Nemo туда ничего не пишет.`)
+}
+
 Deno.serve(async (req) => {
   try {
     const url = new URL(req.url)
@@ -109,7 +188,10 @@ Deno.serve(async (req) => {
     // Button presses on a commerce economics proposal. This is the only place money moves, and it
     // moves only for the bound owner chat pressing Yes on a proposal it owns.
     if (update?.callback_query) {
+      // Two handlers, one press. Each ignores callback data that is not its own prefix, so the
+      // order is irrelevant and a new button type cannot silently shadow an existing one.
       await handleCommerceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      await handleListingCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       return new Response('ok')
     }
 

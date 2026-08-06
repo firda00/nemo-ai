@@ -43,6 +43,7 @@ const resolvedMigration = read('supabase/migrations/20260806220000_commerce_reco
 const listingModule = read('supabase/functions/_shared/listingDraft.ts')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
+const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -270,6 +271,15 @@ const checks = [
   ['the interface names what the draft does not know', listingUi.includes('missingTitle') && listingUi.includes('disabled={missing.length > 0') && listingUi.includes('commerce.listing.missing.')],
   ['JSON fence stripping has one home, not two', llmShared.includes('export function stripJsonFence') && economicsChat.includes("import { stripJsonFence as stripFence }") && !/^function stripFence/m.test(economicsChat)],
   ['the listing drafts migration is registered for deploy', deploy.includes('20260806240000_commerce_listing_drafts.sql')],
+  // Listing Agent in Telegram: same pipeline, same refusals, one more surface.
+  ['a new listing is triggered explicitly, never guessed from an economics message', listingChat.includes('The trigger is EXPLICIT') && listingChat.includes('export function newListingText') && tgProcess.includes('BEFORE the economics branch on purpose')],
+  ['the Telegram draft uses the same modules as the interface', listingChat.includes("from './listingDraft.ts'") && listingChat.includes('draftEconomics({') && !listingChat.includes('commission_percent: 30')],
+  ['category buttons fit Telegram callback data instead of being truncated', listingChat.includes('export function categoryToken') && listingChat.includes('caps callback_data at 64 BYTES') && !/callback_data: .${CB_LISTING_CATEGORY}:${draft.id}:${option.category}/.test(listingChat)],
+  ['approval is refused in Telegram while anything is missing', listingChat.includes("? [{ text: '✖️ Убрать черновик'") && telegramWebhook.includes('Approval is refused while anything is missing') && telegramWebhook.includes('if (missing.length) {')],
+  ['a chosen category recomputes the floor price rather than patching it', listingChat.includes('Recomputed, not patched') && listingChat.includes('export async function applyCategory')],
+  ['a forwarded listing button cannot move another account draft', telegramWebhook.includes('draft.account_id !== owner.accountId')],
+  ['Telegram approval still publishes nothing', telegramWebhook.includes('Nemo туда ничего не пишет') && !telegramWebhook.includes("status: 'published'")],
+  ['model text reaches Telegram escaped', listingChat.includes("import { escapeHtml } from './telegramFormat.ts'") && listingChat.includes('escapeHtml(draft.title_ru')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
