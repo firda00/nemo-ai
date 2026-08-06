@@ -116,6 +116,12 @@ const STOP = new Set(['для', 'и', 'с', 'на', 'в', 'the', 'and', 'va', 'u
 const tokens = (value: string) =>
   String(value ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2 && !STOP.has(word))
 
+/** One of the seller's existing products: how they name it, and where Uzum filed it. */
+export interface SkuExemplar {
+  text: string
+  category: string
+}
+
 /**
  * Candidate categories, best first.
  *
@@ -123,17 +129,44 @@ const tokens = (value: string) =>
  * Uzum has stated it. A new product in a category they have never touched has no commission Nemo
  * can honestly claim, and the draft says so rather than borrowing a number from a neighbour.
  *
- * Matching is by shared words, and it often finds nothing — the owner writes Russian and Uzum
- * names the category in Uzbek. That is not a failure to paper over: with no confident match the
- * full list comes back for the owner to pick from, which is one tap and always correct.
+ * Two signals, both facts about this seller:
+ *
+ *   1. Words shared with the category NAME. Specific when it hits, and it usually does not — the
+ *      owner writes Russian and Uzum names the category in Uzbek, so "хиджаб" and "Hijob va
+ *      tyurbanlar" share nothing. One matched word is enough here, because category names have
+ *      no filler.
+ *   2. Words shared with their OWN PRODUCT NAMES. This is the signal that works: they already
+ *      sell "Женский бони Белый", Uzum already filed it under Hijob va tyurbanlar, and a new
+ *      "Женский хиджаб-бони из шифона" is plainly the same shelf. Two matched words minimum,
+ *      because a single "женский" is true of half the catalogue and would decide nothing.
+ *
+ * A tie decides nothing either: two categories with equal evidence means the owner picks. And
+ * with no match at all the full list comes back to pick from, which is one tap and always right.
  */
-export function categoryCandidates(sourceText: string, options: CategoryOption[]): { confident: boolean; options: CategoryOption[] } {
+export function categoryCandidates(
+  sourceText: string,
+  options: CategoryOption[],
+  exemplars: SkuExemplar[] = [],
+): { confident: boolean; options: CategoryOption[] } {
   const words = new Set(tokens(sourceText))
+  const shared = (value: string) => tokens(value).filter((word) => words.has(word)).length
+
+  // Best exemplar evidence per category. Kept separate from the name score so the two signals
+  // keep their own thresholds instead of being averaged into something meaningless.
+  const byExemplar = new Map<string, number>()
+  for (const exemplar of exemplars) {
+    const score = shared(exemplar.text)
+    if (score >= 2 && score > (byExemplar.get(exemplar.category) ?? 0)) byExemplar.set(exemplar.category, score)
+  }
+
   const scored = options
-    .map((option) => ({ option, score: tokens(option.category).filter((word) => words.has(word)).length }))
+    .map((option) => ({ option, score: Math.max(shared(option.category), byExemplar.get(option.category) ?? 0) }))
     .sort((a, b) => b.score - a.score || b.option.skus - a.option.skus)
+
   const best = scored[0]
-  if (best && best.score > 0) return { confident: true, options: scored.filter((row) => row.score > 0).map((row) => row.option) }
+  const runnerUp = scored[1]
+  const decisive = Boolean(best) && best.score > 0 && (!runnerUp || runnerUp.score < best.score)
+  if (decisive) return { confident: true, options: scored.filter((row) => row.score > 0).map((row) => row.option) }
   return { confident: false, options: scored.map((row) => row.option) }
 }
 

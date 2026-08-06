@@ -52,11 +52,39 @@ assert.equal(matched.confident, true, 'a shared word is a real match')
 assert.equal(matched.options[0].category, 'Hijob va tyurbanlar')
 
 // The owner writes Russian, Uzum names the category in Uzbek: no overlap, and that is normal.
-// The honest answer is the whole list to pick from, not a confident guess.
+// With nothing else to go on the honest answer is the whole list to pick from.
 const unmatched = categoryCandidates('новый купальник раздельный', CATEGORIES)
 assert.equal(unmatched.confident, false, 'no shared word means no confident match')
 assert.equal(unmatched.options.length, 3, 'the owner gets every category they actually sell in')
 assert.equal(unmatched.options[0].skus, 24, 'ordered by how much of their catalogue sits there')
+
+// ...but their own product names DO overlap, and Uzum already filed those. This is the signal
+// that makes the feature usable for a Russian-writing seller instead of asking every single time.
+const EXEMPLARS = [
+  { text: 'Женский бони Белый AYOL88-BONI-БЕЛЫЙ', category: 'Hijob va tyurbanlar' },
+  { text: 'Женский бони Бордовый AYOL88-BONI-БОРДОВ', category: 'Hijob va tyurbanlar' },
+  { text: 'Женский купальник раздельный алый AYOL88-KUPALNIK1', category: 'Ikki qismli choʻmilish kiyimlari' },
+  { text: 'Волнистый шарф молочный AYOL88-SHARF', category: 'Sharflar' },
+]
+
+const viaExemplar = categoryCandidates('Женский хиджаб-бони из шифона, цвет молочный', CATEGORIES, EXEMPLARS)
+assert.equal(viaExemplar.confident, true, 'their own product names bridge the language gap')
+assert.equal(viaExemplar.options[0].category, 'Hijob va tyurbanlar')
+
+const swimwear = categoryCandidates('Новый женский купальник раздельный, размеры 42-48', CATEGORIES, EXEMPLARS)
+assert.equal(swimwear.confident, true)
+assert.equal(swimwear.options[0].category, 'Ikki qismli choʻmilish kiyimlari', 'and it picks the right shelf, not the biggest one')
+
+// One shared word decides nothing: half the catalogue is "женский".
+const tooWeak = categoryCandidates('женский товар', CATEGORIES, EXEMPLARS)
+assert.equal(tooWeak.confident, false, 'a single common word must not choose a commission')
+
+// Equal evidence on two shelves is also a question for the owner, not a coin flip.
+const tie = categoryCandidates('женский бони купальник', CATEGORIES, [
+  { text: 'Женский бони Белый', category: 'Hijob va tyurbanlar' },
+  { text: 'Женский купальник алый', category: 'Ikki qismli choʻmilish kiyimlari' },
+])
+assert.equal(tie.confident, false, 'a tie is not a decision')
 
 // A seller with no synced catalogue has no commission to borrow at all.
 assert.deepEqual(categoryCandidates('что угодно', []), { confident: false, options: [] })
@@ -139,4 +167,4 @@ assert.deepEqual(empty.unknown_attributes, [])
 assert.equal(parseCopy(null), null)
 assert.equal(parseCopy('{"title_ru":"x"}'), null, 'a string is not a parsed object')
 
-console.log('[OK] Listing draft behaviour: 34 assertions')
+console.log('[OK] Listing draft behaviour: 40 assertions')

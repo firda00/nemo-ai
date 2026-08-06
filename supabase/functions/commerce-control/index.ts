@@ -439,7 +439,7 @@ Deno.serve(async (req) => {
     // exact when Uzum states one rate for the category — and when it does not, the spread is a
     // fact about their catalogue rather than a number invented here.
     const { data: skuRows } = await admin.from('commerce_skus')
-      .select('uzum_category, commission_percent, returns_reserve_percent')
+      .select('uzum_category, commission_percent, returns_reserve_percent, title, external_sku')
       .eq('catalog_id', catalog.id).not('uzum_category', 'is', null).not('commission_percent', 'is', null)
     const byCategory = new Map<string, { commission: number[]; returns: number[] }>()
     for (const row of skuRows ?? []) {
@@ -456,9 +456,14 @@ Deno.serve(async (req) => {
       skus: bucket.commission.length,
     }))
 
+    // Their own product names are the signal that actually matches: they write Russian, Uzum
+    // names categories in Uzbek, so "хиджаб" shares nothing with "Hijob va tyurbanlar" — but it
+    // shares plenty with "Женский бони Белый", which Uzum already filed there.
+    const exemplars = (skuRows ?? []).map((row) => ({ text: `${row.external_sku ?? ''} ${row.title ?? ''}`, category: row.uzum_category }))
+
     // An explicit choice from the owner always wins over the match.
     const chosen = text(body?.uzum_category, 160)
-    const candidates = categoryCandidates(sourceText, options)
+    const candidates = categoryCandidates(sourceText, options, exemplars)
     const category = chosen
       ? options.find((option) => option.category === chosen) ?? null
       : (candidates.confident ? candidates.options[0] : null)

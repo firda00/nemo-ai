@@ -258,7 +258,10 @@ const checks = [
   ['numbers are extracted from the owner text by pattern, not by model', listingModule.includes('export function extractNumbers') && listingModule.includes('A cost needs a word that means cost')],
   ['a price the model returned is discarded rather than stored', listingModule.includes('export function parseCopy') && !/price/i.test(listingModule.split('export function parseCopy')[1].split('\n}')[0])],
   ['the commission comes from categories the seller already sells in', listingModule.includes('The commission is never guessed') && commerceControl.includes('Commission and returns are read off')],
-  ['an unmatched category asks the owner instead of borrowing a number', listingModule.includes('full list comes back for the owner to pick from') && commerceControl.includes('category_choices: category ? [] : candidates.options')],
+  ['an unmatched category asks the owner instead of borrowing a number', listingModule.includes('full list comes back to pick from') && commerceControl.includes('category_choices: category ? [] : candidates.options')],
+  // The signal that actually bridges Russian input to Uzbek category names.
+  ["the seller's own product names are what match the category", listingModule.includes('Words shared with their OWN PRODUCT NAMES') && listingModule.includes('export interface SkuExemplar') && commerceControl.includes('const exemplars = (skuRows ?? []).map')],
+  ['one common word never picks a commission, and a tie never does either', listingModule.includes('Two matched words minimum') && listingModule.includes('const decisive = Boolean(best) && best.score > 0 && (!runnerUp || runnerUp.score < best.score)')],
   ['a product with no dimensions is priced at the real no-VGH rate', listingModule.includes('the expensive truth') && listingModule.includes("fulfillment_basis: input.dimension ? 'dimensions' : 'no_dimensions'")],
   ['no commission or no cost means no floor price, never a guessed one', listingModule.includes('a floor computed from a guessed commission') && listingModule.includes('const floor = fees && input.unitCostTiyin != null')],
   ['a draft missing inputs cannot be approved', commerceControl.includes('approving a listing with no floor price is how a product gets sold below cost') && commerceControl.includes("error: 'draft still missing inputs'")],
