@@ -31,6 +31,7 @@ const feeProposalsMigration = read('supabase/migrations/20260805160000_commerce_
 const uzum = read('supabase/functions/_shared/uzum.ts')
 const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
+const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -171,6 +172,11 @@ const checks = [
   ['a shop the key cannot read stays queued so it can heal', commerceWorker.includes('Status deliberately stays') && !commerceWorker.includes("status: products.access === 'no_access'")],
   ['the HTTP status is kept so permissions and shop state stay distinguishable', commerceWorker.includes('(HTTP ${products.status})') && uzum.includes('status: response.status')],
   ['the owner sees which shops are not syncing', commercePage.includes('commerce.syncIssuesTitle') && commercePage.includes('catalog.last_sync_error')],
+  ['a catalogue margin fills blanks and spares a deliberate per-SKU value', minMarginMigration.includes('min_margin_percent = coalesce(s.min_margin_percent, v_proposal.min_margin_percent)') && minMarginMigration.includes('v_proposal.min_margin_percent is not null and s.min_margin_percent is null') && minMarginMigration.includes('must not have it flattened')],
+  ['the deploy probe executes the no-overwrite guarantee', deploy.includes('catalogue margin overwrote a deliberate per-SKU margin') && deploy.includes('catalogue margin did not reach a blank SKU')],
+  ['setting a catalogue margin is owner-only and only a proposal', commerceControl.includes("action === 'propose_min_margin'") && commerceControl.includes("source: 'ui'") && commercePage.includes('propose_min_margin')],
+  ['the margin confirmation counts only blank SKUs', commerceControl.includes(".is('min_margin_percent', null)") && commercePage.includes('commerce.okMargin')],
+  ['tenant isolation runs before any function is updated on deploy', deploy.includes('npm run test:security-live') && deploy.includes('TENANT ISOLATION FAILED')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

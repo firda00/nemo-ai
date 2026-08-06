@@ -9,7 +9,7 @@ import { useI18n } from '../../i18n'
 
 type Catalog = { id: string; name: string; source: string; external_shop_id: string | null; status: string; last_synced_at: string | null; last_sync_error: string | null }
 type Pilot = { status: string; started_at: string | null; expires_at: string | null; read_only_at: string | null }
-type Proposal = { id: string; source: string; sku_id: string | null; catalog_id: string | null; unit_cost_tiyin: number | null; lead_time_days: number | null; commission_percent: number | null; fulfillment_tiyin: number | null; returns_reserve_percent: number | null; commerce_skus?: { title: string; external_sku: string } | null }
+type Proposal = { id: string; source: string; sku_id: string | null; catalog_id: string | null; unit_cost_tiyin: number | null; lead_time_days: number | null; min_margin_percent: number | null; commission_percent: number | null; fulfillment_tiyin: number | null; returns_reserve_percent: number | null; commerce_skus?: { title: string; external_sku: string } | null }
 type Batch = { id: string; status: string; total_rows: number; valid_rows: number; unmatched_rows: number; error_rows: number; created_at: string }
 
 const headers = ['external_sku', 'unit_cost_uzs', 'commission_percent', 'fulfillment_uzs', 'returns_reserve_percent', 'lead_time_days', 'moq', 'safety_stock', 'min_margin_percent'] as const
@@ -59,7 +59,8 @@ export default function CommercePage() {
   const [telegramLink, setTelegramLink] = useState<string | null>(null)
   const [skus, setSkus] = useState<CommerceSku[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'proposal' | null>(null)
+  const [marginInput, setMarginInput] = useState('20')
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'proposal' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
@@ -161,6 +162,21 @@ export default function CommercePage() {
     setBusy(null)
   }
 
+  const proposeMargin = async () => {
+    if (!supabase || !catalogId || busy) return
+    setBusy('margin'); setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'propose_min_margin', catalog_id: catalogId, min_margin_percent: marginInput.trim() } })
+    const result = data as { ok?: boolean; affected?: number; error?: string } | null
+    if (error || !result?.ok) setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.errMargin') })
+    else {
+      // The confirmation names how many SKUs are actually blank, not the catalogue size:
+      // products that already carry a margin keep it.
+      setMessage({ ok: true, text: t('commerce.okMargin', { count: result.affected ?? 0 }) })
+      await loadProposals()
+    }
+    setBusy(null)
+  }
+
   const decideProposal = async (proposalId: string, action: 'apply_proposal' | 'reject_proposal') => {
     if (!supabase || busy) return
     setBusy('proposal'); setMessage(null)
@@ -178,6 +194,7 @@ export default function CommercePage() {
     proposal.returns_reserve_percent != null ? `${t('commerce.returns')} ${proposal.returns_reserve_percent}%` : null,
     proposal.unit_cost_tiyin != null ? `${t('commerce.sku.cost')} ${(proposal.unit_cost_tiyin / 100).toLocaleString('ru-RU')}` : null,
     proposal.lead_time_days != null ? `${t('commerce.sku.lead')} ${proposal.lead_time_days}` : null,
+    proposal.min_margin_percent != null ? `${t('commerce.sku.margin')} ${proposal.min_margin_percent}%` : null,
   ].filter(Boolean).join(' · ')
 
   const connectTelegram = async () => {
@@ -289,6 +306,23 @@ export default function CommercePage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div><p className="text-sm font-semibold text-text">{t('commerce.feesTitle')}</p><p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.feesHint')}</p></div>
           <Button variant="outline" onClick={proposeFees} loading={busy === 'fees'} disabled={!catalogId}>{t('commerce.feesRead')}</Button>
+        </div>
+      </Card>
+
+      <Card className="mt-4" padding="md">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div><p className="text-sm font-semibold text-text">{t('commerce.marginTitle')}</p><p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.marginHint')}</p></div>
+          <div className="flex shrink-0 items-center gap-2">
+            <input
+              className="w-20 rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60"
+              inputMode="decimal"
+              value={marginInput}
+              onChange={(event) => setMarginInput(event.target.value)}
+              aria-label={t('commerce.marginTitle')}
+            />
+            <span className="text-sm text-muted">%</span>
+            <Button variant="outline" onClick={proposeMargin} loading={busy === 'margin'} disabled={!catalogId || !marginInput.trim()}>{t('commerce.marginSet')}</Button>
+          </div>
         </div>
       </Card>
 

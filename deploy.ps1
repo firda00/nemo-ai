@@ -81,6 +81,7 @@ Apply-Migration .\supabase\migrations\20260805130000_commerce_notify_channel.sql
 Apply-Migration .\supabase\migrations\20260805140000_commerce_economics_proposals.sql
 Apply-Migration .\supabase\migrations\20260805150000_fix_proposal_applied_fields.sql
 Apply-Migration .\supabase\migrations\20260805160000_commerce_fee_proposals.sql
+Apply-Migration .\supabase\migrations\20260806150000_commerce_catalog_min_margin.sql
 
 $schemaCheckSql = @'
 select
@@ -372,6 +373,22 @@ begin
   if probe_estimated ? 'unit_cost_tiyin' then
     raise exception 'confirmed field kept its estimate mark';
   end if;
+
+  -- A catalogue-wide value fills blanks without flattening a deliberate per-SKU decision.
+  -- Bulk convenience must never quietly overwrite a number the seller chose on purpose.
+  insert into public.commerce_skus (catalog_id, external_sku, title, min_margin_percent)
+    values (probe_catalog, 'PROBE-SKU-PRICED', 'Deliberately priced probe SKU', 35);
+  insert into public.commerce_economics_proposals
+    (account_id, catalog_id, source, product_query, source_text, min_margin_percent)
+    values (probe_account, probe_catalog, 'ui', 'catalogue minimum margin', 'probe', 20)
+    returning id into probe_proposal;
+  probe_result := public.apply_commerce_economics_proposal(probe_proposal);
+  if (select min_margin_percent from public.commerce_skus where catalog_id = probe_catalog and external_sku = 'PROBE-SKU') is distinct from 20 then
+    raise exception 'catalogue margin did not reach a blank SKU';
+  end if;
+  if (select min_margin_percent from public.commerce_skus where catalog_id = probe_catalog and external_sku = 'PROBE-SKU-PRICED') is distinct from 35 then
+    raise exception 'catalogue margin overwrote a deliberate per-SKU margin';
+  end if;
   if not probe_estimated ? 'safety_stock' then
     raise exception 'untouched field lost its estimate mark';
   end if;
@@ -468,6 +485,19 @@ select cron.schedule(
   Apply-Sql ($cronSql.Replace('__REF__', $ref).Replace('__SECRET__', $safeCron))
 }
 Write-Host "     migrations applied." -ForegroundColor Green
+
+# Tenant isolation is verified against the schema that was just migrated and BEFORE any new
+# function code goes out: a migration that weakens RLS must stop the deploy, not be discovered
+# afterwards. The smoke creates two real accounts and deletes them; a mid-run failure can leave
+# them behind, so the message below tells the operator exactly what to look for.
+Write-Host "1b/3 Verifying tenant isolation against the migrated schema..." -ForegroundColor Cyan
+npm run test:security-live
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "     TENANT ISOLATION FAILED - deploy stopped before any function was updated." -ForegroundColor Red
+  Write-Host "     Check for leftover accounts named 'security-*@example.invalid' before retrying." -ForegroundColor Yellow
+  exit 1
+}
+Write-Host "     tenant isolation verified." -ForegroundColor Green
 
 $failed = @()
 $edgeManifestPath = Join-Path $PSScriptRoot 'supabase\functions\deployment-manifest.json'

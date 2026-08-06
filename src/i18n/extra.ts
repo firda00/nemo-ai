@@ -4,6 +4,11 @@
 
 export const extraUz = {
   "commerce": {
+    "marginTitle": "Butun katalog uchun minimal marja",
+    "marginHint": "Bu raqamni na Uzum API, na kabinet biladi — qancha foyda sizga yetarli ekanini faqat siz aytasiz. Marja belgilanmaguncha Price Guard ishlamaydi. Marja allaqachon kiritilgan tovarlar tegilmaydi.",
+    "marginSet": "Taklif qilish",
+    "errMargin": "Marja taklifini tayyorlab bo‘lmadi.",
+    "okMargin": "{count} ta tovar uchun taklif tayyor — quyida tasdiqlang.",
     "syncIssuesTitle": "Sinxronizatsiya muammolari",
     "syncIssuesHint": "Bu do‘konlardan narx va qoldiq olinmayapti, shuning uchun ular bo‘yicha hisob-kitob yo‘q.",
     "feesTitle": "Kabinetdan komissiyalarni olish",
@@ -1548,6 +1553,11 @@ export const extraUz = {
 
 export const extraRu = {
   "commerce": {
+    "marginTitle": "Минимальная маржа на весь каталог",
+    "marginHint": "Этого числа не знает ни API Uzum, ни кабинет — сколько прибыли вам достаточно, говорите только вы. Пока маржа не задана, Price Guard не сработает. Товары, где маржа уже указана, останутся нетронутыми.",
+    "marginSet": "Предложить",
+    "errMargin": "Не удалось подготовить предложение по марже.",
+    "okMargin": "Предложение готово для {count} товаров — подтвердите ниже.",
     "syncIssuesTitle": "Проблемы синхронизации",
     "syncIssuesHint": "С этих магазинов не забираются цены и остатки, поэтому расчёты по ним не ведутся.",
     "feesTitle": "Забрать комиссии из кабинета",
@@ -3092,6 +3102,11 @@ export const extraRu = {
 
 export const extraEn = {
   "commerce": {
+    "marginTitle": "Minimum margin for the whole catalogue",
+    "marginHint": "Neither the Uzum API nor the cabinet knows this number — only you can say how much profit is enough. Price Guard stays silent until it is set. Products that already carry a margin are left untouched.",
+    "marginSet": "Propose",
+    "errMargin": "Could not prepare the margin proposal.",
+    "okMargin": "Proposal ready for {count} SKU(s) — confirm it below.",
     "syncIssuesTitle": "Sync problems",
     "syncIssuesHint": "Prices and stock are not being read from these shops, so nothing is calculated for them.",
     "feesTitle": "Read fees from the cabinet",

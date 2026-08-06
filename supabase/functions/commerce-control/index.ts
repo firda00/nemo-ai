@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}))
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
-  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'apply_proposal' || action === 'reject_proposal'
+  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'apply_proposal' || action === 'reject_proposal'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -297,6 +297,28 @@ Deno.serve(async (req) => {
     }).select('id, commission_percent, fulfillment_tiyin, returns_reserve_percent, expires_at').single()
     if (error || !proposal) return json({ error: 'could not prepare the fee proposal' }, 500)
     return json({ ok: true, proposal, evidence: fees.evidence, observed_at: observation.observed_at })
+  }
+
+  if (action === 'propose_min_margin') {
+    const catalog = await catalogForAccount(admin, profile.account_id, body?.catalog_id)
+    if (!catalog) return json({ error: 'catalog not found' }, 404)
+    const margin = decimal(body?.min_margin_percent, 0, 99.9999)
+    if (margin === null) return json({ error: 'min_margin_percent is invalid' }, 400)
+    // How many SKUs this would actually touch, so the confirmation states a real number rather
+    // than the catalogue size. Products that already carry a margin are left alone.
+    const { count } = await admin.from('commerce_skus')
+      .select('id', { count: 'exact', head: true })
+      .eq('catalog_id', catalog.id).is('min_margin_percent', null)
+    const { data: proposal, error } = await admin.from('commerce_economics_proposals').insert({
+      account_id: profile.account_id,
+      catalog_id: catalog.id,
+      source: 'ui',
+      product_query: 'catalogue minimum margin',
+      source_text: `owner set ${margin}%`,
+      min_margin_percent: margin,
+    }).select('id, min_margin_percent, expires_at').single()
+    if (error || !proposal) return json({ error: 'could not prepare the margin proposal' }, 500)
+    return json({ ok: true, proposal, affected: count ?? 0 })
   }
 
   if (action === 'list_proposals') {
