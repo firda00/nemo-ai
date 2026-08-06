@@ -69,6 +69,7 @@ export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave
           <tr className="text-xs uppercase tracking-wide text-muted">
             <th className="pb-2 pr-3 font-medium">{t('commerce.sku.product')}</th>
             <th className="pb-2 pr-3 font-medium">{t('commerce.sku.priceStock')}</th>
+            <th className="pb-2 pr-3 font-medium" title={t('commerce.sku.uzumFeesHint')}>{t('commerce.sku.uzumFees')}</th>
             {fields.map((field) => <th key={field.key} className="pb-2 pr-3 font-medium" title={t(field.hintKey)}>{t(field.labelKey)}</th>)}
             <th className="pb-2 font-medium" />
           </tr>
@@ -80,6 +81,15 @@ export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave
               <tr key={sku.id} className="border-t border-ice/10 align-middle transition-colors hover:bg-panel/70">
                 <td className="py-2 pr-3"><p className="max-w-[220px] truncate text-text" title={sku.title}>{sku.title}</p><p className="text-xs text-muted">{sku.external_sku}</p></td>
                 <td className="py-2 pr-3 text-xs text-muted">{money(sku.snapshot?.price_tiyin ?? null, t('commerce.sku.currency'))}<br />{sku.snapshot?.stock_total ?? '—'} {t('commerce.sku.pcs')} · {sku.snapshot?.sold_units_7d ?? '—'} {t('commerce.sku.per7d')}</td>
+                {/* Read-only on purpose: Uzum states the commission and the fee follows from the
+                    dimensions it declares. An input here would invite editing a fact. */}
+                <td className="py-2 pr-3 text-xs text-muted">
+                  <span className="text-text">{sku.commission_percent == null ? '—' : `${sku.commission_percent}%`}</span>
+                  {' · '}{money(sku.fulfillment_tiyin, t('commerce.sku.currency'))}
+                  <br />
+                  {t('commerce.sku.returnsShort')} {sku.returns_reserve_percent == null ? '—' : `${sku.returns_reserve_percent}%`}
+                  {(sku.estimated_fields ?? []).includes('returns_reserve_percent') && <span title={t('commerce.sku.estimatedTitle')} className="ml-1 font-semibold text-amber">≈</span>}
+                </td>
                 {fields.map((field) => (
                   <td key={field.key} className="py-2 pr-3">
                     <div className="flex items-center gap-1">

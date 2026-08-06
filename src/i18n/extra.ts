@@ -83,6 +83,9 @@ export const extraUz = {
     "okStage": "{total} qator tayyorlandi: {valid} to‘g‘ri, {unmatched} mos kelmadi, {invalid} xato.",
     "errReadFile": "Import faylini o‘qib bo‘lmadi.",
     "sku": {
+      "uzumFees": "Uzum: komissiya · logistika",
+      "uzumFeesHint": "Uzum API’dan olinadi. Logistika e’lon qilingan o‘lchamlar va rasmiy tarif bo‘yicha hisoblanadi — tahrirlash shart emas.",
+      "returnsShort": "qaytarish",
       "product": "Tovar",
       "priceStock": "Narx / qoldiq",
       "cost": "Tannarx, so‘m",
@@ -1641,6 +1644,9 @@ export const extraRu = {
     "okStage": "Подготовлено {total} строк: {valid} корректных, {unmatched} без совпадения, {invalid} с ошибками.",
     "errReadFile": "Не удалось прочитать файл импорта.",
     "sku": {
+      "uzumFees": "Uzum: комиссия · логистика",
+      "uzumFeesHint": "Приходит из API Uzum. Логистика считается по заявленным габаритам и официальному тарифу — править не нужно.",
+      "returnsShort": "возвраты",
       "product": "Товар",
       "priceStock": "Цена / остаток",
       "cost": "Себестоимость, сум",
@@ -3199,6 +3205,9 @@ export const extraEn = {
     "okStage": "Staged {total} rows: {valid} valid, {unmatched} unmatched, {invalid} invalid.",
     "errReadFile": "Could not read import file.",
     "sku": {
+      "uzumFees": "Uzum: commission · logistics",
+      "uzumFeesHint": "Comes from the Uzum API. Logistics is computed from declared dimensions against the published tariff — nothing to edit.",
+      "returnsShort": "returns",
       "product": "Product",
       "priceStock": "Price / stock",
       "cost": "Cost, UZS",
