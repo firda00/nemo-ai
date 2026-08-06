@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
+import { batchOutcome, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -83,22 +84,39 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
     const rawUnits = Math.max(0, targetUnits - stock)
     const units = sku.moq ? Math.ceil(rawUnits / sku.moq) * sku.moq : rawUnits
     const reorderInputs = ['lead_time_days', 'safety_stock', 'moq']
+    // What the reorder is worth, when the economics to answer that exist. "Order 150 units"
+    // is a logistics instruction; "150 units, 12.75M in, 4.69M out" is a decision the owner
+    // can actually weigh against other uses of the same cash.
+    const canValue = priceTiyin != null && priceTiyin > 0 && sku.unit_cost_tiyin != null
+      && sku.commission_percent != null && sku.returns_reserve_percent != null && sku.fulfillment_tiyin != null
+    const outcome = canValue
+      ? batchOutcome(units, priceTiyin!, sku.unit_cost_tiyin!, {
+        commission_percent: sku.commission_percent!,
+        returns_reserve_percent: sku.returns_reserve_percent!,
+        fulfillment_tiyin: sku.fulfillment_tiyin!,
+      })
+      : null
+    const valueInputs = [...reorderInputs, 'unit_cost_tiyin', 'commission_percent', 'returns_reserve_percent', 'fulfillment_tiyin']
     if (dailyVelocity > 0 && stock <= reorderPoint) rows.push({
       ...base, kind: 'reorder', severity: severityFor(stock / dailyVelocity <= sku.lead_time_days, reorderInputs),
       dedupe_key: `commerce:${sku.id}:reorder`,
-      calculation: { sold_units_7d: sold7d, daily_velocity: dailyVelocity, stock_total: stock, lead_time_days: sku.lead_time_days, safety_stock: sku.safety_stock, reorder_point: reorderPoint, target_units: targetUnits, reorder_units: units, estimated_inputs: estimatesUsed(reorderInputs) },
-      suggested_action: { type: 'review_reorder', units }, last_detected_at: new Date().toISOString(),
+      calculation: { sold_units_7d: sold7d, daily_velocity: dailyVelocity, stock_total: stock, lead_time_days: sku.lead_time_days, safety_stock: sku.safety_stock, reorder_point: reorderPoint, target_units: targetUnits, reorder_units: units, batch: outcome, estimated_inputs: estimatesUsed(outcome ? valueInputs : reorderInputs) },
+      suggested_action: { type: 'review_reorder', units, investment_tiyin: outcome?.investment_tiyin ?? null, profit_tiyin: outcome?.profit_tiyin ?? null, roi_percent: outcome?.roi_percent ?? null }, last_detected_at: new Date().toISOString(),
     })
   }
 
   if (priceTiyin != null && sku.unit_cost_tiyin != null && sku.commission_percent != null && sku.fulfillment_tiyin != null && sku.returns_reserve_percent != null && sku.min_margin_percent != null && priceTiyin > 0) {
-    const net = priceTiyin - sku.unit_cost_tiyin - sku.fulfillment_tiyin - priceTiyin * (sku.commission_percent + sku.returns_reserve_percent) / 100
-    const marginPercent = net / priceTiyin * 100
+    // One definition of margin for the whole platform, shared with the calculators. Two copies
+    // of this algebra eventually disagree, and the seller is the one who meets the conflict.
+    const fees = { commission_percent: sku.commission_percent, returns_reserve_percent: sku.returns_reserve_percent, fulfillment_tiyin: sku.fulfillment_tiyin }
+    const net = netProfitTiyin(priceTiyin, sku.unit_cost_tiyin, fees)
+    const marginPercent = marginFor(priceTiyin, sku.unit_cost_tiyin, fees) ?? 0
+    const floorTiyin = minSellingPriceTiyin(sku.unit_cost_tiyin, sku.min_margin_percent, fees)
     const priceInputs = ['unit_cost_tiyin', 'fulfillment_tiyin', 'commission_percent', 'returns_reserve_percent', 'min_margin_percent']
     if (marginPercent < sku.min_margin_percent) rows.push({
       ...base, kind: 'price_guard', severity: severityFor(marginPercent <= 0, priceInputs), dedupe_key: `commerce:${sku.id}:price_guard`,
-      calculation: { price_tiyin: priceTiyin, unit_cost_tiyin: sku.unit_cost_tiyin, fulfillment_tiyin: sku.fulfillment_tiyin, commission_percent: sku.commission_percent, returns_reserve_percent: sku.returns_reserve_percent, margin_percent: marginPercent, min_margin_percent: sku.min_margin_percent, estimated_inputs: estimatesUsed(priceInputs) },
-      suggested_action: { type: 'review_price', minimum_margin_percent: sku.min_margin_percent }, last_detected_at: new Date().toISOString(),
+      calculation: { price_tiyin: priceTiyin, unit_cost_tiyin: sku.unit_cost_tiyin, fulfillment_tiyin: sku.fulfillment_tiyin, commission_percent: sku.commission_percent, returns_reserve_percent: sku.returns_reserve_percent, margin_percent: marginPercent, net_profit_tiyin: Math.round(net), min_margin_percent: sku.min_margin_percent, min_selling_price_tiyin: floorTiyin, estimated_inputs: estimatesUsed(priceInputs) },
+      suggested_action: { type: 'review_price', minimum_margin_percent: sku.min_margin_percent, min_selling_price_tiyin: floorTiyin }, last_detected_at: new Date().toISOString(),
     })
   }
   return rows

@@ -29,6 +29,7 @@ const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
 const i18nExtra = read('src/i18n/extra.ts')
 const feeProposalsMigration = read('supabase/migrations/20260805160000_commerce_fee_proposals.sql')
 const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
+const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -101,7 +102,9 @@ const checks = [
   ['auto-fill is owner-only and needs a completed sync', /security definer/.test(autofillMigration) && /u\.role = 'owner'/.test(autofillMigration) && /errcode = '42501'/.test(autofillMigration) && /status = 'completed'/.test(autofillMigration) && /no completed sync yet/.test(autofillMigration) && /revoke all on function public\.autofill_commerce_economics\(uuid\) from public, anon/.test(autofillMigration)],
   ['auto-fill never overwrites owner-entered economics', /s\.unit_cost_tiyin is null/.test(autofillMigration) && /not s\.estimated_fields \? 'unit_cost_tiyin'/.test(autofillMigration) && /coalesce\(s\.lead_time_days, 15\)/.test(autofillMigration)],
   ['estimates can only ever warn, never page', /can never raise a critical alert/.test(commerceWorker) && /const severityFor = \(critical: boolean, inputs: string\[\]\)/.test(commerceWorker) && /return critical && !guessed\.length \? 'critical' : 'warning'/.test(commerceWorker) && /severity: severityFor\(/.test(commerceWorker) && !/severity: stock \/ dailyVelocity/.test(commerceWorker) && !/severity: marginPercent <= 0/.test(commerceWorker)],
-  ['recommendations disclose which inputs were estimated', /estimated_inputs: estimatesUsed\(reorderInputs\)/.test(commerceWorker) && /estimated_inputs: estimatesUsed\(priceInputs\)/.test(commerceWorker)],
+  // A valued reorder rests on the cost and fee fields too, so its disclosure covers those as
+  // well — otherwise a profit figure built on an estimated cost would look confirmed.
+  ['recommendations disclose which inputs were estimated', commerceWorker.includes('estimatesUsed(outcome ? valueInputs : reorderInputs)') && commerceWorker.includes('estimated_inputs: estimatesUsed(priceInputs)')],
   ['owner edits confirm a field and clear its estimate mark', /An explicit owner value confirms the field/.test(commerceControl) && /!providedKeys\.includes\(field\)/.test(commerceControl) && /economics_revision: sku\.economics_revision \+ 1/.test(commerceControl)],
   ['SKU economics edits are validated and concurrency-safe', /`\$\{field\} is invalid`/.test(commerceControl) && /eq\('economics_revision', sku\.economics_revision\)/.test(commerceControl) && /updated concurrently, reload and retry/.test(commerceControl)],
   ['auto-fill and inline editing are owner-gated actions', /action === 'autofill_economics' \|\| action === 'update_sku_economics'/.test(commerceControl) && /userDb\.rpc\('autofill_commerce_economics'/.test(commerceControl)],
@@ -153,6 +156,16 @@ const checks = [
   ['a browser proposal still needs an owner and a confirmation', /action === 'propose_fees' || action === 'apply_proposal'/.test(commerceControl) && /Ownership is re-checked here/.test(commerceControl) && /source: 'browser'/.test(commerceControl)],
   ['the owner sees the evidence behind a scraped number', /Echo the exact lines the numbers were read from/.test(commercePage) && /evidence/.test(commerceControl)],
   ['every commerce migration is registered for deploy', ['20260805140000','20260805150000','20260805160000'].every((id) => deploy.includes(id))],
+  // Plain substring checks: these assert exact code, and escaping them as regexes has broken
+  // this file twice already for no added strictness.
+  ['one definition of margin, shared by alerts and calculators', unitEconomics.includes('The single definition of unit economics')
+    && commerceWorker.includes("from '../_shared/unitEconomics.ts'")
+    && !commerceWorker.includes('const net = priceTiyin - sku.unit_cost_tiyin')],
+  ['margin accounts for the returns reserve', unitEconomics.includes('fees.commission_percent + fees.returns_reserve_percent') && commerceWorker.includes('returns_reserve_percent')],
+  ['impossible economics return no answer rather than a negative', unitEconomics.includes('if (load >= 100) return null') && unitEconomics.includes('value > 0 ? Math.round(value) : null')],
+  ['a reorder states what it costs and returns', commerceWorker.includes('batchOutcome(units') && commerceWorker.includes('investment_tiyin: outcome?.investment_tiyin') && commerceWorker.includes('roi_percent: outcome?.roi_percent')],
+  ['price guard states the floor price, not only the breach', commerceWorker.includes('min_selling_price_tiyin: floorTiyin')],
+  ['batch valuation is flagged when it rests on estimates', commerceWorker.includes('estimatesUsed(outcome ? valueInputs : reorderInputs)')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
