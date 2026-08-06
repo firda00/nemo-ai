@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Database, RefreshCw, Search, Upload, Wand2 }
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
+import { CommerceListingAgent, type CategoryChoice, type ListingDraft } from '../../components/platform/CommerceListingAgent'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
@@ -59,6 +60,8 @@ export default function CommercePage() {
   const [telegramLink, setTelegramLink] = useState<string | null>(null)
   const [skus, setSkus] = useState<CommerceSku[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
+  const [drafts, setDrafts] = useState<ListingDraft[]>([])
+  const [categoryChoices, setCategoryChoices] = useState<CategoryChoice[]>([])
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -77,6 +80,13 @@ export default function CommercePage() {
     setProposals(result?.ok ? result.proposals ?? [] : [])
   }, [])
 
+  const loadDrafts = useCallback(async () => {
+    if (!supabase) { setDrafts([]); return }
+    const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_listing_drafts' } })
+    const result = data as { ok?: boolean; drafts?: ListingDraft[] } | null
+    setDrafts(result?.ok ? result.drafts ?? [] : [])
+  }, [])
+
   const load = useCallback(async (selectedCatalogId = catalogId) => {
     if (!supabase) { setLoading(false); return }
     const [statusResult, listResult] = await Promise.all([
@@ -84,6 +94,7 @@ export default function CommercePage() {
       supabase.functions.invoke('commerce-control', { body: { action: 'list', ...(selectedCatalogId ? { catalog_id: selectedCatalogId } : {}) } }),
       loadSkus(selectedCatalogId),
       loadProposals(),
+      loadDrafts(),
     ])
     const status = statusResult.data as { ok?: boolean; pilot?: Pilot | null; catalogs?: Catalog[]; telegram_connected?: boolean; error?: string } | null
     const list = listResult.data as { ok?: boolean; batches?: Batch[]; error?: string } | null
@@ -96,12 +107,38 @@ export default function CommercePage() {
     if (listResult.error || !list?.ok) setMessage({ ok: false, text: list?.error ?? listResult.error?.message ?? t('commerce.errImports') })
     else setBatches(list.batches ?? [])
     setLoading(false)
-  }, [catalogId, loadSkus, loadProposals])
+  }, [catalogId, loadSkus, loadProposals, loadDrafts])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void load() }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  const draftListing = async (sourceText: string, category: string | null) => {
+    if (!supabase) return false
+    setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', {
+      body: { action: 'draft_listing', source_text: sourceText, ...(category ? { uzum_category: category } : {}), ...(catalogId ? { catalog_id: catalogId } : {}) },
+    })
+    const result = data as { ok?: boolean; category_choices?: CategoryChoice[]; copy_available?: boolean; error?: string } | null
+    if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errCreate') }); return false }
+    // Offered back only when Nemo could not match a category itself. Keeping them on screen is
+    // what turns "I could not tell" into one tap instead of a wrong commission.
+    setCategoryChoices(result.category_choices ?? [])
+    if (result.copy_available === false) setMessage({ ok: true, text: t('commerce.listing.okNoCopy') })
+    await loadDrafts()
+    return true
+  }
+
+  const decideDraft = async (draftId: string, action: 'approve_listing_draft' | 'discard_listing_draft') => {
+    if (!supabase) return false
+    setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action, draft_id: draftId } })
+    const result = data as { ok?: boolean; error?: string } | null
+    if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errDecide') }); return false }
+    await loadDrafts()
+    return true
+  }
 
   const discover = async () => {
     if (!supabase || busy) return
@@ -363,6 +400,22 @@ export default function CommercePage() {
           <Button variant="outline" onClick={autofill} loading={busy === 'autofill'} disabled={!catalogs.length} leftIcon={<Wand2 size={15} />}>{t('commerce.autofill')}</Button>
         </div>
         <div className="mt-4">{loading ? <p className="text-sm text-muted">{t('commerce.loadingSkus')}</p> : <CommerceSkuTable skus={skus} onSave={saveSku} />}</div>
+      </Card>
+
+      <Card className="mt-4" padding="md">
+        <div>
+          <p className="text-sm font-semibold text-text">{t('commerce.listing.title')}</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.listing.hint')}</p>
+        </div>
+        <div className="mt-4">
+          <CommerceListingAgent
+            drafts={drafts}
+            categoryChoices={categoryChoices}
+            onDraft={draftListing}
+            onApprove={(draftId) => decideDraft(draftId, 'approve_listing_draft')}
+            onDiscard={(draftId) => decideDraft(draftId, 'discard_listing_draft')}
+          />
+        </div>
       </Card>
 
       <Card className="mt-4" padding="md">

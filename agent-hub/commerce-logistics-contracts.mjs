@@ -40,6 +40,10 @@ const returnsReserve = read('supabase/functions/_shared/returnsReserve.ts')
 const economics = read('supabase/functions/_shared/unitEconomics.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const resolvedMigration = read('supabase/migrations/20260806220000_commerce_recommendations_resolved.sql')
+const listingModule = read('supabase/functions/_shared/listingDraft.ts')
+const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
+const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
+const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
 const extensionBackground = read('extensions/nemo-browser/background.js')
@@ -159,7 +163,8 @@ const checks = [
   ['a bare /start is answered instead of ignored', /\^\\\/start\(\?:@\\w\+\)\?\$/.test(tgProcess) && /Здравствуйте! Это Nemo/.test(tgProcess) && /Connect Telegram notifications/.test(tgProcess)],
   ['only internal bots get Nemo-branded greetings', /customer-facing DM bot, which must keep its persona/.test(tgProcess) && /channel\.scope === 'group' && \/\^\\\/start/.test(tgProcess)],
   ['extraction does not depend on the agent chat model', /Deliberately NOT agent\.model/.test(tgProcess) && /parseEconomicsMessage\(apiKey, PRIMARY_MODEL, text\)/.test(tgProcess)],
-  ['a fenced or chatty JSON reply is still parsed', /function stripFence/.test(economicsChat) && /text\.slice\(start, end \+ 1\)/.test(economicsChat)],
+  // Lives in llm.ts since the Listing Agent needed the same parser. One copy, two callers.
+  ['a fenced or chatty JSON reply is still parsed', /export function stripJsonFence/.test(llmShared) && /text\.slice\(start, end \+ 1\)/.test(llmShared) && /stripJsonFence as stripFence/.test(economicsChat)],
   ['matching survives real marketplace whitespace and either name field', /replace\(\/\\s\+\/g, ' '\)/.test(economicsChat) && /normalize\(sku\.external_sku\) === needle \|\| normalize\(sku\.title\) === needle/.test(economicsChat) && /external\.includes\(needle\)/.test(economicsChat)],
   ['cabinet fees are read deterministically, never by a model', /Deliberately NOT an LLM call/.test(uzumFees) && /(?<!\d)/.test(uzumFees) && !/callOpenRouter|openai/i.test(uzumFees)],
   ['an unrecognised fees page yields nothing rather than a guess', /returns nothing when it is unsure/.test(uzumFees) && /value < 0 || value > max/.test(uzumFees)],
@@ -246,6 +251,22 @@ const checks = [
   ['a sync never overwrites the owner dismissing an alert', commerceWorker.includes("Those are the owner's verbs") && !commerceWorker.includes("status: 'dismissed'")],
   ['resolved is a status the database actually allows', resolvedMigration.includes("check (status in ('open', 'dismissed', 'accepted', 'expired', 'resolved'))") && resolvedMigration.includes('resolved_at timestamptz')],
   ['price guards from the old margin model are cleared once', resolvedMigration.includes('charged a returned unit') && resolvedMigration.includes("and kind = 'price_guard'")],
+  // Listing Agent: the draft is the product, and Nemo does not publish it.
+  ['Nemo never publishes a listing, and the schema cannot express that it did', listingMigration.includes("status in ('draft', 'ready', 'discarded')") && !listingMigration.includes("'published'") && listingMigration.includes('THERE IS NO PUBLISHED STATUS')],
+  ['a draft is owner-only to create and decide', commerceControl.includes("action === 'draft_listing'") && commerceControl.includes("|| action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'")],
+  ['the model writes prose and never a number', listingModule.includes('Never write a price, a discount, a delivery time or a warranty') && listingModule.includes('Never invent a material')],
+  ['numbers are extracted from the owner text by pattern, not by model', listingModule.includes('export function extractNumbers') && listingModule.includes('A cost needs a word that means cost')],
+  ['a price the model returned is discarded rather than stored', listingModule.includes('export function parseCopy') && !/price/i.test(listingModule.split('export function parseCopy')[1].split('\n}')[0])],
+  ['the commission comes from categories the seller already sells in', listingModule.includes('The commission is never guessed') && commerceControl.includes('Commission and returns are read off')],
+  ['an unmatched category asks the owner instead of borrowing a number', listingModule.includes('full list comes back for the owner to pick from') && commerceControl.includes('category_choices: category ? [] : candidates.options')],
+  ['a product with no dimensions is priced at the real no-VGH rate', listingModule.includes('the expensive truth') && listingModule.includes("fulfillment_basis: input.dimension ? 'dimensions' : 'no_dimensions'")],
+  ['no commission or no cost means no floor price, never a guessed one', listingModule.includes('a floor computed from a guessed commission') && listingModule.includes('const floor = fees && input.unitCostTiyin != null')],
+  ['a draft missing inputs cannot be approved', commerceControl.includes('approving a listing with no floor price is how a product gets sold below cost') && commerceControl.includes("error: 'draft still missing inputs'")],
+  ['the floor price and Price Guard share one definition', listingModule.includes("from './unitEconomics.ts'") && listingModule.includes("from './uzumLogistics.ts'")],
+  ['a model outage still leaves the owner the economics', listingModule.includes('the ECONOMICS are the part that does not depend on') && commerceControl.includes('The copy is optional on purpose')],
+  ['the interface names what the draft does not know', listingUi.includes('missingTitle') && listingUi.includes('disabled={missing.length > 0') && listingUi.includes('commerce.listing.missing.')],
+  ['JSON fence stripping has one home, not two', llmShared.includes('export function stripJsonFence') && economicsChat.includes("import { stripJsonFence as stripFence }") && !/^function stripFence/m.test(economicsChat)],
+  ['the listing drafts migration is registered for deploy', deploy.includes('20260806240000_commerce_listing_drafts.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 

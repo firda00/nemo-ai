@@ -19,6 +19,7 @@ $steps = @(
   @{ Name = 'Logistics parser behavior'; Command = { npm run test:logistics-behavior } },
   @{ Name = 'Return reserve behavior'; Command = { npm run test:returns-reserve } },
   @{ Name = 'Unit economics behavior'; Command = { npm run test:unit-economics } },
+  @{ Name = 'Listing draft behavior'; Command = { npm run test:listing-draft } },
   @{ Name = 'Lead patch behavior'; Command = { npm run test:lead-behavior } },
   @{ Name = 'Release entitlement contracts'; Command = { npm run test:release } },
   @{ Name = 'Review convergence and input UX contracts'; Command = { npm run test:review-ux } },

@@ -90,6 +90,7 @@ Apply-Migration .\supabase\migrations\20260806200000_commerce_facts_skip_unchang
 Apply-Migration .\supabase\migrations\20260806210000_commerce_returns_sample.sql
 Apply-Migration .\supabase\migrations\20260806220000_commerce_recommendations_resolved.sql
 Apply-Migration .\supabase\migrations\20260806230000_browser_observation_total_length.sql
+Apply-Migration .\supabase\migrations\20260806240000_commerce_listing_drafts.sql
 
 $schemaCheckSql = @'
 select

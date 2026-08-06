@@ -25,7 +25,10 @@ let inFlight = 0
 const waiters: Array<() => void> = []
 async function acquireSlot(): Promise<void> { if (inFlight < MAX_CONCURRENT) { inFlight++; return } await new Promise<void>((r) => waiters.push(r)); inFlight++ }
 function releaseSlot(): void { inFlight = Math.max(0, inFlight - 1); const w = waiters.shift(); if (w) w() }
-let breakerUntil = 0
+// Keyed by credential AND model, never global. One model rate-limiting a tenant used to open a
+// circuit that then refused the fallback model as well — the degrade chain existed and could not
+// be reached. Two tenants sharing a worker must not be able to trip each other either.
+const breakerUntil = new Map<string, number>()
 
 async function attemptModel(opts: {
   apiKey: string
@@ -39,7 +42,8 @@ async function attemptModel(opts: {
   // so current claims arrive with URL citations instead of plausible filler.
   plugins?: Array<Record<string, unknown>>
 }): Promise<{ content: string; tokens: number; citations: string[] }> {
-  if (Date.now() < breakerUntil) throw new Error('OpenRouter temporarily throttled (circuit open)')
+  const breakerKey = `${opts.apiKey}:${opts.model}`
+  if (Date.now() < (breakerUntil.get(breakerKey) ?? 0)) throw new Error(`OpenRouter temporarily throttled for ${opts.model} (circuit open)`)
   await acquireSlot()
   try {
   // Retry transient errors (429 / 5xx) with backoff. 402 = out of credits (no retry).
@@ -62,6 +66,10 @@ async function attemptModel(opts: {
         ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
         ...(opts.plugins?.length ? { plugins: opts.plugins } : {}),
       }),
+      // A hung provider connection otherwise holds the isolate until the platform kills it, and
+      // the caller never learns why. 45s is above any legitimate completion and below the
+      // function's own limit, so the degrade chain still gets its turn.
+      signal: AbortSignal.timeout(45_000),
     })
     if (res.ok) break
     if (res.status === 402) throw new Error('NO_CREDITS')
@@ -74,13 +82,13 @@ async function attemptModel(opts: {
       continue
     }
     const detail = await res.text()
-    if (res.status === 429 || res.status >= 500) breakerUntil = Date.now() + 4000 // trip the breaker
+    if (res.status === 429 || res.status >= 500) breakerUntil.set(breakerKey, Date.now() + 4000) // trip this model only
     throw new Error(`OpenRouter ${res.status}: ${detail}`)
   }
-  if (!res || !res.ok) { breakerUntil = Date.now() + 4000; throw new Error('OpenRouter: retries exhausted') }
+  if (!res || !res.ok) { breakerUntil.set(breakerKey, Date.now() + 4000); throw new Error('OpenRouter: retries exhausted') }
 
   const data = await res.json()
-  breakerUntil = 0 // success — reset the breaker
+  breakerUntil.delete(breakerKey) // success — reset only this model
   const content = data?.choices?.[0]?.message?.content?.trim() ?? ''
   const tokens = data?.usage?.total_tokens ?? 0
   // Perplexity "online" models return the sources they used here.
@@ -186,6 +194,17 @@ export function estimateCostUsd(model: string, tokens: number): number {
   else if (m.includes('sonnet')) perM = 6
   else if (m.includes('gpt-4o') && !m.includes('mini')) perM = 6
   return Number(((tokens / 1_000_000) * perM).toFixed(6))
+}
+
+/**
+ * Models that ignore response_format wrap JSON in a fenced code block or add a sentence around
+ * it. Extracting the outermost object costs nothing and saves an otherwise silent parse failure.
+ */
+export function stripJsonFence(content: string): string {
+  const text = String(content ?? '').replace(/```(?:json)?/gi, '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  return start >= 0 && end > start ? text.slice(start, end + 1) : text
 }
 
 export function buildSystemPrompt(agent: PromptAgent | null | undefined, knowledge: string, memory = '', opts: PromptOpts = {}): string {

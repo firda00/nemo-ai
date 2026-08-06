@@ -4,6 +4,9 @@ import { uzumShopList } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 import { extractUzumFees, hasAnyFee } from '../_shared/uzumFees.ts'
+import { categoryCandidates, draftEconomics, extractNumbers, generateCopy, type CategoryOption } from '../_shared/listingDraft.ts'
+import { resolveOpenRouterKey } from '../_shared/keys.ts'
+import { PRIMARY_MODEL } from '../_shared/llm.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -102,6 +105,7 @@ Deno.serve(async (req) => {
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
   const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'sync_now' || action === 'apply_proposal' || action === 'reject_proposal'
+    || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -412,6 +416,130 @@ Deno.serve(async (req) => {
     const { data, error } = await userDb.rpc('confirm_commerce_import', { p_batch_id: body.batch_id })
     if (error) return json({ error: error.code === 'P0002' ? 'batch not found' : 'could not confirm import' }, error.code === 'P0002' ? 404 : 409)
     return json({ ok: true, result: data })
+  }
+
+  // --- Listing Agent -------------------------------------------------------------------------
+  //
+  // Nemo does not publish. The Uzum integration is read-only, so this produces a draft the owner
+  // copies into their own cabinet. What it adds over writing the listing by hand is that the
+  // draft arrives knowing the logistics fee, the commission and the floor price — computed from
+  // the same modules Price Guard uses, so a new product cannot be priced by different arithmetic
+  // than the ones already selling.
+
+  if (action === 'draft_listing') {
+    const sourceText = typeof body?.source_text === 'string' ? body.source_text.trim().slice(0, 4000) : ''
+    if (sourceText.length < 10) return json({ error: 'describe the product in at least a sentence' }, 400)
+
+    const catalog = body?.catalog_id
+      ? await catalogForAccount(admin, profile.account_id, body.catalog_id)
+      : (await admin.from('commerce_catalogs').select('id').eq('account_id', profile.account_id).eq('status', 'active').order('created_at').limit(1).maybeSingle()).data
+    if (!catalog) return json({ error: 'connect a catalogue first — the commission comes from categories you already sell in' }, 409)
+
+    // Commission and returns are read off the seller's OWN SKUs. Averaged per category, which is
+    // exact when Uzum states one rate for the category — and when it does not, the spread is a
+    // fact about their catalogue rather than a number invented here.
+    const { data: skuRows } = await admin.from('commerce_skus')
+      .select('uzum_category, commission_percent, returns_reserve_percent')
+      .eq('catalog_id', catalog.id).not('uzum_category', 'is', null).not('commission_percent', 'is', null)
+    const byCategory = new Map<string, { commission: number[]; returns: number[] }>()
+    for (const row of skuRows ?? []) {
+      const bucket = byCategory.get(row.uzum_category) ?? { commission: [], returns: [] }
+      bucket.commission.push(Number(row.commission_percent))
+      if (row.returns_reserve_percent != null) bucket.returns.push(Number(row.returns_reserve_percent))
+      byCategory.set(row.uzum_category, bucket)
+    }
+    const mean = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null)
+    const options: CategoryOption[] = [...byCategory.entries()].map(([category, bucket]) => ({
+      category,
+      commission_percent: Number((mean(bucket.commission) ?? 0).toFixed(4)),
+      returns_reserve_percent: bucket.returns.length ? Number(mean(bucket.returns)!.toFixed(4)) : null,
+      skus: bucket.commission.length,
+    }))
+
+    // An explicit choice from the owner always wins over the match.
+    const chosen = text(body?.uzum_category, 160)
+    const candidates = categoryCandidates(sourceText, options)
+    const category = chosen
+      ? options.find((option) => option.category === chosen) ?? null
+      : (candidates.confident ? candidates.options[0] : null)
+
+    const numbers = extractNumbers(sourceText)
+    const { data: defaults } = await admin.from('commerce_catalogs').select('default_min_margin_percent').eq('id', catalog.id).maybeSingle()
+    const minMargin = Number(defaults?.default_min_margin_percent ?? 20)
+    const economics = draftEconomics({ dimension: numbers.dimension, unitCostTiyin: numbers.unitCostTiyin, category, minMarginPercent: minMargin })
+
+    // The copy is optional on purpose: a model outage must not cost the owner the economics,
+    // which is the half of this that no model produced.
+    const apiKey = await resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY') ?? '')
+    const copy = apiKey ? await generateCopy(apiKey, PRIMARY_MODEL, sourceText) : null
+
+    const { data: draft, error } = await admin.from('commerce_listing_drafts').insert({
+      account_id: profile.account_id,
+      catalog_id: catalog.id,
+      source_text: sourceText,
+      title_ru: copy?.title_ru ?? null,
+      title_uz: copy?.title_uz ?? null,
+      description_ru: copy?.description_ru ?? null,
+      description_uz: copy?.description_uz ?? null,
+      attributes: copy?.attributes ?? [],
+      unknown_attributes: copy?.unknown_attributes ?? [],
+      uzum_category: category?.category ?? null,
+      commission_percent: economics.commission_percent,
+      returns_reserve_percent: economics.returns_reserve_percent,
+      length_mm: numbers.dimension?.length ?? null,
+      width_mm: numbers.dimension?.width ?? null,
+      height_mm: numbers.dimension?.height ?? null,
+      weight_g: numbers.dimension?.weight ?? null,
+      fulfillment_tiyin: economics.fulfillment_tiyin,
+      unit_cost_tiyin: economics.unit_cost_tiyin,
+      min_margin_percent: economics.min_margin_percent,
+      min_selling_price_tiyin: economics.min_selling_price_tiyin,
+      missing: economics.missing,
+      evidence: numbers.evidence,
+      created_by: user.id,
+    }).select('*').single()
+    if (error) return json({ error: 'could not store the draft' }, 500)
+
+    return json({
+      ok: true,
+      draft,
+      copy_available: Boolean(copy),
+      // Returned whenever the match was not confident, so the owner picks instead of Nemo guessing.
+      category_choices: category ? [] : candidates.options,
+      volume_litres: economics.volume_litres,
+      fulfillment_basis: economics.fulfillment_basis,
+    })
+  }
+
+  if (action === 'list_listing_drafts') {
+    const { data: drafts, error } = await admin.from('commerce_listing_drafts')
+      .select('*').eq('account_id', profile.account_id).neq('status', 'discarded')
+      .order('created_at', { ascending: false }).limit(50)
+    return error ? json({ error: 'could not load drafts' }, 500) : json({ ok: true, drafts: drafts ?? [] })
+  }
+
+  if (action === 'approve_listing_draft' || action === 'discard_listing_draft') {
+    if (typeof body?.draft_id !== 'string' || !UUID.test(body.draft_id)) return json({ error: 'invalid draft_id' }, 400)
+    const approving = action === 'approve_listing_draft'
+    // Approving means "this text is mine to publish", not "Nemo published it". Nothing leaves the
+    // platform on this call, and a draft still missing its economics cannot be approved at all —
+    // approving a listing with no floor price is how a product gets sold below cost.
+    if (approving) {
+      const { data: existing } = await admin.from('commerce_listing_drafts')
+        .select('missing').eq('id', body.draft_id).eq('account_id', profile.account_id).maybeSingle()
+      if (!existing) return json({ error: 'draft not found' }, 404)
+      if (Array.isArray(existing.missing) && existing.missing.length) {
+        return json({ error: 'draft still missing inputs', missing: existing.missing }, 409)
+      }
+    }
+    const { data: updated, error } = await admin.from('commerce_listing_drafts')
+      .update(approving
+        ? { status: 'ready', approved_by: user.id, approved_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+        : { status: 'discarded', updated_at: new Date().toISOString() })
+      .eq('id', body.draft_id).eq('account_id', profile.account_id).eq('status', 'draft')
+      .select('id, status').maybeSingle()
+    if (error) return json({ error: 'could not update the draft' }, 500)
+    return updated ? json({ ok: true, draft: updated }) : json({ error: 'draft not found or already decided' }, 409)
   }
 
   return json({ error: 'unknown action' }, 400)
