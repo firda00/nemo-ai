@@ -244,6 +244,9 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   for (const sku of (refreshed ?? []) as Sku[]) skuByExternal.set(sku.external_sku, sku)
   const productIdCounts = productRows.reduce<Record<string, number>>((out, row) => ({ ...out, ...(row.productId ? { [row.productId]: (out[row.productId] ?? 0) + 1 } : {}) }), {})
   const titleCounts = productRows.reduce<Record<string, number>>((out, row) => ({ ...out, ...(row.name ? { [row.name]: (out[row.name] ?? 0) + 1 } : {}) }), {})
+  // Every alert this run raises stamps last_detected_at. Anything still open afterwards that this
+  // run did not stamp is an alert the sync no longer makes.
+  const runStartedAt = new Date().toISOString()
 
   for (const row of productRows) {
     const sku = skuByExternal.get(row.sku)
@@ -272,6 +275,29 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
       const { error: recommendationError } = await db.from('commerce_recommendations').upsert(recommendations, { onConflict: 'dedupe_key' })
       if (recommendationError) throw recommendationError
     }
+  }
+
+  // An alert that is no longer raised is not silence — it is a fix. A SKU whose margin recovered
+  // stops producing a price_guard row, and without this its old one stayed open forever: the owner
+  // would keep being told to raise a price they had already raised.
+  //
+  // Both directions key off the stamp, so they stay symmetric: an alert that came back must
+  // re-open, or the first resolution would silence it permanently. The first attempt listed 140
+  // dedupe keys in a `not.in` filter, the filter matched nothing, and one run closed every alert
+  // in the catalogue including the ones it had just written. A timestamp cannot be too long.
+  //
+  // Neither statement touches `dismissed` or `accepted`. Those are the owner's verbs, and nothing
+  // writes them yet — when something does, a sync still must not overwrite them.
+  const syncedSkuIds = [...skuByExternal.values()].map((sku) => sku.id)
+  if (syncedSkuIds.length) {
+    const { error: reopenError } = await db.from('commerce_recommendations')
+      .update({ status: 'open', resolved_at: null })
+      .eq('status', 'resolved').in('sku_id', syncedSkuIds).gte('last_detected_at', runStartedAt)
+    if (reopenError) throw reopenError
+    const { error: resolveError } = await db.from('commerce_recommendations')
+      .update({ status: 'resolved', resolved_at: new Date().toISOString() })
+      .eq('status', 'open').in('sku_id', syncedSkuIds).lt('last_detected_at', runStartedAt)
+    if (resolveError) throw resolveError
   }
   const { error: catalogUpdateError } = await db.from('commerce_catalogs').update({ last_synced_at: new Date().toISOString(), last_sync_error: sales.ok ? null : (sales.error ?? 'seven-day sales read failed') }).eq('id', typedCatalog.id)
   if (catalogUpdateError) throw catalogUpdateError

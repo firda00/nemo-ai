@@ -41,11 +41,16 @@ Deno.serve(async (req) => {
     parsed.hash = ''
     const text = redactText(String(body.observation?.bodyText ?? '').replace(/\s+/g, ' ').trim()).slice(0, 8000)
     if (!text) return reply({ ok: false, error: 'empty observation' }, 400)
+    // The extension reports what the page actually held. Say so when the stored copy is short of
+    // it: a snapshot that quietly dropped the half the owner needed reads as a complete one, and
+    // the last such capture cost a day of reasoning about a tariff that was never in it.
+    const totalLength = Number(body.observation?.totalLength)
+    const truncated = Number.isFinite(totalLength) && totalLength > text.length
     const now = new Date()
     const { error } = await admin.from('browser_observations').insert({ account_id: pairing.account_id, pairing_id: pairing.id, source_url: parsed.toString().slice(0, 2000), page_title: redactText(String(body.observation?.title ?? '')).slice(0, 300), body_text: text, observed_at: now.toISOString(), expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString() })
     if (error) return reply({ ok: false, error: 'could not store observation' }, 500)
     await admin.from('browser_pairings').update({ last_seen_at: new Date().toISOString() }).eq('id', pairing.id)
-    return reply({ ok: true })
+    return reply({ ok: true, stored_characters: text.length, truncated })
   }
   const current = await owner(req)
   if (!current) return json({ error: 'unauthorized' }, 401)

@@ -20,35 +20,31 @@ const fees = { commission_percent: 30, returns_reserve_percent: 50, fulfillment_
 const wrong = hijab.price - hijab.cost - fees.fulfillment_tiyin - (hijab.price * (30 + 50)) / 100
 assert.ok(wrong / hijab.price * 100 < -30, 'the old model really did report a heavy loss')
 
-// A return costs shipping, not the retail price. Half the units coming back means each completed
-// sale carries one returned shipment with it: 5 500 out, 5 500 back, 5 500 out again.
-assert.equal(Math.round(effectiveFulfillmentTiyin(fees)), uzs(16_500), 'r=50% doubles-and-adds the fee')
+// Uzum bills commission and logistics only on goods actually sold, per sold unit at handover, and
+// that one fee already covers sending a returned item back and re-listing it. So the fee per
+// completed sale is the plain fee, whatever the return rate.
+assert.equal(effectiveFulfillmentTiyin(fees), uzs(5_500), 'a return is not billed a second fee')
 const margin = marginPercent(hijab.price, hijab.cost, fees)
-assert.ok(margin > 1 && margin < 3, `the hijab is thin but not a loss-maker, got ${margin}`)
+assert.ok(margin > 13.5 && margin < 14, `the hijab clears a real margin, got ${margin}`)
 
-// Zero returns must reduce to the plain fee, so nothing changes for a SKU that never comes back.
+// The return rate must not move the margin at all — that is the whole content of the tariff.
 const clean = { commission_percent: 30, returns_reserve_percent: 0, fulfillment_tiyin: uzs(5_500) }
-assert.equal(effectiveFulfillmentTiyin(clean), uzs(5_500))
+assert.equal(
+  netProfitTiyin(hijab.price, hijab.cost, fees),
+  netProfitTiyin(hijab.price, hijab.cost, clean),
+  'a 50% return rate and a 0% one must produce the same margin per sale',
+)
 assert.equal(
   netProfitTiyin(hijab.price, hijab.cost, clean),
   hijab.price - hijab.cost - uzs(5_500) - (hijab.price * 30) / 100,
-  'with no returns the model is the plain one',
+  'the model is price less commission, cost and one fee',
 )
 
-// Returns still cost real money — the model must not have become a way to ignore them.
-assert.ok(
-  netProfitTiyin(hijab.price, hijab.cost, fees) < netProfitTiyin(hijab.price, hijab.cost, clean),
-  'a 50% return rate must still hurt',
-)
-
-// Commission is refunded with the order, so it is charged on completed sales only. Doubling the
-// return rate must not change the commission the seller ultimately pays per sale.
-const feeless = (r) => ({ commission_percent: 30, returns_reserve_percent: r, fulfillment_tiyin: 0 })
-assert.equal(
-  netProfitTiyin(hijab.price, hijab.cost, feeless(10)),
-  netProfitTiyin(hijab.price, hijab.cost, feeless(60)),
-  'with no shipping cost, the return rate cannot move the margin',
-)
+// The rate is still carried, still stored and still shown — it just answers a different question.
+// If Uzum ever starts billing returns, one constant turns it back into a margin cost.
+assert.equal(RETURN_FEE_MULTIPLIER, 0, 'per Uzum tariff 3.2 a returned unit is billed nothing')
+const billed = (r) => uzs(5_500) * (1 + 1 * (r / (1 - r)))
+assert.equal(billed(0.5), uzs(11_000), 'were returns billed, half of them would double the fee per sale')
 
 // The floor price and the margin must agree: setting the price to the floor yields exactly the
 // minimum margin. This is the contradiction the shared module exists to prevent.
@@ -65,21 +61,18 @@ assert.ok(Math.abs(marginPercent(uzs(300_000), maxCost, fees) - 20) < 0.01, 'max
 assert.equal(maxPurchaseCostTiyin(uzs(300_000), 75, fees), null, '30% commission + 75% target leaves nothing')
 assert.equal(minSellingPriceTiyin(hijab.cost, 71, fees), null, 'an impossible target must not return a price')
 
-// An unsellable return rate must produce a finite, terrible number rather than NaN or Infinity —
-// a NaN would compare false against the minimum margin and silently withhold the alert.
+// A 100% return rate must not produce NaN or Infinity anywhere: a NaN compares false against the
+// minimum margin, so it would withhold the alert rather than raise it.
 const doomed = { commission_percent: 30, returns_reserve_percent: 100, fulfillment_tiyin: uzs(5_500) }
-const doomedMargin = marginPercent(hijab.price, hijab.cost, doomed)
-assert.ok(Number.isFinite(doomedMargin) && doomedMargin < -100, `must stay finite and awful, got ${doomedMargin}`)
+assert.ok(Number.isFinite(marginPercent(hijab.price, hijab.cost, doomed)))
 assert.ok(Number.isFinite(effectiveFulfillmentTiyin(doomed)))
+assert.ok(Number.isFinite(minSellingPriceTiyin(hijab.cost, 20, doomed)))
 
 // ROI is still profit over cash out, and cash out is one unit cost per unit sold: returned goods
 // come back to stock rather than being bought again.
 const batch = batchOutcome(100, hijab.price, hijab.cost, fees)
 assert.equal(batch.investment_tiyin, 100 * hijab.cost)
 assert.equal(batch.profit_tiyin, Math.round(100 * netProfitTiyin(hijab.price, hijab.cost, fees)))
-assert.ok(batch.roi_percent > 0 && batch.roi_percent < 10, `thin margin means thin ROI, got ${batch.roi_percent}`)
+assert.ok(batch.roi_percent > 27 && batch.roi_percent < 28, `ROI is profit over cash out, got ${batch.roi_percent}`)
 
-// The one unconfirmed input is a named constant, so a corrected tariff is a one-line change.
-assert.equal(RETURN_FEE_MULTIPLIER, 1, 'a return is assumed to cost one more shipment until Uzum says otherwise')
-
-console.log('[OK] Unit economics behaviour: 18 assertions')
+console.log('[OK] Unit economics behaviour: 17 assertions')

@@ -39,6 +39,7 @@ const factsMigration = read('supabase/migrations/20260806210000_commerce_returns
 const returnsReserve = read('supabase/functions/_shared/returnsReserve.ts')
 const economics = read('supabase/functions/_shared/unitEconomics.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
+const resolvedMigration = read('supabase/migrations/20260806220000_commerce_recommendations_resolved.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -225,12 +226,17 @@ const checks = [
   ['the old nine-argument facts function cannot survive as an overload', factsMigration.includes('drop function if exists public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer)')],
   // A return costs shipping, not the retail price.
   ['a return is not charged as a lost sale price', economics.includes('A RETURN IS NOT A LOST SALE PRICE') && economics.includes('const percentageLoad = (fees: Fees) => fees.commission_percent') && !/percentageLoad[^\n]*returns_reserve_percent/.test(economics)],
-  ['returns are charged as repeated shipments per completed sale', economics.includes('export function effectiveFulfillmentTiyin') && economics.includes('(1 + RETURN_FEE_MULTIPLIER * r) / (1 - r)')],
+  ['the return rate cannot touch the margin, per the published tariff', economics.includes('export function effectiveFulfillmentTiyin') && economics.includes('(1 + RETURN_FEE_MULTIPLIER * (r / (1 - r)))') && economics.includes('the published tariff each of those is billed nothing')],
   ['the floor price and the margin use the same fee', economics.includes('effectiveFulfillmentTiyin(fees)) * 100) / (100 - load)') && economics.includes('/ 100 - effectiveFulfillmentTiyin(fees)')],
-  ['a total-return rate stays finite instead of becoming NaN', economics.includes('RETURN_RATE_CEILING = 0.95') && economics.includes('keeps a bad number from becoming a NaN that silently disables an alert')],
-  ['the unconfirmed return tariff is one named constant, and says so', economics.includes('export const RETURN_FEE_MULTIPLIER') && economics.includes('ASSUMPTION, not an observed tariff') && economics.includes('rendered as a "please enable JavaScript" placeholder')],
+  ['a total-return rate stays finite instead of becoming NaN', economics.includes('RETURN_RATE_CEILING = 0.95') && economics.includes('a NaN would compare false against the minimum margin and silently')],
+  ['a returned unit is billed nothing, and the tariff is cited for it', economics.includes('export const RETURN_FEE_MULTIPLIER = 0') && economics.includes('ZERO, and that is the tariff talking') && economics.includes('per sold unit at handover')],
   ['the alert shows the fee its own margin used', commerceWorker.includes('effective_fulfillment_tiyin: Math.round(effectiveFulfillmentTiyin(fees))') && commerceWorker.includes('the owner cannot')],
-  ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000'].every((id) => deploy.includes(id))],
+  ['an alert that stopped being true is closed, not left open', commerceWorker.includes("status: 'resolved', resolved_at: new Date().toISOString()") && commerceWorker.includes(".lt('last_detected_at', runStartedAt)")],
+  ['an alert that came back re-opens, so closing it once cannot silence it', commerceWorker.includes("status: 'open', resolved_at: null") && commerceWorker.includes(".gte('last_detected_at', runStartedAt)")],
+  ['a sync never overwrites the owner dismissing an alert', commerceWorker.includes("Those are the owner's verbs") && !commerceWorker.includes("status: 'dismissed'")],
+  ['resolved is a status the database actually allows', resolvedMigration.includes("check (status in ('open', 'dismissed', 'accepted', 'expired', 'resolved'))") && resolvedMigration.includes('resolved_at timestamptz')],
+  ['price guards from the old margin model are cleared once', resolvedMigration.includes('charged a returned unit') && resolvedMigration.includes("and kind = 'price_guard'")],
+  ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
