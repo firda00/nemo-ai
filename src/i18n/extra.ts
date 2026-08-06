@@ -3,6 +3,11 @@
 // Safe to edit by hand: add/adjust a key here and it flows through t('<namespace>.<key>').
 
 export const extraUz = {
+  "platform": {
+    "integrations": {
+      "replaceKey": "Kalitni yangilash",
+    }
+  },
   "commerce": {
     "marginTitle": "Butun katalog uchun minimal marja",
     "marginHint": "Bu raqamni na Uzum API, na kabinet biladi — qancha foyda sizga yetarli ekanini faqat siz aytasiz. Marja belgilanmaguncha Price Guard ishlamaydi. Marja allaqachon kiritilgan tovarlar tegilmaydi.",
@@ -1552,6 +1557,11 @@ export const extraUz = {
 } as const
 
 export const extraRu = {
+  "platform": {
+    "integrations": {
+      "replaceKey": "Обновить ключ",
+    }
+  },
   "commerce": {
     "marginTitle": "Минимальная маржа на весь каталог",
     "marginHint": "Этого числа не знает ни API Uzum, ни кабинет — сколько прибыли вам достаточно, говорите только вы. Пока маржа не задана, Price Guard не сработает. Товары, где маржа уже указана, останутся нетронутыми.",
@@ -3101,6 +3111,11 @@ export const extraRu = {
 } as const
 
 export const extraEn = {
+  "platform": {
+    "integrations": {
+      "replaceKey": "Replace key",
+    }
+  },
   "commerce": {
     "marginTitle": "Minimum margin for the whole catalogue",
     "marginHint": "Neither the Uzum API nor the cabinet knows this number — only you can say how much profit is enough. Price Guard stays silent until it is set. Products that already carry a margin are left untouched.",

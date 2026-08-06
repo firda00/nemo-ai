@@ -376,6 +376,17 @@ export default function IntegrationsPage() {
     finally { setBusy(false) }
   }
 
+  const clearBrowserObservations = async () => {
+    if (!supabase || !isSupabaseEnabled) return
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('browser-bridge', { body: { action: 'clear_observations' } })
+      if (error || !(data as { ok?: boolean } | null)?.ok) throw error ?? new Error('clear failed')
+      toast('Сохранённые Browser snapshots удалены.')
+    } catch { toast('Не удалось удалить Browser snapshots.') }
+    finally { setBusy(false) }
+  }
+
   return (
     <div className="container-page max-w-6xl py-8">
       {/* hero */}
@@ -419,10 +430,13 @@ export default function IntegrationsPage() {
             <h2 className="text-base font-semibold text-text">Nemo Browser: связка с аккаунтом</h2>
             <p className="mt-1 max-w-2xl text-sm text-muted">Создайте временный код, вставьте его в расширение Nemo Browser и вручную сохраните snapshot. Агент получает только read-only данные Uzum, без паролей, cookies, форм, платежей или изменений.</p>
           </div>
-          <button onClick={createBrowserPairing} disabled={busy || !isSupabaseEnabled} className="rounded-xl border border-violet/35 bg-violet/10 px-4 py-2 text-sm font-semibold text-violet disabled:opacity-50">Создать код</button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={clearBrowserObservations} disabled={busy || !isSupabaseEnabled} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-muted disabled:opacity-50">Удалить snapshots</button>
+            <button onClick={createBrowserPairing} disabled={busy || !isSupabaseEnabled} className="rounded-xl border border-violet/35 bg-violet/10 px-4 py-2 text-sm font-semibold text-violet disabled:opacity-50">Создать код</button>
+          </div>
         </div>
         {browserPairing && <div className="mt-4 rounded-2xl border border-ice/10 bg-black/20 p-4">
-          <p className="text-xs text-muted">Код действует до {new Date(browserPairing.expiresAt).toLocaleString('ru-RU')}. Скопируйте его в Nemo Browser. Не передавайте его другим.</p>
+          <p className="text-xs text-muted">Код действует до {new Date(browserPairing.expiresAt).toLocaleString('ru-RU')}. Snapshot очищается от email, телефонов, токенов и URL-параметров, передаётся AI-провайдеру для анализа и автоматически удаляется через 24 часа.</p>
           <code className="mt-2 block break-all rounded-xl bg-black/30 p-3 text-xs text-teal">{browserPairing.secret}</code>
         </div>}
       </section>
@@ -533,6 +547,15 @@ export default function IntegrationsPage() {
                         <Link to={`/app/tools?integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
                           <Wrench size={14} /> {t('platform.integrations.test')}
                         </Link>
+                      )}
+                      {/* A rotated API key had no way in: a connected card offered only Test and
+                          Disconnect, so replacing a key meant disconnecting first and hoping the
+                          new one saved. connect-provider upserts on (account, provider), so the
+                          same form simply overwrites the stored secret. */}
+                      {connectDef && (
+                        <Button size="sm" variant="ghost" onClick={() => openConnect(connectDef)}>
+                          <Plug size={14} /> {t('platform.integrations.replaceKey')}
+                        </Button>
                       )}
                       <Button size="sm" variant="ghost" onClick={() => setConfirmId(it.id)}>
                         <Unplug size={14} /> {t('platform.integrations.disconnect')}
