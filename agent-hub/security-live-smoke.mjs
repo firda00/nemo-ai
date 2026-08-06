@@ -195,6 +195,59 @@ try {
   const browserRag = await b.client.rpc('match_knowledge_team', { p_account_id: b.accountId, p_agent_id: null, p_department_id: deptB.id, p_query: unitVec, p_k: 5 })
   ok('Browser role cannot execute team retrieval directly', Boolean(browserRag.error))
 
+  // --- Commerce isolation -----------------------------------------------------------------
+  // Commerce holds the most commercially sensitive rows on the platform: what a seller buys
+  // for, what they sell, and how much they actually make. Only commerce_catalogs carries
+  // account_id directly — SKUs, snapshots and recommendations are isolated through a join, so
+  // a policy written for a new table can silently miss that indirection. Assert per table.
+  const { data: catalogB, error: catErr } = await admin.from('commerce_catalogs').insert({
+    account_id: b.accountId, source: 'uzum', external_shop_id: '999001', name: 'Tenant B shop',
+  }).select('id').single()
+  if (catErr || !catalogB) throw catErr ?? new Error('catalog B missing')
+  const { data: skuB, error: skuErr } = await admin.from('commerce_skus').insert({
+    catalog_id: catalogB.id, external_sku: 'TENANT-B-SECRET-SKU', title: 'Tenant B private product', unit_cost_tiyin: 4242,
+  }).select('id').single()
+  if (skuErr || !skuB) throw skuErr ?? new Error('sku B missing')
+  const { data: runB } = await admin.from('commerce_sync_runs').insert({ catalog_id: catalogB.id, scheduled_for: new Date().toISOString() }).select('id').single()
+  const { data: snapB } = await admin.from('commerce_inventory_snapshots').insert({
+    sku_id: skuB.id, sync_run_id: runB.id, observed_slot: new Date().toISOString(), price_tiyin: 999999, stock_total: 7,
+  }).select('id').single()
+  await admin.from('commerce_recommendations').insert({
+    sku_id: skuB.id, snapshot_id: snapB.id, kind: 'missing_data', severity: 'warning',
+    dedupe_key: `security-${stamp}:missing_data`, economics_revision: 1, calculation: { missing: ['unit_cost_tiyin'] },
+  })
+  await admin.from('commerce_economics_proposals').insert({
+    account_id: b.accountId, catalog_id: catalogB.id, source: 'ui',
+    product_query: 'tenant B fees', source_text: 'security probe', commission_percent: 12.5,
+  })
+  await admin.from('commerce_pilots').insert({ account_id: b.accountId })
+
+  const foreignCommerce = await Promise.all([
+    a.client.from('commerce_catalogs').select('id').eq('id', catalogB.id),
+    a.client.from('commerce_skus').select('external_sku').eq('id', skuB.id),
+    a.client.from('commerce_inventory_snapshots').select('price_tiyin').eq('sku_id', skuB.id),
+    a.client.from('commerce_recommendations').select('id').eq('sku_id', skuB.id),
+    a.client.from('commerce_economics_proposals').select('commission_percent').eq('catalog_id', catalogB.id),
+    a.client.from('commerce_pilots').select('account_id').eq('account_id', b.accountId),
+  ])
+  ok('RLS blocks foreign commerce rows in every table', foreignCommerce.every((r) => !r.error && (r.data ?? []).length === 0))
+  // The rightful owner must still read them, or the check above could pass on an empty table
+  // and prove nothing at all.
+  const ownCommerce = await b.client.from('commerce_skus').select('external_sku').eq('id', skuB.id)
+  ok('The owning tenant still reads its own commerce rows', !ownCommerce.error && (ownCommerce.data ?? []).length === 1)
+  // Tables with no client grant at all: unreachable regardless of any policy.
+  const serverOnly = await Promise.all([
+    a.client.from('commerce_sync_runs').select('id').limit(1),
+    a.client.from('commerce_telegram_links').select('token').limit(1),
+    a.client.from('browser_observations').select('id').limit(1),
+    a.client.from('browser_pairings').select('id').limit(1),
+  ])
+  ok('Server-only commerce and browser tables are unreachable from the browser role', serverOnly.every((r) => Boolean(r.error) || (r.data ?? []).length === 0))
+  const forgedProposal = await a.client.from('commerce_economics_proposals').insert({
+    account_id: b.accountId, catalog_id: catalogB.id, source: 'ui', product_query: 'forged', source_text: 'forged', commission_percent: 99,
+  })
+  ok('Browser role cannot forge a commerce proposal into another tenant', Boolean(forgedProposal.error))
+
   await admin.from('google_accounts').upsert({ account_id: a.accountId, google_email: 'security@example.invalid', refresh_token: 'temporary-refresh-token' })
   await admin.from('google_oauth_apps').upsert({ account_id: a.accountId, client_id: 'temporary-client', client_secret: 'temporary-secret' })
   await admin.from('provider_keys').upsert({
