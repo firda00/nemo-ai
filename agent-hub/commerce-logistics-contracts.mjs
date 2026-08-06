@@ -191,13 +191,21 @@ const checks = [
   ['the cooldown message explains whose key it protects', i18nExtra.includes('не нагружать ваш ключ Uzum') && i18nExtra.includes('your own Uzum key from being throttled')],
   ['auto-fill covers every catalogue on the account', commerceControl.includes('No catalogue id means every catalogue on the account') && commercePage.includes("action: 'autofill_economics' }") && !commercePage.includes("action: 'autofill_economics', catalog_id")],
   ['the manual sync migration is registered for deploy', deploy.includes('20260806170000_commerce_manual_sync.sql')],
+  ['the digest lists only what needs a decision', commerceDigest.includes('Zero noise: the list contains only what needs a decision today') && commerceDigest.includes("rows.filter((row) => row.kind === 'reorder')") && commerceDigest.includes("rows.filter((row) => row.kind === 'price_guard')")],
+  ['missing-data rows never enter the list', !commerceDigest.includes("не хватает данных для расчёта") && commerceDigest.includes('they are a single standing fact about the catalogue, not a hundred events')],
+  ['incomplete economics collapse into one closing line', commerceDigest.includes('One line, never a list') && commerceDigest.includes('себестоимость заполнена примерно')],
+  ['a reorder in the digest carries its money, not just a count', commerceDigest.includes('action.investment_tiyin != null && action.profit_tiyin != null') && commerceDigest.includes('ROI')],
+  ['a margin breach names the floor price', commerceDigest.includes('calc.min_selling_price_tiyin != null') && commerceDigest.includes('Минимальная цена')],
+  ['catalogue facts are counted from SKUs, not from recommendations', commerceDigest.includes('Counted from the SKUs themselves rather than') && commerceDigest.includes('statsByAccount')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
   ['our own markup is sent unescaped, agent output still is not', /tgSend\(\) runs agent output through/.test(telegramHelper) && /export async function tgSendHtml/.test(telegramHelper) && /parse_mode: 'HTML'/.test(telegramHelper)],
   ['commerce messages never go through the escaping sender', !/\btgSend\(/.test(commerceDigest) && !/\btgSend\(/.test(telegramWebhook) && /tgSendHtml/.test(commerceDigest) && /tgSendHtml/.test(telegramWebhook)],
   ['interpolated marketplace data is escaped', /export function escapeHtml/.test(telegramFormat) && /escapeHtml\(String\(row\.title/.test(commerceDigest) && /escapeHtml\(sku\.title\)/.test(economicsChat) && /escapeHtml\(parsed\.product\)/.test(tgProcess)],
-  ['the digest tells the owner how to unblock the numbers', /нет себестоимости или срока поставки/.test(commerceDigest) && /Продиктуйте прямо сюда/.test(commerceDigest)],
+  // The wording moved into the single closing line when the digest stopped listing every
+  // incomplete product; what must not disappear is the instruction on how to fix it.
+  ['the digest tells the owner how to unblock the numbers', commerceDigest.includes('надиктуйте её текстом или голосом прямо в этот чат') && commerceDigest.includes('себестоимость 20000, доставка 12 дней')],
   ['the welcome message explains that the chat accepts input', /Можно отвечать прямо сюда/.test(telegramWebhook) && /наговорите голосом/.test(telegramWebhook)],
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
 ]

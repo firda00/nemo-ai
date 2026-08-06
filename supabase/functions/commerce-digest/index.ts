@@ -51,36 +51,56 @@ function criticalText(row: any) {
   ].join('\n')
 }
 
-function digestLine(row: any) {
-  if (row.kind === 'reorder') return `🔴 ${name(row)} — заказать ${num(row.suggested_action?.units)} шт.`
-  if (row.kind === 'price_guard') return `💰 ${name(row)} — маржа ниже вашего минимума`
-  return `📝 ${name(row)} — не хватает данных для расчёта`
+function reorderLine(row: any) {
+  const calc = row.calculation ?? {}
+  const action = row.suggested_action ?? {}
+  const days = calc.stock_total != null && calc.daily_velocity ? ` (хватит на ${num(calc.stock_total / calc.daily_velocity)} дн.)` : ''
+  const money = action.investment_tiyin != null && action.profit_tiyin != null
+    ? `\n  Вложения ${num(action.investment_tiyin / 100)} сум · прибыль ${num(action.profit_tiyin / 100)} сум${action.roi_percent != null ? ` (ROI ${action.roi_percent.toFixed(0)}%)` : ''}`
+    : ''
+  return `• ${name(row)}: осталось ${num(calc.stock_total)} шт.${days}\n  Заказать <b>${num(action.units)} шт.</b>${money}`
 }
 
-function digestText(rows: any[]) {
-  const critical = rows.filter((row) => row.severity === 'critical').length
-  const missing = rows.filter((row) => row.kind === 'missing_data').length
-  const head = critical
-    ? `🔴 Срочно: <b>${critical}</b>`
-    : '✅ Срочных рисков нет'
-  const lines = rows.slice(0, 8).map(digestLine)
-  const tail = rows.length > 8 ? `\n…и ещё ${rows.length - 8} в Commerce.` : ''
-  // Missing economics is the single thing blocking real reorder/price advice, so say what to do.
-  const nudge = missing
-    ? `\n\n💡 У <b>${missing}</b> товар(ов) нет себестоимости или срока поставки — без них Nemo не считает закупку и маржу. Продиктуйте прямо сюда, например: «${escapeHtml('XALTA 50*60 себестоимость 20000, доставка 12 дней')}».`
-    : ''
-  return [
-    '☀️ <b>Nemo Commerce — сводка за сутки</b>',
-    '',
-    head,
-    `Всего рекомендаций: <b>${rows.length}</b>`,
-    '',
-    lines.join('\n') || 'Новых рекомендаций нет.',
-    tail,
-    nudge,
-    '',
-    '<i>Nemo ничего не меняет на Uzum автоматически.</i>',
-  ].filter((part) => part !== '').join('\n')
+function priceLine(row: any) {
+  const calc = row.calculation ?? {}
+  const floor = calc.min_selling_price_tiyin != null ? ` Минимальная цена ${num(calc.min_selling_price_tiyin / 100)} сум.` : ''
+  return `• ${name(row)}: маржа ${num(calc.margin_percent)}% при вашем минимуме ${num(calc.min_margin_percent)}%.${floor}`
+}
+
+/**
+ * Zero noise: the list contains only what needs a decision today.
+ *
+ * A hundred "not enough data" lines bury the one product that is actually running out — the
+ * seller scrolls past the thing they were supposed to act on. Incomplete economics are real
+ * information, but they are a single standing fact about the catalogue, not a hundred events,
+ * so they collapse into one closing line that says what to do about it.
+ */
+function digestText(rows: any[], stats: { skus: number; approximate: number }) {
+  const reorders = rows.filter((row) => row.kind === 'reorder')
+  const priceIssues = rows.filter((row) => row.kind === 'price_guard')
+  const today = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'Asia/Tashkent' }).format(new Date())
+
+  const blocks: string[] = [`☀️ <b>Nemo Commerce — сводка за ${today}</b>`, '']
+
+  if (!reorders.length && !priceIssues.length) {
+    blocks.push(stats.skus ? `✅ Срочных рисков нет. Все ${stats.skus} товаров под наблюдением.` : '✅ Срочных рисков нет.')
+  }
+  if (reorders.length) {
+    blocks.push('🔴 <b>Срочная закупка</b>', reorders.slice(0, 5).map(reorderLine).join('\n'))
+    if (reorders.length > 5) blocks.push(`…и ещё ${reorders.length - 5} в Commerce.`)
+  }
+  if (priceIssues.length) {
+    blocks.push('', '💰 <b>Маржа ниже минимума</b>', priceIssues.slice(0, 5).map(priceLine).join('\n'))
+    if (priceIssues.length > 5) blocks.push(`…и ещё ${priceIssues.length - 5} в Commerce.`)
+  }
+
+  // One line, never a list: the state of the catalogue's economics plus the cheapest way to fix it.
+  if (stats.approximate) {
+    blocks.push('', `💡 У ${stats.approximate} товаров себестоимость заполнена примерно (≈). Чтобы уточнить цифру по товару, надиктуйте её текстом или голосом прямо в этот чат — например: «${escapeHtml('XALTA 50*60 себестоимость 20000, доставка 12 дней')}».`)
+  }
+
+  blocks.push('', '<i>Nemo не меняет цены и не оформляет заказы на Uzum.</i>')
+  return blocks.join('\n')
 }
 
 Deno.serve(async (req) => {
@@ -107,6 +127,28 @@ Deno.serve(async (req) => {
     if (!accountId) continue
     byAccount.set(accountId, [...(byAccount.get(accountId) ?? []), { ...row, ...sku }])
   }
+  // Catalogue-level facts for the closing line. Counted from the SKUs themselves rather than
+  // from recommendations: "113 products carry an estimated cost" is one standing fact, and
+  // deriving it from a hundred rows is what produced the wall of text in the first place.
+  const statsByAccount = new Map<string, { skus: number; approximate: number }>()
+  if (action === 'digest') {
+    const { data: catalogs } = await db.from('commerce_catalogs').select('id, account_id').in('account_id', accountIds)
+    const accountByCatalog = new Map((catalogs ?? []).map((c: { id: string; account_id: string }) => [c.id, c.account_id]))
+    if (accountByCatalog.size) {
+      const { data: skuRows } = await db.from('commerce_skus')
+        .select('catalog_id, estimated_fields, unit_cost_tiyin').in('catalog_id', [...accountByCatalog.keys()])
+      for (const sku of skuRows ?? []) {
+        const accountId = accountByCatalog.get(sku.catalog_id)
+        if (!accountId) continue
+        const current = statsByAccount.get(accountId) ?? { skus: 0, approximate: 0 }
+        current.skus += 1
+        const estimated = Array.isArray(sku.estimated_fields) ? sku.estimated_fields : []
+        if (estimated.length || sku.unit_cost_tiyin == null) current.approximate += 1
+        statsByAccount.set(accountId, current)
+      }
+    }
+  }
+
   let sent = 0
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(new Date())
   for (const [accountId, accountRows] of byAccount) {
@@ -122,7 +164,8 @@ Deno.serve(async (req) => {
       }
     } else {
       const unsent = accountRows.filter((item) => item.digest_sent_at !== today)
-      if (unsent.length && await tgSendHtml(target.token, target.chatId, digestText(unsent))) {
+      const stats = statsByAccount.get(accountId) ?? { skus: 0, approximate: 0 }
+      if (unsent.length && await tgSendHtml(target.token, target.chatId, digestText(unsent, stats))) {
         await db.from('commerce_recommendations').update({ digest_sent_at: today }).in('id', unsent.map((item) => item.id))
         sent++
       }
