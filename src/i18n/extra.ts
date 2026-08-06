@@ -83,6 +83,8 @@ export const extraUz = {
     "okStage": "{total} qator tayyorlandi: {valid} to‘g‘ri, {unmatched} mos kelmadi, {invalid} xato.",
     "errReadFile": "Import faylini o‘qib bo‘lmadi.",
     "sku": {
+      "returnsSample": "({n} sotuv)",
+      "returnsSampleHint": "Qaytarish zaxirasi — baho. Sotuvlar kam bo‘lsa, Nemo shu toifadagi umumiy darajani oladi: bitta qaytarish ikki sotuvdan 50% degani emas.",
       "uzumFees": "Uzum: komissiya · logistika",
       "uzumFeesHint": "Uzum API’dan olinadi. Logistika e’lon qilingan o‘lchamlar va rasmiy tarif bo‘yicha hisoblanadi — tahrirlash shart emas.",
       "returnsShort": "qaytarish",
@@ -1644,6 +1646,8 @@ export const extraRu = {
     "okStage": "Подготовлено {total} строк: {valid} корректных, {unmatched} без совпадения, {invalid} с ошибками.",
     "errReadFile": "Не удалось прочитать файл импорта.",
     "sku": {
+      "returnsSample": "({n} продаж)",
+      "returnsSampleHint": "Резерв возвратов — оценка. При малых продажах Nemo берёт общий уровень по категории: один возврат из двух продаж не значит 50%.",
       "uzumFees": "Uzum: комиссия · логистика",
       "uzumFeesHint": "Приходит из API Uzum. Логистика считается по заявленным габаритам и официальному тарифу — править не нужно.",
       "returnsShort": "возвраты",
@@ -3205,6 +3209,8 @@ export const extraEn = {
     "okStage": "Staged {total} rows: {valid} valid, {unmatched} unmatched, {invalid} invalid.",
     "errReadFile": "Could not read import file.",
     "sku": {
+      "returnsSample": "({n} sales)",
+      "returnsSampleHint": "The return reserve is an estimate. On thin sales Nemo uses the category rate instead: one return out of two sales does not mean 50%.",
       "uzumFees": "Uzum: commission · logistics",
       "uzumFeesHint": "Comes from the Uzum API. Logistics is computed from declared dimensions against the published tariff — nothing to edit.",
       "returnsShort": "returns",

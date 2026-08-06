@@ -5,6 +5,7 @@ import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { batchOutcome, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
+import { reservesForCatalogue } from '../_shared/returnsReserve.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -198,10 +199,19 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   // The RPC decides what may be written: it never touches a value the owner set themselves.
   // One call for the whole catalogue: a per-SKU round trip took 140 of them for a single shop
   // and exceeded the function's 150-second limit.
+  // The reserve needs the whole catalogue at once: a SKU with six sales is estimated from its
+  // category, and the category from the catalogue. Computed before the loop for that reason.
+  const reserves = reservesForCatalogue(productRows.map((row) => ({
+    key: row.sku,
+    category: row.category,
+    observation: { sold: row.soldUnits, returned: row.returnedUnits },
+  })))
+
   const facts = productRows.flatMap((row) => {
     const sku = skuByExternal.get(row.sku)
     if (!sku) return []
-    if (row.commissionPercent == null && row.dimension == null && row.category == null && row.returnPercent == null) return []
+    const returnPercent = reserves.get(row.sku) ?? null
+    if (row.commissionPercent == null && row.dimension == null && row.category == null && returnPercent == null) return []
     return [{
       sku_id: sku.id,
       category: row.category,
@@ -209,7 +219,10 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
       // Charged per sold unit off the published tariff; a SKU without dimensions pays the
       // maximum rather than nothing, so margin is never flattered by missing data.
       fulfillment_tiyin: fulfillmentTiyin(row.dimension),
-      return_percent: row.returnPercent,
+      return_percent: returnPercent,
+      // Stored so the interface can say what the reserve rests on. A rate over six sales and a
+      // rate over six hundred deserve different amounts of trust from the owner.
+      return_sample_units: row.soldUnits,
       length: row.dimension?.length ?? null,
       width: row.dimension?.width ?? null,
       height: row.dimension?.height ?? null,
@@ -283,8 +296,10 @@ Deno.serve(async (req) => {
     const token = keyRow?.api_key ? await openSecret(keyRow.api_key, providerSecretContext(catalog.account_id, 'uzum')) : null
     if (!token) return json({ error: 'no uzum key' }, 409)
 
+    // One card is enough to read a schema; a whole page is needed to read what a counter means.
+    const size = inspectBody.mode === 'quantities' ? 50 : 1
     const response = await fetch(
-      `https://api-seller.uzum.uz/api/seller-openapi/v1/product/shop/${encodeURIComponent(catalog.external_shop_id)}?size=1&page=0`,
+      `https://api-seller.uzum.uz/api/seller-openapi/v1/product/shop/${encodeURIComponent(catalog.external_shop_id)}?size=${size}&page=0`,
       // Raw token, no Bearer prefix — Uzum's OpenAPI specifies it that way, and a Bearer
       // prefix is silently answered with 403.
       { headers: { Authorization: token, Accept: 'application/json' } },
@@ -296,6 +311,29 @@ Deno.serve(async (req) => {
       .find((value) => Array.isArray(value)) ?? (Array.isArray(payload) ? payload : [])
     const product = list[0] ?? null
     const sku = Array.isArray(product?.skuList) ? product.skuList[0] ?? null : null
+
+    // `quantitySold` sits among a dozen `quantity*` fields that are plainly warehouse states, and
+    // the return reserve is derived from it — so what it counts has to be established, not
+    // assumed. Sums across the shop answer that: if sold, returned, active and created add up
+    // like stock buckets rather than lifetime history, the reserve is built on the wrong number.
+    // Counts only. No title, no price, no SKU code leaves this endpoint.
+    if (inspectBody.mode === 'quantities') {
+      const counters = ['quantityCreated', 'quantitySold', 'quantityReturned', 'quantityActive', 'quantityAvailable', 'quantityMissing', 'quantityDefected', 'quantityPending', 'returnedPercentage', 'avgdsales', 'turnover']
+      const sums: Record<string, { sum: number; present: number }> = {}
+      let variants = 0
+      for (const item of list) {
+        const skuList = Array.isArray(item?.skuList) ? item.skuList : [item]
+        for (const variant of skuList) {
+          variants++
+          for (const key of counters) {
+            const value = Number(variant?.[key] ?? item?.[key])
+            if (!Number.isFinite(value)) continue
+            sums[key] = { sum: (sums[key]?.sum ?? 0) + value, present: (sums[key]?.present ?? 0) + 1 }
+          }
+        }
+      }
+      return json({ ok: true, products: list.length, variants, sums })
+    }
     const wanted = ['category', 'categoryId', 'categoryName', 'category_id', 'length', 'width', 'height', 'volume', 'weight', 'dimensions', 'commission', 'commissionPercent']
     const flatten = (o: unknown) => (o && typeof o === 'object' ? Object.keys(o as Record<string, unknown>) : [])
     // Names only. Values were sampled once to learn whether `commission` is a percentage or an

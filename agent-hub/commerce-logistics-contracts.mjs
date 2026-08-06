@@ -35,7 +35,8 @@ const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
 const defaultsMigration = read('supabase/migrations/20260806160000_commerce_catalog_defaults.sql')
 const manualSyncMigration = read('supabase/migrations/20260806170000_commerce_manual_sync.sql')
-const factsMigration = read('supabase/migrations/20260806200000_commerce_facts_skip_unchanged.sql')
+const factsMigration = read('supabase/migrations/20260806210000_commerce_returns_sample.sql')
+const returnsReserve = read('supabase/functions/_shared/returnsReserve.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
@@ -206,12 +207,21 @@ const checks = [
   ['the logistics fee comes from the published tariff, not a guess', logistics.includes('seller.uzum.uz/manual/3.tariffs') && logistics.includes('effectiveFrom') && logistics.includes('Math.ceil((l * w * h) / 1_000_000)')],
   ['a SKU without dimensions pays the maximum, never zero', logistics.includes('withoutDimensionsTiyin') && logistics.includes('would overstate margin on exactly the products whose data is weakest')],
   ['Uzum commission and dimensions are captured by the worker', uzum.includes('commissionPercent') && uzum.includes('skuDimension') && commerceWorker.includes('commerce_apply_uzum_facts_batch')],
-  ['the observed return rate is stored as an estimate, never as fact', factsMigration.includes('lands as an ESTIMATE and can never raise a critical alert') && factsMigration.includes("'[\"returns_reserve_percent\"]'::jsonb")],
+  ['the return reserve is stored as an estimate, never as fact', factsMigration.includes('Shrinking the rate makes it usable; it does not') && factsMigration.includes("'[\"returns_reserve_percent\"]'::jsonb")],
   ['a sync never overwrites a value the owner set', factsMigration.includes('The owner owns it') && factsMigration.includes('v_owns_commission := v_sku.commission_percent is not null')],
   ['a value Uzum supplied stops counting as a guess', factsMigration.includes('A value Uzum supplied is no longer a guess')],
   ['an unchanged sync writes nothing', factsMigration.includes('Nothing moved: no write, no revision bump') && factsMigration.includes('is not distinct from v_sku.commission_percent')],
   ['facts are applied per catalogue, not per SKU round trip', commerceWorker.includes('One call for the whole catalogue') && !commerceWorker.includes("db.rpc('commerce_apply_uzum_facts',")],
-  ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000'].every((id) => deploy.includes(id))],
+  // The return reserve: Uzum's raw percentage hid its own denominator.
+  ['the reserve is derived from counts, never from returnedPercentage', uzum.includes('quantitySold') && uzum.includes('quantityReturned') && !/num\((?:sku|product)\?\.returnedPercentage\)/.test(uzum)],
+  ['a thin sample borrows its rate from the category, and the category from the catalogue', returnsReserve.includes('a SKU toward its') && returnsReserve.includes('borrows from the catalogue before it') && returnsReserve.includes('export function reservesForCatalogue')],
+  ['the reserve is never capped, so a genuinely bad product still shows', returnsReserve.includes('There is deliberately no upper cap')],
+  ['an unsold SKU in an unsold catalogue gets no invented reserve', returnsReserve.includes('inventing a reserve for it would put a number the owner never gave')],
+  ['the worker shrinks across the whole catalogue before writing facts', commerceWorker.includes('reservesForCatalogue') && commerceWorker.includes('return_sample_units: row.soldUnits')],
+  ['the sample behind the reserve is stored for the owner to judge', factsMigration.includes('returns_sample_units integer') && factsMigration.includes('returns_sample_units = v_next_sample')],
+  ['rates written by the old unshrunk path are cleared, not left to rot', factsMigration.includes('would repair on its own') && factsMigration.includes('set returns_reserve_percent = null')],
+  ['the old nine-argument facts function cannot survive as an overload', factsMigration.includes('drop function if exists public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer)')],
+  ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---

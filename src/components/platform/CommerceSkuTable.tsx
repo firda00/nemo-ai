@@ -10,6 +10,7 @@ export type CommerceSku = {
   commission_percent: number | null
   fulfillment_tiyin: number | null
   returns_reserve_percent: number | null
+  returns_sample_units: number | null
   lead_time_days: number | null
   moq: number | null
   safety_stock: number | null
@@ -88,7 +89,13 @@ export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave
                   {' · '}{money(sku.fulfillment_tiyin, t('commerce.sku.currency'))}
                   <br />
                   {t('commerce.sku.returnsShort')} {sku.returns_reserve_percent == null ? '—' : `${sku.returns_reserve_percent}%`}
-                  {(sku.estimated_fields ?? []).includes('returns_reserve_percent') && <span title={t('commerce.sku.estimatedTitle')} className="ml-1 font-semibold text-amber">≈</span>}
+                  {/* The sample is the point: a rate over six sales and one over six hundred are
+                      not the same claim, and the owner is the one who has to act on it. */}
+                  {sku.returns_reserve_percent != null && (
+                    <span title={t('commerce.sku.returnsSampleHint')} className="ml-1 font-semibold text-amber">
+                      ≈{sku.returns_sample_units != null && <span className="ml-0.5 font-normal">{t('commerce.sku.returnsSample').replace('{n}', String(sku.returns_sample_units))}</span>}
+                    </span>
+                  )}
                 </td>
                 {fields.map((field) => (
                   <td key={field.key} className="py-2 pr-3">

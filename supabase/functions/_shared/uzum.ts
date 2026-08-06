@@ -87,8 +87,10 @@ export interface UzumProductRow {
   /** Uzum's own commission for this SKU, as a percentage. Its number, not our estimate. */
   commissionPercent: number | null
   category: string | null
-  /** Observed share of returns. History on possibly tiny volume, so it is used as an estimate. */
-  returnPercent: number | null
+  /** Lifetime units sold for this SKU. The denominator behind any return-rate claim. */
+  soldUnits: number | null
+  /** Lifetime units returned for this SKU. */
+  returnedUnits: number | null
   /** Millimetres and grams as Uzum declares them; the logistics fee is derived from these. */
   dimension: { length: number | null; width: number | null; height: number | null; weight: number | null } | null
 }
@@ -196,9 +198,11 @@ export async function uzumProductRows(
         // Commission comes per SKU; commissionDto on the product is the category band it sits in.
         commissionPercent: num(sku?.commission) ?? num(product?.commissionDto?.maxCommission) ?? num(product?.commission),
         category: typeof product?.category === 'string' ? product.category.slice(0, 160) : null,
-        // Product level, not SKU level, on purpose: one return against two sales reads as 100%
-        // per SKU, which is noise rather than a return rate.
-        returnPercent: num(product?.returnedPercentage) ?? num(sku?.returnedPercentage),
+        // Counts, not `returnedPercentage`. The percentage hides its own denominator, and the
+        // denominators here are small enough that the difference decides whether a product looks
+        // profitable. The reserve is derived from these in _shared/returnsReserve.ts.
+        soldUnits: num(sku?.quantitySold) ?? num(product?.quantitySold),
+        returnedUnits: num(sku?.quantityReturned) ?? num(product?.quantityReturned),
         dimension: sku?.skuDimension && typeof sku.skuDimension === 'object'
           ? {
             length: num(sku.skuDimension.length),

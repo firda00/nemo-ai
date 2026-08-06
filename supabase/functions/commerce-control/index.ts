@@ -210,7 +210,7 @@ Deno.serve(async (req) => {
     const catalog = await catalogForAccount(admin, profile.account_id, body?.catalog_id)
     if (!catalog) return json({ error: 'catalog not found' }, 404)
     const { data: skus, error } = await admin.from('commerce_skus')
-      .select('id, external_sku, title, unit_cost_tiyin, commission_percent, fulfillment_tiyin, returns_reserve_percent, lead_time_days, moq, safety_stock, min_margin_percent, estimated_fields, economics_revision')
+      .select('id, external_sku, title, unit_cost_tiyin, commission_percent, fulfillment_tiyin, returns_reserve_percent, returns_sample_units, lead_time_days, moq, safety_stock, min_margin_percent, estimated_fields, economics_revision')
       .eq('catalog_id', catalog.id).order('title').limit(500)
     if (error) return json({ error: 'could not load SKUs' }, 500)
     const { data: run } = await admin.from('commerce_sync_runs').select('id, scheduled_for')
