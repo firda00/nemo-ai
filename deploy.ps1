@@ -83,6 +83,7 @@ Apply-Migration .\supabase\migrations\20260805150000_fix_proposal_applied_fields
 Apply-Migration .\supabase\migrations\20260805160000_commerce_fee_proposals.sql
 Apply-Migration .\supabase\migrations\20260806150000_commerce_catalog_min_margin.sql
 Apply-Migration .\supabase\migrations\20260806160000_commerce_catalog_defaults.sql
+Apply-Migration .\supabase\migrations\20260806170000_commerce_manual_sync.sql
 
 $schemaCheckSql = @'
 select

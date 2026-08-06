@@ -9,6 +9,10 @@ export const extraUz = {
     }
   },
   "commerce": {
+    "syncNow": "Hozir sinxronlash",
+    "syncCooldown": "Sinxronlash yaqinda ishga tushdi. {minutes} daqiqadan so‘ng qayta urinib ko‘ring — Uzum kalitingizni ortiqcha yuklamaslik uchun.",
+    "errSync": "Sinxronlashni ishga tushirib bo‘lmadi.",
+    "okSync": "{count} ta do‘kon sinxronlandi.",
     "marginTitle": "Butun katalog uchun minimal marja",
     "marginHint": "Bu raqamni na Uzum API, na kabinet biladi — qancha foyda sizga yetarli ekanini faqat siz aytasiz. Marja belgilanmaguncha Price Guard ishlamaydi. Marja allaqachon kiritilgan tovarlar tegilmaydi.",
     "marginSet": "Taklif qilish",
@@ -1563,6 +1567,10 @@ export const extraRu = {
     }
   },
   "commerce": {
+    "syncNow": "Синхронизировать сейчас",
+    "syncCooldown": "Синхронизация уже запускалась. Повторите через {minutes} мин — чтобы не нагружать ваш ключ Uzum.",
+    "errSync": "Не удалось запустить синхронизацию.",
+    "okSync": "Синхронизировано магазинов: {count}.",
     "marginTitle": "Минимальная маржа на весь каталог",
     "marginHint": "Этого числа не знает ни API Uzum, ни кабинет — сколько прибыли вам достаточно, говорите только вы. Пока маржа не задана, Price Guard не сработает. Товары, где маржа уже указана, останутся нетронутыми.",
     "marginSet": "Предложить",
@@ -3117,6 +3125,10 @@ export const extraEn = {
     }
   },
   "commerce": {
+    "syncNow": "Sync now",
+    "syncCooldown": "A sync just ran. Try again in {minutes} min — this protects your own Uzum key from being throttled.",
+    "errSync": "Could not start the sync.",
+    "okSync": "{count} shop(s) synced.",
     "marginTitle": "Minimum margin for the whole catalogue",
     "marginHint": "Neither the Uzum API nor the cabinet knows this number — only you can say how much profit is enough. Price Guard stays silent until it is set. Products that already carry a margin are left untouched.",
     "marginSet": "Propose",

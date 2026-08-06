@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}))
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
-  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'apply_proposal' || action === 'reject_proposal'
+  const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'sync_now' || action === 'apply_proposal' || action === 'reject_proposal'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -224,15 +224,6 @@ Deno.serve(async (req) => {
     return json({ ok: true, observed_at: run?.scheduled_for ?? null, skus: (skus ?? []).map((sku) => ({ ...sku, snapshot: snapshotBySku.get(sku.id) ?? null })) })
   }
 
-  if (action === 'autofill_economics') {
-    const catalog = await catalogForAccount(admin, profile.account_id, body?.catalog_id)
-    if (!catalog) return json({ error: 'catalog not found' }, 404)
-    // The RPC re-checks the owner via auth.uid(), so invoke it through the caller JWT.
-    const { data, error } = await userDb.rpc('autofill_commerce_economics', { p_catalog_id: catalog.id })
-    if (error) return json({ error: error.code === '23514' ? 'run a catalog sync before auto-filling estimates' : 'could not auto-fill estimates' }, error.code === '23514' ? 409 : 500)
-    return json({ ok: true, result: data })
-  }
-
   if (action === 'update_sku_economics') {
     if (typeof body?.sku_id !== 'string' || !UUID.test(body.sku_id)) return json({ error: 'invalid sku_id' }, 400)
     const validators: Record<string, (value: unknown) => number | null> = {
@@ -297,6 +288,61 @@ Deno.serve(async (req) => {
     }).select('id, commission_percent, fulfillment_tiyin, returns_reserve_percent, expires_at').single()
     if (error || !proposal) return json({ error: 'could not prepare the fee proposal' }, 500)
     return json({ ok: true, proposal, evidence: fees.evidence, observed_at: observation.observed_at })
+  }
+
+  if (action === 'sync_now') {
+    // The cooldown is claimed in SQL, not checked here: two tabs pressing at the same instant
+    // would both pass a read-then-write check in this function.
+    const { data: claim, error: claimError } = await admin.rpc('claim_commerce_manual_sync', { p_account: profile.account_id, p_cooldown_seconds: 600 })
+    if (claimError) return json({ error: 'could not start the sync' }, 500)
+    if (!claim?.ok) {
+      if (claim?.reason === 'cooldown') return json({ error: 'cooldown', retry_after_seconds: claim.retry_after_seconds ?? 600 }, 429)
+      return json({ error: claim?.reason === 'no_pilot' ? 'commerce pilot is not started' : 'commerce pilot is inactive' }, 409)
+    }
+    // Same entry point pg_cron uses. It processes whatever is due platform-wide, which is
+    // exactly the behaviour that is already load-tested; the cooldown above is what protects
+    // this seller's Uzum key from being hammered.
+    const response = await fetch(`${URL}/functions/v1/commerce-worker`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual' }),
+    }).catch(() => null)
+    const result = response && response.ok ? await response.json().catch(() => null) : null
+    if (!result) return json({ error: 'the sync worker did not respond' }, 502)
+
+    const { data: catalogs } = await admin.from('commerce_catalogs')
+      .select('name, last_sync_error').eq('account_id', profile.account_id)
+    return json({
+      ok: true,
+      requeued: claim.requeued ?? 0,
+      completed: result.completed ?? 0,
+      failed: result.failed ?? 0,
+      // Report this account's own catalogues rather than the worker's global counters, which
+      // include other tenants' runs and would be misleading here.
+      issues: (catalogs ?? []).filter((c: { last_sync_error: string | null }) => c.last_sync_error),
+    })
+  }
+
+  if (action === 'autofill_economics') {
+    // No catalogue id means every catalogue on the account: a seller with four shops should not
+    // press the same button four times.
+    const targets = body?.catalog_id
+      ? [await catalogForAccount(admin, profile.account_id, body.catalog_id)].filter(Boolean)
+      : ((await admin.from('commerce_catalogs').select('id').eq('account_id', profile.account_id)).data ?? [])
+    if (!targets.length) return json({ error: 'catalog not found' }, 404)
+    let cost = 0
+    let supply = 0
+    const skipped: string[] = []
+    for (const target of targets as Array<{ id: string }>) {
+      const { data, error } = await userDb.rpc('autofill_commerce_economics', { p_catalog_id: target.id })
+      if (error) { skipped.push(target.id); continue }
+      cost += Number(data?.cost_estimated ?? 0)
+      supply += Number(data?.supply_estimated ?? 0)
+    }
+    // A catalogue with no completed sync yet cannot be estimated from — say so instead of
+    // reporting a silent zero.
+    if (skipped.length === targets.length) return json({ error: 'run a catalog sync before auto-filling estimates' }, 409)
+    return json({ ok: true, result: { cost_estimated: cost, supply_estimated: supply }, catalogs: targets.length, skipped: skipped.length })
   }
 
   if (action === 'propose_min_margin') {

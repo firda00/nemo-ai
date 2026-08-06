@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, CheckCircle2, Database, Search, Upload, Wand2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Database, RefreshCw, Search, Upload, Wand2 } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
@@ -60,7 +60,7 @@ export default function CommercePage() {
   const [skus, setSkus] = useState<CommerceSku[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [marginInput, setMarginInput] = useState('20')
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'proposal' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
@@ -124,9 +124,11 @@ export default function CommercePage() {
   }
 
   const autofill = async () => {
-    if (!supabase || !catalogId || busy) return
+    // No catalogue guard any more: the action covers every catalogue on the account, so a
+    // seller with four shops presses this once.
+    if (!supabase || busy) return
     setBusy('autofill'); setMessage(null)
-    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'autofill_economics', catalog_id: catalogId } })
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'autofill_economics' } })
     const result = data as { ok?: boolean; result?: { cost_estimated: number; supply_estimated: number }; error?: string } | null
     if (error || !result?.ok) setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.errAutofill') })
     else {
@@ -158,6 +160,30 @@ export default function CommercePage() {
       // and cannot judge it without seeing what was actually on the page.
       setMessage({ ok: true, text: (result.evidence ?? []).join(' · ') })
       await loadProposals()
+    }
+    setBusy(null)
+  }
+
+  const syncNow = async () => {
+    if (!supabase || busy) return
+    setBusy('sync'); setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'sync_now' } })
+    const result = data as { ok?: boolean; completed?: number; failed?: number; issues?: Array<{ name: string; last_sync_error: string }>; retry_after_seconds?: number; error?: string } | null
+    if (result?.error === 'cooldown') {
+      setMessage({ ok: false, text: t('commerce.syncCooldown', { minutes: Math.ceil((result.retry_after_seconds ?? 600) / 60) }) })
+    } else if (error || !result?.ok) {
+      setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.errSync') })
+    } else {
+      // A shop that failed says so by name: "synced" while two shops are silently broken is
+      // exactly the report that hid this problem for a day.
+      const issues = result.issues ?? []
+      setMessage({
+        ok: issues.length === 0,
+        text: issues.length
+          ? `${t('commerce.okSync', { count: result.completed ?? 0 })} ${issues.map((i) => i.name).join(', ')}`
+          : t('commerce.okSync', { count: result.completed ?? 0 }),
+      })
+      await load(catalogId)
     }
     setBusy(null)
   }
@@ -253,7 +279,7 @@ export default function CommercePage() {
     <div className="container-page max-w-5xl py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-indigo/15 text-accent-indigo"><Database size={20} /></span><div><h1 className="text-2xl font-semibold tracking-tight text-text">{t('commerce.title')}</h1><p className="text-sm text-muted">{t('commerce.subtitle')}</p></div></div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled || pilot?.status === 'active'}>{t('commerce.startPilot')}</Button><Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled || pilot?.status === 'active'}>{t('commerce.startPilot')}</Button><Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button><Button variant="outline" onClick={syncNow} loading={busy === 'sync'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<RefreshCw size={15} />}>{t('commerce.syncNow')}</Button></div>
       </div>
 
       {message && <div className={`mt-5 flex items-start gap-2 rounded-xl px-3 py-2 text-sm ${message.ok ? 'bg-teal/10 text-teal border border-teal/20' : 'bg-danger/10 text-danger'}`}><>{message.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}</><span>{message.text}{!message.ok && t('commerce.ownerHint')}</span></div>}
@@ -334,7 +360,7 @@ export default function CommercePage() {
             <p className="text-sm font-semibold text-text">{t('commerce.economicsTitle')}</p>
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.economicsHint')}</p>
           </div>
-          <Button variant="outline" onClick={autofill} loading={busy === 'autofill'} disabled={!catalogId || !skus.length} leftIcon={<Wand2 size={15} />}>{t('commerce.autofill')}</Button>
+          <Button variant="outline" onClick={autofill} loading={busy === 'autofill'} disabled={!catalogs.length} leftIcon={<Wand2 size={15} />}>{t('commerce.autofill')}</Button>
         </div>
         <div className="mt-4">{loading ? <p className="text-sm text-muted">{t('commerce.loadingSkus')}</p> : <CommerceSkuTable skus={skus} onSave={saveSku} />}</div>
       </Card>

@@ -33,6 +33,7 @@ const uzumFees = read('supabase/functions/_shared/uzumFees.ts')
 const unitEconomics = read('supabase/functions/_shared/unitEconomics.ts')
 const minMarginMigration = read('supabase/migrations/20260806150000_commerce_catalog_min_margin.sql')
 const defaultsMigration = read('supabase/migrations/20260806160000_commerce_catalog_defaults.sql')
+const manualSyncMigration = read('supabase/migrations/20260806170000_commerce_manual_sync.sql')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 
 const checks = [
@@ -184,6 +185,12 @@ const checks = [
   ['a catalogue proposal records the default as well as filling blanks', defaultsMigration.includes('default_min_margin_percent = coalesce(v_proposal.min_margin_percent') && defaultsMigration.includes("becomes the catalogue's standing default")],
   ['the deploy probe proves a later SKU inherits', deploy.includes('a later SKU did not inherit the catalogue default margin') && deploy.includes('the catalogue default overwrote an explicit value on insert')],
   ['the defaults migration is registered for deploy', deploy.includes('20260806160000_commerce_catalog_defaults.sql')],
+  ['the manual sync cooldown is claimed in SQL, not checked in the function', manualSyncMigration.includes('the UPDATE\'s own WHERE clause is the lock') && manualSyncMigration.includes('last_manual_sync_at <= now() - make_interval') && commerceControl.includes('claim_commerce_manual_sync')],
+  ['a manual retry only requeues the caller\'s own runs', manualSyncMigration.includes('c.account_id = p_account') && manualSyncMigration.includes('must never reset another tenant')],
+  ['manual sync is owner-only and reports this account\'s failures by name', commerceControl.includes("action === 'sync_now'") && commerceControl.includes('issues:') && commercePage.includes('issues.map((i) => i.name)')],
+  ['the cooldown message explains whose key it protects', i18nExtra.includes('не нагружать ваш ключ Uzum') && i18nExtra.includes('your own Uzum key from being throttled')],
+  ['auto-fill covers every catalogue on the account', commerceControl.includes('No catalogue id means every catalogue on the account') && commercePage.includes("action: 'autofill_economics' }") && !commercePage.includes("action: 'autofill_economics', catalog_id")],
+  ['the manual sync migration is registered for deploy', deploy.includes('20260806170000_commerce_manual_sync.sql')],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 
   // --- Hand-written Telegram copy must render, and marketplace data must not break it ---
