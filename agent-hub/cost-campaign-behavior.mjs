@@ -45,6 +45,21 @@ assert.deepEqual(junk.unparsed, ['заколки 6шт'])
 // A number with no name has nothing to attach to.
 assert.deepEqual(parseCostBatch('18000').unparsed, ['18000'])
 
+// THE LINE THAT GOT THROUGH. The owner pasted a report back into the chat and "last number wins"
+// read the shelf value as a purchase cost — 931 200 against a retail price of 116 400. Four SKUs
+// took it, and a confirmed cost stops being an estimate, so they were one sync from raising
+// critical alerts about a loss that never existed.
+const pasted = parseCostBatch([
+  '• AYOL88-CHECHENKA-ЧЕРН      116 400 × 8  →  931 200 сум на полке',
+  '• AYOL88-CHECHENKA-СЕРЫЙ     116 400 × 8  →  931 200',
+  '• AYOL88-КУПАЛЬНИК1-ЛАЙМ-50  339 500 × 2  →  679 000',
+].join('\n'))
+assert.deepEqual(pasted.items, [], 'a computed line is never a dictated cost')
+assert.equal(pasted.unparsed.length, 3, 'and all three are reported back')
+// The same arithmetic in the other notations people paste.
+assert.deepEqual(parseCostBatch('бони 116400 x 8 = 931200').items, [])
+assert.deepEqual(parseCostBatch('шарф 22000 → 44000').items, [])
+
 // One cost is the existing single-item flow, which also understands lead times and margins.
 assert.equal(looksLikeCostBatch('бони 18000'), false, 'one item is not a batch')
 assert.equal(looksLikeCostBatch('бони 18000, шарф 22000'), true)
@@ -69,6 +84,24 @@ assert.equal(matched[0].sku.id, 'c')
 assert.equal(matched[1].kind, 'ambiguous', 'two colours match "бони", so the owner decides')
 assert.equal(matched[1].candidates.length, 2)
 assert.equal(matched[2].kind, 'unknown', 'nothing in the catalogue is a sock')
+
+// The second defence, and the one that does not depend on how the number was read: nobody buys
+// for what they sell for, so a cost at or above the retail price is never a purchase price.
+const prices = { a: 35000, b: 35000, c: 116400 }
+const implausible = matchBatch([{ query: 'Волнистый шарф', costUzs: 931200 }], SKUS, fakeMatch, prices)
+assert.equal(implausible[0].kind, 'implausible')
+assert.equal(implausible[0].priceUzs, 116400)
+// Equal is refused too: a purchase price identical to the selling price is not one either.
+assert.equal(matchBatch([{ query: 'Волнистый шарф', costUzs: 116400 }], SKUS, fakeMatch, prices)[0].kind, 'implausible')
+assert.equal(matchBatch([{ query: 'Волнистый шарф', costUzs: 40000 }], SKUS, fakeMatch, prices)[0].kind, 'matched')
+// A SKU never observed has no price to compare against, so the check stands aside rather than
+// blocking a cost the owner is entitled to give.
+assert.equal(matchBatch([{ query: 'Волнистый шарф', costUzs: 931200 }], SKUS, fakeMatch, { c: null })[0].kind, 'matched')
+
+const refusedCard = batchCard(implausible, [], 10)
+assert.match(refusedCard, /не ниже цены продажи/)
+assert.match(refusedCard, /Это не закупка/)
+assert.equal(batchKeyboard('k', implausible.filter((row) => row.kind === 'matched').length), undefined)
 
 // --- The card states what will be written, and what will not -------------------------------
 
@@ -124,4 +157,4 @@ assert.match(
   /&lt;b&gt;x&lt;\/b&gt;/,
 )
 
-console.log('[OK] Cost campaign behaviour: 38 assertions')
+console.log('[OK] Cost campaign behaviour: 52 assertions')

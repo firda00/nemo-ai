@@ -41,6 +41,16 @@ const SEGMENT = /\r?\n|;|,(?!\s*\d)|(?<!\d)\s*,\s*/
 // 9000", "бони 46 размер 18000" — and in every one of them the price is the number said last.
 const TRAILING_NUMBER = /(\d[\d\s\u00a0]*)(?:\s*(?:сум|so['‘’]m|uzs|som))?\s*$/i
 
+// Marks of a line that was COMPUTED and pasted, not dictated. The owner pasted a report line —
+// "AYOL88-CHECHENKA-ЧЕРН 116 400 × 8 → 931 200 сум на полке" — and "last number wins" read the
+// shelf value as a purchase cost: 931 200 against a retail price of 116 400. Four SKUs took it,
+// and because a confirmed cost stops being an estimate, they were one sync away from raising
+// critical alerts about a loss that never existed.
+//
+// A dictated cost is a name and a number. A line carrying arithmetic between its numbers is
+// somebody else's calculation, and Nemo has no business reading money out of one.
+const COMPUTED_LINE = /[×✕✖→⇒=]|\d\s*[x*]\s*\d/u
+
 const clean = (value: string) => value.replace(/\s+/g, ' ').trim()
 
 export function parseCostBatch(text: string): ParsedBatch {
@@ -49,6 +59,7 @@ export function parseCostBatch(text: string): ParsedBatch {
   for (const raw of String(text ?? '').split(SEGMENT)) {
     const segment = clean(raw)
     if (!segment) continue
+    if (COMPUTED_LINE.test(segment)) { unparsed.push(segment.slice(0, 80)); continue }
     const hit = segment.match(TRAILING_NUMBER)
     const cost = hit ? Number(hit[1].replace(/[\s\u00a0]/g, '')) : NaN
     const query = hit ? clean(segment.slice(0, hit.index)) : segment
@@ -68,6 +79,7 @@ export function looksLikeCostBatch(text: string): boolean {
 
 export type MatchedItem =
   | { kind: 'matched'; item: CostItem; sku: SkuCandidate }
+  | { kind: 'implausible'; item: CostItem; sku: SkuCandidate; priceUzs: number }
   | { kind: 'ambiguous'; item: CostItem; candidates: SkuCandidate[] }
   | { kind: 'unknown'; item: CostItem }
 
@@ -77,14 +89,40 @@ export type MatchedItem =
  * Ambiguity is reported, never resolved by picking the first: writing a cost onto the wrong colour
  * is invisible afterwards — the number looks perfectly reasonable sitting on the wrong row, and
  * every margin it feeds is quietly wrong from then on.
+ *
+ * A cost at or above the SKU's own retail price is refused outright. Nobody buys for what they
+ * sell for, so such a number is never a purchase price — it is a total, a sum, or a line pasted
+ * from somewhere else. This check is the reason the parser cannot be the only defence: it catches
+ * the whole class no matter how the number was read.
  */
-export function matchBatch(items: CostItem[], skus: SkuCandidate[], match: (query: string, skus: SkuCandidate[]) => SkuCandidate[]): MatchedItem[] {
+export function matchBatch(
+  items: CostItem[],
+  skus: SkuCandidate[],
+  match: (query: string, skus: SkuCandidate[]) => SkuCandidate[],
+  priceUzsBySkuId: Record<string, number | null> = {},
+): MatchedItem[] {
   return items.map((item) => {
     const candidates = match(item.query, skus)
-    if (candidates.length === 1) return { kind: 'matched', item, sku: candidates[0] }
     if (candidates.length > 1) return { kind: 'ambiguous', item, candidates: candidates.slice(0, 5) }
-    return { kind: 'unknown', item }
+    if (!candidates.length) return { kind: 'unknown', item }
+    const sku = candidates[0]
+    const price = priceUzsBySkuId[sku.id]
+    if (price != null && price > 0 && item.costUzs >= price) return { kind: 'implausible', item, sku, priceUzs: price }
+    return { kind: 'matched', item, sku }
   })
+}
+
+/** Latest observed retail price per SKU, in sum. Absent when the SKU has never been observed. */
+export async function latestPricesUzs(db: any, skuIds: string[]): Promise<Record<string, number | null>> {
+  if (!skuIds.length) return {}
+  const { data } = await db.from('commerce_inventory_snapshots')
+    .select('sku_id, price_tiyin, observed_slot').in('sku_id', skuIds).order('observed_slot', { ascending: false })
+  const prices: Record<string, number | null> = {}
+  for (const row of data ?? []) {
+    if (row.sku_id in prices) continue
+    prices[row.sku_id] = row.price_tiyin == null ? null : Math.round(row.price_tiyin / 100)
+  }
+  return prices
 }
 
 const uzs = (value: number) => `${value.toLocaleString('ru-RU')} сум`
@@ -98,6 +136,9 @@ export function batchCard(matched: MatchedItem[], unparsed: string[], remaining:
     lines.push(`✅ <b>${escapeHtml(row.sku.title)}</b> — ${uzs(row.item.costUzs)}`)
   }
   for (const row of matched) {
+    if (row.kind === 'implausible') {
+      lines.push(`🚫 <b>${escapeHtml(row.sku.title)}</b> — ${uzs(row.item.costUzs)} не ниже цены продажи ${uzs(row.priceUzs)}. Это не закупка.`)
+    }
     if (row.kind === 'ambiguous') {
       lines.push(`❓ «${escapeHtml(row.item.query)}» — подходит ${row.candidates.length}: ${row.candidates.map((c) => escapeHtml(c.title)).join(', ')}`)
     }

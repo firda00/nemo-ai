@@ -15,7 +15,7 @@ import {
   buildListingDraft, draftCard, draftKeyboard, NEW_LISTING_HELP, newListingText,
 } from './commerceListingChat.ts'
 import {
-  asksWhatNext, batchCard, batchKeyboard, costCampaignState, looksLikeCostBatch, matchBatch,
+  asksWhatNext, batchCard, batchKeyboard, costCampaignState, latestPricesUzs, looksLikeCostBatch, matchBatch,
   nextCard, parseCostBatch,
 } from './commerceCostCampaign.ts'
 import { resolveOpenRouterKey } from './keys.ts'
@@ -155,7 +155,9 @@ async function handleCostBatch(db: any, agent: any, botToken: string, owner: Own
     await tgSendHtml(botToken, owner.chatId, 'Каталог ещё не синхронизирован с Uzum, поэтому себестоимость пока не к чему привязать.')
     return true
   }
-  const matched = matchBatch(parsed.items, skus, matchSkus)
+  // Prices for the plausibility check: a cost at or above what the SKU sells for is not a cost.
+  const prices = await latestPricesUzs(db, skus.map((sku: any) => sku.id))
+  const matched = matchBatch(parsed.items, skus, matchSkus, prices)
   const savable = matched.filter((row) => row.kind === 'matched')
   const state = await costCampaignState(db, owner.accountId, 0)
 
