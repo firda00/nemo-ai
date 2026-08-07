@@ -3,10 +3,12 @@
 // provider_keys — write-only from the client, never read back (like connect-model).
 //   POST /functions/v1/connect-provider  (Bearer jwt)
 //   { action:'connect', provider, api_key } | { action:'status' } | { action:'disconnect', provider }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { providerSecretContext, sealSecret } from '../_shared/secretBox.ts'
 import { uzumShops } from '../_shared/uzum.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
+import { normalizeKey } from '../_shared/providerKey.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -83,8 +85,9 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'connect') {
+    if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     const provider = String(body?.provider ?? '')
-    const key = String(body?.api_key ?? '').trim()
+    const key = normalizeKey(body?.api_key)
     const def = provider_def(provider)
     if (!def) return json({ ok: false, error: 'Неизвестный провайдер.' }, 200)
     if (!def.ok(key)) return json({ ok: false, error: `Ключ выглядит некорректно для ${def.label}.` }, 200)

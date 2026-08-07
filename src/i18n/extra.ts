@@ -9,6 +9,14 @@ export const extraUz = {
     }
   },
   "commerce": {
+      "onboard": {
+        "title": "Uzum do‘koningizni ulang",
+        "hint": "Bir tugma: Nemo do‘konlaringizni topadi, katalogni o‘qiydi va birinchi auditni yig‘adi — komissiya, logistika va eng past narx. Nemo Uzumga hech narsa yozmaydi va hech narsani o‘zgartirmaydi.",
+        "action": "Ulash va birinchi auditni yig‘ish",
+        "needsKey": "Avval Integratsiyalarda Uzum kalitini qo‘shing.",
+        "ok": "Topildi: {shops} ta do‘kon. Birinchi sinxronizatsiya ketdi — natijalar bir necha daqiqada paydo bo‘ladi.",
+        "err": "Ulanmadi.",
+      },
       "findings": {
         "title": "Nemo nimani aniqladi",
         "hint": "Har bir xulosa o‘z raqamlariga tayanadi. Qaror talab qiladiganlari ro‘yxatda, qolgan fon esa bitta qatorda — 93 ta nom hech kimga yordam bermaydi.",
@@ -1615,6 +1623,14 @@ export const extraRu = {
     }
   },
   "commerce": {
+      "onboard": {
+        "title": "Подключите магазин Uzum",
+        "hint": "Одна кнопка: Nemo найдёт ваши магазины, прочитает каталог и соберёт первый аудит — комиссия, логистика и минимальная цена по каждой позиции. Nemo ничего не пишет на Uzum и ничего там не меняет.",
+        "action": "Подключить и собрать первый аудит",
+        "needsKey": "Сначала добавьте ключ Uzum в Интеграциях.",
+        "ok": "Найдено магазинов: {shops}. Первая синхронизация запущена — результаты появятся через несколько минут.",
+        "err": "Не удалось подключить.",
+      },
       "findings": {
         "title": "Что нашёл Nemo",
         "hint": "Каждый вывод опирается на свои числа. То, что требует решения, — списком; остальной фон — одной строкой, потому что 93 названия не помогают никому.",
@@ -3221,6 +3237,14 @@ export const extraEn = {
     }
   },
   "commerce": {
+      "onboard": {
+        "title": "Connect your Uzum shop",
+        "hint": "One button: Nemo finds your shops, reads the catalogue and assembles the first audit — commission, logistics and a floor price per product. Nemo writes nothing to Uzum and changes nothing there.",
+        "action": "Connect and build the first audit",
+        "needsKey": "Add the Uzum key in Integrations first.",
+        "ok": "Shops found: {shops}. The first sync has started — results appear in a few minutes.",
+        "err": "Could not connect.",
+      },
       "findings": {
         "title": "What Nemo found",
         "hint": "Every conclusion rests on its own numbers. What needs a decision is listed; the rest of the background is one line, because 93 names help nobody.",

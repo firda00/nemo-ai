@@ -65,7 +65,7 @@ export default function CommercePage() {
   const [findings, setFindings] = useState<Finding[]>([])
   const [categoryChoices, setCategoryChoices] = useState<CategoryChoice[]>([])
   const [marginInput, setMarginInput] = useState('20')
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
@@ -123,6 +123,17 @@ export default function CommercePage() {
     const timer = window.setTimeout(() => { void load() }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  const onboard = async () => {
+    if (!supabase || busy) return
+    setBusy('onboard'); setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'onboard' } })
+    const result = data as { ok?: boolean; shops?: number; queued?: number; error?: string } | null
+    if (error || !result?.ok) setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.onboard.err') })
+    else setMessage({ ok: true, text: t('commerce.onboard.ok').replace('{shops}', String(result.shops ?? 0)) })
+    await load()
+    setBusy(null)
+  }
 
   const draftListing = async (sourceText: string, category: string | null) => {
     if (!supabase) return false
@@ -335,6 +346,21 @@ export default function CommercePage() {
         <Card className="lg:col-span-2" padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.pilotStatus')}</p><p className="mt-2 text-lg font-semibold text-text">{loading ? t('common.loading') : pilot?.status ?? t('commerce.notStarted')}</p><p className="mt-1 text-xs text-muted">{pilot?.expires_at ? t('commerce.expires', { date: new Date(pilot.expires_at).toLocaleDateString() }) : t('commerce.noPilot')}</p></Card>
         <Card padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalogs')}</p><p className="mt-2 text-lg font-semibold text-text">{catalogs.length}</p><p className="mt-1 text-xs text-muted">{selectedCatalog ? `${selectedCatalog.name} · ${selectedCatalog.status}` : t('commerce.discoverFirst')}</p></Card>
       </div>
+
+      {/* Shown only while there is nothing to look at yet. A seller who has already connected
+          does not need the connect card taking the top of their screen every day. */}
+      {!loading && !catalogs.length && (
+        <Card className="mt-4" padding="md">
+          <p className="text-sm font-semibold text-text">{t('commerce.onboard.title')}</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.onboard.hint')}</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button onClick={() => void onboard()} loading={busy === 'onboard'} leftIcon={<Database size={15} />}>
+              {t('commerce.onboard.action')}
+            </Button>
+            <p className="text-xs text-muted">{t('commerce.onboard.needsKey')}</p>
+          </div>
+        </Card>
+      )}
 
       {/* The conclusions, first. Everything below this card is an input to them. */}
       <Card className="mt-4" padding="md">

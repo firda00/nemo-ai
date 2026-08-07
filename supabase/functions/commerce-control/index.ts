@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
   const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'sync_now' || action === 'apply_proposal' || action === 'reject_proposal'
-    || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'
+    || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft' || action === 'onboard'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -169,6 +169,69 @@ Deno.serve(async (req) => {
       { onConflict: 'account_id,source,external_shop_id' },
     ).select('id, name, external_shop_id, status')
     return error ? json({ error: 'could not save Uzum catalogs' }, 500) : json({ ok: true, catalogs: catalogs ?? [] })
+  }
+
+  // One call from "the key was accepted" to "the first audit is running". A new seller had to
+  // find and press four separate buttons in the right order — start the pilot, discover shops,
+  // pick a catalogue, sync — and any one of them missed left the page looking broken. Every step
+  // here is idempotent: pressing it twice costs a second read and changes nothing.
+  if (action === 'onboard') {
+    if (await blocksExternalActions(admin, profile.account_id)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+    const { data: keyRow } = await admin.from('provider_keys').select('api_key')
+      .eq('account_id', profile.account_id).eq('provider', 'uzum').maybeSingle()
+    const key = await openSecret(keyRow?.api_key, providerSecretContext(profile.account_id, 'uzum'))
+    if (!key) return json({ error: 'connect the Uzum key first', step: 'key' }, 409)
+
+    // An already-running pilot is the desired state, not a conflict — unlike start_pilot, which
+    // is a deliberate action and says so when repeated.
+    const { data: pilot } = await admin.from('commerce_pilots').select('status, expires_at')
+      .eq('account_id', profile.account_id).maybeSingle()
+    if (!pilot) {
+      const { error: pilotError } = await admin.from('commerce_pilots').insert({ account_id: profile.account_id })
+      if (pilotError) return json({ error: 'could not start the pilot', step: 'pilot' }, 500)
+    } else if (pilot.status !== 'active') {
+      return json({ error: 'the commerce pilot has ended', step: 'pilot' }, 409)
+    }
+
+    const listed = await uzumShopList(key)
+    if (!listed.ok) return json({ error: listed.error ?? 'could not read Uzum shops', step: 'shops' }, 502)
+    if (!listed.shops.length) return json({ error: 'the key sees no shops — grant it access in the Uzum Seller cabinet', step: 'shops' }, 409)
+    const { data: catalogs, error: catalogError } = await admin.from('commerce_catalogs').upsert(
+      listed.shops.map((shop) => ({ account_id: profile.account_id, source: 'uzum', external_shop_id: shop.id, name: shop.name })),
+      { onConflict: 'account_id,source,external_shop_id' },
+    ).select('id, name, external_shop_id, status')
+    if (catalogError) return json({ error: 'could not save the shops', step: 'shops' }, 500)
+
+    // Queue one run per catalogue that has none waiting. Without this check a second press would
+    // stack duplicate runs that each re-read the same shop.
+    const active = (catalogs ?? []).filter((catalog) => catalog.status === 'active')
+    const { data: pendingRuns } = await admin.from('commerce_sync_runs')
+      .select('catalog_id').in('catalog_id', active.map((catalog) => catalog.id)).in('status', ['queued', 'running'])
+    const alreadyQueued = new Set((pendingRuns ?? []).map((run: { catalog_id: string }) => run.catalog_id))
+    const toQueue = active.filter((catalog) => !alreadyQueued.has(catalog.id))
+    if (toQueue.length) {
+      const { error: queueError } = await admin.from('commerce_sync_runs')
+        .insert(toQueue.map((catalog) => ({ catalog_id: catalog.id, status: 'queued', scheduled_for: new Date().toISOString() })))
+      if (queueError) return json({ error: 'could not queue the first sync', step: 'sync' }, 500)
+    }
+
+    // Kick the worker and do NOT wait: a first sync of several shops runs past this function's
+    // own time limit, and a timeout here would look like a failure while the sync was fine.
+    fetch(`${URL}/functions/v1/commerce-worker`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual' }),
+    }).catch(() => {})
+
+    return json({
+      ok: true,
+      shops: (catalogs ?? []).length,
+      queued: toQueue.length,
+      catalogs: catalogs ?? [],
+      // The page polls status; saying "started" rather than "done" is the difference between a
+      // spinner that ends and one that lies.
+      sync_started: true,
+    })
   }
 
   if (action === 'stage_import') {
