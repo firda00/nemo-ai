@@ -11,6 +11,7 @@ import { applyKeyboard, CB_APPLY, CB_PICK, ownerChatFor, proposalText } from '..
 import {
   applyCategory, catalogueContext, categoryToken, CB_LISTING, CB_LISTING_CATEGORY, draftCard, draftKeyboard,
 } from '../_shared/commerceListingChat.ts'
+import { CB_COST_BATCH, costCampaignState } from '../_shared/commerceCostCampaign.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
@@ -87,6 +88,61 @@ async function handleCommerceCallback(db: any, channelId: string, botToken: stri
   const applied = Array.isArray(result?.applied_fields) ? result.applied_fields.length : 0
   await tgAnswerCallback(botToken, cb.id, 'Сохранено')
   await tgEditMessage(botToken, chatId, messageId, `✅ Сохранено (${applied} показател${applied === 1 ? 'ь' : 'я'}).\nЭти цифры теперь подтверждены вами — по ним включены критические оповещения.`)
+}
+
+/**
+ * One press on a batch of dictated costs. The owner said several numbers in one message and gets
+ * one outcome: all of them or none, reported by count so a partial apply cannot pass as a whole.
+ */
+async function handleCostBatchCallback(db: any, channelId: string, botToken: string | undefined, cb: any): Promise<void> {
+  const data = String(cb?.data ?? '')
+  const chatId = String(cb?.message?.chat?.id ?? '')
+  const messageId = Number(cb?.message?.message_id ?? 0)
+  const parts = data.split(':')
+  if (!botToken || !chatId || parts[0] !== CB_COST_BATCH) return
+  const [, batchKey, arg] = parts
+  if (!UUID.test(batchKey ?? '')) return
+
+  const owner = await ownerChatFor(db, channelId, chatId)
+  const { data: pending } = await db.from('commerce_economics_proposals')
+    .select('id, account_id, chat_id, status').eq('batch_key', batchKey).limit(50)
+  const rows = pending ?? []
+  // The batch belongs to this chat and this account, or it belongs to nobody here.
+  if (!owner || !rows.length || rows.some((row: any) => row.chat_id !== chatId || row.account_id !== owner.accountId)) {
+    await tgAnswerCallback(botToken, cb.id, 'Это подтверждение недоступно.')
+    return
+  }
+  if (!rows.some((row: any) => row.status === 'pending')) {
+    await tgAnswerCallback(botToken, cb.id, 'Уже обработано.')
+    return
+  }
+
+  if (arg !== 'y') {
+    await db.from('commerce_economics_proposals').update({ status: 'rejected' }).eq('batch_key', batchKey).eq('status', 'pending')
+    await tgAnswerCallback(botToken, cb.id, 'Отменено.')
+    await tgEditMessage(botToken, chatId, messageId, '✖️ Не сохранено. Себестоимость осталась прежней.')
+    return
+  }
+
+  const { data: result, error } = await db.rpc('apply_commerce_cost_batch', { p_batch_key: batchKey })
+  if (error) {
+    // Keyboard stays: the proposals are still pending, and a retry must not cost the owner the
+    // whole dictation again.
+    console.error('cost batch apply failed:', error)
+    await tgAnswerCallback(botToken, cb.id, 'Не удалось сохранить, попробуйте ещё раз.')
+    return
+  }
+  const applied = Number(result?.applied ?? 0)
+  // Scoped to this owner's catalogues. Counting every SKU on the platform would put another
+  // tenant's number in front of this seller.
+  const { remaining } = await costCampaignState(db, owner.accountId, 0)
+  await tgAnswerCallback(botToken, cb.id, `Сохранено: ${applied}`)
+  await tgEditMessage(botToken, chatId, messageId, [
+    `✅ <b>Сохранено: ${applied}</b>`,
+    'Это ваши числа — по ним включены критические оповещения.',
+    `\nОсталось без себестоимости: <b>${remaining}</b>`,
+    'Напишите «что дальше», чтобы продолжить.',
+  ].join('\n'))
 }
 
 /**
@@ -192,6 +248,7 @@ Deno.serve(async (req) => {
       // order is irrelevant and a new button type cannot silently shadow an existing one.
       await handleCommerceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handleListingCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      await handleCostBatchCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       return new Response('ok')
     }
 

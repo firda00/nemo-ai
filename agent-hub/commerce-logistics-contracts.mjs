@@ -45,6 +45,8 @@ const listingMigration = read('supabase/migrations/20260806240000_commerce_listi
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
 const costMigration = read('supabase/migrations/20260806250000_commerce_uzum_purchase_price.sql')
+const costCampaign = read('supabase/functions/_shared/commerceCostCampaign.ts')
+const batchMigration = read('supabase/migrations/20260806260000_commerce_cost_batch.sql')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -296,6 +298,17 @@ const checks = [
   ['the worker sends the real purchase price per variant', commerceWorker.includes('sales.costBySku?.[row.name]') && commerceWorker.includes('Reported in sum')],
   ['severity is gated by the inputs the margin really uses', unitEconomics.includes('export const MARGIN_INPUTS') && unitEconomics.includes('silently holding every price alert down to a warning') && commerceWorker.includes('const priceInputs = [...MARGIN_INPUTS]')],
   ['the purchase price migration is registered for deploy', deploy.includes('20260806250000_commerce_uzum_purchase_price.sql')],
+  // The cost campaign: 135 SKUs still on a placeholder, dictated in batches.
+  ['no model parses a dictated batch of costs', costCampaign.includes('NO MODEL PARSES THE BATCH') && costCampaign.includes('export function parseCostBatch') && !costCampaign.includes('callOpenRouter')],
+  ['a number too small to be a price is reported, never stored', costCampaign.includes('MIN_COST_UZS') && costCampaign.includes('a margin of 99% on the table')],
+  ['an ambiguous name is asked about, never resolved by picking the first', costCampaign.includes('Ambiguity is reported, never resolved by picking the first') && costCampaign.includes("kind: 'ambiguous'")],
+  ['a batch with nothing savable offers no save button', costCampaign.includes('if (!savable) return undefined')],
+  ['one dictation is one confirmation, applied under a lock', batchMigration.includes('apply_commerce_cost_batch') && batchMigration.includes('for update skip locked') && batchMigration.includes('cannot be applied later by a stale button')],
+  ['a batch belongs to the chat that dictated it', telegramWebhook.includes('row.chat_id !== chatId || row.account_id !== owner.accountId')],
+  ['the remaining count is scoped to the owner account', telegramWebhook.includes('costCampaignState(db, owner.accountId, 0)') && telegramWebhook.includes('another')],
+  ['only estimated costs are ever asked for again', costCampaign.includes('is already the truth and must never be asked for again') && costCampaign.includes("includes('unit_cost_tiyin')")],
+  ['the campaign runs above the single-item economics path', tgProcess.includes('asksWhatNext(text)') && tgProcess.includes('looksLikeCostBatch(text)') && tgProcess.indexOf('looksLikeCostBatch(text)') < tgProcess.indexOf('looksLikeEconomics(text)')],
+  ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 

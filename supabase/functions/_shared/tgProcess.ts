@@ -14,6 +14,10 @@ import {
 import {
   buildListingDraft, draftCard, draftKeyboard, NEW_LISTING_HELP, newListingText,
 } from './commerceListingChat.ts'
+import {
+  asksWhatNext, batchCard, batchKeyboard, costCampaignState, looksLikeCostBatch, matchBatch,
+  nextCard, parseCostBatch,
+} from './commerceCostCampaign.ts'
 import { resolveOpenRouterKey } from './keys.ts'
 import { planOf } from './plans.ts'
 import { transcribeAudio } from './transcribe.ts'
@@ -139,6 +143,52 @@ async function handleEconomicsMessage(
   return true
 }
 
+/**
+ * A batch of dictated costs. Returns true when it was handled — including when nothing could be
+ * matched, because saying "I matched none of these" is handling it, and falling through to the
+ * single-item parser would take the first cost and lose the rest without saying so.
+ */
+async function handleCostBatch(db: any, agent: any, botToken: string, owner: OwnerChat, text: string): Promise<boolean> {
+  const parsed = parseCostBatch(text)
+  const skus = await accountSkus(db, owner.accountId)
+  if (!skus.length) {
+    await tgSendHtml(botToken, owner.chatId, 'Каталог ещё не синхронизирован с Uzum, поэтому себестоимость пока не к чему привязать.')
+    return true
+  }
+  const matched = matchBatch(parsed.items, skus, matchSkus)
+  const savable = matched.filter((row) => row.kind === 'matched')
+  const state = await costCampaignState(db, owner.accountId, 0)
+
+  // One key for the whole message: the owner pressed one button and expects one outcome.
+  const batchKey = crypto.randomUUID()
+  if (savable.length) {
+    const rows = savable.map((row: any) => ({
+      account_id: owner.accountId,
+      channel_id: owner.channelId,
+      chat_id: owner.chatId,
+      sku_id: row.sku.id,
+      candidates: [],
+      product_query: row.item.query.slice(0, 200),
+      source_text: text.slice(0, 2000),
+      unit_cost_tiyin: Math.round(row.item.costUzs * 100),
+      batch_key: batchKey,
+    }))
+    const { error } = await db.from('commerce_economics_proposals').insert(rows)
+    if (error) {
+      console.error('cost batch proposals insert failed:', error)
+      await tgSendHtml(botToken, owner.chatId, 'Не смог подготовить подтверждение. Попробуйте ещё раз.')
+      return true
+    }
+  }
+  await tgSendKeyboard(
+    botToken,
+    owner.chatId,
+    batchCard(matched, parsed.unparsed, state.remaining),
+    batchKeyboard(batchKey, savable.length) ?? { inline_keyboard: [] },
+  )
+  return true
+}
+
 export async function processTelegramUpdate(db: any, channelId: string, update: any): Promise<void> {
   const { data: channel } = await db.from('channels').select('*, agents(*)').eq('id', channelId).single()
   if (!channel) return
@@ -254,6 +304,20 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
           await tgSendKeyboard(botToken, chatId, draftCard(built.draft), draftKeyboard(built.draft, built.categories))
           return
         } catch (e) { console.error('commerce listing chat failed:', e) }
+      }
+
+      // The cost campaign. Both branches sit above the single-item economics path: "что дальше"
+      // is a question, not a dictated number, and a batch of two or more costs is a shape the
+      // single-item parser would take the first of and silently drop the rest.
+      if (asksWhatNext(text)) {
+        const state = await costCampaignState(db, agent.account_id)
+        await tgSendHtml(botToken, chatId, nextCard(state.targets, state.remaining))
+        return
+      }
+      if (looksLikeCostBatch(text)) {
+        try {
+          if (await handleCostBatch(db, agent, botToken, owner, text)) return
+        } catch (e) { console.error('commerce cost batch failed:', e) }
       }
 
       if (OPENROUTER_API_KEY && looksLikeEconomics(text)) {
