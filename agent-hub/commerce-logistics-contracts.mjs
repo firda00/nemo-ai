@@ -47,6 +47,7 @@ const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
 const costMigration = read('supabase/migrations/20260806250000_commerce_uzum_purchase_price.sql')
 const costCampaign = read('supabase/functions/_shared/commerceCostCampaign.ts')
 const batchMigration = read('supabase/migrations/20260806260000_commerce_cost_batch.sql')
+const ownerMigration = read('supabase/migrations/20260806270000_commerce_owner_value_outranks_uzum.sql')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -311,6 +312,9 @@ const checks = [
   ['a pasted calculation is never read as a dictated cost', costCampaign.includes('COMPUTED_LINE') && costCampaign.includes('somebody else') && costCampaign.includes('COMPUTED_LINE.test(segment)')],
   ['a cost at or above the selling price is refused whatever the parse did', costCampaign.includes("kind: 'implausible'") && costCampaign.includes('Nobody buys for what they') && costCampaign.includes('item.costUzs >= price')],
   ['the plausibility check has the price to check against', costCampaign.includes('export async function latestPricesUzs') && tgProcess.includes('latestPricesUzs(db, skus.map')],
+  ['a confirmed value leaves both provenance lists, so a sync cannot take it back', ownerMigration.includes('Out of BOTH lists') && ownerMigration.includes('api_fields = v_api') && ownerMigration.includes('outrank a reading')],
+  ['a dictated cost is labelled as the owner value it is', ownerMigration.includes("unit_cost_source = case when v_proposal.unit_cost_tiyin is not null then 'owner'") && ownerMigration.includes('Repair the rows already confirmed')],
+  ['the ownership migration is registered for deploy', deploy.includes('20260806270000_commerce_owner_value_outranks_uzum.sql')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],

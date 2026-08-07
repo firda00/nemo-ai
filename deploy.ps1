@@ -93,6 +93,7 @@ Apply-Migration .\supabase\migrations\20260806230000_browser_observation_total_l
 Apply-Migration .\supabase\migrations\20260806240000_commerce_listing_drafts.sql
 Apply-Migration .\supabase\migrations\20260806250000_commerce_uzum_purchase_price.sql
 Apply-Migration .\supabase\migrations\20260806260000_commerce_cost_batch.sql
+Apply-Migration .\supabase\migrations\20260806270000_commerce_owner_value_outranks_uzum.sql
 
 $schemaCheckSql = @'
 select
