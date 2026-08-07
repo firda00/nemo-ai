@@ -9,6 +9,23 @@ export const extraUz = {
     }
   },
   "commerce": {
+      "findings": {
+        "title": "Nemo nimani aniqladi",
+        "hint": "Har bir xulosa o‘z raqamlariga tayanadi. Qaror talab qiladiganlari ro‘yxatda, qolgan fon esa bitta qatorda — 93 ta nom hech kimga yordam bermaydi.",
+        "loading": "Xulosalar yuklanmoqda…",
+        "empty": "Hozircha shoshilinch hech narsa yo‘q.",
+        "stockoutUrgent": "Tugadi, talab bor",
+        "stockoutQuiet": "Yana {n} ta mahsulot nol qoldiq bilan, bir hafta ichida sotuvsiz.",
+        "reorder": "Sotib olish vaqti",
+        "margin": "Marja maqsaddan past",
+        "soldLastWeek": "Bir haftada sotildi:",
+        "stockLeft": "Qoldi:",
+        "order": "Buyurtma bering:",
+        "marginNow": "Marja:",
+        "floor": "Eng past narx:",
+        "estimatedTitle": "Hisobda Nemo bahosi ishlatilgan — bu sizning raqamingiz emas.",
+        "andMore": "yana {n} ta",
+      },
       "listing": {
         "title": "Listing Agent — yangi mahsulot qoralamasi",
         "hint": "Mahsulotni oddiy so‘z bilan yozing. Nemo matnni tayyorlaydi va darhol iqtisodini hisoblaydi: komissiya siz allaqachon sotayotgan toifadan, logistika e’lon qilingan o‘lchamlardan. Nemo Uzumga hech narsa joylamaydi — qoralamani o‘zingiz ko‘chirasiz.",
@@ -106,6 +123,9 @@ export const extraUz = {
     "okStage": "{total} qator tayyorlandi: {valid} to‘g‘ri, {unmatched} mos kelmadi, {invalid} xato.",
     "errReadFile": "Import faylini o‘qib bo‘lmadi.",
     "sku": {
+      "sourceOwner": "siz",
+      "sourceOwnerTitle": "Bu tannarxni siz aytgansiz. Uzum sinxronizatsiyasi uni hech qachon almashtirmaydi.",
+      "sourceUzumTitle": "Uzum haqiqiy sotuvda olgan xarid narxi. Siz o‘zingiznikini aytsangiz, u ustun bo‘ladi.",
       "returnsSample": "({n} sotuv)",
       "returnsSampleHint": "Qaytarish zaxirasi — baho. Sotuvlar kam bo‘lsa, Nemo shu toifadagi umumiy darajani oladi: bitta qaytarish ikki sotuvdan 50% degani emas.",
       "uzumFees": "Uzum: komissiya · logistika",
@@ -1595,6 +1615,23 @@ export const extraRu = {
     }
   },
   "commerce": {
+      "findings": {
+        "title": "Что нашёл Nemo",
+        "hint": "Каждый вывод опирается на свои числа. То, что требует решения, — списком; остальной фон — одной строкой, потому что 93 названия не помогают никому.",
+        "loading": "Загружаю выводы…",
+        "empty": "Срочного пока нет.",
+        "stockoutUrgent": "Закончились, спрос есть",
+        "stockoutQuiet": "Ещё {n} товаров с нулевым остатком и без продаж за неделю.",
+        "reorder": "Пора закупать",
+        "margin": "Маржа ниже цели",
+        "soldLastWeek": "Продано за неделю:",
+        "stockLeft": "Осталось:",
+        "order": "Заказать:",
+        "marginNow": "Маржа:",
+        "floor": "Минимальная цена:",
+        "estimatedTitle": "В расчёте использована оценка Nemo — это не ваше число.",
+        "andMore": "и ещё {n}",
+      },
       "listing": {
         "title": "Listing Agent — черновик нового товара",
         "hint": "Опишите товар обычными словами. Nemo напишет текст и сразу посчитает экономику: комиссию — из категории, в которой вы уже продаёте, логистику — из заявленных габаритов. Nemo ничего не публикует на Uzum: черновик вы переносите сами.",
@@ -1692,6 +1729,9 @@ export const extraRu = {
     "okStage": "Подготовлено {total} строк: {valid} корректных, {unmatched} без совпадения, {invalid} с ошибками.",
     "errReadFile": "Не удалось прочитать файл импорта.",
     "sku": {
+      "sourceOwner": "вы",
+      "sourceOwnerTitle": "Эту себестоимость назвали вы. Синхронизация с Uzum её не перезапишет.",
+      "sourceUzumTitle": "Закупочная цена, которую Uzum указал на реальной продаже. Ваше число будет старше.",
       "returnsSample": "({n} продаж)",
       "returnsSampleHint": "Резерв возвратов — оценка. При малых продажах Nemo берёт общий уровень по категории: один возврат из двух продаж не значит 50%.",
       "uzumFees": "Uzum: комиссия · логистика",
@@ -3181,6 +3221,23 @@ export const extraEn = {
     }
   },
   "commerce": {
+      "findings": {
+        "title": "What Nemo found",
+        "hint": "Every conclusion rests on its own numbers. What needs a decision is listed; the rest of the background is one line, because 93 names help nobody.",
+        "loading": "Loading findings…",
+        "empty": "Nothing urgent right now.",
+        "stockoutUrgent": "Out of stock, demand exists",
+        "stockoutQuiet": "{n} more products at zero stock with no sales this week.",
+        "reorder": "Time to reorder",
+        "margin": "Margin below target",
+        "soldLastWeek": "Sold this week:",
+        "stockLeft": "Left:",
+        "order": "Order:",
+        "marginNow": "Margin:",
+        "floor": "Floor price:",
+        "estimatedTitle": "A Nemo estimate went into this figure — it is not your number.",
+        "andMore": "{n} more",
+      },
       "listing": {
         "title": "Listing Agent — draft for a new product",
         "hint": "Describe the product in plain words. Nemo writes the copy and prices it immediately: commission from a category you already sell in, logistics from the declared dimensions. Nemo publishes nothing to Uzum — you copy the draft across yourself.",
@@ -3278,6 +3335,9 @@ export const extraEn = {
     "okStage": "Staged {total} rows: {valid} valid, {unmatched} unmatched, {invalid} invalid.",
     "errReadFile": "Could not read import file.",
     "sku": {
+      "sourceOwner": "you",
+      "sourceOwnerTitle": "You stated this cost. A Uzum sync will never overwrite it.",
+      "sourceUzumTitle": "The purchase price Uzum reported on a real sale. Your own figure outranks it.",
       "returnsSample": "({n} sales)",
       "returnsSampleHint": "The return reserve is an estimate. On thin sales Nemo uses the category rate instead: one return out of two sales does not mean 50%.",
       "uzumFees": "Uzum: commission · logistics",

@@ -7,6 +7,7 @@ export type CommerceSku = {
   external_sku: string
   title: string
   unit_cost_tiyin: number | null
+  unit_cost_source: string | null
   commission_percent: number | null
   fulfillment_tiyin: number | null
   returns_reserve_percent: number | null
@@ -107,6 +108,15 @@ export function CommerceSkuTable({ skus, onSave }: { skus: CommerceSku[]; onSave
                         onChange={(event) => setDrafts((current) => ({ ...current, [sku.id]: { ...current[sku.id], [field.key]: event.target.value } }))}
                       />
                       {estimated.includes(field.key) && <span title={t('commerce.sku.estimatedTitle')} className="text-xs font-semibold text-amber">≈</span>}
+                      {/* Three sources now produce a cost — a Nemo placeholder, a price Uzum
+                          charged on a real sale, and the owner's own word — and they are not
+                          interchangeable. The ≈ said only "guessed"; this says whose number it is. */}
+                      {field.key === 'unit_cost_tiyin' && sku.unit_cost_source === 'uzum_sale' && (
+                        <span title={t('commerce.sku.sourceUzumTitle')} className="text-[10px] font-semibold uppercase text-teal">uzum</span>
+                      )}
+                      {field.key === 'unit_cost_tiyin' && sku.unit_cost_source === 'owner' && (
+                        <span title={t('commerce.sku.sourceOwnerTitle')} className="text-[10px] font-semibold uppercase text-accent-cyan">{t('commerce.sku.sourceOwner')}</span>
+                      )}
                     </div>
                   </td>
                 ))}

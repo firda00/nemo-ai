@@ -51,6 +51,7 @@ const ownerMigration = read('supabase/migrations/20260806270000_commerce_owner_v
 const stockoutMigration = read('supabase/migrations/20260806280000_commerce_stockout.sql')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
+const findingsUi = read('src/components/platform/CommerceFindings.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
 const extensionBackground = read('extensions/nemo-browser/background.js')
 const extensionManifest = read('extensions/nemo-browser/manifest.json')
@@ -321,6 +322,12 @@ const checks = [
   ['demand makes a stockout urgent, absence of demand does not', commerceWorker.includes("severity: (sold7d ?? 0) > 0 ? 'critical' : 'warning'") && commerceWorker.includes('stock is a fact from')],
   ['only stockouts with demand are listed; the rest are one line', commerceDigest.includes('ninety-four bullet points is a wall') && commerceDigest.includes('const urgentStockouts') && commerceDigest.includes('без продаж за неделю')],
   ['the stockout migration is registered for deploy', deploy.includes('20260806280000_commerce_stockout.sql')],
+  // The web page showed every input and none of the conclusions.
+  ['the interface shows what the sync concluded, not only what it read', findingsUi.includes('on the screen where the owner can act on it') && commerceControl.includes("action === 'list_findings'") && commercePage.includes('<CommerceFindings')],
+  ['the Zero Noise rule holds on the page as it does in the digest', findingsUi.includes('the large quiet background collapses into a single') && findingsUi.includes('quietStockouts') && findingsUi.includes('stockoutQuiet')],
+  ['a floor price built on an estimate is marked as such on screen', findingsUi.includes('estimated_inputs') && findingsUi.includes('rests on a Nemo guess rather than on their own figure')],
+  ['findings are scoped to the account catalogues', commerceControl.includes("eq('account_id', profile.account_id)") && commerceControl.includes("in('sku_id', [...byId.keys()])")],
+  ['the table says whose number the cost is, not merely that it is a guess', skuTable.includes('unit_cost_source') && skuTable.includes('they are not') && skuTable.includes('sourceOwner')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],

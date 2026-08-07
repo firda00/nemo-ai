@@ -215,7 +215,7 @@ Deno.serve(async (req) => {
     const catalog = await catalogForAccount(admin, profile.account_id, body?.catalog_id)
     if (!catalog) return json({ error: 'catalog not found' }, 404)
     const { data: skus, error } = await admin.from('commerce_skus')
-      .select('id, external_sku, title, unit_cost_tiyin, commission_percent, fulfillment_tiyin, returns_reserve_percent, returns_sample_units, lead_time_days, moq, safety_stock, min_margin_percent, estimated_fields, economics_revision')
+      .select('id, external_sku, title, unit_cost_tiyin, unit_cost_source, commission_percent, fulfillment_tiyin, returns_reserve_percent, returns_sample_units, lead_time_days, moq, safety_stock, min_margin_percent, estimated_fields, economics_revision')
       .eq('catalog_id', catalog.id).order('title').limit(500)
     if (error) return json({ error: 'could not load SKUs' }, 500)
     const { data: run } = await admin.from('commerce_sync_runs').select('id, scheduled_for')
@@ -493,6 +493,34 @@ Deno.serve(async (req) => {
       volume_litres: economics.volume_litres,
       fulfillment_basis: economics.fulfillment_basis,
     })
+  }
+
+  if (action === 'list_findings') {
+    // Everything the worker concluded, for the screen where the owner can act on it. Until now
+    // these existed only in the database and the Telegram digest: the page showed the inputs and
+    // hid the conclusions.
+    const { data: catalogs } = await admin.from('commerce_catalogs').select('id').eq('account_id', profile.account_id)
+    const catalogIds = (catalogs ?? []).map((row: { id: string }) => row.id)
+    if (!catalogIds.length) return json({ ok: true, findings: [], counts: {} })
+
+    const { data: skus } = await admin.from('commerce_skus').select('id, title, external_sku').in('catalog_id', catalogIds)
+    const byId = new Map((skus ?? []).map((sku: Record<string, unknown>) => [sku.id, sku]))
+    if (!byId.size) return json({ ok: true, findings: [], counts: {} })
+
+    const { data: rows, error } = await admin.from('commerce_recommendations')
+      .select('id, kind, severity, calculation, suggested_action, sku_id, last_detected_at')
+      .eq('status', 'open').in('sku_id', [...byId.keys()])
+      .order('severity', { ascending: true }).order('last_detected_at', { ascending: false }).limit(400)
+    if (error) return json({ error: 'could not load findings' }, 500)
+
+    const counts: Record<string, number> = {}
+    const findings = (rows ?? []).map((row: Record<string, unknown>) => {
+      const key = `${row.kind}:${row.severity}`
+      counts[key] = (counts[key] ?? 0) + 1
+      const sku = byId.get(row.sku_id) as Record<string, unknown> | undefined
+      return { ...row, title: sku?.title ?? '', external_sku: sku?.external_sku ?? '' }
+    })
+    return json({ ok: true, findings, counts })
   }
 
   if (action === 'list_listing_drafts') {

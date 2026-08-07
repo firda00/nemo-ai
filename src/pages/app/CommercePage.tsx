@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
 import { CommerceListingAgent, type CategoryChoice, type ListingDraft } from '../../components/platform/CommerceListingAgent'
+import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
@@ -61,6 +62,7 @@ export default function CommercePage() {
   const [skus, setSkus] = useState<CommerceSku[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [drafts, setDrafts] = useState<ListingDraft[]>([])
+  const [findings, setFindings] = useState<Finding[]>([])
   const [categoryChoices, setCategoryChoices] = useState<CategoryChoice[]>([])
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | null>(null)
@@ -80,6 +82,13 @@ export default function CommercePage() {
     setProposals(result?.ok ? result.proposals ?? [] : [])
   }, [])
 
+  const loadFindings = useCallback(async () => {
+    if (!supabase) { setFindings([]); return }
+    const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_findings' } })
+    const result = data as { ok?: boolean; findings?: Finding[] } | null
+    setFindings(result?.ok ? result.findings ?? [] : [])
+  }, [])
+
   const loadDrafts = useCallback(async () => {
     if (!supabase) { setDrafts([]); return }
     const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_listing_drafts' } })
@@ -95,6 +104,7 @@ export default function CommercePage() {
       loadSkus(selectedCatalogId),
       loadProposals(),
       loadDrafts(),
+      loadFindings(),
     ])
     const status = statusResult.data as { ok?: boolean; pilot?: Pilot | null; catalogs?: Catalog[]; telegram_connected?: boolean; error?: string } | null
     const list = listResult.data as { ok?: boolean; batches?: Batch[]; error?: string } | null
@@ -107,7 +117,7 @@ export default function CommercePage() {
     if (listResult.error || !list?.ok) setMessage({ ok: false, text: list?.error ?? listResult.error?.message ?? t('commerce.errImports') })
     else setBatches(list.batches ?? [])
     setLoading(false)
-  }, [catalogId, loadSkus, loadProposals, loadDrafts])
+  }, [catalogId, loadSkus, loadProposals, loadDrafts, loadFindings])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void load() }, 0)
@@ -325,6 +335,15 @@ export default function CommercePage() {
         <Card className="lg:col-span-2" padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.pilotStatus')}</p><p className="mt-2 text-lg font-semibold text-text">{loading ? t('common.loading') : pilot?.status ?? t('commerce.notStarted')}</p><p className="mt-1 text-xs text-muted">{pilot?.expires_at ? t('commerce.expires', { date: new Date(pilot.expires_at).toLocaleDateString() }) : t('commerce.noPilot')}</p></Card>
         <Card padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalogs')}</p><p className="mt-2 text-lg font-semibold text-text">{catalogs.length}</p><p className="mt-1 text-xs text-muted">{selectedCatalog ? `${selectedCatalog.name} · ${selectedCatalog.status}` : t('commerce.discoverFirst')}</p></Card>
       </div>
+
+      {/* The conclusions, first. Everything below this card is an input to them. */}
+      <Card className="mt-4" padding="md">
+        <div>
+          <p className="text-sm font-semibold text-text">{t('commerce.findings.title')}</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.findings.hint')}</p>
+        </div>
+        <div className="mt-4"><CommerceFindings findings={findings} loading={loading} /></div>
+      </Card>
 
       {catalogs.some((catalog) => catalog.last_sync_error) && (
         <Card className="mt-4" padding="md">
