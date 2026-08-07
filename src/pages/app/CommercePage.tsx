@@ -355,7 +355,14 @@ export default function CommercePage() {
     <div className="container-page max-w-5xl py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-indigo/15 text-accent-indigo"><Database size={20} /></span><div><h1 className="text-2xl font-semibold tracking-tight text-text">{t('commerce.title')}</h1><p className="text-sm text-muted">{t('commerce.subtitle')}</p></div></div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled || pilot?.status === 'active'}>{t('commerce.startPilot')}</Button><Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button><Button variant="outline" onClick={syncNow} loading={busy === 'sync'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<RefreshCw size={15} />}>{t('commerce.syncNow')}</Button></div>
+        {/* Nothing connected yet means exactly one thing to do, and the card below is it. These
+            three lived in the header, above that card — "start pilot", "find shops", "sync" — so
+            the topmost button on an empty page was the one that finds shops and syncs nothing.
+            Twice in a row that is what got pressed, and twice the catalogues appeared with no
+            audit behind them. A single action cannot compete with three that look like it. */}
+        {(loading || catalogs.length > 0) && (
+          <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled || pilot?.status === 'active'}>{t('commerce.startPilot')}</Button><Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button><Button variant="outline" onClick={syncNow} loading={busy === 'sync'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<RefreshCw size={15} />}>{t('commerce.syncNow')}</Button></div>
+        )}
       </div>
 
       {message && <div className={`mt-5 flex items-start gap-2 rounded-xl px-3 py-2 text-sm ${message.ok ? 'bg-teal/10 text-teal border border-teal/20' : 'bg-danger/10 text-danger'}`}><>{message.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}</><span>{message.text}{!message.ok && /owner|владел|egasi/i.test(message.text) && t('commerce.ownerHint')}</span></div>}

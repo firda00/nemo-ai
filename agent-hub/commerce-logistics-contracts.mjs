@@ -335,6 +335,7 @@ const checks = [
   ['key normalisation lives where it can be tested outside Deno', providerKey.includes('tested outside Deno') && !providerKey.includes('esm.sh')],
   ['onboarding is one idempotent action, not four ordered buttons', commerceControl.includes("action === 'onboard'") && commerceControl.includes('Every step') && commerceControl.includes('alreadyQueued')],
   ['a first sync is started, not awaited and called finished', commerceControl.includes('sync_started: true') && commerceControl.includes('spinner that ends and one that lies')],
+  ['an empty page offers one way to start, not four', commercePage.includes('A single action cannot compete with three that look like it') && commercePage.includes('{(loading || catalogs.length > 0) && (')],
   ['the connect card disappears once there is something to look at', commercePage.includes('!loading && !catalogs.length') && commercePage.includes('commerce.onboard.action')],
   ['the first sync is kicked through waitUntil, not a bare un-awaited fetch', commerceControl.includes('waitUntil, NOT a bare un-awaited fetch') && commerceControl.includes('runtime?.waitUntil') && commerceControl.includes('const kick = fetch')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
