@@ -283,6 +283,12 @@ const checks = [
   ['the commission is gathered from every catalogue, not one picked by a tie', listingChat.includes('Every catalogue, not one') && listingChat.includes("eq('status', 'active')") && !listingChat.includes("order('created_at').limit(1)") && !commerceControl.includes("eq('status', 'active').order('created_at').limit(1)")],
   ['both surfaces share one catalogue reader', commerceControl.includes("import { catalogueContext } from '../_shared/commerceListingChat.ts'") && commerceControl.includes('const context = await catalogueContext(admin, profile.account_id)')],
   ['a matched shelf brings its own shop and margin target', listingModule.includes('Which catalogue the shelf lives in') && listingChat.includes('category?.min_margin_percent ?? context.defaultMinMargin') && commerceControl.includes('catalog_id: category?.catalog_id ?? null')],
+  // The sales report: every read since day one asked for a window in the year 55000.
+  ['the sales window is expressed in seconds, which is what Uzum answers', uzum.includes('const to = Math.floor(Date.now() / 1000)') && uzum.includes('const from = to - days * 86_400') && !uzum.includes('const to = Date.now()')],
+  ['a wrongly-asked window can no longer look like a quiet week', uzum.includes('reported: number | null') && uzum.includes('totalElements') && uzum.includes('indistinguishable from a')],
+  ['finance pages are spaced so a 429 is not mistaken for no sales', uzum.includes('Uzum answers back-to-back finance calls with 429')],
+  ['the purchase price Uzum states on a sale is captured', uzum.includes('costBySku') && uzum.includes("pick(item, ['purchasePrice'])")],
+  ['sales are keyed by the variant Uzum names, not the product card', uzum.includes("pick(item, ['skuTitle', 'productId', 'id'])") && uzum.includes('skuTitle FIRST') && commerceWorker.includes('The finance report names the variant')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 

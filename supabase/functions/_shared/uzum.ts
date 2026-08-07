@@ -256,6 +256,14 @@ export interface UzumSales {
   revenue: number | null
   unitsBySku: Record<string, number>
   namesBySku: Record<string, string>
+  /**
+   * What the API says the window holds, from its own totalElements — independent of what we then
+   * managed to parse. A read that asked the wrong question used to be indistinguishable from a
+   * week with no sales, and for weeks it was the wrong question.
+   */
+  reported: number | null
+  /** Purchase cost per unit as Uzum reports it on a completed sale. The seller's real number. */
+  costBySku: Record<string, number>
   error?: string
 }
 
@@ -271,28 +279,47 @@ export interface UzumSales {
  */
 export async function uzumSalesRows(token: string, shopId: string, days = 7, maxPages = 5): Promise<UzumSales> {
   const id = String(shopId).trim()
-  const empty: UzumSales = { ok: false, days, orders: 0, revenue: null, unitsBySku: {}, namesBySku: {} }
+  const empty: UzumSales = { ok: false, days, orders: 0, revenue: null, unitsBySku: {}, namesBySku: {}, reported: null, costBySku: {} }
   if (!/^\d{1,18}$/.test(id)) return { ...empty, error: 'нужен числовой ID магазина' }
-  const to = Date.now()
-  const from = to - days * 86_400_000
+  // SECONDS. The first version sent Date.now() — milliseconds — which places the window somewhere
+  // in the year 55000. Uzum answers 200 with an empty list for that, so every sales read since the
+  // beginning reported zero units and nothing anywhere could tell it apart from a quiet week.
+  // Probed against the live API: seconds returns rows, milliseconds returns none, ISO returns 400.
+  const to = Math.floor(Date.now() / 1000)
+  const from = to - days * 86_400
   const unitsBySku: Record<string, number> = {}
   const namesBySku: Record<string, string> = {}
+  const costBySku: Record<string, number> = {}
   const orderIds = new Set<string>()
+  let reported: number | null = null
 
   for (let page = 0; page < maxPages; page++) {
+    // Uzum answers back-to-back finance calls with 429. One breath between pages costs a second
+    // and is the difference between reading the report and measuring the rate limiter.
+    if (page > 0) await new Promise((resolve) => setTimeout(resolve, 1200))
     const query = `shopIds=${encodeURIComponent(id)}&dateFrom=${from}&dateTo=${to}&page=${page}&size=50&group=false`
     const response = await request(`/v1/finance/orders?${query}`, token)
     if (!response.ok) return { ...empty, error: errorMessage(response.data, response.status) }
+    const total = num((response.data as Record<string, unknown> | null)?.totalElements)
+    if (total != null && reported === null) reported = total
     const batch = listOf(response.data)
     if (!batch.length) break
     for (const item of batch) {
-      const sku = String(pick(item, ['productId', 'skuTitle', 'id'])?.value ?? '').trim()
+      // skuTitle FIRST. It is the variant — "AYOL88-BONI-КОРИЧН" — and it matches a stored SKU
+      // exactly. productId is the product card: one id covers every colour, so keying on it made
+      // a single sale unattributable without smearing it across thirty variants, and the guard
+      // against smearing then discarded it. Correct window, correct rows, still zeros.
+      const sku = String(pick(item, ['skuTitle', 'productId', 'id'])?.value ?? '').trim()
       if (!sku) continue
       const amount = num(pick(item, ['amount'])?.value) ?? 0
       const returned = num(pick(item, ['amountReturns'])?.value) ?? 0
       const cancelled = num(pick(item, ['cancelled'])?.value) ?? 0
       const netUnits = Math.max(0, amount - returned - cancelled)
       unitsBySku[sku] = (unitsBySku[sku] ?? 0) + netUnits
+      // Uzum states the purchase price on a completed sale. Kept per SKU as the most recent one
+      // seen; it is the seller's own number, not the 50%-of-retail placeholder Nemo starts with.
+      const cost = num(pick(item, ['purchasePrice'])?.value)
+      if (cost != null && cost > 0) costBySku[sku] = cost
       const orderId = String(pick(item, ['orderId'])?.value ?? '').trim()
       if (orderId) orderIds.add(orderId)
       const name = String(pick(item, ['productTitle', 'skuTitle'])?.value ?? '').slice(0, 120)
@@ -300,7 +327,7 @@ export async function uzumSalesRows(token: string, shopId: string, days = 7, max
     }
     if (batch.length < 50) break
   }
-  return { ok: true, days, orders: orderIds.size, revenue: null, unitsBySku, namesBySku }
+  return { ok: true, days, orders: orderIds.size, revenue: null, unitsBySku, namesBySku, reported, costBySku }
 }
 
 /** Read product/SKU metadata for an explicitly selected seller shop. No mutations. */

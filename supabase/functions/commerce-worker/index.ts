@@ -38,6 +38,9 @@ const nonNegativeInteger = (value: number | null): number | null =>
 function salesFor(row: UzumProductRow, sales: Any, productIdCounts: Record<string, number>, titleCounts: Record<string, number>): number | null {
   if (!sales.ok) return null
   if (sales.unitsBySku[row.sku] != null) return nonNegativeInteger(sales.unitsBySku[row.sku])
+  // The finance report names the variant, and that is what a SKU's title holds. Exact, so no
+  // uniqueness guard is needed: one variant name, one SKU.
+  if (row.name && sales.unitsBySku[row.name] != null) return nonNegativeInteger(sales.unitsBySku[row.name])
   if (row.productId && productIdCounts[row.productId] === 1 && sales.unitsBySku[row.productId] != null) {
     return nonNegativeInteger(sales.unitsBySku[row.productId])
   }
@@ -346,6 +349,72 @@ Deno.serve(async (req) => {
     // assumed. Sums across the shop answer that: if sold, returned, active and created add up
     // like stock buckets rather than lifetime history, the reserve is built on the wrong number.
     // Counts only. No title, no price, no SKU code leaves this endpoint.
+    // Every snapshot reports zero units sold while the product cards report 341 lifetime sales.
+    // Either the shop really sold nothing this week or the sales report is being asked the wrong
+    // question — and the reader returns ok:true on an empty list, so nothing upstream can tell.
+    // This probes the same endpoint with several date encodings and reports COUNTS and FIELD NAMES
+    // only: enough to see which window the API actually answers, and no order contents.
+    if (inspectBody.mode === 'sales') {
+      const now = Date.now()
+      const days = 7
+      const windows: Record<string, { from: string; to: string }> = {
+        milliseconds: { from: String(now - days * 86_400_000), to: String(now) },
+        seconds: { from: String(Math.floor((now - days * 86_400_000) / 1000)), to: String(Math.floor(now / 1000)) },
+        iso_date: { from: new Date(now - days * 86_400_000).toISOString().slice(0, 10), to: new Date(now).toISOString().slice(0, 10) },
+        milliseconds_90d: { from: String(now - 90 * 86_400_000), to: String(now) },
+      }
+      const report: Record<string, unknown> = {}
+      let first = true
+      for (const [label, range] of Object.entries(windows)) {
+        // Uzum answered three back-to-back probes with 429. Spacing them out is the difference
+        // between measuring the API and measuring its rate limiter.
+        if (!first) await new Promise((resolve) => setTimeout(resolve, 2500))
+        first = false
+        const query = `shopIds=${encodeURIComponent(catalog.external_shop_id)}&dateFrom=${range.from}&dateTo=${range.to}&page=0&size=50&group=false`
+        const probe = await fetch(`https://api-seller.uzum.uz/api/seller-openapi/v1/finance/orders?${query}`, {
+          headers: { Authorization: token, Accept: 'application/json' },
+        }).catch(() => null)
+        if (!probe) { report[label] = { error: 'network' }; continue }
+        const payload = await probe.json().catch(() => null)
+        const list = ['orderItems', 'orders', 'payload', 'data', 'result', 'items', 'content']
+          .map((key) => payload?.[key])
+          .find((value) => Array.isArray(value)) ?? (Array.isArray(payload) ? payload : [])
+        report[label] = {
+          status: probe.status,
+          envelope_keys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+          // What the API says it has, independent of what this page returned.
+          total_elements: payload?.totalElements ?? null,
+          rows: list.length,
+          row_keys: list[0] && typeof list[0] === 'object' ? Object.keys(list[0]) : [],
+        }
+      }
+      // Knowing the window is right is only half of it: the units still have to find their SKU.
+      // This matches the identifiers the finance rows actually carry against the ones stored, and
+      // reports WHICH key matches — attribution is where a correct read still ends in zeros.
+      const secondsQuery = `shopIds=${encodeURIComponent(catalog.external_shop_id)}&dateFrom=${windows.seconds.from}&dateTo=${windows.seconds.to}&page=0&size=50&group=false`
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      const salesResponse = await fetch(`https://api-seller.uzum.uz/api/seller-openapi/v1/finance/orders?${secondsQuery}`, {
+        headers: { Authorization: token, Accept: 'application/json' },
+      }).catch(() => null)
+      const salesPayload = salesResponse?.ok ? await salesResponse.json().catch(() => null) : null
+      const items: Array<Record<string, unknown>> = Array.isArray(salesPayload?.orderItems) ? salesPayload.orderItems : []
+      const { data: storedSkus } = await db.from('commerce_skus')
+        .select('external_sku, title, external_product_id').eq('catalog_id', catalog.id)
+      const byExternalSku = new Set((storedSkus ?? []).map((row: Record<string, unknown>) => String(row.external_sku)))
+      const byTitle = new Set((storedSkus ?? []).map((row: Record<string, unknown>) => String(row.title)))
+      const byProductId = new Set((storedSkus ?? []).map((row: Record<string, unknown>) => String(row.external_product_id)))
+      const attribution = items.map((item) => ({
+        productId: String(item.productId ?? ''),
+        skuTitle: String(item.skuTitle ?? ''),
+        amount: item.amount ?? null,
+        purchasePrice: item.purchasePrice ?? null,
+        matches_product_id: byProductId.has(String(item.productId ?? '')),
+        matches_external_sku: byExternalSku.has(String(item.skuTitle ?? '')),
+        matches_title: byTitle.has(String(item.skuTitle ?? '')),
+      }))
+      return json({ ok: true, shop: catalog.external_shop_id, report, stored_skus: (storedSkus ?? []).length, attribution })
+    }
+
     if (inspectBody.mode === 'quantities') {
       const counters = ['quantityCreated', 'quantitySold', 'quantityReturned', 'quantityActive', 'quantityAvailable', 'quantityMissing', 'quantityDefected', 'quantityPending', 'returnedPercentage', 'avgdsales', 'turnover']
       const sums: Record<string, { sum: number; present: number }> = {}
