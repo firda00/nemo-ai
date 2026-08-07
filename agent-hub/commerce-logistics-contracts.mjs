@@ -44,6 +44,7 @@ const listingModule = read('supabase/functions/_shared/listingDraft.ts')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
+const costMigration = read('supabase/migrations/20260806250000_commerce_uzum_purchase_price.sql')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -289,6 +290,12 @@ const checks = [
   ['finance pages are spaced so a 429 is not mistaken for no sales', uzum.includes('Uzum answers back-to-back finance calls with 429')],
   ['the purchase price Uzum states on a sale is captured', uzum.includes('costBySku') && uzum.includes("pick(item, ['purchasePrice'])")],
   ['sales are keyed by the variant Uzum names, not the product card', uzum.includes("pick(item, ['skuTitle', 'productId', 'id'])") && uzum.includes('skuTitle FIRST') && commerceWorker.includes('The finance report names the variant')],
+  // The purchase price Uzum states on a completed sale.
+  ['a cost Uzum charged replaces an estimate and never an owner value', costMigration.includes('never touches a number the owner stated') && costMigration.includes("v_owns_cost := v_sku.unit_cost_tiyin is not null") && costMigration.includes("'[\"unit_cost_tiyin\"]'::jsonb")],
+  ['where a cost came from is recorded, not inferred later', costMigration.includes("unit_cost_source in ('uzum_sale', 'owner', 'estimate')") && costMigration.includes('Backfill the label')],
+  ['the worker sends the real purchase price per variant', commerceWorker.includes('sales.costBySku?.[row.name]') && commerceWorker.includes('Reported in sum')],
+  ['severity is gated by the inputs the margin really uses', unitEconomics.includes('export const MARGIN_INPUTS') && unitEconomics.includes('silently holding every price alert down to a warning') && commerceWorker.includes('const priceInputs = [...MARGIN_INPUTS]')],
+  ['the purchase price migration is registered for deploy', deploy.includes('20260806250000_commerce_uzum_purchase_price.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 

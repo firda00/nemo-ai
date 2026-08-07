@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  MARGIN_INPUTS,
   RETURN_FEE_MULTIPLIER,
   batchOutcome,
   effectiveFulfillmentTiyin,
@@ -75,4 +76,12 @@ assert.equal(batch.investment_tiyin, 100 * hijab.cost)
 assert.equal(batch.profit_tiyin, Math.round(100 * netProfitTiyin(hijab.price, hijab.cost, fees)))
 assert.ok(batch.roi_percent > 27 && batch.roi_percent < 28, `ROI is profit over cash out, got ${batch.roi_percent}`)
 
-console.log('[OK] Unit economics behaviour: 17 assertions')
+// The severity gate must list the inputs the margin actually uses. The return reserve is not
+// one of them while a return is billed nothing — and listing it there held every price alert
+// down to a warning, including on SKUs whose cost Uzum itself had confirmed.
+assert.equal(MARGIN_INPUTS.includes('returns_reserve_percent'), RETURN_FEE_MULTIPLIER > 0, 'the reserve gates severity only while it can move the margin')
+for (const field of ['unit_cost_tiyin', 'fulfillment_tiyin', 'commission_percent', 'min_margin_percent']) {
+  assert.ok(MARGIN_INPUTS.includes(field), `the margin depends on ${field}, so an estimate of it must cap severity`)
+}
+
+console.log('[OK] Unit economics behaviour: 22 assertions')

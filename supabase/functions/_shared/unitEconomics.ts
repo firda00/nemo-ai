@@ -137,6 +137,24 @@ export function batchOutcome(units: number, priceTiyin: number, unitCostTiyin: n
   }
 }
 
+/**
+ * The inputs the margin ACTUALLY depends on, derived from the model rather than listed by hand.
+ *
+ * This gates alert severity: an alert resting on a Nemo estimate is capped at a warning. The list
+ * used to be hand-written and included the return reserve — which, since a returned unit is billed
+ * nothing, cannot move the margin by a single tiyin. So an estimate that changes no answer was
+ * silently holding every price alert down to a warning, including on SKUs whose cost Uzum itself
+ * had confirmed. Deriving it means the day RETURN_FEE_MULTIPLIER stops being zero, the reserve
+ * gates severity again on its own.
+ */
+export const MARGIN_INPUTS: readonly string[] = [
+  'unit_cost_tiyin',
+  'fulfillment_tiyin',
+  'commission_percent',
+  'min_margin_percent',
+  ...(RETURN_FEE_MULTIPLIER > 0 ? ['returns_reserve_percent'] : []),
+]
+
 /** True when every input the maths needs is present. Callers must check before computing. */
 export function feesComplete(fees: Partial<Fees> | null | undefined): fees is Fees {
   return Boolean(fees)

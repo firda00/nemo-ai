@@ -3,7 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
-import { batchOutcome, effectiveFulfillmentTiyin, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
+import { batchOutcome, effectiveFulfillmentTiyin, MARGIN_INPUTS, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
 import { reservesForCatalogue } from '../_shared/returnsReserve.ts'
 
@@ -101,7 +101,9 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
         fulfillment_tiyin: sku.fulfillment_tiyin!,
       })
       : null
-    const valueInputs = [...reorderInputs, 'unit_cost_tiyin', 'commission_percent', 'returns_reserve_percent', 'fulfillment_tiyin']
+    // Derived from the margin model, so an input that cannot move the answer cannot hold the
+    // alert down to a warning either.
+    const valueInputs = [...reorderInputs, ...MARGIN_INPUTS]
     if (dailyVelocity > 0 && stock <= reorderPoint) rows.push({
       ...base, kind: 'reorder', severity: severityFor(stock / dailyVelocity <= sku.lead_time_days, reorderInputs),
       dedupe_key: `commerce:${sku.id}:reorder`,
@@ -117,7 +119,7 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
     const net = netProfitTiyin(priceTiyin, sku.unit_cost_tiyin, fees)
     const marginPercent = marginFor(priceTiyin, sku.unit_cost_tiyin, fees) ?? 0
     const floorTiyin = minSellingPriceTiyin(sku.unit_cost_tiyin, sku.min_margin_percent, fees)
-    const priceInputs = ['unit_cost_tiyin', 'fulfillment_tiyin', 'commission_percent', 'returns_reserve_percent', 'min_margin_percent']
+    const priceInputs = [...MARGIN_INPUTS]
     if (marginPercent < sku.min_margin_percent) rows.push({
       ...base, kind: 'price_guard', severity: severityFor(marginPercent <= 0, priceInputs), dedupe_key: `commerce:${sku.id}:price_guard`,
       // effective_fulfillment_tiyin is the fee the margin above actually used: the outbound
@@ -229,6 +231,12 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
       // Stored so the interface can say what the reserve rests on. A rate over six sales and a
       // rate over six hundred deserve different amounts of trust from the owner.
       return_sample_units: row.soldUnits,
+      // The purchase price Uzum charged on a real sale of this exact variant. Reported in sum,
+      // stored in tiyin like every other amount. Null when the variant has not sold in the
+      // window — the RPC then leaves whatever is there, estimate or owner value, untouched.
+      unit_cost_tiyin: sales.ok && sales.costBySku?.[row.name] != null
+        ? Math.round(Number(sales.costBySku[row.name]) * 100)
+        : null,
       length: row.dimension?.length ?? null,
       width: row.dimension?.width ?? null,
       height: row.dimension?.height ?? null,
