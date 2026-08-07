@@ -89,6 +89,29 @@ assert.equal(tie.confident, false, 'a tie is not a decision')
 // A seller with no synced catalogue has no commission to borrow at all.
 assert.deepEqual(categoryCandidates('что угодно', []), { confident: false, options: [] })
 
+// The shelf carries its own shop with it. This seller has four catalogues discovered in the same
+// second, and the first version picked one of them by an ordering tie — a hijab was priced against
+// a catalogue of three washing bags at 20% while 110 hijab SKUs sat in a catalogue never opened.
+const MULTI_SHOP = [
+  { category: 'Kiyim va poyabzallarni yuvish uchun sumkalar, qoplar', commission_percent: 20, returns_reserve_percent: 22, skus: 3, catalog_id: 'everly-home', min_margin_percent: 15 },
+  { category: 'Hijob va tyurbanlar', commission_percent: 30, returns_reserve_percent: 43, skus: 24, catalog_id: 'ayollar-olami', min_margin_percent: 20 },
+]
+const across = categoryCandidates('женский хиджаб-бони из шифона, молочный', MULTI_SHOP, [
+  { text: 'Женский бони Молочный AYOL88-BONI-МОЛОЧ', category: 'Hijob va tyurbanlar' },
+  { text: 'Мешок для стирки UY01-MESHOK', category: 'Kiyim va poyabzallarni yuvish uchun sumkalar, qoplar' },
+])
+assert.equal(across.confident, true, 'the hijab must reach the hijab shelf across catalogues')
+assert.equal(across.options[0].catalog_id, 'ayollar-olami', 'and bring its own catalogue with it')
+
+const priced = draftEconomics({
+  dimension: { length: 238, width: 138, height: 34, weight: 120 },
+  unitCostTiyin: uzs(18_000),
+  category: across.options[0],
+  minMarginPercent: across.options[0].min_margin_percent,
+})
+assert.equal(priced.commission_percent, 30, 'the commission is the hijab one, not the washing-bag one')
+assert.equal(priced.min_selling_price_tiyin, uzs(47_000), '(18000 + 5500) / (1 - 0.30 - 0.20) = 47 000')
+
 // --- Economics: facts, or a named gap ------------------------------------------------------
 
 const complete = draftEconomics({
@@ -167,4 +190,4 @@ assert.deepEqual(empty.unknown_attributes, [])
 assert.equal(parseCopy(null), null)
 assert.equal(parseCopy('{"title_ru":"x"}'), null, 'a string is not a parsed object')
 
-console.log('[OK] Listing draft behaviour: 40 assertions')
+console.log('[OK] Listing draft behaviour: 45 assertions')

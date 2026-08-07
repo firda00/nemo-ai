@@ -258,10 +258,10 @@ const checks = [
   ['the model writes prose and never a number', listingModule.includes('Never write a price, a discount, a delivery time or a warranty') && listingModule.includes('Never invent a material')],
   ['numbers are extracted from the owner text by pattern, not by model', listingModule.includes('export function extractNumbers') && listingModule.includes('A cost needs a word that means cost')],
   ['a price the model returned is discarded rather than stored', listingModule.includes('export function parseCopy') && !/price/i.test(listingModule.split('export function parseCopy')[1].split('\n}')[0])],
-  ['the commission comes from categories the seller already sells in', listingModule.includes('The commission is never guessed') && commerceControl.includes('Commission and returns are read off')],
+  ['the commission comes from categories the seller already sells in', listingModule.includes('The commission is never guessed') && listingChat.includes('Commission and returns are pooled per category')],
   ['an unmatched category asks the owner instead of borrowing a number', listingModule.includes('full list comes back to pick from') && commerceControl.includes('category_choices: category ? [] : candidates.options')],
   // The signal that actually bridges Russian input to Uzbek category names.
-  ["the seller's own product names are what match the category", listingModule.includes('Words shared with their OWN PRODUCT NAMES') && listingModule.includes('export interface SkuExemplar') && commerceControl.includes('const exemplars = (skuRows ?? []).map')],
+  ["the seller's own product names are what match the category", listingModule.includes('Words shared with their OWN PRODUCT NAMES') && listingModule.includes('export interface SkuExemplar') && listingChat.includes('exemplars: (rows ?? []).map')],
   ['one common word never picks a commission, and a tie never does either', listingModule.includes('Two matched words minimum') && listingModule.includes('const decisive = Boolean(best) && best.score > 0 && (!runnerUp || runnerUp.score < best.score)')],
   ['a product with no dimensions is priced at the real no-VGH rate', listingModule.includes('the expensive truth') && listingModule.includes("fulfillment_basis: input.dimension ? 'dimensions' : 'no_dimensions'")],
   ['no commission or no cost means no floor price, never a guessed one', listingModule.includes('a floor computed from a guessed commission') && listingModule.includes('const floor = fees && input.unitCostTiyin != null')],
@@ -280,6 +280,9 @@ const checks = [
   ['a forwarded listing button cannot move another account draft', telegramWebhook.includes('draft.account_id !== owner.accountId')],
   ['Telegram approval still publishes nothing', telegramWebhook.includes('Nemo туда ничего не пишет') && !telegramWebhook.includes("status: 'published'")],
   ['model text reaches Telegram escaped', listingChat.includes("import { escapeHtml } from './telegramFormat.ts'") && listingChat.includes('escapeHtml(draft.title_ru')],
+  ['the commission is gathered from every catalogue, not one picked by a tie', listingChat.includes('Every catalogue, not one') && listingChat.includes("eq('status', 'active')") && !listingChat.includes("order('created_at').limit(1)") && !commerceControl.includes("eq('status', 'active').order('created_at').limit(1)")],
+  ['both surfaces share one catalogue reader', commerceControl.includes("import { catalogueContext } from '../_shared/commerceListingChat.ts'") && commerceControl.includes('const context = await catalogueContext(admin, profile.account_id)')],
+  ['a matched shelf brings its own shop and margin target', listingModule.includes('Which catalogue the shelf lives in') && listingChat.includes('category?.min_margin_percent ?? context.defaultMinMargin') && commerceControl.includes('catalog_id: category?.catalog_id ?? null')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],
 

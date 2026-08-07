@@ -110,6 +110,14 @@ export interface CategoryOption {
   returns_reserve_percent: number | null
   /** How many of the seller's own SKUs sit in it. This is why the commission is a fact. */
   skus: number
+  /**
+   * Which catalogue the shelf lives in. A seller with four shops has four catalogues, and a new
+   * product belongs to whichever one already carries its category — so the match decides the
+   * catalogue rather than the other way round.
+   */
+  catalog_id?: string
+  /** That catalogue's own minimum margin, so the floor price uses the target set for that shop. */
+  min_margin_percent?: number
 }
 
 const STOP = new Set(['для', 'и', 'с', 'на', 'в', 'the', 'and', 'va', 'uchun', 'сум', 'so', 'мм', 'см'])

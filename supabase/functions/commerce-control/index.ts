@@ -4,7 +4,8 @@ import { uzumShopList } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 import { extractUzumFees, hasAnyFee } from '../_shared/uzumFees.ts'
-import { categoryCandidates, draftEconomics, extractNumbers, generateCopy, type CategoryOption } from '../_shared/listingDraft.ts'
+import { categoryCandidates, draftEconomics, extractNumbers, generateCopy } from '../_shared/listingDraft.ts'
+import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { PRIMARY_MODEL } from '../_shared/llm.ts'
 
@@ -430,48 +431,26 @@ Deno.serve(async (req) => {
     const sourceText = typeof body?.source_text === 'string' ? body.source_text.trim().slice(0, 4000) : ''
     if (sourceText.length < 10) return json({ error: 'describe the product in at least a sentence' }, 400)
 
-    const catalog = body?.catalog_id
-      ? await catalogForAccount(admin, profile.account_id, body.catalog_id)
-      : (await admin.from('commerce_catalogs').select('id').eq('account_id', profile.account_id).eq('status', 'active').order('created_at').limit(1).maybeSingle()).data
-    if (!catalog) return json({ error: 'connect a catalogue first — the commission comes from categories you already sell in' }, 409)
-
-    // Commission and returns are read off the seller's OWN SKUs. Averaged per category, which is
-    // exact when Uzum states one rate for the category — and when it does not, the spread is a
-    // fact about their catalogue rather than a number invented here.
-    const { data: skuRows } = await admin.from('commerce_skus')
-      .select('uzum_category, commission_percent, returns_reserve_percent, title, external_sku')
-      .eq('catalog_id', catalog.id).not('uzum_category', 'is', null).not('commission_percent', 'is', null)
-    const byCategory = new Map<string, { commission: number[]; returns: number[] }>()
-    for (const row of skuRows ?? []) {
-      const bucket = byCategory.get(row.uzum_category) ?? { commission: [], returns: [] }
-      bucket.commission.push(Number(row.commission_percent))
-      if (row.returns_reserve_percent != null) bucket.returns.push(Number(row.returns_reserve_percent))
-      byCategory.set(row.uzum_category, bucket)
-    }
-    const mean = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null)
-    const options: CategoryOption[] = [...byCategory.entries()].map(([category, bucket]) => ({
-      category,
-      commission_percent: Number((mean(bucket.commission) ?? 0).toFixed(4)),
-      returns_reserve_percent: bucket.returns.length ? Number(mean(bucket.returns)!.toFixed(4)) : null,
-      skus: bucket.commission.length,
-    }))
-
-    // Their own product names are the signal that actually matches: they write Russian, Uzum
-    // names categories in Uzbek, so "хиджаб" shares nothing with "Hijob va tyurbanlar" — but it
-    // shares plenty with "Женский бони Белый", which Uzum already filed there.
-    const exemplars = (skuRows ?? []).map((row) => ({ text: `${row.external_sku ?? ''} ${row.title ?? ''}`, category: row.uzum_category }))
+    // Categories, exemplars and margin targets come from the SAME helper the Telegram flow uses —
+    // it reads every active catalogue on the account. A per-surface copy of this is what let one
+    // surface price a hijab against a catalogue of washing bags.
+    const context = await catalogueContext(admin, profile.account_id)
+    if (!context.hasCatalogue) return json({ error: 'connect a catalogue first — the commission comes from categories you already sell in' }, 409)
 
     // An explicit choice from the owner always wins over the match.
     const chosen = text(body?.uzum_category, 160)
-    const candidates = categoryCandidates(sourceText, options, exemplars)
+    const candidates = categoryCandidates(sourceText, context.options, context.exemplars)
     const category = chosen
-      ? options.find((option) => option.category === chosen) ?? null
+      ? context.options.find((option) => option.category === chosen) ?? null
       : (candidates.confident ? candidates.options[0] : null)
 
     const numbers = extractNumbers(sourceText)
-    const { data: defaults } = await admin.from('commerce_catalogs').select('default_min_margin_percent').eq('id', catalog.id).maybeSingle()
-    const minMargin = Number(defaults?.default_min_margin_percent ?? 20)
-    const economics = draftEconomics({ dimension: numbers.dimension, unitCostTiyin: numbers.unitCostTiyin, category, minMarginPercent: minMargin })
+    const economics = draftEconomics({
+      dimension: numbers.dimension,
+      unitCostTiyin: numbers.unitCostTiyin,
+      category,
+      minMarginPercent: category?.min_margin_percent ?? context.defaultMinMargin,
+    })
 
     // The copy is optional on purpose: a model outage must not cost the owner the economics,
     // which is the half of this that no model produced.
@@ -480,7 +459,7 @@ Deno.serve(async (req) => {
 
     const { data: draft, error } = await admin.from('commerce_listing_drafts').insert({
       account_id: profile.account_id,
-      catalog_id: catalog.id,
+      catalog_id: category?.catalog_id ?? null,
       source_text: sourceText,
       title_ru: copy?.title_ru ?? null,
       title_uz: copy?.title_uz ?? null,

@@ -162,40 +162,69 @@ export function draftKeyboard(draft: DraftRow, categories: CategoryOption[]) {
   return { inline_keyboard: rows }
 }
 
-/** Categories the seller already sells in, plus their own product names to match against. */
+/**
+ * Categories the seller already sells in, across EVERY active catalogue, plus their own product
+ * names to match against.
+ *
+ * Every catalogue, not one. The first version asked for the oldest active catalogue and stopped
+ * there — and this seller's four shops were all discovered in the same second, so the tie was
+ * broken arbitrarily by Postgres. A hijab got priced against a catalogue of three washing bags at
+ * 20% commission while the 110 hijab SKUs sat in a catalogue the code never opened.
+ *
+ * A category can exist in more than one shop; it is attributed to the one carrying the most SKUs
+ * in it, because that is where the commission evidence is strongest.
+ */
 export async function catalogueContext(db: any, accountId: string): Promise<{
-  catalogId: string | null
-  minMargin: number
+  hasCatalogue: boolean
+  defaultMinMargin: number
   options: CategoryOption[]
   exemplars: Array<{ text: string; category: string }>
 }> {
-  const { data: catalog } = await db.from('commerce_catalogs')
+  const { data: catalogs } = await db.from('commerce_catalogs')
     .select('id, default_min_margin_percent').eq('account_id', accountId).eq('status', 'active')
-    .order('created_at').limit(1).maybeSingle()
-  if (!catalog) return { catalogId: null, minMargin: 20, options: [], exemplars: [] }
+  if (!catalogs?.length) return { hasCatalogue: false, defaultMinMargin: 20, options: [], exemplars: [] }
 
+  const marginByCatalog = new Map<string, number>(
+    catalogs.map((row: Record<string, unknown>) => [String(row.id), Number(row.default_min_margin_percent ?? 20)]),
+  )
   const { data: rows } = await db.from('commerce_skus')
-    .select('uzum_category, commission_percent, returns_reserve_percent, title, external_sku')
-    .eq('catalog_id', catalog.id).not('uzum_category', 'is', null).not('commission_percent', 'is', null)
+    .select('catalog_id, uzum_category, commission_percent, returns_reserve_percent, title, external_sku')
+    .in('catalog_id', catalogs.map((row: Record<string, unknown>) => row.id))
+    .not('uzum_category', 'is', null).not('commission_percent', 'is', null)
 
-  const byCategory = new Map<string, { commission: number[]; returns: number[] }>()
+  // Commission and returns are pooled per category; the catalogue is decided by SKU count within it.
+  const byCategory = new Map<string, { commission: number[]; returns: number[]; catalogs: Map<string, number> }>()
   for (const row of rows ?? []) {
-    const bucket = byCategory.get(row.uzum_category) ?? { commission: [], returns: [] }
+    const bucket = byCategory.get(row.uzum_category) ?? { commission: [], returns: [], catalogs: new Map<string, number>() }
     bucket.commission.push(Number(row.commission_percent))
     if (row.returns_reserve_percent != null) bucket.returns.push(Number(row.returns_reserve_percent))
+    bucket.catalogs.set(row.catalog_id, (bucket.catalogs.get(row.catalog_id) ?? 0) + 1)
     byCategory.set(row.uzum_category, bucket)
   }
   const mean = (values: number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null)
 
-  return {
-    catalogId: catalog.id,
-    minMargin: Number(catalog.default_min_margin_percent ?? 20),
-    options: [...byCategory.entries()].map(([category, bucket]) => ({
+  const options: CategoryOption[] = [...byCategory.entries()].map(([category, bucket]) => {
+    const [catalogId] = [...bucket.catalogs.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]
+    return {
       category,
       commission_percent: Number((mean(bucket.commission) ?? 0).toFixed(4)),
       returns_reserve_percent: bucket.returns.length ? Number(mean(bucket.returns)!.toFixed(4)) : null,
       skus: bucket.commission.length,
-    })),
+      catalog_id: catalogId,
+      min_margin_percent: marginByCatalog.get(catalogId) ?? 20,
+    }
+  })
+
+  // With no category matched there is still a margin target to use: the shop holding most of their
+  // catalogue is the defensible default, and ties break on id so the answer never wobbles.
+  const skusByCatalog = new Map<string, number>()
+  for (const row of rows ?? []) skusByCatalog.set(row.catalog_id, (skusByCatalog.get(row.catalog_id) ?? 0) + 1)
+  const biggest = [...skusByCatalog.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]
+
+  return {
+    hasCatalogue: true,
+    defaultMinMargin: biggest ? marginByCatalog.get(biggest[0]) ?? 20 : 20,
+    options,
     exemplars: (rows ?? []).map((row: Record<string, unknown>) => ({
       text: `${row.external_sku ?? ''} ${row.title ?? ''}`,
       category: String(row.uzum_category),
@@ -251,7 +280,7 @@ export async function buildListingDraft(
   sourceText: string,
 ): Promise<{ draft: DraftRow; categories: CategoryOption[] } | null> {
   const context = await catalogueContext(db, owner.accountId)
-  if (!context.catalogId) return null
+  if (!context.hasCatalogue) return null
 
   const numbers = extractNumbers(sourceText)
   const candidates = categoryCandidates(sourceText, context.options, context.exemplars)
@@ -260,14 +289,16 @@ export async function buildListingDraft(
     dimension: numbers.dimension,
     unitCostTiyin: numbers.unitCostTiyin,
     category,
-    minMarginPercent: context.minMargin,
+    // The matched shelf brings its own shop's margin target with it; without a match, the shop
+    // holding most of the catalogue sets it.
+    minMarginPercent: category?.min_margin_percent ?? context.defaultMinMargin,
   })
   // The copy is optional: a model outage must not cost the owner the economics, which is the half
   // no model produced.
   const copy = apiKey ? await generateCopy(apiKey, Deno.env.get('PRIMARY_MODEL') ?? 'openai/gpt-4o-mini', sourceText) : null
 
   const { data: draft, error } = await db.from('commerce_listing_drafts')
-    .insert(draftRow({ accountId: owner.accountId, catalogId: context.catalogId, sourceText, numbers, economics, category, copy }))
+    .insert(draftRow({ accountId: owner.accountId, catalogId: category?.catalog_id ?? null, sourceText, numbers, economics, category, copy }))
     .select('*').single()
   if (error || !draft) return null
   return { draft: draft as DraftRow, categories: candidates.options }
@@ -286,13 +317,17 @@ export async function applyCategory(db: any, draft: DraftRow, option: CategoryOp
       : null,
     unitCostTiyin: draft.unit_cost_tiyin,
     category: option,
-    minMarginPercent: Number(draft.min_margin_percent ?? 20),
+    // The shelf carries its shop's margin target. Keeping the draft's earlier value would price a
+    // product against a target belonging to a different shop.
+    minMarginPercent: option.min_margin_percent ?? Number(draft.min_margin_percent ?? 20),
   })
   const { data: updated } = await db.from('commerce_listing_drafts').update({
     uzum_category: option.category,
+    catalog_id: option.catalog_id ?? null,
     commission_percent: economics.commission_percent,
     returns_reserve_percent: economics.returns_reserve_percent,
     fulfillment_tiyin: economics.fulfillment_tiyin,
+    min_margin_percent: economics.min_margin_percent,
     min_selling_price_tiyin: economics.min_selling_price_tiyin,
     missing: economics.missing,
     updated_at: new Date().toISOString(),
