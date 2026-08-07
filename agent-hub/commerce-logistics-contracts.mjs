@@ -336,6 +336,7 @@ const checks = [
   ['onboarding is one idempotent action, not four ordered buttons', commerceControl.includes("action === 'onboard'") && commerceControl.includes('Every step') && commerceControl.includes('alreadyQueued')],
   ['a first sync is started, not awaited and called finished', commerceControl.includes('sync_started: true') && commerceControl.includes('spinner that ends and one that lies')],
   ['the connect card disappears once there is something to look at', commercePage.includes('!loading && !catalogs.length') && commercePage.includes('commerce.onboard.action')],
+  ['the first sync is kicked through waitUntil, not a bare un-awaited fetch', commerceControl.includes('waitUntil, NOT a bare un-awaited fetch') && commerceControl.includes('runtime?.waitUntil') && commerceControl.includes('const kick = fetch')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],

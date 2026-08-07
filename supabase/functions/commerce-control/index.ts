@@ -215,13 +215,22 @@ Deno.serve(async (req) => {
       if (queueError) return json({ error: 'could not queue the first sync', step: 'sync' }, 500)
     }
 
-    // Kick the worker and do NOT wait: a first sync of several shops runs past this function's
-    // own time limit, and a timeout here would look like a failure while the sync was fine.
-    fetch(`${URL}/functions/v1/commerce-worker`, {
+    // Kick the worker without blocking the response: a first sync of several shops runs past this
+    // function's own time limit, and a timeout here would look like a failure while the sync was
+    // fine.
+    //
+    // Through waitUntil, NOT a bare un-awaited fetch. The isolate is torn down as soon as the
+    // response is returned, so a promise nobody is holding may never be sent at all — the runs
+    // would sit queued until the four-hourly cron, while the page polled for two minutes and
+    // showed the seller nothing. waitUntil is what keeps the isolate alive for it.
+    const kick = fetch(`${URL}/functions/v1/commerce-worker`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'manual' }),
     }).catch(() => {})
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const runtime = (globalThis as any).EdgeRuntime
+    if (runtime?.waitUntil) runtime.waitUntil(kick)
 
     return json({
       ok: true,
