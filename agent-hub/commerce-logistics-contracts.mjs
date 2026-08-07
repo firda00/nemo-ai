@@ -23,6 +23,8 @@ const autofillMigration = read('supabase/migrations/20260805120000_commerce_econ
 const notifyChannelMigration = read('supabase/migrations/20260805130000_commerce_notify_channel.sql')
 const proposalsMigration = read('supabase/migrations/20260805140000_commerce_economics_proposals.sql')
 const economicsChat = read('supabase/functions/_shared/commerceEconomicsChat.ts')
+const freshness = read('supabase/functions/_shared/commerceFreshness.ts')
+const freshnessMigration = read('supabase/migrations/20260807190000_commerce_freshness_watchdog.sql')
 const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
 const telegramHelper = read('supabase/functions/_shared/telegram.ts')
 const telegramFormat = read('supabase/functions/_shared/telegramFormat.ts')
@@ -105,7 +107,11 @@ const checks = [
   ['sync runs are fenced by claim token', /for update of r skip locked/.test(commerceMigration) && /claim_token = gen_random_uuid\(\)/.test(commerceMigration) && /interval '10 minutes'/.test(commerceMigration) && /eq\('claim_token', run\.claim_token\)\.eq\('status', 'running'\)/.test(commerceWorker) && /claim lost/.test(commerceWorker)],
   ['reorder alerts wait for seven full days of history', /7 \* 86_400_000/.test(commerceWorker) && /historyReady && stock != null/.test(commerceWorker)],
   ['critical alerts are deduplicated and marked only after Telegram accepts', /severity === 'critical' && !item\.alerted_at/.test(commerceDigest) && /if \(await tgSendHtml\(target\.token, target\.chatId, criticalText\(row\)\)\)/.test(commerceDigest) && /\.is\('alerted_at', null\)/.test(commerceDigest)],
-  ['daily digest is sent once per Tashkent day', /timeZone: 'Asia\/Tashkent'/.test(commerceDigest) && /digest_sent_at !== today/.test(commerceDigest) && /unsent\.length && await tgSend/.test(commerceDigest)],
+  // Was: "unsent.length && await tgSend(...)" — which pinned the digest to send ONLY when there
+  // were unsent findings. That conjunction was the silence bug itself: a dead sync produces no
+  // findings, so the seller heard nothing on the day it mattered. What must stay true is that a
+  // finding is reported once per Tashkent day, not that an empty finding list buys silence.
+  ['a finding is digested once per Tashkent day', /timeZone: 'Asia\/Tashkent'/.test(commerceDigest) && /digest_sent_at !== today/.test(commerceDigest) && /digest_sent_at: today/.test(commerceDigest)],
   ['telegram deep links are short-lived and single-use', /interval '15 minutes'/.test(telegramLinksMigration) && /revoke all on public\.commerce_telegram_links from public, anon, authenticated/.test(telegramLinksMigration) && telegramWebhook.includes('commerce_([0-9a-f-]{36})') && /const expired = link \? new Date\(link\.expires_at\) <= new Date\(\) : false/.test(telegramWebhook) && /if \(link && !link\.used_at && !expired\)/.test(telegramWebhook) && /\.is\('used_at', null\)/.test(telegramWebhook)],
   ['commerce money is stored as integer tiyin', /unit_cost_tiyin: integer\(/.test(commerceControl) && /row\.price \* 100/.test(commerceWorker) && /Math\.round\(Number\(normalized\) \* 100\)/.test(commercePage) && /unit_cost_tiyin bigint/.test(commerceMigration)],
   ['SKU matching is exact with an unmatched queue', /matching is intentionally exact/.test(commerceControl) && /'unmatched'/.test(commerceControl) && /unique \(catalog_id, external_sku\)/.test(commerceMigration)],
@@ -351,6 +357,25 @@ const checks = [
   ['the digest tells the owner how to unblock the numbers', commerceDigest.includes('надиктуйте её текстом или голосом прямо в этот чат') && commerceDigest.includes('себестоимость 20000, доставка 12 дней')],
   ['the welcome message explains that the chat accepts input', /Можно отвечать прямо сюда/.test(telegramWebhook) && /наговорите голосом/.test(telegramWebhook)],
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
+
+  // --- The silence watchdog: a broken sync must announce itself ---
+  // Every other finding is produced by the sync. When the sync dies no finding is produced, the
+  // digest has nothing unsent, and the seller receives nothing at all — a failure that presents
+  // as a calm week. These contracts hold the parts that stop that from being true again.
+  ['freshness is judged in the delivery path, not inside the sync it watches', commerceDigest.includes('commerce_catalog_freshness') && freshness.includes('the sync is the suspect') && !commerceWorker.includes('commerce_catalog_freshness')],
+  ['the digest reaches an account that has no findings at all', /for \(const accountId of accountIds\)/.test(commerceDigest) && !/for \(const \[accountId, accountRows\] of byAccount\)/.test(commerceDigest) && commerceDigest.includes('has no new findings by definition')],
+  ['a stale account is written to even when nothing is unsent', /if \(!unsent\.length && !warning\) continue/.test(commerceDigest) && /if \(unsent\.length\) \{[\s\S]{0,200}digest_sent_at: today/.test(commerceDigest)],
+  ['staleness is measured from data that arrived, not from a sync that claimed to run', freshnessMigration.includes('max(s.observed_at)') && freshness.includes('last_observed_at') && !/last_synced_at >=|last_synced_at <=/.test(freshness)],
+  ['the outage alert fires once per outage and rearms on recovery', commerceDigest.includes('stale_alerted_at: new Date().toISOString()') && /update\(\{ stale_alerted_at: null \}\)/.test(commerceDigest) && commerceDigest.includes('hygiene, not a notification')],
+  ['the threshold is whole worker cycles, so one hiccup is not an outage', /export const STALE_AFTER_HOURS = 12\b/.test(freshness) && freshness.includes('every four hours')],
+  ['a never-synced shop reads differently from one that stopped', freshness.includes("? 'never' : 'fresh'") && freshness.includes('не пришло ни одного товара') && freshness.includes('не обновлялись')],
+  ['the warning says the remaining numbers cannot be trusted', freshness.includes('Проверьте API-ключ или статус кабинета') && freshness.includes('на них нельзя опираться')],
+  // One dead shop out of four does not make the other three untrustworthy. A watchdog that
+  // overstates the damage gets muted exactly like one that understates it.
+  ['the warning claims no more breakage than there is', freshness.includes('allStale') && freshness.includes('Остальные магазины обновляются нормально') && /allStale: stale\.length >= \(catalogsPerAccount\.get\(accountId\) \?\? 1\)/.test(commerceDigest)],
+  ['shop names from Uzum cannot inject markup into the warning', /escapeHtml\(item\.name\)/.test(freshness) && /escapeHtml\(item\.error/.test(freshness)],
+  ['the watchdog rules can be tested outside Deno', !freshness.includes('esm.sh') && !/Deno\./.test(freshness)],
+  ['the freshness migration is registered for deploy', deploy.includes('20260807190000_commerce_freshness_watchdog.sql')],
 ]
 
 let failed = 0

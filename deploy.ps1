@@ -95,6 +95,7 @@ Apply-Migration .\supabase\migrations\20260806250000_commerce_uzum_purchase_pric
 Apply-Migration .\supabase\migrations\20260806260000_commerce_cost_batch.sql
 Apply-Migration .\supabase\migrations\20260806270000_commerce_owner_value_outranks_uzum.sql
 Apply-Migration .\supabase\migrations\20260806280000_commerce_stockout.sql
+Apply-Migration .\supabase\migrations\20260807190000_commerce_freshness_watchdog.sql
 
 $schemaCheckSql = @'
 select

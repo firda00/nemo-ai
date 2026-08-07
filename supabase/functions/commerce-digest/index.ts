@@ -5,6 +5,7 @@ import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSendHtml } from '../_shared/telegram.ts'
 import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { staleCatalogues, staleWarningText, type CatalogueFreshness } from '../_shared/commerceFreshness.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -160,6 +161,28 @@ Deno.serve(async (req) => {
     .select('id, severity, kind, calculation, suggested_action, alerted_at, digest_sent_at, commerce_skus!inner(external_sku, title, commerce_catalogs!inner(account_id))')
     .eq('status', 'open').in('commerce_skus.commerce_catalogs.account_id', accountIds).order('created_at', { ascending: false }).limit(500)
   if (error) return json({ error: 'recommendation_lookup_failed' }, 500)
+  // Freshness is read here, in the delivery path, rather than in the worker that produces findings.
+  // A watchdog hosted by the process it watches goes down with it: if the sync stops, so does every
+  // rule that runs inside the sync, and the silence it was meant to report becomes its own silence.
+  const { data: freshRows } = await db.rpc('commerce_catalog_freshness', { p_account_ids: accountIds })
+  const now = new Date()
+  const staleByAccount = new Map<string, CatalogueFreshness[]>()
+  const alertedByCatalog = new Map<string, string | null>()
+  const catalogsPerAccount = new Map<string, number>()
+  const recovered: string[] = []
+  for (const row of freshRows ?? []) {
+    const accountId = String(row.owner_account_id)
+    catalogsPerAccount.set(accountId, (catalogsPerAccount.get(accountId) ?? 0) + 1)
+    alertedByCatalog.set(String(row.catalog_id), row.stale_alerted_at ?? null)
+    const [stale] = staleCatalogues([row], now)
+    if (stale) staleByAccount.set(accountId, [...(staleByAccount.get(accountId) ?? []), stale])
+    else if (row.stale_alerted_at) recovered.push(String(row.catalog_id))
+  }
+  // Clearing happens before any send and regardless of whether Telegram is reachable: it is state
+  // hygiene, not a notification. A catalogue that recovers and breaks again must be able to alert
+  // a second time, while one continuous outage stays a single alert.
+  if (recovered.length) await db.from('commerce_catalogs').update({ stale_alerted_at: null }).in('id', recovered)
+
   const byAccount = new Map<string, any[]>()
   for (const row of rows ?? []) {
     const sku = row.commerce_skus
@@ -190,12 +213,31 @@ Deno.serve(async (req) => {
   }
 
   let sent = 0
+  let staleSent = 0
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(new Date())
-  for (const [accountId, accountRows] of byAccount) {
+  // Over every pilot account, not only the ones that produced findings. An account whose sync died
+  // has no new findings by definition, so the old loop could not reach the one seller who most
+  // needed to hear from us — it delivered warnings to everybody except the broken shop.
+  for (const accountId of accountIds) {
+    const accountRows = byAccount.get(accountId) ?? []
+    const stale = staleByAccount.get(accountId) ?? []
+    if (!accountRows.length && !stale.length) continue
     if (await blocksExternalActions(db, accountId)) continue
     const target = await telegramTarget(db, accountId)
     if (!target) continue
+    const multiShop = (catalogsPerAccount.get(accountId) ?? 0) > 1
+
     if (action === 'alerts') {
+      // Once per outage, not once every four hours. The flag is cleared the moment data returns,
+      // so a second outage is a second alert and one long outage stays one.
+      const unalerted = stale.filter((item) => !alertedByCatalog.get(item.catalogId))
+      const warning = staleWarningText(unalerted, { multiShop, allStale: stale.length >= (catalogsPerAccount.get(accountId) ?? 1) })
+      if (warning && await tgSendHtml(target.token, target.chatId, warning)) {
+        await db.from('commerce_catalogs').update({ stale_alerted_at: new Date().toISOString() })
+          .in('id', unalerted.map((item) => item.catalogId)).is('stale_alerted_at', null)
+        staleSent++
+        sent++
+      }
       for (const row of accountRows.filter((item) => item.severity === 'critical' && !item.alerted_at)) {
         if (await tgSendHtml(target.token, target.chatId, criticalText(row))) {
           await db.from('commerce_recommendations').update({ alerted_at: new Date().toISOString() }).eq('id', row.id).is('alerted_at', null)
@@ -205,11 +247,20 @@ Deno.serve(async (req) => {
     } else {
       const unsent = accountRows.filter((item) => item.digest_sent_at !== today)
       const stats = statsByAccount.get(accountId) ?? { skus: 0, approximate: 0 }
-      if (unsent.length && await tgSendHtml(target.token, target.chatId, digestText(unsent, stats))) {
-        await db.from('commerce_recommendations').update({ digest_sent_at: today }).in('id', unsent.map((item) => item.id))
+      const warning = staleWarningText(stale, { multiShop, allStale: stale.length >= (catalogsPerAccount.get(accountId) ?? 1) })
+      if (!unsent.length && !warning) continue
+      // The warning leads, and the digest is sent even when there is nothing new to report —
+      // silence was the bug. Everything under the warning was computed from data that stopped
+      // arriving, and the seller has to know that before reading a single number.
+      const text = [warning, unsent.length ? digestText(unsent, stats) : null].filter(Boolean).join('\n\n')
+      if (await tgSendHtml(target.token, target.chatId, text)) {
+        if (unsent.length) {
+          await db.from('commerce_recommendations').update({ digest_sent_at: today }).in('id', unsent.map((item) => item.id))
+        }
         sent++
+        if (warning) staleSent++
       }
     }
   }
-  return json({ ok: true, action, sent })
+  return json({ ok: true, action, sent, stale_sent: staleSent })
 })

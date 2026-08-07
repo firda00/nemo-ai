@@ -64,6 +64,7 @@
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",
     "test:cost-campaign": "node --experimental-strip-types agent-hub/cost-campaign-behavior.mjs",
     "test:onboarding-keys": "node --experimental-strip-types agent-hub/onboarding-behavior.mjs",
+    "test:freshness": "node --experimental-strip-types agent-hub/commerce-freshness-behavior.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview",
     "demo:swarm": "node agent-hub/demo-simulation.mjs",
