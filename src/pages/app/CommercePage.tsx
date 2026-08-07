@@ -129,8 +129,26 @@ export default function CommercePage() {
     setBusy('onboard'); setMessage(null)
     const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action: 'onboard' } })
     const result = data as { ok?: boolean; shops?: number; queued?: number; error?: string } | null
-    if (error || !result?.ok) setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.onboard.err') })
-    else setMessage({ ok: true, text: t('commerce.onboard.ok').replace('{shops}', String(result.shops ?? 0)) })
+    if (error || !result?.ok) {
+      setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.onboard.err') })
+      await load()
+      setBusy(null)
+      return
+    }
+    setMessage({ ok: true, text: t('commerce.onboard.ok').replace('{shops}', String(result.shops ?? 0)) })
+
+    // The first sync runs in the background, so the page has to come back for the answer. Without
+    // this the seller is told "results in a few minutes" by a screen that then never changes, and
+    // the only way to find out is to guess when to reload. The button stays in its loading state
+    // throughout, because work really is still happening.
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await new Promise((resolve) => window.setTimeout(resolve, 10_000))
+      const { data: statusData } = await supabase.functions.invoke('commerce-control', { body: { action: 'status' } })
+      const status = statusData as { ok?: boolean; catalogs?: Catalog[] } | null
+      // Every catalogue has either finished a sync or reported why it could not.
+      const settled = (status?.catalogs ?? []).filter((catalog) => catalog.status === 'active')
+      if (settled.length && settled.every((catalog) => catalog.last_synced_at || catalog.last_sync_error)) break
+    }
     await load()
     setBusy(null)
   }
