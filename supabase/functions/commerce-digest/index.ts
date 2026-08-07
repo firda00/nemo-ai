@@ -37,6 +37,26 @@ const name = (row: any) => `${escapeHtml(String(row.title ?? 'Товар'))} <co
 function criticalText(row: any) {
   const calc = row.calculation ?? {}
   const action = row.suggested_action ?? {}
+  const footer = ['', '<i>Это рекомендация. Nemo не оформляет заказ и не меняет цену.</i>']
+
+  // A stockout has no velocity, no reorder point and no suggested quantity — the reorder planner
+  // computes those and needs a week of history it does not have. Rendering this with the reorder
+  // wording produced "Хватит примерно на — дн." and "Рекомендуем заказать — шт.": three empty
+  // fields and no reason to act. Each kind gets the sentence its own facts support.
+  if (row.kind === 'stockout') {
+    return [
+      '🔴 <b>Товар закончился</b>',
+      '',
+      name(row),
+      'Остаток: <b>0 шт.</b>',
+      calc.sold_units_7d ? `Продано за последнюю неделю: <b>${num(calc.sold_units_7d)} шт.</b>` : '',
+      calc.price_tiyin ? `Цена на витрине: ${num(calc.price_tiyin / 100)} сум` : '',
+      '',
+      '👉 Спрос есть, а продавать нечего — стоит пополнить.',
+      ...footer,
+    ].filter(Boolean).join('\n')
+  }
+
   return [
     '🔴 <b>Товар заканчивается</b>',
     '',
@@ -46,8 +66,7 @@ function criticalText(row: any) {
     `Точка заказа: ${num(calc.reorder_point)} шт.`,
     '',
     `👉 Рекомендуем заказать <b>${num(action.units)} шт.</b>`,
-    '',
-    '<i>Это рекомендация. Nemo не оформляет заказ и не меняет цену.</i>',
+    ...footer,
   ].join('\n')
 }
 

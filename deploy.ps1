@@ -438,7 +438,7 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent');
+  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent');
 select cron.schedule(
   'nemo-autonomous-worker-every-minute',
   '* * * * *',
@@ -464,6 +464,21 @@ select cron.schedule(
       url := 'https://__REF__.supabase.co/functions/v1/commerce-digest',
       headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
       body := '{}'::jsonb
+    );$$
+);
+-- Urgent findings, three times a day in working hours. The digest carries everything once each
+-- morning; a SKU that sold last week and hit zero this afternoon should not wait until tomorrow
+-- to be mentioned. `alerted_at` makes each one send exactly once, so the extra passes are cheap.
+--
+-- Deliberately NOT aligned with every sync: the worker also runs at 19:00 and 23:00 UTC, which is
+-- midnight and 04:00 in Tashkent. An alert that wakes the owner teaches them to mute the bot.
+select cron.schedule(
+  'nemo-commerce-alerts-tashkent',
+  '25 3,7,11 * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/commerce-digest',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{"action":"alerts"}'::jsonb
     );$$
 );
 select cron.schedule(
