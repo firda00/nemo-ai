@@ -48,6 +48,7 @@ const costMigration = read('supabase/migrations/20260806250000_commerce_uzum_pur
 const costCampaign = read('supabase/functions/_shared/commerceCostCampaign.ts')
 const batchMigration = read('supabase/migrations/20260806260000_commerce_cost_batch.sql')
 const ownerMigration = read('supabase/migrations/20260806270000_commerce_owner_value_outranks_uzum.sql')
+const stockoutMigration = read('supabase/migrations/20260806280000_commerce_stockout.sql')
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -315,6 +316,11 @@ const checks = [
   ['a confirmed value leaves both provenance lists, so a sync cannot take it back', ownerMigration.includes('Out of BOTH lists') && ownerMigration.includes('api_fields = v_api') && ownerMigration.includes('outrank a reading')],
   ['a dictated cost is labelled as the owner value it is', ownerMigration.includes("unit_cost_source = case when v_proposal.unit_cost_tiyin is not null then 'owner'") && ownerMigration.includes('Repair the rows already confirmed')],
   ['the ownership migration is registered for deploy', deploy.includes('20260806270000_commerce_owner_value_outranks_uzum.sql')],
+  // Out of stock is knowable from the first sync; the reorder planner needs a week of velocity.
+  ['a stockout is reported without waiting for sales history', commerceWorker.includes("kind: 'stockout'") && commerceWorker.includes('needs a week of velocity before it can') && stockoutMigration.includes("'stockout'")],
+  ['demand makes a stockout urgent, absence of demand does not', commerceWorker.includes("severity: (sold7d ?? 0) > 0 ? 'critical' : 'warning'") && commerceWorker.includes('stock is a fact from')],
+  ['only stockouts with demand are listed; the rest are one line', commerceDigest.includes('ninety-four bullet points is a wall') && commerceDigest.includes('const urgentStockouts') && commerceDigest.includes('без продаж за неделю')],
+  ['the stockout migration is registered for deploy', deploy.includes('20260806280000_commerce_stockout.sql')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
   ['the Uzum facts migrations are registered for deploy', ['20260806180000', '20260806190000', '20260806200000', '20260806210000', '20260806220000'].every((id) => deploy.includes(id))],
   ['proposals migration is deployed', /20260805140000_commerce_economics_proposals\.sql/.test(deploy)],

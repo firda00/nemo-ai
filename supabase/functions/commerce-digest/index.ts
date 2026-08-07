@@ -75,15 +75,31 @@ function priceLine(row: any) {
  * information, but they are a single standing fact about the catalogue, not a hundred events,
  * so they collapse into one closing line that says what to do about it.
  */
+function stockoutLine(row: any) {
+  const calc = row.calculation ?? {}
+  const sold = calc.sold_units_7d
+  return `• ${name(row)}: остаток 0${sold ? `, продано за неделю ${num(sold)} шт.` : ''}`
+}
+
 function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   const reorders = rows.filter((row) => row.kind === 'reorder')
   const priceIssues = rows.filter((row) => row.kind === 'price_guard')
+  // A SKU at zero that sold last week is losing orders today; one that never sold may simply be
+  // finished. Only the first is a decision, so only the first is listed — the rest are one line,
+  // because ninety-four bullet points is a wall, not a briefing.
+  const stockouts = rows.filter((row) => row.kind === 'stockout')
+  const urgentStockouts = stockouts.filter((row) => row.severity === 'critical')
+  const quietStockouts = stockouts.length - urgentStockouts.length
   const today = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'Asia/Tashkent' }).format(new Date())
 
   const blocks: string[] = [`☀️ <b>Nemo Commerce — сводка за ${today}</b>`, '']
 
-  if (!reorders.length && !priceIssues.length) {
+  if (!reorders.length && !priceIssues.length && !stockouts.length) {
     blocks.push(stats.skus ? `✅ Срочных рисков нет. Все ${stats.skus} товаров под наблюдением.` : '✅ Срочных рисков нет.')
+  }
+  if (urgentStockouts.length) {
+    blocks.push('📦 <b>Закончились, а спрос есть</b>', urgentStockouts.slice(0, 5).map(stockoutLine).join('\n'))
+    if (urgentStockouts.length > 5) blocks.push(`…и ещё ${urgentStockouts.length - 5} в Commerce.`)
   }
   if (reorders.length) {
     blocks.push('🔴 <b>Срочная закупка</b>', reorders.slice(0, 5).map(reorderLine).join('\n'))
@@ -92,6 +108,11 @@ function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   if (priceIssues.length) {
     blocks.push('', '💰 <b>Маржа ниже минимума</b>', priceIssues.slice(0, 5).map(priceLine).join('\n'))
     if (priceIssues.length > 5) blocks.push(`…и ещё ${priceIssues.length - 5} в Commerce.`)
+  }
+
+  // One line, never a list. Ninety-four names would bury the handful that need a decision today.
+  if (quietStockouts) {
+    blocks.push('', `📦 Ещё ${quietStockouts} товаров с нулевым остатком без продаж за неделю — список в Commerce.`)
   }
 
   // One line, never a list: the state of the catalogue's economics plus the cheapest way to fix it.

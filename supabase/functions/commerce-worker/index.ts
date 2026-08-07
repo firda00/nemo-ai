@@ -82,6 +82,22 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
 
   if (!historyReady) missing.push('seven_full_days_of_history')
 
+  // Out of stock, said plainly. The reorder planner below answers "when will this run out" and
+  // needs a week of velocity before it can; this answers "it already has", which the stock figure
+  // from this morning settles on its own.
+  //
+  // Sales make it urgent rather than merely true: a SKU that sold last week and is now at zero is
+  // losing orders today. One that has never sold may simply be finished. And stock is a fact from
+  // Uzum, not an estimate, so this severity is not capped by the guessed-inputs rule — nothing
+  // here rests on a number Nemo invented.
+  if (stock === 0) rows.push({
+    ...base, kind: 'stockout',
+    severity: (sold7d ?? 0) > 0 ? 'critical' : 'warning',
+    dedupe_key: `commerce:${sku.id}:stockout`,
+    calculation: { stock_total: stock, sold_units_7d: sold7d, price_tiyin: priceTiyin, history_ready: historyReady },
+    suggested_action: { type: 'restock', sold_units_7d: sold7d }, last_detected_at: new Date().toISOString(),
+  })
+
   if (historyReady && stock != null && sold7d != null && sku.lead_time_days != null && sku.safety_stock != null) {
     const dailyVelocity = sold7d / 7
     const reorderPoint = Math.ceil(dailyVelocity * sku.lead_time_days) + sku.safety_stock
