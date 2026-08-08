@@ -3,6 +3,47 @@
 // Safe to edit by hand: add/adjust a key here and it flows through t('<namespace>.<key>').
 
 export const extraUz = {
+  "memory": {
+    "eyebrow": "Tashkilot xotirasi",
+    "title": "Tizim nimaga ishonadi",
+    "subtitle": "Bu yerda jamoa ish jarayonida bilib olgan narsalar. Har bir da'vo manbasini, dalillar sonini va amal qilish muddatini ko'rsatadi. Noto'g'risini bekor qiling — tuzatib bo'lmaydigan xotira umuman yo'q xotiradan yomonroq.",
+    "board": { "resolved": "Hal qilingan qarorlar", "accuracy": "Aniqlik", "unmeasurable": "O'lchab bo'lmadi" },
+    "recallsFailed": "Xotiraga {n} ta murojaat muvaffaqiyatsiz tugadi. Agentlar bu vaqtda xotirasiz ishlagan.",
+    "state": {
+      "title": "Aslida qanday ekanini ayting",
+      "hint": "Egasining so'zi agent xulosasidan ustun turadi va uni hech kim qayta yoza olmaydi.",
+      "kind": "Turi",
+      "placeholder": "Masalan: faqat oldindan to'lov bilan ishlaymiz",
+      "action": "Yozib qo'yish",
+    },
+    "stated": "Yozildi. Endi bu keyingi ishlarda hisobga olinadi.",
+    "rejected": {
+      "instruction": "Bu ko'rsatma kabi o'qiladi. Xotira dalil saqlaydi, buyruq emas.",
+      "delimiter": "Matnda xizmat belgilari bor — ularsiz qayta yozing.",
+      "shape": "Juda qisqa yoki juda uzun.",
+    },
+    "group": {
+      "disputed": "Bahsli",
+      "disputedHint": "Tizim ikkita bir-biriga zid xulosaga ega. Qaysi biri to'g'ri ekanini o'zingiz tanlang.",
+      "active": "Amalda",
+      "expired": "Muddati o'tgan",
+      "expiredHint": "Kuzatuvlar eskiradi. Bular endi hisobga olinmaydi.",
+      "retired": "Bekor qilingan",
+      "retiredHint": "Saqlanadi, lekin ishlatilmaydi.",
+    },
+    "kind": { "fact": "kuzatuv", "preference": "afzallik", "constraint": "qoida", "lesson": "saboq" },
+    "source": { "owner": "egasi", "agent": "agent", "tool": "asbob", "outcome": "natija" },
+    "evidence": "dalil {for}/{total}",
+    "noEvidence": "dalil yo'q",
+    "confidence": "ishonch {v}",
+    "until": "{d} gacha",
+    "expired": "muddati o'tgan",
+    "affirm": "Shu to'g'ri",
+    "retire": "Bekor qilish",
+    "empty": "Xotira hali bo'sh. Birinchi jamoaviy ishdan keyin bu yerda xulosalar paydo bo'ladi.",
+    "error": "Xotirani o'qib bo'lmadi.",
+    "retry": "Qayta urinish",
+  },
   "platform": {
     "integrations": {
       "replaceKey": "Kalitni yangilash",
@@ -1617,6 +1658,47 @@ export const extraUz = {
 } as const
 
 export const extraRu = {
+  "memory": {
+    "eyebrow": "Память организации",
+    "title": "Во что верит система",
+    "subtitle": "Здесь то, что команда выяснила, работая. У каждого утверждения видно происхождение, число свидетельств и срок годности. Ложное — снимайте: память, которую нельзя исправить, хуже отсутствующей.",
+    "board": { "resolved": "Решений разрешено", "accuracy": "Точность", "unmeasurable": "Не удалось измерить" },
+    "recallsFailed": "Обращений к памяти с ошибкой: {n}. Всё это время агенты работали без неё.",
+    "state": {
+      "title": "Скажите, как есть на самом деле",
+      "hint": "Слово владельца старше вывода агента, и переписать его агент не может.",
+      "kind": "Тип",
+      "placeholder": "Например: работаем только по предоплате",
+      "action": "Записать",
+    },
+    "stated": "Записано. Дальше это учитывается в работе.",
+    "rejected": {
+      "instruction": "Это читается как указание. Память хранит свидетельства, а не команды.",
+      "delimiter": "В тексте служебные символы — перепишите без них.",
+      "shape": "Слишком коротко или слишком длинно.",
+    },
+    "group": {
+      "disputed": "Оспаривается",
+      "disputedHint": "Система пришла к двум несовместимым выводам и не стала выбирать молча. Решите, какой верен.",
+      "active": "В работе",
+      "expired": "Истекло",
+      "expiredHint": "Наблюдения стареют. Эти больше не учитываются.",
+      "retired": "Снято",
+      "retiredHint": "Сохранено, но не используется.",
+    },
+    "kind": { "fact": "наблюдение", "preference": "предпочтение", "constraint": "правило", "lesson": "урок" },
+    "source": { "owner": "владелец", "agent": "агент", "tool": "инструмент", "outcome": "исход" },
+    "evidence": "свидетельств {for}/{total}",
+    "noEvidence": "не проверялось",
+    "confidence": "уверенность {v}",
+    "until": "до {d}",
+    "expired": "истекло",
+    "affirm": "Верно это",
+    "retire": "Снять",
+    "empty": "Память пока пуста. Выводы появятся после первого командного прогона.",
+    "error": "Не удалось прочитать память.",
+    "retry": "Повторить",
+  },
   "platform": {
     "integrations": {
       "replaceKey": "Обновить ключ",
@@ -3231,6 +3313,47 @@ export const extraRu = {
 } as const
 
 export const extraEn = {
+  "memory": {
+    "eyebrow": "Organizational memory",
+    "title": "What the system believes",
+    "subtitle": "What the team worked out while doing the work. Every claim shows where it came from, how much evidence it has and when it expires. Retract what is wrong — a memory you cannot correct is worse than none.",
+    "board": { "resolved": "Decisions resolved", "accuracy": "Accuracy", "unmeasurable": "Could not measure" },
+    "recallsFailed": "{n} memory lookups failed. Agents worked without it for that long.",
+    "state": {
+      "title": "Say how it actually is",
+      "hint": "The owner's word outranks an agent's inference, and no agent can overwrite it.",
+      "kind": "Type",
+      "placeholder": "For example: we work on prepayment only",
+      "action": "Record",
+    },
+    "stated": "Recorded. It counts from the next run on.",
+    "rejected": {
+      "instruction": "That reads as an instruction. Memory holds evidence, not commands.",
+      "delimiter": "The text contains control markers — please rewrite without them.",
+      "shape": "Too short or too long.",
+    },
+    "group": {
+      "disputed": "Disputed",
+      "disputedHint": "The system reached two incompatible conclusions and refused to pick one silently. Decide which holds.",
+      "active": "In use",
+      "expired": "Expired",
+      "expiredHint": "Observations age. These no longer count.",
+      "retired": "Retracted",
+      "retiredHint": "Kept, but not used.",
+    },
+    "kind": { "fact": "observation", "preference": "preference", "constraint": "rule", "lesson": "lesson" },
+    "source": { "owner": "owner", "agent": "agent", "tool": "tool", "outcome": "outcome" },
+    "evidence": "evidence {for}/{total}",
+    "noEvidence": "untested",
+    "confidence": "confidence {v}",
+    "until": "until {d}",
+    "expired": "expired",
+    "affirm": "This one holds",
+    "retire": "Retract",
+    "empty": "Memory is still empty. Conclusions appear after the first team run.",
+    "error": "Could not read memory.",
+    "retry": "Retry",
+  },
   "platform": {
     "integrations": {
       "replaceKey": "Replace key",

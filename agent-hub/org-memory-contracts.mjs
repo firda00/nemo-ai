@@ -17,6 +17,10 @@ const opsWatchdog = read('supabase/functions/ops-watchdog/index.ts')
 const ttl = read('supabase/migrations/20260807230000_org_claim_ttl.sql')
 const resolver = read('supabase/migrations/20260807240000_org_outcome_resolver.sql')
 const resolveFix = read('supabase/migrations/20260807250000_org_decision_resolve_fix.sql')
+const ownerMigration = read('supabase/migrations/20260807260000_org_memory_owner.sql')
+const ownerFn = read('supabase/functions/org-memory/index.ts')
+const memoryPage = read('src/pages/app/MemoryPage.tsx')
+const app = read('src/App.tsx')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -369,6 +373,52 @@ const checks = [
   ['the resolver migrations are registered for deploy',
     deploy.includes('20260807240000_org_outcome_resolver.sql')
     && deploy.includes('20260807250000_org_decision_resolve_fix.sql')],
+
+  // ── Экран владельца ───────────────────────────────────────────────────────────────────────
+  // Память, которую нельзя исправить, хуже отсутствующей: система верит, действует и не оставляет
+  // способа возразить.
+  ['the owner can read what the system believes and argue with it',
+    /action === 'list'/.test(ownerFn) && /action === 'retire'/.test(ownerFn)
+    && /action === 'affirm'/.test(ownerFn) && /action === 'state'/.test(ownerFn)
+    && /org-memory/.test(memoryPage) && /path="memory"/.test(app)],
+
+  // RLS отдал бы строку целиком, вместе с source_detail — идентификаторами прогонов и следами
+  // инструментов. Для изоляции арендаторов этого хватило бы; для минимальной привилегии нет.
+  ['internal provenance never reaches the browser',
+    !/source_detail/.test(memoryPage)
+    && /from_run: Boolean\(claim\.run_ref\)/.test(ownerFn)
+    && !/\.select\('\*'\)/.test(ownerFn)],
+
+  ['the owner cannot forge provenance or confidence',
+    /p_source: 'owner'/.test(ownerFn)
+    && !/evidence_for/.test(ownerFn.split("action === 'state'")[1] ?? '')],
+
+  // Слово владельца проходит тот же отсев, что и вывод агента: инъекция не становится безопаснее
+  // оттого, что её вставил человек.
+  ['an owner statement is screened like any other',
+    /const screen = screenStatement\(statement\)/.test(ownerFn)
+    && /return json\(\{ error: 'rejected', reason: screen\.reason \}, 400\)/.test(ownerFn)],
+
+  // Срок годности замера не зависит от того, кто его произнёс.
+  ['an owner observation expires like an agent observation',
+    /const validUntil = expiryFor\(kind, statement, new Date\(\), body\?\.horizon\)/.test(ownerFn)],
+
+  // Потерять слово владельца из-за недоступного Supabase.ai хуже, чем на время оставить
+  // ненаходимым: без вектора отзыв его не увидит, и владелец будет уверен, что система знает.
+  ['an owner statement survives an embedding outage and is caught up later',
+    /catch \{ embedding = null \}/.test(ownerFn)
+    && /org_claims_missing_embedding/.test(extractor)
+    && /org_claim_set_embedding/.test(extractor)],
+
+  ['resolving a dispute retires the rival rather than leaving the contradiction standing',
+    /status = 'disputed' and kind = v_kind and subject_key = v_subject/.test(ownerMigration)
+    && /'retired_rivals', v_retired/.test(ownerMigration)],
+
+  ['the owner screen distinguishes a failed read from an empty memory',
+    /«система ничего не знает» и «мы не\r?\n\s*\/\/ смогли спросить» — разные новости/.test(memoryPage)],
+
+  ['the owner migration is registered for deploy',
+    deploy.includes('20260807260000_org_memory_owner.sql')],
 ]
 
 let failed = 0

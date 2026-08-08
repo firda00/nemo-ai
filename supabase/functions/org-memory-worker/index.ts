@@ -165,9 +165,27 @@ Deno.serve(async (req) => {
   if (authorization !== `Bearer ${SERVICE_ROLE}` && (!CRON_SECRET || cron !== CRON_SECRET)) return json({ error: 'forbidden' }, 403)
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
+
+  // Достройка векторов. Слово владельца записывается даже когда Supabase.ai недоступен — потерять
+  // его хуже, чем на время оставить ненаходимым, — но без вектора отзыв его не увидит, и владелец
+  // будет уверен, что сказал системе то, чего она не знает. Догоняем здесь.
+  let embedded = 0
+  const { data: pending } = await db.rpc('org_claims_missing_embedding', { p_limit: 20 })
+  for (const claim of pending ?? []) {
+    try {
+      const vector = await embedText(String(claim.statement))
+      const { data: set } = await db.rpc('org_claim_set_embedding', { p_claim_id: claim.id, p_embedding: vector })
+      if (set) embedded++
+    } catch {
+      // Эмбеддинг всё ещё недоступен — строка останется в очереди до следующего запуска, а
+      // счётчики здоровья уже скажут об этом отдельно.
+      break
+    }
+  }
+
   const { data: jobs, error } = await db.rpc('org_memory_outbox_claim', { p_limit: MAX_JOBS_PER_INVOCATION, p_lease_seconds: 300 })
   if (error) return json({ error: 'claim_failed' }, 500)
-  if (!jobs?.length) return json({ ok: true, claimed: 0 })
+  if (!jobs?.length) return json({ ok: true, claimed: 0, embedded })
 
   const totals: JobOutcome = { inserted: 0, skipped_similar: 0, refused: 0, screened: 0, perishable: 0 }
   for (const job of jobs) {
@@ -185,5 +203,5 @@ Deno.serve(async (req) => {
       await db.rpc('org_memory_outbox_finish', { p_id: job.id, p_status: 'failed', p_error: String(cause) })
     }
   }
-  return json({ ok: true, claimed: jobs.length, ...totals })
+  return json({ ok: true, claimed: jobs.length, embedded, ...totals })
 })

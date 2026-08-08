@@ -21,7 +21,7 @@ const classified = [...publicFunctions, ...authenticatedFunctions, ...excludedFu
 assert.equal(new Set(classified).size, classified.length, 'a function may appear in only one deployment class')
 assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory must be deployed or explicitly excluded')
 assert.equal(publicFunctions.length, 28)
-assert.equal(authenticatedFunctions.length, 46)
+assert.equal(authenticatedFunctions.length, 47)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
 

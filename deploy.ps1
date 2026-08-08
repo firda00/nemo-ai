@@ -102,6 +102,7 @@ Apply-Migration .\supabase\migrations\20260807220000_org_memory_health.sql
 Apply-Migration .\supabase\migrations\20260807230000_org_claim_ttl.sql
 Apply-Migration .\supabase\migrations\20260807240000_org_outcome_resolver.sql
 Apply-Migration .\supabase\migrations\20260807250000_org_decision_resolve_fix.sql
+Apply-Migration .\supabase\migrations\20260807260000_org_memory_owner.sql
 
 $schemaCheckSql = @'
 select
