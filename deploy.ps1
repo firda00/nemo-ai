@@ -108,6 +108,7 @@ Apply-Migration .\supabase\migrations\20260808160000_sync_run_counts.sql
 Apply-Migration .\supabase\migrations\20260808170000_commerce_empty_shop.sql
 Apply-Migration .\supabase\migrations\20260808180000_org_metrics_registry.sql
 Apply-Migration .\supabase\migrations\20260808190000_register_refuses_unwired.sql
+Apply-Migration .\supabase\migrations\20260808200000_composite_expectations.sql
 
 $schemaCheckSql = @'
 select

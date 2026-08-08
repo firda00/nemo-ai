@@ -30,6 +30,7 @@ const commercePage = read('src/pages/app/CommercePage.tsx')
 const commerceFindings = read('src/components/platform/CommerceFindings.tsx')
 const registry = read('supabase/migrations/20260808180000_org_metrics_registry.sql')
 const unwiredGate = read('supabase/migrations/20260808190000_register_refuses_unwired.sql')
+const composite = read('supabase/migrations/20260808200000_composite_expectations.sql')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -540,6 +541,43 @@ const checks = [
   ['the registry migrations are registered for deploy',
     deploy.includes('20260808180000_org_metrics_registry.sql')
     && deploy.includes('20260808190000_register_refuses_unwired.sql')],
+
+  // ── Составное ожидание ────────────────────────────────────────────────────────────────────
+  // «Остаток вышел из нуля» верно и для закупки, заморозившей деньги в неликвиде: товар лежит,
+  // гипотеза confirmed, уверенность растёт. Та же лестная точность, только пробравшаяся через
+  // выбор метрики, а не через её отсутствие.
+  ['restocking is judged by whether the goods then sold, not only by whether they arrived',
+    /'metric', 'commerce\.sku\.stock_total'[\s\S]{0,300}'metric', 'commerce\.sku\.sold_units_7d'/.test(composite)
+    && /ДВА вопроса, а не один/.test(composite)],
+
+  // Старая формулировка обязана остаться в WHERE — ею находятся уже созданные строки. Проверяем
+  // тело функции, которая создаёт НОВЫЕ: измерять одно, а верить в другое нельзя.
+  ['the hypothesis says what is actually measured',
+    /выводит остаток из нуля, и товар после этого продаётся/
+      .test(composite.split('create or replace function public.commerce_hypothesis_for')[1] ?? '')
+    && !/к сроку поставки/
+      .test(composite.split('create or replace function public.commerce_hypothesis_for')[1] ?? '')],
+
+  ['an unmeasurable term makes the whole decision unmeasurable',
+    /if v_blocked is not null then/.test(composite)
+    && /perform public\.org_decision_resolve\(v_due\.id, 'unmeasurable'/.test(composite)
+    && /Заключить «сработало» по половине условий\s*\r?\n--? ?нельзя/.test(composite)],
+
+  // Иначе конъюнкция стала бы обходом: подключённый терм рядом с неподключённым прошёл бы
+  // регистрацию и вернулся тихим unmeasurable через неделю.
+  ['every term is probed at registration, not just the first',
+    /for v_term in select \* from public\.org_expectation_terms\(p_expected\)/.test(composite)
+    && /raise exception using errcode = '22023',\s*\r?\n?\s*message = 'metric not wired/.test(composite)],
+
+  ['a decision cannot depend on more conditions than can be attributed',
+    /jsonb_array_length\(p -> 'all'\) between 1 and 4/.test(composite)
+    && /невозможно атрибутировать/.test(composite)],
+
+  ['the failing term is recorded, not just the verdict',
+    /'expected', v_target, 'actual', v_actual, 'holds', v_holds/.test(composite)],
+
+  ['the composite migration is registered for deploy',
+    deploy.includes('20260808200000_composite_expectations.sql')],
 ]
 
 let failed = 0
