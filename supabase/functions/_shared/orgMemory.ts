@@ -222,6 +222,57 @@ export const RETIRE_BELOW_CONFIDENCE = 0.3
 export const shouldRetire = (forCount: number, againstCount: number) =>
   againstCount >= RETIRE_MIN_EVIDENCE && confidenceFrom(forCount, againstCount) < RETIRE_BELOW_CONFIDENCE
 
+// ─── Здоровье памяти ─────────────────────────────────────────────────────────────────────────
+
+export type RecallOutcome = 'ok' | 'empty' | 'embed_failed' | 'query_failed'
+
+export type HealthCounts = {
+  attempts: number
+  successes: number
+  empties: number
+  embed_failures: number
+  query_failures: number
+}
+
+export type HealthState = 'idle' | 'healthy' | 'degraded' | 'broken'
+
+export type HealthVerdict = { state: HealthState; ok: boolean; info: string }
+
+/**
+ * Отличить «памяти пока нет» от «память сломалась и молчит».
+ *
+ * Отзыв деградирует мягко — не смог, вернул пустой список, прогон пошёл дальше. Поведение верное
+ * и беззвучное одновременно: пустой ответ выглядит одинаково и когда память пуста, и когда
+ * Supabase.ai недоступен и она не заработает никогда.
+ *
+ * Различает вот что: `empty` — это УСПЕХ. Если вектор посчитан и запрос вернул ноль строк, путь
+ * цел. Сломано — когда провалы есть, а успехов нет ни одного.
+ */
+export function memoryHealthVerdict(counts: HealthCounts): HealthVerdict {
+  const attempts = Math.max(0, counts.attempts ?? 0)
+  const working = Math.max(0, counts.successes ?? 0) + Math.max(0, counts.empties ?? 0)
+  const failures = Math.max(0, counts.embed_failures ?? 0) + Math.max(0, counts.query_failures ?? 0)
+
+  // Ни одной попытки — сказать нечего. Молчание об отсутствии работы не является отчётом
+  // о здоровье, и выдавать его за «всё хорошо» значит повторить ту же ошибку этажом выше.
+  if (attempts === 0) return { state: 'idle', ok: true, info: 'обращений не было' }
+
+  if (failures === 0) {
+    return counts.successes > 0
+      ? { state: 'healthy', ok: true, info: `${counts.successes} из ${attempts} с находками` }
+      : { state: 'healthy', ok: true, info: `путь цел, память пуста (${counts.empties} пустых отзывов)` }
+  }
+
+  // Провалы есть, успехов нет ни одного: путь мёртв, и до этой проверки об этом не узнал бы никто.
+  if (working === 0) {
+    const reason = counts.embed_failures > 0 ? 'Supabase.ai не отдаёт векторы' : 'запрос к памяти не проходит'
+    return { state: 'broken', ok: false, info: `память не работает: ${reason} (${failures} из ${attempts})` }
+  }
+
+  // Часть проходит, часть нет. Не «всё хорошо» и не «всё пропало» — так и надо сказать.
+  return { state: 'degraded', ok: false, info: `память сбоит: ${failures} из ${attempts} неудачны` }
+}
+
 /**
  * Кому исход засчитывается.
  *

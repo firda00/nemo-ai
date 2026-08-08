@@ -98,6 +98,7 @@ Apply-Migration .\supabase\migrations\20260806280000_commerce_stockout.sql
 Apply-Migration .\supabase\migrations\20260807190000_commerce_freshness_watchdog.sql
 Apply-Migration .\supabase\migrations\20260807200000_org_memory.sql
 Apply-Migration .\supabase\migrations\20260807210000_org_memory_wiring.sql
+Apply-Migration .\supabase\migrations\20260807220000_org_memory_health.sql
 
 $schemaCheckSql = @'
 select

@@ -4,9 +4,10 @@
 // status CHANGES — sends a Telegram alert to the admin (so no spam every tick). Recovery is
 // announced too. Configure OPS_ALERT_BOT_TOKEN + OPS_ALERT_CHAT_ID to receive alerts.
 //   POST /functions/v1/ops-watchdog   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
+import { memoryHealthVerdict } from '../_shared/orgMemory.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -92,6 +93,27 @@ Deno.serve(async (req) => {
     if (error) return { ok: false, info: `sweep failed: ${error.message.slice(0, 80)}` }
     const n = swept?.length ?? 0
     return { ok: true, info: n ? `${n} ta osilgan vazifa yopildi` : 'osilgan vazifa yo`q' }
+  })
+
+  // 7) organizational memory — is the recall path alive, or quietly returning nothing forever?
+  //
+  // Recall degrades softly by design: it cannot fail a run, so a broken embedding service and an
+  // empty memory both produce the same empty list. That is the shape of failure this project
+  // keeps meeting — silence that reads as calm — so the distinction is recorded at the source and
+  // judged here, in a process that does not depend on the memory working.
+  details.org_memory = await timed(async () => {
+    const { data, error } = await db.rpc('org_memory_health_window', { p_days: 2 })
+    if (error) return { ok: false, info: `rpc error: ${error.message.slice(0, 80)}` }
+    const row = (Array.isArray(data) ? data[0] : data) ?? {}
+    const verdict = memoryHealthVerdict({
+      attempts: Number(row.attempts ?? 0),
+      successes: Number(row.successes ?? 0),
+      empties: Number(row.empties ?? 0),
+      embed_failures: Number(row.embed_failures ?? 0),
+      query_failures: Number(row.query_failures ?? 0),
+    })
+    const tail = verdict.ok || !row.last_error ? '' : ` · ${String(row.last_error).slice(0, 60)}`
+    return { ok: verdict.ok, info: `${verdict.state}: ${verdict.info}${tail}` }
   })
 
   // The monitor's own liveness, read BEFORE writing this tick. pg_cron was configured

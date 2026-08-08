@@ -25,7 +25,7 @@ import { storeSnapshot, type StoreSnapshot } from '../_shared/marketplaceSnapsho
 import { chooseExecutionPlan } from '../_shared/executionBudget.ts'
 import { validateDependencies } from '../_shared/executionDag.ts'
 import { embedText } from '../_shared/knowledge.ts'
-import { memoryForPhase, type Claim, type Phase } from '../_shared/orgMemory.ts'
+import { memoryForPhase, type Claim, type Phase, type RecallOutcome } from '../_shared/orgMemory.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -229,9 +229,30 @@ const ORG_MEMORY_TOKEN_BUDGET = 700
 async function loadOrgClaims(admin: any, accountId: string, query: string, kinds: string[] | null, k = 8): Promise<Claim[]> {
   const text = String(query ?? '').trim()
   if (!accountId || text.length < 4) return []
+
+  // Исход каждой попытки записывается. Раньше отказ и пустая память возвращали одно и то же —
+  // пустой список, — и различить «памяти пока нет» от «память не заработает никогда» было
+  // невозможно ни изнутри, ни снаружи. Сама запись не имеет права уронить отзыв; если она не
+  // проходит, значит база недоступна, и это ловит первая же проверка ops-watchdog.
+  const record = (outcome: RecallOutcome, cause?: unknown) =>
+    admin.rpc('org_memory_health_record', {
+      p_account_id: accountId,
+      p_outcome: outcome,
+      p_error: cause == null ? null : String((cause as { message?: string })?.message ?? cause).slice(0, 300),
+    }).then(() => {}, () => {})
+
+  // Два шага разнесены намеренно: отказ Supabase.ai и отказ запроса — разные болезни с разным
+  // лечением, а слитый catch назвал бы их одним словом.
+  let embedding: number[]
   try {
-    const embedding = await embedText(text.slice(0, 2_000))
-    const { data } = await admin.rpc('match_org_claims', {
+    embedding = await embedText(text.slice(0, 2_000))
+  } catch (cause) {
+    await record('embed_failed', cause)
+    return []
+  }
+
+  try {
+    const { data, error } = await admin.rpc('match_org_claims', {
       p_account_id: accountId,
       p_query: embedding,
       p_kinds: kinds,
@@ -240,10 +261,19 @@ async function loadOrgClaims(admin: any, accountId: string, query: string, kinds
       p_department_id: null,
       p_k: k,
     })
-    return (data ?? []) as Claim[]
-  } catch {
+    if (error) {
+      await record('query_failed', error)
+      return []
+    }
+    const claims = (data ?? []) as Claim[]
+    // Пустой результат записывается как УСПЕХ: вектор посчитан, запрос прошёл, путь цел. Именно
+    // этот исход отличает пустую память от сломанной.
+    await record(claims.length ? 'ok' : 'empty')
+    return claims
+  } catch (cause) {
     // Память — поправка, а не условие работы. Прогон, падающий из-за недоступного отзыва, хуже
     // прогона без памяти: первый не делает ничего, второй делает то же, что делал вчера.
+    await record('query_failed', cause)
     return []
   }
 }

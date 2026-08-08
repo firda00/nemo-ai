@@ -12,6 +12,8 @@ const wiring = read('supabase/migrations/20260807210000_org_memory_wiring.sql')
 const orchestrate = read('supabase/functions/orchestrate/index.ts')
 const worker = read('supabase/functions/autonomous-worker/index.ts')
 const extractor = read('supabase/functions/org-memory-worker/index.ts')
+const health = read('supabase/migrations/20260807220000_org_memory_health.sql')
+const opsWatchdog = read('supabase/functions/ops-watchdog/index.ts')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -178,8 +180,10 @@ const checks = [
 
   // Память — поправка, а не условие работы: прогон, падающий из-за недоступного отзыва, хуже
   // прогона без памяти. Первый не делает ничего, второй делает то же, что делал вчера.
+  // Записывать причину — не то же самое, что ронять прогон: каждая ветка отказа по-прежнему
+  // возвращает пустой список, просто теперь она говорит, почему он пуст.
   ['an unavailable recall degrades to no memory, never to a failed run',
-    /} catch \{[\s\S]{0,400}return \[\]/.test(orchestrate)
+    (orchestrate.match(/catch \(cause\) \{[\s\S]{0,300}?return \[\]/g) ?? []).length >= 2
     && /Память — поправка, а не условие работы/.test(orchestrate)],
 
   ['the memory budget is counted in tokens and stays smaller than the handoff it accompanies',
@@ -224,6 +228,44 @@ const checks = [
 
   ['the wiring migration is registered for deploy',
     deploy.includes('20260807210000_org_memory_wiring.sql')],
+
+  // ── Беззвучность закрыта ──────────────────────────────────────────────────────────────────
+  // Отзыв не может уронить прогон, поэтому сломанный embedText и пустая память возвращали один
+  // и тот же пустой список. Тот же класс отказа, что читался в Commerce как спокойная неделя.
+  ['a recall records why it returned nothing, instead of returning nothing silently',
+    /await record\('embed_failed', cause\)/.test(orchestrate)
+    && /await record\('query_failed', error\)/.test(orchestrate)
+    && /await record\(claims\.length \? 'ok' : 'empty'\)/.test(orchestrate)],
+
+  // Слитый catch назвал бы одним словом две болезни с разным лечением.
+  ['an embedding failure is distinguishable from a query failure',
+    /Два шага разнесены намеренно/.test(orchestrate)
+    && /embed_failed/.test(health) && /query_failed/.test(health)
+    && /Supabase\.ai не отдаёт векторы/.test(orgMemory)
+    && /запрос к памяти не проходит/.test(orgMemory)],
+
+  // Именно это различение и закрывает беззвучность: пустой отзыв доказывает, что путь цел.
+  ['an empty recall counts as machinery working, not as a failure',
+    /await record\(claims\.length \? 'ok' : 'empty'\)/.test(orchestrate)
+    && /recalls_empty/.test(health)
+    && /'empty' — это УСПЕХ машинерии/.test(health)
+    && /путь цел, память пуста/.test(orgMemory)],
+
+  ['recording health cannot itself break a recall',
+    /\.then\(\(\) => \{\}, \(\) => \{\}\)/.test(orchestrate)],
+
+  // Сторож судит память из процесса, который от неё не зависит — иначе он умрёт вместе с ней.
+  ['the verdict is reached outside the subsystem it judges',
+    /details\.org_memory = await timed/.test(opsWatchdog)
+    && /org_memory_health_window/.test(opsWatchdog)
+    && /memoryHealthVerdict/.test(opsWatchdog)
+    && !/memoryHealthVerdict/.test(extractor)],
+
+  ['no attempts is reported as no attempts, never as good news',
+    /if \(attempts === 0\) return \{ state: 'idle', ok: true, info: 'обращений не было' \}/.test(orgMemory)],
+
+  ['the health migration is registered for deploy',
+    deploy.includes('20260807220000_org_memory_health.sql')],
 ]
 
 let failed = 0

@@ -6,6 +6,7 @@ import {
   MEMORY_OPEN, MEMORY_CLOSE, MEMORY_GUARD,
   provenanceLabel, renderClaim, renderMemoryBlock, memoryForPhase, fitToBudget, estimateTokens,
   confidenceFrom, shouldRetire, RETIRE_MIN_EVIDENCE, learnableClaim,
+  memoryHealthVerdict,
 } from '../supabase/functions/_shared/orgMemory.ts'
 
 const claim = (over = {}) => ({
@@ -165,5 +166,52 @@ assert.equal(learnableClaim([{ claim_id: 'a', role: 'supporting' }, { claim_id: 
 assert.equal(learnableClaim([{ claim_id: 'a', role: 'primary' }, { claim_id: 'b', role: 'primary' }]), null,
   'две главные гипотезы — недостаточная атрибуция, а не двойное обучение')
 assert.equal(learnableClaim([]), null)
+
+// ── Здоровье памяти: отличить пустую от сломанной ────────────────────────────────────────────
+// Отзыв деградирует мягко и потому беззвучно: сломанный embedText и пустая память возвращают
+// один и тот же пустой список. Это тот же класс отказа, который в Commerce читался как спокойная
+// неделя.
+const health = (over = {}) => ({ attempts: 0, successes: 0, empties: 0, embed_failures: 0, query_failures: 0, ...over })
+
+// Ни одной попытки — сказать нечего. Выдать это за «всё хорошо» значило бы повторить ту же
+// ошибку этажом выше: молчание об отсутствии работы не является отчётом о здоровье.
+assert.equal(memoryHealthVerdict(health()).state, 'idle')
+assert.equal(memoryHealthVerdict(health()).ok, true)
+assert.match(memoryHealthVerdict(health()).info, /обращений не было/)
+
+// ГЛАВНОЕ РАЗЛИЧЕНИЕ. Пустой отзыв — это УСПЕХ машинерии: вектор посчитан, запрос прошёл.
+const emptyStore = memoryHealthVerdict(health({ attempts: 12, empties: 12 }))
+assert.equal(emptyStore.state, 'healthy')
+assert.equal(emptyStore.ok, true)
+assert.match(emptyStore.info, /путь цел, память пуста/)
+
+// А это — то, ради чего всё писалось: провалы есть, успехов нет ни одного.
+const dead = memoryHealthVerdict(health({ attempts: 9, embed_failures: 9 }))
+assert.equal(dead.state, 'broken')
+assert.equal(dead.ok, false)
+assert.match(dead.info, /Supabase\.ai не отдаёт векторы/, 'причина названа, а не спрятана за «ошибка»')
+
+// Два разных отказа не называются одним словом: лечение у них разное.
+assert.match(memoryHealthVerdict(health({ attempts: 4, query_failures: 4 })).info, /запрос к памяти не проходит/)
+assert.doesNotMatch(memoryHealthVerdict(health({ attempts: 4, query_failures: 4 })).info, /Supabase\.ai/)
+
+// Работает и находит.
+const working = memoryHealthVerdict(health({ attempts: 10, successes: 7, empties: 3 }))
+assert.equal(working.state, 'healthy')
+assert.match(working.info, /7 из 10/)
+
+// Часть проходит, часть нет — не «всё хорошо» и не «всё пропало».
+const flaky = memoryHealthVerdict(health({ attempts: 10, successes: 6, empties: 2, embed_failures: 2 }))
+assert.equal(flaky.state, 'degraded')
+assert.equal(flaky.ok, false, 'сбоящая память не считается здоровой только потому, что иногда отвечает')
+
+// Один провал среди успехов не объявляется поломкой, но и не замалчивается.
+const oneOff = memoryHealthVerdict(health({ attempts: 20, successes: 19, query_failures: 1 }))
+assert.equal(oneOff.state, 'degraded')
+assert.match(oneOff.info, /1 из 20/)
+
+// Отрицательные и отсутствующие значения не должны переворачивать вердикт.
+assert.equal(memoryHealthVerdict({ attempts: -5 }).state, 'idle')
+assert.equal(memoryHealthVerdict(health({ attempts: 3, embed_failures: 3, successes: -1 })).state, 'broken')
 
 console.log('org memory behaviour: all assertions passed')
