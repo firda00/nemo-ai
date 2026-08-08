@@ -7,6 +7,7 @@ import {
   provenanceLabel, renderClaim, renderMemoryBlock, memoryForPhase, fitToBudget, estimateTokens,
   confidenceFrom, shouldRetire, RETIRE_MIN_EVIDENCE, learnableClaim,
   memoryHealthVerdict,
+  timeBoundStatement, claimTtlDays, expiryFor, SNAPSHOT_TTL_DAYS, SEASON_TTL_DAYS,
 } from '../supabase/functions/_shared/orgMemory.ts'
 
 const claim = (over = {}) => ({
@@ -166,6 +167,67 @@ assert.equal(learnableClaim([{ claim_id: 'a', role: 'supporting' }, { claim_id: 
 assert.equal(learnableClaim([{ claim_id: 'a', role: 'primary' }, { claim_id: 'b', role: 'primary' }]), null,
   'две главные гипотезы — недостаточная атрибуция, а не двойное обучение')
 assert.equal(learnableClaim([]), null)
+
+// ── Срок годности: наблюдения стареют, правила — нет ─────────────────────────────────────────
+// Первый живой прогон положил в память навсегда «за последние 7 дней ни один товар не был
+// продан». Оно было истинно неделю — и то по ошибке: продажи в тот день читались нулём из-за
+// бага. Вечное убеждение из моментального снимка и есть галлюцинация организации.
+
+// Ровно та строка, которая это вскрыла.
+assert.equal(timeBoundStatement('За последние 7 дней ни один товар не был продан.'), true)
+assert.equal(timeBoundStatement("Все 114 товаров классифицированы как 'недостаточно данных'."), true)
+
+const snapshots = [
+  'Продано 12 шт за неделю.',
+  'Остаток: 0 шт по трём позициям.',
+  'Сегодня конверсия упала.',
+  'В этом месяце выручка выше плана.',
+  'Маржа: 3.2 процента по ключевым позициям.',
+  'Sold 40 units in the last 14 days.',
+  'Currently the warehouse is empty.',
+  'Conversion is 12 percent this week.',
+]
+for (const text of snapshots) assert.equal(timeBoundStatement(text), true, `не распознан замер: ${text}`)
+
+// И обратная сторона — правила не должны становиться скоропортящимися.
+const durables = [
+  'Работаем только по предоплате, без исключений.',
+  'Клиент платит после демонстрации продукта.',
+  'Решения по цене принимает владелец, а не агент.',
+  'Uzum удерживает комиссию только с проданного товара.',
+  'The reviewer must reject unsupported numeric claims.',
+]
+for (const text of durables) assert.equal(timeBoundStatement(text), false, `ложное срабатывание: ${text}`)
+
+// ОПОРНОЕ ПРАВИЛО: факт не получает бессрочность НИКОГДА, что бы ни сказала модель.
+assert.equal(claimTtlDays('fact', 'Рынок Узбекистана растёт.', 'durable'), SEASON_TTL_DAYS,
+  'факт — это замер, а замеры устаревают, даже когда модель уверена в обратном')
+assert.equal(claimTtlDays('fact', 'За последние 7 дней продаж не было.', 'durable'), SNAPSHOT_TTL_DAYS,
+  'привязка ко времени перебивает мнение модели')
+assert.notEqual(claimTtlDays('fact', 'Что угодно.', 'durable'), null)
+
+// Правила бессрочны — но только пока в тексте нет замера.
+assert.equal(claimTtlDays('constraint', 'Работаем только по предоплате.', 'durable'), null)
+assert.equal(claimTtlDays('preference', 'Короткие письма получают больше ответов.'), null)
+assert.equal(claimTtlDays('lesson', 'Не запускать рассылку без проверки списка.'), null)
+
+// Правило, сформулированное через замер, — это замер в одежде правила.
+assert.equal(claimTtlDays('constraint', 'Держать остаток не ниже 20 шт.', 'durable'), SNAPSHOT_TTL_DAYS)
+
+// Пропущенный горизонт — это неизвестный срок, а не бессрочность.
+assert.equal(claimTtlDays('fact', 'Клиенты из Ташкента отвечают охотнее.'), SEASON_TTL_DAYS)
+assert.equal(claimTtlDays('constraint', 'Оплата только по счёту.', undefined), null)
+
+// Модель назвала замером — верим ей и укорачиваем даже правило.
+assert.equal(claimTtlDays('preference', 'Утренние письма работают лучше.', 'snapshot'), SNAPSHOT_TTL_DAYS)
+assert.equal(claimTtlDays('preference', 'Утренние письма работают лучше.', 'season'), SEASON_TTL_DAYS)
+
+// Дата истечения считается от переданного момента — функция остаётся чистой.
+const NOW_TTL = new Date('2026-08-07T12:00:00.000Z')
+assert.equal(expiryFor('constraint', 'Работаем по предоплате.', NOW_TTL, 'durable'), null)
+assert.equal(expiryFor('fact', 'За последние 7 дней продаж не было.', NOW_TTL),
+  new Date(NOW_TTL.getTime() + SNAPSHOT_TTL_DAYS * 86_400_000).toISOString())
+assert.ok(SNAPSHOT_TTL_DAYS < SEASON_TTL_DAYS)
 
 // ── Здоровье памяти: отличить пустую от сломанной ────────────────────────────────────────────
 // Отзыв деградирует мягко и потому беззвучно: сломанный embedText и пустая память возвращают

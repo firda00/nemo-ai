@@ -222,6 +222,78 @@ export const RETIRE_BELOW_CONFIDENCE = 0.3
 export const shouldRetire = (forCount: number, againstCount: number) =>
   againstCount >= RETIRE_MIN_EVIDENCE && confidenceFrom(forCount, againstCount) < RETIRE_BELOW_CONFIDENCE
 
+// ─── Срок годности ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Насколько утверждение переживает момент, в который родилось.
+ *
+ * Первый живой прогон извлёк из отчёта «за последние 7 дней ни один товар не был продан» и
+ * положил это в память навсегда. Утверждение было истинно неделю, да и то по ошибке — в тот день
+ * продажи читались нулём из-за бага. Вечное убеждение, выведенное из моментального снимка, — это
+ * и есть галлюцинация организации: следующий прогон прочитает его как установленный факт и
+ * построит на нём план.
+ */
+export type ClaimHorizon = 'snapshot' | 'season' | 'durable'
+
+/** Две недели: достаточно, чтобы наблюдение помогло на этой неделе, и мало, чтобы окаменеть. */
+export const SNAPSHOT_TTL_DAYS = 14
+/** Квартал: рыночные закономерности живут дольше замера, но не вечно. */
+export const SEASON_TTL_DAYS = 120
+
+/**
+ * Разметка времени в самом тексте.
+ *
+ * Вторая линия после подсказки модели — та же схема, что с инъекциями: инструктивную линию можно
+ * обойти уговорами, регулярную нельзя. Модель охотно называет «долгосрочным» всё, что звучит
+ * важно, и именно так снимок становится вечным.
+ */
+const TIME_BOUND: RegExp[] = [
+  // «за последние 7 дней», «за прошлую неделю», «за месяц»
+  /за\s+(?:последн|прошл|истекш)[\p{L}]*\s+[\d\s]*(?:день|дня|дней|недел[\p{L}]*|месяц[\p{L}]*|квартал[\p{L}]*|год[\p{L}]*|сут[\p{L}]*)/iu,
+  /за\s+\d+\s*(?:день|дня|дней|недел[\p{L}]*|месяц[\p{L}]*)/iu,
+  // Привязка к «сейчас»
+  /(?:сегодня|вчера|на\s+этой\s+неделе|в\s+этом\s+(?:месяце|квартале|году)|на\s+данный\s+момент|сейчас|текущ[\p{L}]*)/iu,
+  // Замер: число рядом с единицей измерения или с сущностью каталога
+  /\d[\d\s.,]*\s*(?:шт|штук[\p{L}]*|товар[\p{L}]*|позици[\p{L}]*|сум[\p{L}]*|%|процент[\p{L}]*|заказ[\p{L}]*|клиент[\p{L}]*)/iu,
+  /(?:остат[\p{L}]*|продано|выручк[\p{L}]*|оборот[\p{L}]*|конверси[\p{L}]*|маржа|прибыл[\p{L}]*)\s*[:—-]?\s*\d/iu,
+  // English
+  /\b(?:in|over|during)\s+the\s+(?:last|past)\s+\d*\s*(?:day|days|week|weeks|month|months|quarter)/i,
+  /\b(?:today|yesterday|this\s+(?:week|month|quarter)|right\s+now|currently|as\s+of)\b/i,
+  /\b\d[\d\s.,]*\s*(?:units?|items?|products?|skus?|orders?|customers?|percent|%)\b/i,
+]
+
+export const timeBoundStatement = (statement: string) =>
+  TIME_BOUND.some((marker) => marker.test(String(statement ?? '')))
+
+/**
+ * Сколько дней жить утверждению; null — вечно.
+ *
+ * ОПОРНОЕ ПРАВИЛО: наблюдения стареют, правила — нет. `fact` не получает бессрочность никогда,
+ * что бы ни сказала модель: факт — это замер, а замеры устаревают. Бессрочными могут быть только
+ * ограничение, предпочтение и урок — и то лишь пока в тексте нет привязки ко времени.
+ */
+export function claimTtlDays(kind: ClaimKind, statement: string, horizon?: ClaimHorizon): number | null {
+  const bound = timeBoundStatement(statement)
+
+  if (kind === 'fact') {
+    // Даже «долгосрочный» по мнению модели факт живёт не дольше квартала.
+    if (bound || horizon === 'snapshot') return SNAPSHOT_TTL_DAYS
+    return SEASON_TTL_DAYS
+  }
+
+  // Правило, сформулированное через замер, — это замер в одежде правила.
+  if (bound) return SNAPSHOT_TTL_DAYS
+  if (horizon === 'snapshot') return SNAPSHOT_TTL_DAYS
+  if (horizon === 'season') return SEASON_TTL_DAYS
+  return null
+}
+
+/** ISO-момент истечения, либо null. `now` передаётся, чтобы функция осталась чистой. */
+export function expiryFor(kind: ClaimKind, statement: string, now: Date, horizon?: ClaimHorizon): string | null {
+  const days = claimTtlDays(kind, statement, horizon)
+  return days == null ? null : new Date(now.getTime() + days * 86_400_000).toISOString()
+}
+
 // ─── Здоровье памяти ─────────────────────────────────────────────────────────────────────────
 
 export type RecallOutcome = 'ok' | 'empty' | 'embed_failed' | 'query_failed'

@@ -14,6 +14,7 @@ const worker = read('supabase/functions/autonomous-worker/index.ts')
 const extractor = read('supabase/functions/org-memory-worker/index.ts')
 const health = read('supabase/migrations/20260807220000_org_memory_health.sql')
 const opsWatchdog = read('supabase/functions/ops-watchdog/index.ts')
+const ttl = read('supabase/migrations/20260807230000_org_claim_ttl.sql')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -266,6 +267,43 @@ const checks = [
 
   ['the health migration is registered for deploy',
     deploy.includes('20260807220000_org_memory_health.sql')],
+
+  // ── Срок годности ─────────────────────────────────────────────────────────────────────────
+  // Первый живой прогон положил в память навсегда «за последние 7 дней ни один товар не был
+  // продан» — истинное неделю, и то по ошибке. Вечное убеждение из моментального снимка и есть
+  // галлюцинация организации: следующий прогон читает его как установленный факт.
+  ['an observation can never be stored as eternal',
+    /if \(kind === 'fact'\) \{[\s\S]{0,400}return SEASON_TTL_DAYS/.test(orgMemory)
+    && !/kind === 'fact'[\s\S]{0,200}return null/.test(orgMemory)
+    && /наблюдения стареют, правила — нет/.test(orgMemory)],
+
+  // Инструктивную линию модель обходит, регулярную — нет. Та же схема, что с инъекциями.
+  ['a time-bound phrasing overrides whatever horizon the model claimed',
+    /const bound = timeBoundStatement\(statement\)/.test(orgMemory)
+    && /if \(bound\) return SNAPSHOT_TTL_DAYS/.test(orgMemory)
+    && /за\\s\+\(\?:последн\|прошл\|истекш\)/.test(orgMemory)],
+
+  ['a missing horizon means unknown, never eternal',
+    /horizon: HORIZONS\.includes\(horizon\) \? horizon : undefined/.test(extractor)
+    && /неуказанный срок — это неизвестный срок/.test(extractor)],
+
+  ['the extractor asks for a horizon and applies the rule rather than the answer',
+    /"horizon":"snapshot"\|"season"\|"durable"/.test(extractor)
+    && /const validUntil = expiryFor\(candidate\.kind, candidate\.statement, now, candidate\.horizon\)/.test(extractor)
+    && /p_valid_until: validUntil/.test(extractor)],
+
+  // Две перегрузки с одинаковым префиксом аргументов — это вызов, который однажды уйдёт не туда.
+  ['adding the expiry parameter left no ambiguous overload behind',
+    /drop function if exists public\.org_claim_record\(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public\.vector, uuid\[\]\)/.test(ttl)
+    && /p_valid_until   timestamptz default null/.test(ttl)
+    && /grant execute on function public\.org_claim_record\([^)]*timestamptz\) to service_role/.test(ttl)],
+
+  ['expiry takes effect through the existing recall filter, with an index behind it',
+    /valid_until is null or c\.valid_until > now\(\)/.test(migration.replace(/c\./g, 'c.'))
+    && /create index if not exists org_claims_live_idx/.test(ttl)],
+
+  ['the expiry migration is registered for deploy',
+    deploy.includes('20260807230000_org_claim_ttl.sql')],
 ]
 
 let failed = 0
