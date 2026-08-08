@@ -28,6 +28,8 @@ const bridge = read('supabase/migrations/20260807270000_commerce_decision_bridge
 const commerceControl = read('supabase/functions/commerce-control/index.ts')
 const commercePage = read('src/pages/app/CommercePage.tsx')
 const commerceFindings = read('src/components/platform/CommerceFindings.tsx')
+const registry = read('supabase/migrations/20260808180000_org_metrics_registry.sql')
+const unwiredGate = read('supabase/migrations/20260808190000_register_refuses_unwired.sql')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -492,6 +494,46 @@ const checks = [
 
   ['the bridge migration is registered for deploy',
     deploy.includes('20260807270000_commerce_decision_bridge.sql')],
+
+  // ── Реестр метрик ─────────────────────────────────────────────────────────────────────────
+  // Раньше третьего состояния не было: метрика либо есть в цепочке if/elsif и считается, либо её
+  // нет и регистрация падает. «Знаем о метрике, канала данных нет» сказать было нечем — а это
+  // единственный способ говорить о CRM, финансах и HR, не обещая измеримости.
+  ['what the system can measure is data, not a hardcoded chain',
+    /create table if not exists public\.org_metrics/.test(registry)
+    && /select \* into m from public\.org_metrics where key = p_metric/.test(registry)
+    && /m\.read_strategy = 'commerce_snapshot_latest'/.test(registry)],
+
+  ['a wired metric must say how it is read, an unwired one what is missing',
+    /constraint org_metrics_wired_is_readable/.test(registry)
+    && /constraint org_metrics_unwired_explains_itself/.test(registry)
+    && /char_length\(unwired_reason\) >= 10/.test(registry)],
+
+  // Объявленная, но не подключённая метрика превратила бы громкий отказ при регистрации в тихое
+  // 'unmeasurable' через неделю — и небрежность выглядела бы свойством мира.
+  ['registration refuses an unwired metric as loudly as an unknown one',
+    /if v_reason = 'metric_not_wired' then/.test(unwiredGate)
+    && /raise exception using errcode = '22023',\s*\r?\n?\s*message = 'metric not wired/.test(unwiredGate)
+    && /if v_reason = 'unknown_metric' then/.test(unwiredGate)],
+
+  ['a column name from the registry is still quoted as an identifier',
+    /format\(\s*\r?\n?\s*'select i\.%I/.test(registry)
+    && /экранирование идентификатора стоит одну функцию/.test(registry)],
+
+  // Данных мало — не то же самое, что канала нет. Support подключён на настоящих dialogues.
+  ['support is wired on a real channel, the empty domains are named and explained',
+    /'support\.dialogue\.first_response_minutes'[\s\S]{0,200}true/.test(registry)
+    && /'crm\.deals\.closed',\s*'crm'[\s\S]{0,200}false/.test(registry)
+    && /коннектор только пишет наружу и не читает обратно/.test(registry)],
+
+  ['the owner sees which domains can be measured and why the rest cannot',
+    /from\('org_metrics'\)/.test(ownerFn)
+    && /function Measurable/.test(memoryPage)
+    && /metric\.unwired_reason/.test(memoryPage)],
+
+  ['the registry migrations are registered for deploy',
+    deploy.includes('20260808180000_org_metrics_registry.sql')
+    && deploy.includes('20260808190000_register_refuses_unwired.sql')],
 ]
 
 let failed = 0

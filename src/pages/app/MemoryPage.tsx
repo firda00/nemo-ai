@@ -21,12 +21,14 @@ type Claim = {
 
 type Scoreboard = { resolved: number; confirmed: number; refuted: number; unmeasurable: number; accuracy: number | null; unmeasurable_share: number | null }
 type Recalls = { ok: number; empty: number; failed: number }
+type Metric = { key: string; domain: string; label: string; unit: string; is_wired: boolean; unwired_reason: string | null }
 
 export default function MemoryPage() {
   const { t } = useI18n()
   const [claims, setClaims] = useState<Claim[]>([])
   const [board, setBoard] = useState<Scoreboard | null>(null)
   const [recalls, setRecalls] = useState<Recalls | null>(null)
+  const [metrics, setMetrics] = useState<Metric[]>([])
   // Клиент известен на этапе модуля, поэтому «не настроено» — состояние рендера, а не состояние
   // компонента: иначе эффект синхронно вызывает setState и запускает каскад перерисовок.
   const [loading, setLoading] = useState(Boolean(supabase))
@@ -41,7 +43,7 @@ export default function MemoryPage() {
     // Никакого setLoading здесь: состояние уже начинается с loading, а синхронный setState внутри
     // эффекта запускает каскад перерисовок. Повторную попытку подсвечивает сам обработчик.
     const { data, error: failed } = await supabase.functions.invoke('org-memory', { body: { action: 'list' } })
-    const result = data as { ok?: boolean; claims?: Claim[]; scoreboard?: Scoreboard; recalls?: Recalls } | null
+    const result = data as { ok?: boolean; claims?: Claim[]; scoreboard?: Scoreboard; recalls?: Recalls; metrics?: Metric[] } | null
     // Ошибка чтения показывается ошибкой, а не пустым списком: «система ничего не знает» и «мы не
     // смогли спросить» — разные новости, и вторая не должна выглядеть первой.
     if (failed || !result?.ok) { setError(true); setLoading(false); return }
@@ -49,6 +51,7 @@ export default function MemoryPage() {
     setClaims(result.claims ?? [])
     setBoard(result.scoreboard ?? null)
     setRecalls(result.recalls ?? null)
+    setMetrics(result.metrics ?? [])
     setLoading(false)
   }, [])
 
@@ -137,6 +140,10 @@ export default function MemoryPage() {
         {notice && <p className="mt-2 text-sm text-muted">{notice}</p>}
       </section>
 
+      {/* Что система умеет измерять. Без этого «поддержка подключена, CRM нет» остаётся словами,
+          и владелец не знает, на что вправе рассчитывать, а на что нет. */}
+      {metrics.length > 0 && <Measurable metrics={metrics} t={t} />}
+
       {loading && <div className="mt-6 space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-20 animate-pulse rounded-2xl bg-panel/60" />)}</div>}
 
       {!loading && (error || !supabase) && (
@@ -158,6 +165,49 @@ export default function MemoryPage() {
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * Реестр метрик глазами владельца.
+ *
+ * Неподключённые домены показываются вместе с причиной, а не прячутся: «CRM появится когда-нибудь»
+ * и «CRM не измеряется, потому что коннектор только пишет наружу» — разные обещания, и второе
+ * можно проверить.
+ */
+function Measurable({ metrics, t }: { metrics: Metric[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const domains = [...new Set(metrics.map((metric) => metric.domain))]
+  return (
+    <section className="card mt-6 rounded-3xl p-5">
+      <h2 className="text-lg font-bold text-text">{t('memory.metrics.title')}</h2>
+      <p className="mt-1 text-sm text-muted">{t('memory.metrics.hint')}</p>
+      <div className="mt-3 space-y-3">
+        {domains.map((domain) => {
+          const rows = metrics.filter((metric) => metric.domain === domain)
+          const wired = rows.filter((metric) => metric.is_wired)
+          return (
+            <div key={domain} className="rounded-2xl border border-white/10 bg-bg/40 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-text">{t(`memory.domain.${domain}`)}</span>
+                {wired.length > 0
+                  ? <span className="rounded-full border border-teal/30 bg-teal/10 px-2 py-0.5 text-xs text-teal">{t('memory.metrics.wired', { n: wired.length })}</span>
+                  : <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-muted">{t('memory.metrics.unwired')}</span>}
+              </div>
+              <ul className="mt-2 space-y-1 text-xs text-muted">
+                {rows.map((metric) => (
+                  <li key={metric.key} className="flex flex-wrap items-baseline gap-2">
+                    <span className={metric.is_wired ? 'text-text' : ''}>{metric.label}</span>
+                    <code className="text-[11px] opacity-60">{metric.key}</code>
+                    {/* Причина, а не многоточие: её можно устранить, и владелец видит чем. */}
+                    {!metric.is_wired && metric.unwired_reason && <span className="w-full text-amber/80">{metric.unwired_reason}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 

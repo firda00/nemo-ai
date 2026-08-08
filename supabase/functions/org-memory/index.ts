@@ -70,11 +70,18 @@ Deno.serve(async (req) => {
       failed: sum.failed + Number(row.embed_failed ?? 0) + Number(row.query_failed ?? 0),
     }), { ok: 0, empty: 0, failed: 0 })
 
+    // Что система умеет измерять — и о чём честно говорит, что не умеет. Без этого «поддержка
+    // подключена, CRM нет» остаётся словами в переписке, а владелец не знает, на что вправе
+    // рассчитывать.
+    const { data: metrics } = await admin.from('org_metrics')
+      .select('key, domain, label, unit, is_wired, unwired_reason').order('domain').order('key')
+
     return json({
       ok: true,
       claims: shaped,
       scoreboard: (Array.isArray(board) ? board[0] : board) ?? null,
       recalls: totals,
+      metrics: metrics ?? [],
     })
   }
 
