@@ -304,6 +304,24 @@ const checks = [
 
   ['the expiry migration is registered for deploy',
     deploy.includes('20260807230000_org_claim_ttl.sql')],
+
+  // ── Волатильные темы ──────────────────────────────────────────────────────────────────────
+  // Живой прогон записал «большинство товаров имеют значительные остатки» на 120 дней при 94 из
+  // 140 SKU в нуле. Первое правило пропустило честно: ни числа, ни периода. Расплывчатый квантор
+  // прячет измерение, но не отменяет его — значит, судить надо и по теме, а не только по форме.
+  ['an observation about a daily-changing quantity is a reading, however vaguely phrased',
+    /const VOLATILE_TOPICS: RegExp\[\]/.test(orgMemory)
+    && /export const volatileStatement/.test(orgMemory)
+    && /volatileStatement\(statement\)\) return SNAPSHOT_TTL_DAYS/.test(orgMemory)
+    && /остат\[\\p\{L\}\]\*/.test(orgMemory)],
+
+  // Заплата обязана быть узкой: правило ПРО остаток — это правило, а не замер остатка.
+  ['volatility shortens facts only, never rules',
+    /if \(kind === 'fact'\) \{[\s\S]{0,500}volatileStatement\(statement\)/.test(orgMemory)
+    && !/if \(bound\) return SNAPSHOT_TTL_DAYS[\s\S]{0,120}volatileStatement/.test(orgMemory)],
+
+  ['the extractor is told about volatile topics too, so both layers agree',
+    /Утверждение ОБ остатках, ценах, балансе, лидах, очередях, конверсии/.test(extractor)],
 ]
 
 let failed = 0

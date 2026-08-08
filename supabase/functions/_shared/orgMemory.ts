@@ -266,6 +266,30 @@ export const timeBoundStatement = (statement: string) =>
   TIME_BOUND.some((marker) => marker.test(String(statement ?? '')))
 
 /**
+ * Темы, которые меняются быстрее, чем живёт убеждение о них.
+ *
+ * Живой прогон записал «большинство товаров имеют значительные остатки на складе» и получил
+ * 120 дней — при том, что 94 из 140 SKU стояли в нуле, а остатка выше десяти не было ни у одного.
+ * Правило TIME_BOUND не сработало честно: в предложении нет ни числа, ни периода. Расплывчатый
+ * квантор — «большинство», «значительные» — прячет измерение, но не отменяет его.
+ *
+ * Отсюда второй признак: не КАК сказано, а О ЧЁМ. Остаток, цена, баланс, очередь, конверсия
+ * меняются ежедневно, и наблюдение о них — замер, каким бы обобщённым ни выглядело.
+ */
+const VOLATILE_TOPICS: RegExp[] = [
+  /остат[\p{L}]*|склад[\p{L}]*|запас[\p{L}]*|наличи[\p{L}]*/iu,
+  /цен[аыуе][\p{L}]*|прайс[\p{L}]*|стоимост[\p{L}]*|скидк[\p{L}]*/iu,
+  /баланс[\p{L}]*|бюджет[\p{L}]*|расход[\p{L}]*|выручк[\p{L}]*|оборот[\p{L}]*|маржа|маржинальност[\p{L}]*/iu,
+  /лид[аыов][\p{L}]*|заявк[\p{L}]*|очеред[\p{L}]*|тикет[\p{L}]*|обращени[\p{L}]*/iu,
+  /конверси[\p{L}]*|трафик[\p{L}]*|показ[аыов][\p{L}]*|кликов|переход[\p{L}]*|позици[\p{L}]* в выдаче|рейтинг[\p{L}]*/iu,
+  /продаж[\p{L}]*|спрос[\p{L}]*|заказ[\p{L}]*/iu,
+  /\b(?:stock|inventory|price|pricing|balance|budget|revenue|margin|leads?|queue|backlog|conversion|traffic|impressions|clicks|ranking|sales|demand|orders?)\b/i,
+]
+
+export const volatileStatement = (statement: string) =>
+  VOLATILE_TOPICS.some((topic) => topic.test(String(statement ?? '')))
+
+/**
  * Сколько дней жить утверждению; null — вечно.
  *
  * ОПОРНОЕ ПРАВИЛО: наблюдения стареют, правила — нет. `fact` не получает бессрочность никогда,
@@ -276,8 +300,10 @@ export function claimTtlDays(kind: ClaimKind, statement: string, horizon?: Claim
   const bound = timeBoundStatement(statement)
 
   if (kind === 'fact') {
-    // Даже «долгосрочный» по мнению модели факт живёт не дольше квартала.
-    if (bound || horizon === 'snapshot') return SNAPSHOT_TTL_DAYS
+    // Наблюдение о величине, которая меняется ежедневно, — замер. Проверяется ТОЛЬКО для факта:
+    // «не опускать остаток ниже 20» — это правило про остаток, а не замер остатка, и оно вправе
+    // жить долго.
+    if (bound || horizon === 'snapshot' || volatileStatement(statement)) return SNAPSHOT_TTL_DAYS
     return SEASON_TTL_DAYS
   }
 

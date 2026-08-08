@@ -7,7 +7,7 @@ import {
   provenanceLabel, renderClaim, renderMemoryBlock, memoryForPhase, fitToBudget, estimateTokens,
   confidenceFrom, shouldRetire, RETIRE_MIN_EVIDENCE, learnableClaim,
   memoryHealthVerdict,
-  timeBoundStatement, claimTtlDays, expiryFor, SNAPSHOT_TTL_DAYS, SEASON_TTL_DAYS,
+  timeBoundStatement, volatileStatement, claimTtlDays, expiryFor, SNAPSHOT_TTL_DAYS, SEASON_TTL_DAYS,
 } from '../supabase/functions/_shared/orgMemory.ts'
 
 const claim = (over = {}) => ({
@@ -198,6 +198,50 @@ const durables = [
   'The reviewer must reject unsupported numeric claims.',
 ]
 for (const text of durables) assert.equal(timeBoundStatement(text), false, `ложное срабатывание: ${text}`)
+
+// ── Волатильные темы: не КАК сказано, а О ЧЁМ ────────────────────────────────────────────────
+// Живой прогон записал «большинство товаров имеют значительные остатки на складе» на 120 дней —
+// при 94 из 140 SKU в нуле и ни одного с остатком выше десяти. TIME_BOUND не сработал честно:
+// ни числа, ни периода. Расплывчатый квантор прячет измерение, но не отменяет его.
+
+// ТА САМАЯ СТРОКА, которая прошла мимо первого правила.
+assert.equal(timeBoundStatement('Большинство товаров имеют значительные остатки на складе.'), false,
+  'по форме она действительно не выглядит замером — потому первое правило её и пропустило')
+assert.equal(volatileStatement('Большинство товаров имеют значительные остатки на складе.'), true)
+assert.equal(claimTtlDays('fact', 'Большинство товаров имеют значительные остатки на складе.', 'season'),
+  SNAPSHOT_TTL_DAYS, 'заплата ловит её несмотря на мнение модели и отсутствие цифр')
+
+const volatile = [
+  'Много товаров лежит на складе без движения.',
+  'Цены у конкурентов заметно ниже наших.',
+  'Баланс рекламного бюджета почти исчерпан.',
+  'Лидов приходит мало.',
+  'Очередь обращений растёт.',
+  'Конверсия карточек оставляет желать лучшего.',
+  'Спрос на категорию слабый.',
+  'Most items have plenty of stock.',
+  'Conversion is poor across the catalogue.',
+  'Lead flow has thinned out.',
+]
+for (const text of volatile) assert.equal(volatileStatement(text), true, `не распознана волатильная тема: ${text}`)
+
+// Обратная сторона: устойчивые наблюдения не должны стать скоропортящимися.
+const stable = [
+  'Клиенты предпочитают общаться в Telegram, а не по почте.',
+  'Uzum удерживает сбор только с проданного товара.',
+  'Аудитория в основном из Ташкента и Самарканда.',
+  'Customers reply faster in the local language.',
+]
+for (const text of stable) assert.equal(volatileStatement(text), false, `ложное срабатывание: ${text}`)
+
+// ГЛАВНОЕ ОГРАНИЧЕНИЕ ЗАПЛАТЫ: волатильность касается только ФАКТА. Правило про остаток —
+// это правило, а не замер остатка, и оно вправе жить долго.
+assert.equal(claimTtlDays('constraint', 'Не опускать остаток ниже безопасного уровня.', 'durable'), null,
+  'правило про волатильную величину остаётся правилом')
+assert.equal(claimTtlDays('preference', 'Цены обсуждаем только письменно.', 'durable'), null)
+assert.equal(claimTtlDays('lesson', 'Не запускать скидку без согласования с владельцем.'), null)
+// А наблюдение о той же величине — замер.
+assert.equal(claimTtlDays('fact', 'Остатки на складе выглядят достаточными.', 'durable'), SNAPSHOT_TTL_DAYS)
 
 // ОПОРНОЕ ПРАВИЛО: факт не получает бессрочность НИКОГДА, что бы ни сказала модель.
 assert.equal(claimTtlDays('fact', 'Рынок Узбекистана растёт.', 'durable'), SEASON_TTL_DAYS,
