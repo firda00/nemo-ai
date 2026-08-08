@@ -3,6 +3,8 @@ import {
   STALE_AFTER_HOURS,
   catalogueFreshness,
   staleCatalogues,
+  brokenCatalogues,
+  emptyNotice,
   hoursWord,
   staleHoursPhrase,
   staleWarningText,
@@ -114,5 +116,55 @@ const hostile = staleWarningText(
 )
 assert.match(hostile, /&lt;b&gt;Shop&lt;\/b&gt; &amp; Co/)
 assert.doesNotMatch(hostile, /<b>Shop<\/b>/, 'a shop name cannot inject markup into the warning')
+
+// ── Пустой магазин — не авария ────────────────────────────────────────────────────────────────
+// Владелец подключил Vita Market Plus и не завёл карточки. Сторож кричал 77 часов и был прав по
+// своей логике — данных нет. Но «продавец ещё не начал» и «синхронизация сломалась» требуют
+// разного, и тревога о первом была бы неправдой о том, что случилось.
+const EMPTY_REASON = 'Uzum вернул 0 карточек по магазину 125704 — в кабинете нет товаров либо ключ не видит этот магазин.'
+const emptyRow = (over = {}) => row({ last_observed_at: null, connected_at: hoursAgo(77), last_sync_error: EMPTY_REASON, ...over })
+
+assert.equal(catalogueFreshness(emptyRow(), NOW).state, 'empty', 'причина известна из ответа Uzum')
+assert.equal(catalogueFreshness(emptyRow({ last_sync_error: '401 Unauthorized' }), NOW).state, 'never',
+  'иной отказ остаётся аварией, а не превращается в «магазин пустой»')
+assert.equal(catalogueFreshness(emptyRow({ last_sync_error: null }), NOW).state, 'never',
+  'без объяснения молчание остаётся молчанием')
+// Свежеподключённый пустой магазин не трогаем вовсе: карточки могли не успеть появиться.
+assert.equal(catalogueFreshness(emptyRow({ connected_at: hoursAgo(2) }), NOW).state, 'fresh')
+
+// Подтверждённый владельцем выпадает из внимания совсем.
+assert.equal(staleCatalogues([emptyRow()], NOW).length, 1, 'неподтверждённый пустой ещё виден')
+assert.equal(staleCatalogues([emptyRow({ empty_confirmed_at: hoursAgo(1) })], NOW).length, 0,
+  'владелец посмотрел кабинет — больше не наша забота')
+
+// ГЛАВНОЕ: пустой магазин не попадает в тревогу ни при каких условиях.
+const mixedWithEmpty = staleCatalogues([
+  emptyRow({ catalog_id: 'e', catalog_name: 'Vita Market Plus' }),
+  row({ catalog_id: 'b', catalog_name: 'XALTA', last_observed_at: hoursAgo(20) }),
+], NOW)
+assert.equal(mixedWithEmpty.length, 2)
+assert.equal(brokenCatalogues(mixedWithEmpty).length, 1, 'в аварии остаётся только сломанный')
+assert.equal(brokenCatalogues(mixedWithEmpty)[0].name, 'XALTA')
+assert.doesNotMatch(
+  staleWarningText(brokenCatalogues(mixedWithEmpty), { multiShop: true, allStale: false }) ?? '',
+  /Vita Market Plus/, 'пустой магазин не называется в тревоге')
+
+// Вежливая подсказка — вместо тревоги и ровно один раз.
+const notice = emptyNotice(mixedWithEmpty, { multiShop: true })
+assert.match(notice, /товаров пока нет/)
+assert.match(notice, /Vita Market Plus/)
+assert.doesNotMatch(notice, /XALTA/, 'подсказка не про сломанный магазин')
+assert.match(notice, /Добавьте первые товары/)
+assert.match(notice, /не ошибка/, 'сказано прямо, чтобы тишина не читалась как поломка')
+assert.match(notice, /Больше об этом магазине не напомним/)
+
+assert.equal(emptyNotice(staleCatalogues([emptyRow({ empty_notified_at: hoursAgo(2) })], NOW), { multiShop: false }), null,
+  'вторая подсказка — спам')
+assert.equal(emptyNotice(staleCatalogues([emptyRow({ empty_confirmed_at: hoursAgo(2) })], NOW), { multiShop: false }), null)
+assert.equal(emptyNotice([], { multiShop: false }), null)
+// Имя магазина приходит из Uzum и попадает в HTML-сообщение.
+assert.match(
+  emptyNotice(staleCatalogues([emptyRow({ catalog_name: '<b>Shop</b>' })], NOW), { multiShop: true }),
+  /&lt;b&gt;Shop&lt;\/b&gt;/)
 
 console.log('commerce freshness behaviour: all assertions passed')

@@ -5,7 +5,7 @@ import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSendHtml } from '../_shared/telegram.ts'
 import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
-import { staleCatalogues, staleWarningText, type CatalogueFreshness } from '../_shared/commerceFreshness.ts'
+import { staleCatalogues, staleWarningText, brokenCatalogues, emptyNotice, type CatalogueFreshness } from '../_shared/commerceFreshness.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -228,10 +228,22 @@ Deno.serve(async (req) => {
     const multiShop = (catalogsPerAccount.get(accountId) ?? 0) > 1
 
     if (action === 'alerts') {
+      // Подключённый магазин без товаров — не авария. Продавец, который ещё не завёл карточки,
+      // получает одну вежливую подсказку, а не тревогу: тревога здесь была бы неправдой о том,
+      // что случилось, и научила бы отключать уведомления.
+      const notice = emptyNotice(stale, { multiShop })
+      if (notice && await tgSendHtml(target.token, target.chatId, notice)) {
+        await db.from('commerce_catalogs').update({ empty_notified_at: new Date().toISOString() })
+          .in('id', stale.filter((item) => item.state === 'empty').map((item) => item.catalogId))
+          .is('empty_notified_at', null)
+        sent++
+      }
+
       // Once per outage, not once every four hours. The flag is cleared the moment data returns,
       // so a second outage is a second alert and one long outage stays one.
-      const unalerted = stale.filter((item) => !alertedByCatalog.get(item.catalogId))
-      const warning = staleWarningText(unalerted, { multiShop, allStale: stale.length >= (catalogsPerAccount.get(accountId) ?? 1) })
+      const broken = brokenCatalogues(stale)
+      const unalerted = broken.filter((item) => !alertedByCatalog.get(item.catalogId))
+      const warning = staleWarningText(unalerted, { multiShop, allStale: broken.length >= (catalogsPerAccount.get(accountId) ?? 1) })
       if (warning && await tgSendHtml(target.token, target.chatId, warning)) {
         await db.from('commerce_catalogs').update({ stale_alerted_at: new Date().toISOString() })
           .in('id', unalerted.map((item) => item.catalogId)).is('stale_alerted_at', null)
@@ -247,7 +259,10 @@ Deno.serve(async (req) => {
     } else {
       const unsent = accountRows.filter((item) => item.digest_sent_at !== today)
       const stats = statsByAccount.get(accountId) ?? { skus: 0, approximate: 0 }
-      const warning = staleWarningText(stale, { multiShop, allStale: stale.length >= (catalogsPerAccount.get(accountId) ?? 1) })
+      // В дайджесте тоже только аварии: пустой магазин один раз упомянут в алертах и больше не
+      // занимает место в утренней сводке, где каждая строка должна требовать решения.
+      const brokenForDigest = brokenCatalogues(stale)
+      const warning = staleWarningText(brokenForDigest, { multiShop, allStale: brokenForDigest.length >= (catalogsPerAccount.get(accountId) ?? 1) })
       if (!unsent.length && !warning) continue
       // The warning leads, and the digest is sent even when there is nothing new to report —
       // silence was the bug. Everything under the warning was computed from data that stopped

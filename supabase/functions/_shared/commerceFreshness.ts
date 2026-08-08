@@ -24,9 +24,19 @@ export type CatalogueFreshnessRow = {
   connected_at: string
   last_observed_at: string | null
   last_sync_error?: string | null
+  empty_confirmed_at?: string | null
+  empty_notified_at?: string | null
 }
 
-export type FreshnessState = 'fresh' | 'stale' | 'never'
+/**
+ * `empty` — подключённый магазин, в котором продавец ещё не завёл карточки.
+ *
+ * Отличается от `never` тем, что причина известна: Uzum ответил и отдал ноль карточек. Сторож
+ * кричал о таком магазине 77 часов и был прав по своей логике — данных нет. Но «продавец ещё не
+ * начал» и «синхронизация сломалась» требуют разного: первое — вежливой подсказки один раз,
+ * второе — тревоги, пока не починят.
+ */
+export type FreshnessState = 'fresh' | 'stale' | 'never' | 'empty'
 
 export type CatalogueFreshness = {
   catalogId: string
@@ -34,7 +44,17 @@ export type CatalogueFreshness = {
   state: FreshnessState
   hours: number
   error: string | null
+  /** Владелец посмотрел кабинет и подтвердил, что товаров нет. Тогда молчим совсем. */
+  emptyConfirmed: boolean
+  /** Подсказку «добавьте первые товары» уже отправляли. Вторая такая — спам. */
+  emptyNotified: boolean
 }
+
+/**
+ * Синк дописывает причину пустоты в last_sync_error, поэтому пустой магазин узнаётся по ответу
+ * Uzum, а не по догадке. Без этой строки «ноль карточек» и «ключ не видит магазин» неразличимы.
+ */
+const EMPTY_SHOP_REASON = /вернул 0 карточек/i
 
 function hoursBetween(iso: string | null | undefined, now: Date): number | null {
   if (!iso) return null
@@ -53,16 +73,65 @@ function hoursBetween(iso: string | null | undefined, now: Date): number | null 
 export function catalogueFreshness(row: CatalogueFreshnessRow, now: Date): CatalogueFreshness {
   const name = String(row.catalog_name ?? '').trim() || 'Каталог'
   const error = row.last_sync_error ? String(row.last_sync_error) : null
+  const base = {
+    catalogId: row.catalog_id,
+    name,
+    error,
+    emptyConfirmed: Boolean(row.empty_confirmed_at),
+    emptyNotified: Boolean(row.empty_notified_at),
+  }
   const observed = hoursBetween(row.last_observed_at, now)
   if (observed != null) {
-    return { catalogId: row.catalog_id, name, state: observed >= STALE_AFTER_HOURS ? 'stale' : 'fresh', hours: observed, error }
+    return { ...base, state: observed >= STALE_AFTER_HOURS ? 'stale' : 'fresh', hours: observed }
   }
   const connected = hoursBetween(row.connected_at, now) ?? 0
-  return { catalogId: row.catalog_id, name, state: connected >= STALE_AFTER_HOURS ? 'never' : 'fresh', hours: connected, error }
+  if (connected < STALE_AFTER_HOURS) return { ...base, state: 'fresh', hours: connected }
+
+  // Причина известна из ответа Uzum: карточек нет. Это не «синхронизация сломалась», это
+  // «продавец ещё не начал», и тревога здесь была бы неправдой о том, что случилось.
+  if (error && EMPTY_SHOP_REASON.test(error)) return { ...base, state: 'empty', hours: connected }
+
+  return { ...base, state: 'never', hours: connected }
 }
 
+/**
+ * Что заслуживает внимания.
+ *
+ * Подтверждённо пустой магазин выпадает совсем: владелец посмотрел кабинет и знает. Пустой,
+ * которого ещё не подтверждали, остаётся — но как подсказка, а не как авария (см. emptyNotice).
+ */
 export function staleCatalogues(rows: CatalogueFreshnessRow[], now: Date): CatalogueFreshness[] {
-  return rows.map((row) => catalogueFreshness(row, now)).filter((item) => item.state !== 'fresh')
+  return rows
+    .map((row) => catalogueFreshness(row, now))
+    .filter((item) => item.state !== 'fresh')
+    .filter((item) => !(item.state === 'empty' && item.emptyConfirmed))
+}
+
+/** Аварии — то, о чём стоит тревожить. Пустой магазин сюда не входит ни при каких условиях. */
+export const brokenCatalogues = (items: CatalogueFreshness[]) => items.filter((item) => item.state !== 'empty')
+
+/**
+ * Вежливая подсказка вместо тревоги.
+ *
+ * Отправляется один раз: продавец, который ещё не завёл карточки, знает это и без нас, а
+ * ежедневное напоминание об этом — повод отключить уведомления совсем.
+ */
+export function emptyNotice(items: CatalogueFreshness[], options: { multiShop: boolean }): string | null {
+  const fresh = items.filter((item) => item.state === 'empty' && !item.emptyConfirmed && !item.emptyNotified)
+  if (!fresh.length) return null
+  const lines = ['🌱 <b>Магазин подключён, товаров пока нет</b>', '']
+  for (const item of fresh) {
+    lines.push(options.multiShop
+      ? `<b>${escapeHtml(item.name)}</b>: Nemo подключился, но в кабинете Uzum ещё нет ни одной карточки.`
+      : 'Nemo подключился, но в кабинете Uzum ещё нет ни одной карточки.')
+  }
+  lines.push(
+    '',
+    'Добавьте первые товары — и Nemo сразу посчитает комиссию, логистику и минимальную цену по каждому.',
+    // Сказано прямо, чтобы «тишина» не читалась как поломка и чтобы никто не ждал второго письма.
+    '<i>Это не ошибка и не требует ответа. Больше об этом магазине не напомним — начнём считать, как только товары появятся.</i>',
+  )
+  return lines.join('\n')
 }
 
 /** 1 час, 2 часа, 5 часов, 21 час — a broken plural reads as a broken system. */

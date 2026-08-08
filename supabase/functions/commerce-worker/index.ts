@@ -349,6 +349,9 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   const { error: catalogUpdateError } = await db.from('commerce_catalogs').update({
     last_synced_at: new Date().toISOString(),
     last_sync_error: sales.ok ? emptyNote : (sales.error ?? 'seven-day sales read failed'),
+    // Признание пустоты снимается, как только товары появились. Магазин, опустевший ПОСЛЕ того
+    // как торговал, — это уже новость, и подтверждение прошлого месяца не должно её глушить.
+    ...(productRows.length ? { empty_confirmed_at: null, empty_notified_at: null } : {}),
   }).eq('id', typedCatalog.id)
   if (catalogUpdateError) throw catalogUpdateError
   if (!await finish(db, run, 'completed', null, { fetched: products.rows.length, usable: productRows.length })) throw new Error('claim lost')

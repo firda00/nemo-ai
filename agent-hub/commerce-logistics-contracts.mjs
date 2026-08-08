@@ -24,6 +24,7 @@ const notifyChannelMigration = read('supabase/migrations/20260805130000_commerce
 const proposalsMigration = read('supabase/migrations/20260805140000_commerce_economics_proposals.sql')
 const economicsChat = read('supabase/functions/_shared/commerceEconomicsChat.ts')
 const freshness = read('supabase/functions/_shared/commerceFreshness.ts')
+const emptyShop = read('supabase/migrations/20260808170000_commerce_empty_shop.sql')
 const freshnessMigration = read('supabase/migrations/20260807190000_commerce_freshness_watchdog.sql')
 const tgProcess = read('supabase/functions/_shared/tgProcess.ts')
 const telegramHelper = read('supabase/functions/_shared/telegram.ts')
@@ -359,6 +360,35 @@ const checks = [
   // Vita Market Plus стоял 55 часов, каждые четыре часа помечая себя здоровым: чтение прошло,
   // ошибки нет, товаров ноль. Пустой магазин и отвалившиеся на фильтре карточки давали одну и ту
   // же тишину — первое лечит продавец, второе мы.
+  // Пустой магазин — не авария. Тревога о нём была бы неправдой о том, что случилось, и научила
+  // бы владельца отключать уведомления.
+  ['a connected shop with no products is a nudge, never an alarm',
+    freshness.includes("state: 'empty'") && freshness.includes('export const brokenCatalogues')
+    && commerceDigest.includes('const broken = brokenCatalogues(stale)')
+    && commerceDigest.includes('const brokenForDigest = brokenCatalogues(stale)')
+    && /emptyNotice\(stale, \{ multiShop \}\)/.test(commerceDigest)],
+
+  ['the nudge is sent once, and never after the owner confirms',
+    /empty_notified_at: new Date\(\)\.toISOString\(\)/.test(commerceDigest)
+    && /\.is\('empty_notified_at', null\)/.test(commerceDigest)
+    && /!item\.emptyConfirmed && !item\.emptyNotified/.test(freshness)],
+
+  // Магазин, опустевший ПОСЛЕ того как торговал, — это уже новость, и подтверждение прошлого
+  // месяца не должно её глушить.
+  ['confirming emptiness expires the moment products appear',
+    /empty_confirmed_at: null, empty_notified_at: null/.test(commerceWorker)],
+
+  // Пауза выбросила бы магазин из синхронизации навсегда, включая тот день, когда продавец
+  // добавит первый товар. Меняется суждение, а не наблюдение.
+  ['a confirmed-empty shop keeps syncing rather than being paused out of existence',
+    // Сломанная форма процитирована в комментарии намеренно — это и есть объяснение. Проверяем
+    // исполняемую строку: `set status =`, а не упоминание.
+    emptyShop.includes('ПОЧЕМУ НЕ status') && !/set status =/.test(emptyShop)
+    && /and status = 'active' and empty_confirmed_at is null/.test(emptyShop)],
+
+  ['only Uzum\'s own answer turns silence into "empty", never a guess',
+    /const EMPTY_SHOP_REASON = \/вернул 0 карточек\/i/.test(freshness)],
+
   ['a sync that found nothing says what it saw',
     commerceWorker.includes('fetched: products.rows.length, usable: productRows.length')
     && commerceWorker.includes('Uzum вернул 0 карточек')
@@ -377,11 +407,13 @@ const checks = [
   ['staleness is measured from data that arrived, not from a sync that claimed to run', freshnessMigration.includes('max(s.observed_at)') && freshness.includes('last_observed_at') && !/last_synced_at >=|last_synced_at <=/.test(freshness)],
   ['the outage alert fires once per outage and rearms on recovery', commerceDigest.includes('stale_alerted_at: new Date().toISOString()') && /update\(\{ stale_alerted_at: null \}\)/.test(commerceDigest) && commerceDigest.includes('hygiene, not a notification')],
   ['the threshold is whole worker cycles, so one hiccup is not an outage', /export const STALE_AFTER_HOURS = 12\b/.test(freshness) && freshness.includes('every four hours')],
-  ['a never-synced shop reads differently from one that stopped', freshness.includes("? 'never' : 'fresh'") && freshness.includes('не пришло ни одного товара') && freshness.includes('не обновлялись')],
+  // Три состояния, а не два: остановился, не начинал, и пуст по собственному признанию Uzum.
+  // Четыре состояния, а не два: свежий, остановился, не начинал, и пуст по признанию Uzum.
+  ['a never-synced shop reads differently from one that stopped', /FreshnessState = 'fresh' \| 'stale' \| 'never' \| 'empty'/.test(freshness) && freshness.includes('не пришло ни одного товара') && freshness.includes('не обновлялись')],
   ['the warning says the remaining numbers cannot be trusted', freshness.includes('Проверьте API-ключ или статус кабинета') && freshness.includes('на них нельзя опираться')],
   // One dead shop out of four does not make the other three untrustworthy. A watchdog that
   // overstates the damage gets muted exactly like one that understates it.
-  ['the warning claims no more breakage than there is', freshness.includes('allStale') && freshness.includes('Остальные магазины обновляются нормально') && /allStale: stale\.length >= \(catalogsPerAccount\.get\(accountId\) \?\? 1\)/.test(commerceDigest)],
+  ['the warning claims no more breakage than there is', freshness.includes('allStale') && freshness.includes('Остальные магазины обновляются нормально') && /allStale: broken(?:ForDigest)?\.length >= \(catalogsPerAccount\.get\(accountId\) \?\? 1\)/.test(commerceDigest)],
   ['shop names from Uzum cannot inject markup into the warning', /escapeHtml\(item\.name\)/.test(freshness) && /escapeHtml\(item\.error/.test(freshness)],
   ['the watchdog rules can be tested outside Deno', !freshness.includes('esm.sh') && !/Deno\./.test(freshness)],
   ['the freshness migration is registered for deploy', deploy.includes('20260807190000_commerce_freshness_watchdog.sql')],

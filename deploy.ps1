@@ -105,6 +105,7 @@ Apply-Migration .\supabase\migrations\20260807250000_org_decision_resolve_fix.sq
 Apply-Migration .\supabase\migrations\20260807260000_org_memory_owner.sql
 Apply-Migration .\supabase\migrations\20260807270000_commerce_decision_bridge.sql
 Apply-Migration .\supabase\migrations\20260808160000_sync_run_counts.sql
+Apply-Migration .\supabase\migrations\20260808170000_commerce_empty_shop.sql
 
 $schemaCheckSql = @'
 select
