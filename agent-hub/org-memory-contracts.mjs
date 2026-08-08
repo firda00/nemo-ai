@@ -478,10 +478,13 @@ const checks = [
     /ничего[\s\S]{0,20}не пишет в (?:Uzum|маркетплейс)/.test(commerceControl)
     && !/uzum.*(?:POST|PUT|PATCH)/i.test(bridge)],
 
-  ['the owner can reach acceptance from the findings list',
+  // Кнопка сначала попала только под закупку и маржу, а самая срочная секция — товар, который
+  // продавался и встал в ноль — осталась без неё. Каждая секция, где находки перечислены
+  // поимённо, обязана давать по ним действовать.
+  ['every individually listed finding can be accepted',
     /action: 'accept_finding'/.test(commercePage)
-    && /onAccept/.test(commerceFindings)
-    && /commerce\.findings\.accept/.test(commerceFindings)],
+    && /commerce\.findings\.accept/.test(commerceFindings)
+    && (commerceFindings.match(/\{accept\(row\.id\)\}/g) ?? []).length === 3],
 
   ['the accepted finding does not vanish from under the pointer',
     /setAcceptedFindings/.test(commercePage)

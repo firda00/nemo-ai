@@ -84,6 +84,11 @@ export function CommerceFindings({ findings, loading, onAccept, acceptedIds, bus
                 <p className="mt-0.5 text-muted">
                   {t('commerce.findings.soldLastWeek')} {String(row.calculation?.sold_units_7d ?? '—')} · {money(row.calculation?.price_tiyin, unit)}
                 </p>
+                {/* Самая срочная секция получила кнопку последней: товар, который продавался и
+                    встал в ноль, — как раз тот случай, где пополнение стоит проверять. Тихие
+                    нули её не получают намеренно: гипотеза «пополним то, что никто не покупает»
+                    заведомо плохая, и лишние свидетельства испортили бы счёт настоящей. */}
+                {accept(row.id)}
               </li>
             ))}
           </ul>
