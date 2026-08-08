@@ -97,6 +97,7 @@ Apply-Migration .\supabase\migrations\20260806270000_commerce_owner_value_outran
 Apply-Migration .\supabase\migrations\20260806280000_commerce_stockout.sql
 Apply-Migration .\supabase\migrations\20260807190000_commerce_freshness_watchdog.sql
 Apply-Migration .\supabase\migrations\20260807200000_org_memory.sql
+Apply-Migration .\supabase\migrations\20260807210000_org_memory_wiring.sql
 
 $schemaCheckSql = @'
 select
@@ -440,7 +441,19 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent');
+  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent', 'nemo-org-memory-every-five-minutes');
+-- Извлечение памяти отделено от прогона: ящик наполняет транзакция завершения, а модель зовётся
+-- здесь. Пустая очередь стоит один запрос, поэтому пять минут — не расточительство, а задержка,
+-- после которой знание прогона доступно следующему.
+select cron.schedule(
+  'nemo-org-memory-every-five-minutes',
+  '*/5 * * * *',
+  $$select net.http_post(
+      url := 'https://__REF__.supabase.co/functions/v1/org-memory-worker',
+      headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','__SECRET__'),
+      body := '{}'::jsonb
+    );$$
+);
 select cron.schedule(
   'nemo-autonomous-worker-every-minute',
   '* * * * *',

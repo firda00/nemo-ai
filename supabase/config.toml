@@ -143,6 +143,9 @@ verify_jwt = false
 [functions.commerce-worker]
 verify_jwt = false
 
+[functions.org-memory-worker]
+verify_jwt = false
+
 # Commerce digest and alerts are cron/service-role only.
 [functions.commerce-digest]
 verify_jwt = false

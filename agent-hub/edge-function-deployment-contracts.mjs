@@ -20,7 +20,7 @@ const classified = [...publicFunctions, ...authenticatedFunctions, ...excludedFu
 
 assert.equal(new Set(classified).size, classified.length, 'a function may appear in only one deployment class')
 assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory must be deployed or explicitly excluded')
-assert.equal(publicFunctions.length, 27)
+assert.equal(publicFunctions.length, 28)
 assert.equal(authenticatedFunctions.length, 46)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
@@ -35,7 +35,7 @@ assert.match(deploy, /\$edgeManifest\.authenticated/)
 
 const knowledgeIndex = fs.readFileSync(path.join(functionsRoot, 'knowledge-index', 'index.ts'), 'utf8')
 assert.match(knowledgeIndex, /!CRON_SECRET\s*\|\|/, 'public knowledge indexing cron must fail closed without a configured secret')
-for (const fn of ['commerce-worker', 'commerce-digest']) {
+for (const fn of ['commerce-worker', 'commerce-digest', 'org-memory-worker']) {
   const source = fs.readFileSync(path.join(functionsRoot, fn, 'index.ts'), 'utf8')
   assert.match(source, /!CRON(?:_SECRET)?\s*\|\|/, `public ${fn} cron must fail closed without a configured secret`)
   assert.match(source, /403/, `public ${fn} must reject unauthorized callers`)

@@ -1,12 +1,12 @@
 {
   "public": [
     "agent-worker",
-    "autonomous-worker",
     "automation-hook",
+    "autonomous-worker",
     "autopost",
     "browser-bridge",
-    "commerce-worker",
     "commerce-digest",
+    "commerce-worker",
     "daily-digest",
     "evolve-agent",
     "follow-up",
@@ -17,6 +17,7 @@
     "morning-brief",
     "ops-autopilot",
     "ops-watchdog",
+    "org-memory-worker",
     "setup-meta",
     "setup-telegram",
     "stripe-webhook",
