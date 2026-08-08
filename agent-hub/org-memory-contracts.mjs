@@ -531,6 +531,12 @@ const checks = [
     && /function Measurable/.test(memoryPage)
     && /metric\.unwired_reason/.test(memoryPage)],
 
+  // По алфавиту Поддержка вставала последней, под четырьмя блоками «канала нет», и экран читался
+  // как список неготового — хотя готового ровно половина.
+  ['working domains are listed before the ones still waiting for a channel',
+    /Number\(wiredDomains\.has\(b\)\) - Number\(wiredDomains\.has\(a\)\)/.test(memoryPage)
+    && /a\.localeCompare\(b\)/.test(memoryPage)],
+
   ['the registry migrations are registered for deploy',
     deploy.includes('20260808180000_org_metrics_registry.sql')
     && deploy.includes('20260808190000_register_refuses_unwired.sql')],

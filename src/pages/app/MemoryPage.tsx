@@ -176,7 +176,12 @@ export default function MemoryPage() {
  * можно проверить.
  */
 function Measurable({ metrics, t }: { metrics: Metric[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  // Сначала то, что работает. Поддержка — второй подключённый домен, а по алфавиту она вставала
+  // последней, под четырьмя блоками «канала нет»: экран читался как список неготового, хотя
+  // готового ровно половина. Внутри групп порядок остаётся алфавитным, чтобы он не прыгал.
+  const wiredDomains = new Set(metrics.filter((metric) => metric.is_wired).map((metric) => metric.domain))
   const domains = [...new Set(metrics.map((metric) => metric.domain))]
+    .sort((a, b) => Number(wiredDomains.has(b)) - Number(wiredDomains.has(a)) || a.localeCompare(b))
   return (
     <section className="card mt-6 rounded-3xl p-5">
       <h2 className="text-lg font-bold text-text">{t('memory.metrics.title')}</h2>
