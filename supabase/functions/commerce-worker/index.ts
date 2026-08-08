@@ -148,9 +148,18 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
   return rows
 }
 
-async function finish(db: any, run: SyncRun, status: 'completed' | 'failed' | 'skipped', error: string | null = null): Promise<boolean> {
+async function finish(
+  db: any, run: SyncRun, status: 'completed' | 'failed' | 'skipped', error: string | null = null,
+  counts: { fetched?: number; usable?: number } = {},
+): Promise<boolean> {
   const { data, error: updateError } = await db.from('commerce_sync_runs')
-    .update({ status, error, completed_at: new Date().toISOString() })
+    .update({
+      status, error, completed_at: new Date().toISOString(),
+      // Что синк видел, а не только чем кончился. Прогон, завершившийся ничем, иначе не отличить
+      // от пустого магазина — а это разные болезни.
+      ...(counts.fetched != null ? { fetched_rows: counts.fetched } : {}),
+      ...(counts.usable != null ? { usable_rows: counts.usable } : {}),
+    })
     .eq('id', run.id).eq('claim_token', run.claim_token).eq('status', 'running').select('id')
   if (updateError) throw updateError
   return Boolean(data?.length)
@@ -326,9 +335,23 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
       .eq('status', 'open').in('sku_id', syncedSkuIds).lt('last_detected_at', runStartedAt)
     if (resolveError) throw resolveError
   }
-  const { error: catalogUpdateError } = await db.from('commerce_catalogs').update({ last_synced_at: new Date().toISOString(), last_sync_error: sales.ok ? null : (sales.error ?? 'seven-day sales read failed') }).eq('id', typedCatalog.id)
+  // Прогон, завершившийся без товаров, объясняет себя сам.
+  //
+  // Vita Market Plus стоял 55 часов, каждые четыре часа помечая себя здоровым: чтение прошло,
+  // ошибки нет, товаров ноль. Два совершенно разных случая давали одну и ту же тишину — магазин
+  // пуст, или карточки пришли и все отвалились на фильтре по идентификатору. Первое лечит
+  // продавец, второе мы.
+  const emptyNote = productRows.length === 0
+    ? (products.rows.length === 0
+        ? `Uzum вернул 0 карточек по магазину ${typedCatalog.external_shop_id} — в кабинете нет товаров либо ключ не видит этот магазин.`
+        : `Uzum вернул ${products.rows.length} карточек, но ни одна не дала идентификатора SKU — это дефект разбора на нашей стороне.`)
+    : null
+  const { error: catalogUpdateError } = await db.from('commerce_catalogs').update({
+    last_synced_at: new Date().toISOString(),
+    last_sync_error: sales.ok ? emptyNote : (sales.error ?? 'seven-day sales read failed'),
+  }).eq('id', typedCatalog.id)
   if (catalogUpdateError) throw catalogUpdateError
-  if (!await finish(db, run, 'completed')) throw new Error('claim lost')
+  if (!await finish(db, run, 'completed', null, { fetched: products.rows.length, usable: productRows.length })) throw new Error('claim lost')
   return 'completed'
 }
 

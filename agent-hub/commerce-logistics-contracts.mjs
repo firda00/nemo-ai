@@ -356,6 +356,15 @@ const checks = [
   // incomplete product; what must not disappear is the instruction on how to fix it.
   ['the digest tells the owner how to unblock the numbers', commerceDigest.includes('надиктуйте её текстом или голосом прямо в этот чат') && commerceDigest.includes('себестоимость 20000, доставка 12 дней')],
   ['the welcome message explains that the chat accepts input', /Можно отвечать прямо сюда/.test(telegramWebhook) && /наговорите голосом/.test(telegramWebhook)],
+  // Vita Market Plus стоял 55 часов, каждые четыре часа помечая себя здоровым: чтение прошло,
+  // ошибки нет, товаров ноль. Пустой магазин и отвалившиеся на фильтре карточки давали одну и ту
+  // же тишину — первое лечит продавец, второе мы.
+  ['a sync that found nothing says what it saw',
+    commerceWorker.includes('fetched: products.rows.length, usable: productRows.length')
+    && commerceWorker.includes('Uzum вернул 0 карточек')
+    && commerceWorker.includes('дефект разбора на нашей стороне')
+    && deploy.includes('20260808160000_sync_run_counts.sql')],
+
   ['auto-fill migration is deployed and probed', /20260805120000_commerce_economics_autofill\.sql/.test(deploy) && /column_name = 'estimated_fields'/.test(deploy) && /to_regprocedure\('public\.autofill_commerce_economics\(uuid\)'\) is not null/.test(deploy)],
 
   // --- The silence watchdog: a broken sync must announce itself ---
