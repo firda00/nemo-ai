@@ -56,7 +56,9 @@ try {
   })
 
   const publicRoutes = ['/', '/pricing', '/demo', '/pitch', '/auth']
-  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates']
+  // /app/memory входит сюда после того, как страница была задеплоена без пункта в меню: маршрут
+  // существовал, дойти до него было нельзя, и ни одна проверка этого не заметила.
+  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates', '/app/memory']
 
   async function checkRoute(route) {
     // Vite keeps a development/HMR connection open, so networkidle0 can hang
@@ -71,14 +73,16 @@ try {
       text: document.body.innerText.trim(),
       rootChildren: document.querySelector('#root')?.childElementCount ?? 0,
       viteError: Boolean(document.querySelector('vite-error-overlay')),
+      path: window.location.pathname,
     }))
     if (result.viteError || result.rootChildren === 0 || result.text.length < 30) throw new Error(`${route} rendered an empty or broken page`)
+    if (result.path !== route) throw new Error(`${route} unexpectedly redirected to ${result.path}`)
     console.log(`[OK] ${route}`)
   }
 
   for (const route of publicRoutes) await checkRoute(route)
   await page.evaluate(() => localStorage.setItem('nemo.user', JSON.stringify({
-    id: 'smoke-user', email: 'smoke@nemo.local', name: 'Smoke User', lang: 'uz', role: 'user', createdAt: '2026-07-10', quotaUsed: 0, quotaLimit: 100,
+    id: 'smoke-user', email: 'smoke@nemo.local', name: 'Smoke User', lang: 'uz', role: 'user', onboardingCompleted: true, createdAt: '2026-07-10', quotaUsed: 0, quotaLimit: 100,
   })))
   for (const route of appRoutes) await checkRoute(route)
 

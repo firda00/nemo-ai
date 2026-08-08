@@ -21,6 +21,9 @@ const ownerMigration = read('supabase/migrations/20260807260000_org_memory_owner
 const ownerFn = read('supabase/functions/org-memory/index.ts')
 const memoryPage = read('src/pages/app/MemoryPage.tsx')
 const app = read('src/App.tsx')
+const appLayout = read('src/components/layout/AppLayout.tsx')
+const i18n = read('src/i18n/extra.ts')
+const siteSmoke = read('agent-hub/site-smoke.mjs')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -419,6 +422,18 @@ const checks = [
 
   ['the owner migration is registered for deploy',
     deploy.includes('20260807260000_org_memory_owner.sql')],
+
+  // Страница была задеплоена без пункта в меню: маршрут существовал, дойти до него было нельзя.
+  // Комментарий над списком навигации говорит ровно это — «every released workflow must remain
+  // reachable», — и его пришлось нарушить, чтобы он заработал как проверка.
+  ['the memory screen is reachable from the navigation, not only by URL',
+    /\{ to: '\/app\/memory'/.test(appLayout)
+    && /appLayout\.navMemory/.test(appLayout)
+    && ['navMemory": "Tashkilot xotirasi', 'navMemory": "Память компании', 'navMemory": "Company memory']
+        .every((label) => i18n.includes(label))],
+
+  ['the route is smoke-tested like every other released screen',
+    /'\/app\/memory'/.test(siteSmoke)],
 ]
 
 let failed = 0

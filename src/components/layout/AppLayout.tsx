@@ -26,6 +26,7 @@ import {
   PanelLeftOpen,
   Mail,
   Database,
+  Brain,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -128,6 +129,10 @@ export function AppLayout() {
       ...(emailEnabled ? [{ to: '/app/email-assistant', label: t('appLayout.navEmailAssistant'), icon: Mail }] : []),
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
       { to: '/app/approvals', label: 'Approvals', icon: ClipboardCheck },
+      // Рядом с согласованиями: обе страницы про одно — посмотреть, что система сделала или
+      // решила, и возразить. Память, до которой не дойти из меню, неисправима ровно так же,
+      // как память, которой нет.
+      { to: '/app/memory', label: t('appLayout.navMemory'), icon: Brain },
       { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
     ] },
     { title: t('appLayout.groupAccount'), items: [
