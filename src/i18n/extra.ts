@@ -74,6 +74,8 @@ export const extraUz = {
         "floor": "Eng past narx:",
         "estimatedTitle": "Hisobda Nemo bahosi ishlatilgan — bu sizning raqamingiz emas.",
         "andMore": "yana {n} ta",
+        "accept": "Ishga olaman",
+        "accepted": "Qabul qilindi — muddatida tekshiramiz",
       },
       "listing": {
         "title": "Listing Agent — yangi mahsulot qoralamasi",
@@ -1730,6 +1732,8 @@ export const extraRu = {
         "floor": "Минимальная цена:",
         "estimatedTitle": "В расчёте использована оценка Nemo — это не ваше число.",
         "andMore": "и ещё {n}",
+        "accept": "Беру в работу",
+        "accepted": "Принято — проверим к сроку",
       },
       "listing": {
         "title": "Listing Agent — черновик нового товара",
@@ -3386,6 +3390,8 @@ export const extraEn = {
         "floor": "Floor price:",
         "estimatedTitle": "A Nemo estimate went into this figure — it is not your number.",
         "andMore": "{n} more",
+        "accept": "I'll do this",
+        "accepted": "Accepted — we'll check at the horizon",
       },
       "listing": {
         "title": "Listing Agent — draft for a new product",

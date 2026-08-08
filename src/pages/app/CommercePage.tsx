@@ -82,6 +82,23 @@ export default function CommercePage() {
     setProposals(result?.ok ? result.proposals ?? [] : [])
   }, [])
 
+  // Принятое помечается локально, а не перезагрузкой списка: list_findings отдаёт только открытые,
+  // и принятая находка исчезла бы из-под пальца — владелец не увидел бы подтверждения тому, что
+  // сделал. Список обновится сам при следующем заходе.
+  const [acceptedFindings, setAcceptedFindings] = useState<Set<string>>(new Set())
+  const [acceptingFinding, setAcceptingFinding] = useState<string | null>(null)
+
+  const acceptFinding = useCallback(async (recommendationId: string) => {
+    if (!supabase) return
+    setAcceptingFinding(recommendationId)
+    const { data } = await supabase.functions.invoke('commerce-control', {
+      body: { action: 'accept_finding', recommendation_id: recommendationId },
+    })
+    const result = data as { ok?: boolean } | null
+    if (result?.ok) setAcceptedFindings((current) => new Set(current).add(recommendationId))
+    setAcceptingFinding(null)
+  }, [])
+
   const loadFindings = useCallback(async () => {
     if (!supabase) { setFindings([]); return }
     const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_findings' } })
@@ -393,7 +410,15 @@ export default function CommercePage() {
           <p className="text-sm font-semibold text-text">{t('commerce.findings.title')}</p>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.findings.hint')}</p>
         </div>
-        <div className="mt-4"><CommerceFindings findings={findings} loading={loading} /></div>
+        <div className="mt-4">
+          <CommerceFindings
+            findings={findings}
+            loading={loading}
+            acceptedIds={acceptedFindings}
+            busyId={acceptingFinding}
+            onAccept={acceptFinding}
+          />
+        </div>
       </Card>
 
       {catalogs.some((catalog) => catalog.last_sync_error) && (

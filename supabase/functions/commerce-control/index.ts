@@ -567,6 +567,23 @@ Deno.serve(async (req) => {
     })
   }
 
+  if (action === 'accept_finding') {
+    // «Принимаю» — обязательство владельца, а не команда маркетплейсу: Nemo по-прежнему ничего
+    // не пишет в Uzum. С этого момента совет становится проверяемой гипотезой — база в одной
+    // транзакции меняет статус и регистрирует решение с измеримым ожиданием и сроком.
+    //
+    // Одной транзакцией потому, что принятая рекомендация без решения необучаема и молчит об
+    // этом: советы остались бы одинаково хорошими навсегда.
+    const recommendationId = String(body?.recommendation_id ?? '')
+    if (!UUID.test(recommendationId)) return json({ error: 'invalid_recommendation_id' }, 400)
+    const { data, error } = await admin.rpc('commerce_accept_finding', {
+      p_account_id: profile.account_id,
+      p_recommendation_id: recommendationId,
+    })
+    if (error) return json({ error: 'accept_failed', detail: error.message }, 500)
+    return json({ ok: Boolean(data?.ok), result: data })
+  }
+
   if (action === 'list_findings') {
     // Everything the worker concluded, for the screen where the owner can act on it. Until now
     // these existed only in the database and the Telegram digest: the page showed the inputs and

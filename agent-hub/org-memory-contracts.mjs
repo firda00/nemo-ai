@@ -24,6 +24,10 @@ const app = read('src/App.tsx')
 const appLayout = read('src/components/layout/AppLayout.tsx')
 const i18n = read('src/i18n/extra.ts')
 const siteSmoke = read('agent-hub/site-smoke.mjs')
+const bridge = read('supabase/migrations/20260807270000_commerce_decision_bridge.sql')
+const commerceControl = read('supabase/functions/commerce-control/index.ts')
+const commercePage = read('src/pages/app/CommercePage.tsx')
+const commerceFindings = read('src/components/platform/CommerceFindings.tsx')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -434,6 +438,57 @@ const checks = [
 
   ['the route is smoke-tested like every other released screen',
     /'\/app\/memory'/.test(siteSmoke)],
+
+  // ── Мостик Commerce → решения ─────────────────────────────────────────────────────────────
+  // Путь обучения был декоративным: решений никто не регистрировал. Хуже — статус 'accepted' жил
+  // в схеме, но в него не переводила ни одна строка кода: принять рекомендацию было нельзя.
+  ['accepting a recommendation and registering the decision happen in one transaction',
+    /create or replace function public\.commerce_accept_finding/.test(bridge)
+    && /update public\.commerce_recommendations\s*\r?\n\s*set status = 'accepted'/.test(bridge)
+    && /v_decision := public\.org_decision_register\(/.test(bridge)
+    && /необучаема и молчит об этом/.test(bridge)],
+
+  ['a second press cannot register a second decision',
+    /return jsonb_build_object\('ok', false, 'reason', 'already_' \|\| v_rec\.status\)/.test(bridge)
+    && /where id = p_recommendation_id and status = 'open'/.test(bridge)],
+
+  // Одна гипотеза на вид находки, а не на рекомендацию: одно принятие ничего не доказывает,
+  // двадцать — доказывают.
+  ['every acceptance tests one standing hypothesis, so evidence accumulates',
+    /create or replace function public\.commerce_hypothesis_for/.test(bridge)
+    && /'commerce:restock'/.test(bridge) && /'commerce:pricing'/.test(bridge)
+    && /'role', 'primary'/.test(bridge)],
+
+  ['a data gap is not accepted as a decision',
+    /if v_rec\.kind = 'missing_data' then/.test(bridge)
+    && /'not_actionable'/.test(bridge)],
+
+  // Без запаса решение измерялось бы в день, когда товар ещё едет.
+  ['the horizon allows for delivery and for the snapshot to catch up',
+    /coalesce\(v_rec\.lead_time_days, 14\) \+ 3/.test(bridge)],
+
+  ['the price hypothesis is measurable, because the observer learned to read price',
+    /p_metric = 'commerce\.sku\.price_tiyin'/.test(bridge)
+    && /'metric', 'commerce\.sku\.price_tiyin'/.test(bridge)],
+
+  // Nemo по-прежнему ничего не пишет в Uzum: принятие — обязательство владельца, и проверяется
+  // не выполнение, а результат.
+  ['accepting still writes nothing to the marketplace',
+    // Перенос строки и знак комментария между словами — отсюда терпимый промежуток.
+    /ничего[\s\S]{0,20}не пишет в (?:Uzum|маркетплейс)/.test(commerceControl)
+    && !/uzum.*(?:POST|PUT|PATCH)/i.test(bridge)],
+
+  ['the owner can reach acceptance from the findings list',
+    /action: 'accept_finding'/.test(commercePage)
+    && /onAccept/.test(commerceFindings)
+    && /commerce\.findings\.accept/.test(commerceFindings)],
+
+  ['the accepted finding does not vanish from under the pointer',
+    /setAcceptedFindings/.test(commercePage)
+    && /исчезла бы из-под пальца/.test(commercePage)],
+
+  ['the bridge migration is registered for deploy',
+    deploy.includes('20260807270000_commerce_decision_bridge.sql')],
 ]
 
 let failed = 0

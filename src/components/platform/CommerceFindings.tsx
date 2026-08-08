@@ -23,9 +23,43 @@ const percent = (value: unknown) => (typeof value === 'number' ? `${value.toFixe
  * need a decision are listed one by one, and the large quiet background collapses into a single
  * line. Ninety-three names is a wall on a phone and a wall on a laptop.
  */
-export function CommerceFindings({ findings, loading }: { findings: Finding[]; loading: boolean }) {
+/**
+ * «Принимаю» — не команда Uzum, а обязательство владельца.
+ *
+ * Nemo по-прежнему ничего не пишет в маркетплейс. Нажатие означает «беру это в работу», и с этого
+ * момента совет становится проверяемой гипотезой: система запоминает, чего ждёт и к какому сроку,
+ * а через срок сама смотрит, сбылось ли. Без этой кнопки все советы одинаково хороши навсегда.
+ */
+function Accept({ id, accepted, busy, onAccept, t }: {
+  id: string; accepted: boolean; busy: boolean
+  onAccept?: (id: string) => void
+  t: (key: string) => string
+}) {
+  if (!onAccept) return null
+  if (accepted) return <span className="mt-1 inline-block text-[11px] text-teal">{t('commerce.findings.accepted')}</span>
+  return (
+    <button
+      type="button"
+      onClick={() => onAccept(id)}
+      disabled={busy}
+      className="mt-1 rounded-lg border border-accent-cyan/30 bg-accent-cyan/10 px-2 py-1 text-[11px] text-accent-cyan hover:bg-accent-cyan/20 disabled:opacity-50"
+    >
+      {t('commerce.findings.accept')}
+    </button>
+  )
+}
+
+export function CommerceFindings({ findings, loading, onAccept, acceptedIds, busyId }: {
+  findings: Finding[]; loading: boolean
+  onAccept?: (id: string) => void
+  acceptedIds?: Set<string>
+  busyId?: string | null
+}) {
   const { t } = useI18n()
   const unit = t('commerce.sku.currency')
+  const accept = (id: string) => (
+    <Accept id={id} accepted={Boolean(acceptedIds?.has(id))} busy={busyId === id} onAccept={onAccept} t={t} />
+  )
 
   if (loading) return <p className="text-sm text-muted">{t('commerce.findings.loading')}</p>
   if (!findings.length) return <p className="text-sm text-muted">{t('commerce.findings.empty')}</p>
@@ -68,6 +102,7 @@ export function CommerceFindings({ findings, loading }: { findings: Finding[]; l
                 <p className="mt-0.5 text-muted">
                   {t('commerce.findings.stockLeft')} {String(row.calculation?.stock_total ?? '—')} · {t('commerce.findings.order')} <span className="text-text">{String(row.suggested_action?.units ?? '—')}</span>
                 </p>
+                {accept(row.id)}
               </li>
             ))}
           </ul>
@@ -94,6 +129,7 @@ export function CommerceFindings({ findings, loading }: { findings: Finding[]; l
                         rests on a Nemo guess rather than on their own figure. */}
                     {estimated.length > 0 && <span className="ml-1 text-amber" title={t('commerce.findings.estimatedTitle')}>≈</span>}
                   </p>
+                  {accept(row.id)}
                 </li>
               )
             })}
