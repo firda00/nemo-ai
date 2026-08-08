@@ -100,6 +100,8 @@ Apply-Migration .\supabase\migrations\20260807200000_org_memory.sql
 Apply-Migration .\supabase\migrations\20260807210000_org_memory_wiring.sql
 Apply-Migration .\supabase\migrations\20260807220000_org_memory_health.sql
 Apply-Migration .\supabase\migrations\20260807230000_org_claim_ttl.sql
+Apply-Migration .\supabase\migrations\20260807240000_org_outcome_resolver.sql
+Apply-Migration .\supabase\migrations\20260807250000_org_decision_resolve_fix.sql
 
 $schemaCheckSql = @'
 select
@@ -443,7 +445,14 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent', 'nemo-org-memory-every-five-minutes');
+  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent', 'nemo-org-memory-every-five-minutes', 'nemo-org-outcomes-hourly');
+-- Резолвер исходов зовётся прямым SQL, без edge-функции: у него нет ни HTTP, ни секрета, ни
+-- холодного старта, а значит и трёх способов отказать молча.
+select cron.schedule(
+  'nemo-org-outcomes-hourly',
+  '35 * * * *',
+  $job$select public.org_decisions_resolve_due(200);$job$
+);
 -- Извлечение памяти отделено от прогона: ящик наполняет транзакция завершения, а модель зовётся
 -- здесь. Пустая очередь стоит один запрос, поэтому пять минут — не расточительство, а задержка,
 -- после которой знание прогона доступно следующему.

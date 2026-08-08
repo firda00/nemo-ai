@@ -15,6 +15,8 @@ const extractor = read('supabase/functions/org-memory-worker/index.ts')
 const health = read('supabase/migrations/20260807220000_org_memory_health.sql')
 const opsWatchdog = read('supabase/functions/ops-watchdog/index.ts')
 const ttl = read('supabase/migrations/20260807230000_org_claim_ttl.sql')
+const resolver = read('supabase/migrations/20260807240000_org_outcome_resolver.sql')
+const resolveFix = read('supabase/migrations/20260807250000_org_decision_resolve_fix.sql')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -322,6 +324,51 @@ const checks = [
 
   ['the extractor is told about volatile topics too, so both layers agree',
     /Утверждение ОБ остатках, ценах, балансе, лидах, очередях, конверсии/.test(extractor)],
+
+  // ── Обратная связь по исходу ──────────────────────────────────────────────────────────────
+  // Измеряем ТОЛЬКО по наблюдениям после горизонта. Данные, собранные до решения, о его исходе
+  // ничего не говорят — измерить ими и назвать результатом значит получить красивую точность ни о чём.
+  ['an outcome is measured only from observations after the horizon',
+    /i\.observed_at > p_after/.test(resolver)
+    && /'no_observation_after_horizon'/.test(resolver)
+    && /Данные, собранные до решения, ничего о\r?\n-- его исходе не говорят/.test(resolver)],
+
+  ['the observer verifies tenancy itself, because definer bypasses RLS',
+    /'subject_not_in_account'/.test(resolver)
+    && /security definer[\s\S]{0,200}set search_path = ''/.test(resolver)],
+
+  // Лучше не зарегистрировать решение, чем зарегистрировать и через неделю получить
+  // 'unmeasurable', приняв собственную небрежность за свойство мира.
+  ['an unknown metric is refused loudly at registration, not quietly at the horizon',
+    /if v_probe->>'reason' = 'unknown_metric' then/.test(resolver)
+    && /raise exception using errcode = '22023', message = 'unknown metric/.test(resolver)],
+
+  ['unmeasurable is resolved, counted and shown beside accuracy',
+    /perform public\.org_decision_resolve\(v_due\.id, 'unmeasurable', v_obs\)/.test(resolver)
+    && /unmeasurable_share/.test(resolver)
+    && /create or replace function public\.org_learning_scoreboard/.test(resolver)],
+
+  ['a second cron pass cannot count the same evidence twice',
+    /for update skip locked/.test(resolver)
+    && /where id = p_decision_id and outcome = 'pending'/.test(resolveFix)],
+
+  // min(uuid) не существует. Строка лежала с первой миграции и ни разу не исполнялась: решений
+  // не было, начислять свидетельство было нечему. Путь, который никто не запускал, сломан.
+  ['the evidence path uses an aggregate that exists for uuid',
+    /\(array_agg\(claim_id\)\)\[1\]/.test(resolveFix)
+    // Сломанная форма цитируется в комментарии намеренно — это и есть объяснение. Проверяем
+    // исполняемую строку: `min(claim_id) into`, а не упоминание.
+    && !/min\(claim_id\) into/.test(resolveFix)
+    && /min\(uuid\) в Postgres не существует/.test(resolveFix)],
+
+  ['the resolver runs as plain SQL on cron, with no function to cold-start',
+    /select public\.org_decisions_resolve_due\(200\);/.test(deploy)
+    && /nemo-org-outcomes-hourly/.test(deploy)
+    && !/functions\/v1\/org-outcome/.test(deploy)],
+
+  ['the resolver migrations are registered for deploy',
+    deploy.includes('20260807240000_org_outcome_resolver.sql')
+    && deploy.includes('20260807250000_org_decision_resolve_fix.sql')],
 ]
 
 let failed = 0
