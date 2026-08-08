@@ -24,6 +24,8 @@ $steps = @(
   @{ Name = 'Cost campaign behavior'; Command = { npm run test:cost-campaign } },
   @{ Name = 'Onboarding key normalisation'; Command = { npm run test:onboarding-keys } },
   @{ Name = 'Silence watchdog behavior'; Command = { npm run test:freshness } },
+  @{ Name = 'Organizational memory behavior'; Command = { npm run test:org-memory } },
+  @{ Name = 'Organizational memory contracts'; Command = { npm run test:org-memory-contracts } },
   @{ Name = 'Lead patch behavior'; Command = { npm run test:lead-behavior } },
   @{ Name = 'Release entitlement contracts'; Command = { npm run test:release } },
   @{ Name = 'Review convergence and input UX contracts'; Command = { npm run test:review-ux } },

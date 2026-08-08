@@ -65,6 +65,8 @@
     "test:cost-campaign": "node --experimental-strip-types agent-hub/cost-campaign-behavior.mjs",
     "test:onboarding-keys": "node --experimental-strip-types agent-hub/onboarding-behavior.mjs",
     "test:freshness": "node --experimental-strip-types agent-hub/commerce-freshness-behavior.mjs",
+    "test:org-memory": "node --experimental-strip-types agent-hub/org-memory-behavior.mjs",
+    "test:org-memory-contracts": "node agent-hub/org-memory-contracts.mjs",
     "quality": "powershell -ExecutionPolicy Bypass -File ./agent-hub/quality-gate.ps1",
     "preview": "vite preview",
     "demo:swarm": "node agent-hub/demo-simulation.mjs",
