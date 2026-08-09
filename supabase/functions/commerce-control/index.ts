@@ -113,10 +113,26 @@ Deno.serve(async (req) => {
     const [{ data: pilot }, { data: catalogs, error }, { data: notificationProfile }] = await Promise.all([
       admin.from('commerce_pilots').select('status, started_at, expires_at, read_only_at').eq('account_id', profile.account_id).maybeSingle(),
       admin.from('commerce_catalogs').select('id, name, source, external_shop_id, status, last_synced_at, last_sync_error').eq('account_id', profile.account_id).order('created_at', { ascending: false }),
-      admin.from('business_profiles').select('notify_chat_id').eq('account_id', profile.account_id).maybeSingle(),
+      admin.from('business_profiles').select('notify_chat_id, notify_channel_id').eq('account_id', profile.account_id).maybeSingle(),
     ])
     if (error) return json({ error: 'could not load commerce status' }, 500)
-    return json({ ok: true, pilot: pilot ?? null, catalogs: catalogs ?? [], telegram_connected: Boolean(notificationProfile?.notify_chat_id) })
+
+    // Какой именно бот обслуживает этот магазин. Связь существовала только в базе: владелец
+    // выяснял имя бота перепиской, а имя агента ему в этом врало — «Создай AI-команду для
+    // управления магазином» звучит как нужный бот и им не является. Один запрос вместо догадки.
+    let notifyBot: string | null = null
+    if (notificationProfile?.notify_channel_id) {
+      const { data: channel } = await admin.from('channels')
+        .select('credentials').eq('id', notificationProfile.notify_channel_id).maybeSingle()
+      const username = channel?.credentials?.username
+      notifyBot = typeof username === 'string' && username ? username : null
+    }
+
+    return json({
+      ok: true, pilot: pilot ?? null, catalogs: catalogs ?? [],
+      telegram_connected: Boolean(notificationProfile?.notify_chat_id),
+      notify_bot: notifyBot,
+    })
   }
 
   if (action === 'start_pilot') {

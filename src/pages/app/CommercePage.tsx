@@ -58,6 +58,9 @@ export default function CommercePage() {
   const [batches, setBatches] = useState<Batch[]>([])
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [telegramConnected, setTelegramConnected] = useState(false)
+  // Какой бот обслуживает этот магазин. Связь жила только в базе: имя агента ей вдобавок врало —
+  // «Создай AI-команду для управления магазином» звучит как нужный бот и им не является.
+  const [notifyBot, setNotifyBot] = useState<string | null>(null)
   const [telegramLink, setTelegramLink] = useState<string | null>(null)
   const [skus, setSkus] = useState<CommerceSku[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
@@ -123,12 +126,13 @@ export default function CommercePage() {
       loadDrafts(),
       loadFindings(),
     ])
-    const status = statusResult.data as { ok?: boolean; pilot?: Pilot | null; catalogs?: Catalog[]; telegram_connected?: boolean; error?: string } | null
+    const status = statusResult.data as { ok?: boolean; pilot?: Pilot | null; catalogs?: Catalog[]; telegram_connected?: boolean; notify_bot?: string | null; error?: string } | null
     const list = listResult.data as { ok?: boolean; batches?: Batch[]; error?: string } | null
     if (statusResult.error || !status?.ok) setMessage({ ok: false, text: status?.error ?? statusResult.error?.message ?? t('commerce.errStatus') })
     else {
       const nextCatalogs = status.catalogs ?? []
        setPilot(status.pilot ?? null); setCatalogs(nextCatalogs); setTelegramConnected(Boolean(status.telegram_connected))
+       setNotifyBot(status.notify_bot ?? null)
       if (!selectedCatalogId && nextCatalogs[0]) setCatalogId(nextCatalogs[0].id)
     }
     if (listResult.error || !list?.ok) setMessage({ ok: false, text: list?.error ?? listResult.error?.message ?? t('commerce.errImports') })
@@ -484,7 +488,9 @@ export default function CommercePage() {
         </div>
       </Card>
 
-      <Card className="mt-4" padding="md"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{t('commerce.tgTitle')}</p><p className="mt-1 text-xs text-muted">{t('commerce.tgSubtitle')}</p></div>{telegramConnected ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1.5 text-xs font-medium text-teal"><CheckCircle2 size={14} /> {t('commerce.tgConnected')}</span> : <Button onClick={connectTelegram}>{t('commerce.tgConnect')}</Button>}</div>{telegramLink && <a href={telegramLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-medium text-accent-cyan underline">{t('commerce.tgOpen')}</a>}{!telegramConnected && !telegramLink && <p className="mt-3 text-xs text-amber">{t('commerce.tgHint')}</p>}</Card>
+      <Card className="mt-4" padding="md"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{t('commerce.tgTitle')}</p><p className="mt-1 text-xs text-muted">{t('commerce.tgSubtitle')}</p></div>{telegramConnected ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1.5 text-xs font-medium text-teal"><CheckCircle2 size={14} /> {t('commerce.tgConnected')}</span> : <Button onClick={connectTelegram}>{t('commerce.tgConnect')}</Button>}</div>{/* Имя бота, а не «в вашем Telegram»: у аккаунта их несколько, и назвать нужный можно только
+    по привязке. Ссылка ведёт прямо в тот чат, куда приходят сводки и где ждут /costs. */}
+{notifyBot && <p className="mt-3 text-xs text-muted">{t('commerce.tgBot')} <a href={`https://t.me/${notifyBot}`} target="_blank" rel="noreferrer" className="font-medium text-accent-cyan underline">@{notifyBot}</a></p>}{telegramLink && <a href={telegramLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-medium text-accent-cyan underline">{t('commerce.tgOpen')}</a>}{!telegramConnected && !telegramLink && <p className="mt-3 text-xs text-amber">{t('commerce.tgHint')}</p>}</Card>
 
       <Card className="mt-4" padding="md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

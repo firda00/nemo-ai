@@ -389,6 +389,15 @@ const checks = [
   ['only Uzum\'s own answer turns silence into "empty", never a guess',
     /const EMPTY_SHOP_REASON = \/вернул 0 карточек\/i/.test(freshness)],
 
+  // Аккаунт держит несколько ботов, и назвать нужный можно только по привязке. Имя агента вдобавок
+  // врёт: «Создай AI-команду для управления магазином» звучит как нужный бот и им не является.
+  ['the page names the bot that serves this shop, taken from the binding',
+    commerceControl.includes('notify_bot: notifyBot')
+    && /select\('credentials'\)\.eq\('id', notificationProfile\.notify_channel_id\)/.test(commerceControl)
+    && /https:\/\/t\.me\/\$\{notifyBot\}/.test(commercePage)
+    && ['tgBot": "Xabarnomalar', 'tgBot": "Уведомления', 'tgBot": "Notifications']
+        .every((label) => i18nExtra.includes(label))],
+
   ['a sync that found nothing says what it saw',
     commerceWorker.includes('fetched: products.rows.length, usable: productRows.length')
     && commerceWorker.includes('Uzum вернул 0 карточек')
