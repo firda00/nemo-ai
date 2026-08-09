@@ -39,7 +39,16 @@ const MAX_COST_UZS = 100_000_000
 const SEGMENT = /\r?\n|;|,(?!\s*\d)|(?<!\d)\s*,\s*/
 // The LAST standalone number in a segment is the cost. Names carry digits too — "заколки 6шт
 // 9000", "бони 46 размер 18000" — and in every one of them the price is the number said last.
-const TRAILING_NUMBER = /(\d[\d\s\u00a0]*)(?:\s*(?:сум|so['‘’]m|uzs|som))?\s*$/i
+//
+// Пробелы ВНУТРИ числа склеиваются только как разряды — группами ровно по три. Первая версия
+// принимала любую череду цифр и пробелов, поэтому размер в конце названия приклеивался к цене.
+// «AYOL88-КУПАЛЬНИК1-ЛАЙМ-50 22000» читалось как себестоимость 5 022 000 при рознице 339 500,
+// а товар — теперь «…-ЛАЙМ-» — не находился вовсе. Владелец продиктовал две позиции, увидел
+// одну, и про вторую ему не сказали. «TONOGICHLAR-БЕЛЫЙ-13 33950» — та же форма: 1 333 950.
+//
+// Имена SKU на Uzum заканчиваются размером как правило — -50, -13, -XL, «8 лет», — так что это
+// был не краевой случай, а обычный.
+const TRAILING_NUMBER = /(\d{1,3}(?:[\s\u00a0]\d{3})+|\d+)(?:\s*(?:сум|so['‘’]m|uzs|som))?\s*$/i
 
 // Marks of a line that was COMPUTED and pasted, not dictated. The owner pasted a report line —
 // "AYOL88-CHECHENKA-ЧЕРН 116 400 × 8 → 931 200 сум на полке" — and "last number wins" read the

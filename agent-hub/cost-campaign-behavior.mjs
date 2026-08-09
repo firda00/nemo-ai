@@ -157,4 +157,31 @@ assert.match(
   /&lt;b&gt;x&lt;\/b&gt;/,
 )
 
-console.log('[OK] Cost campaign behaviour: 52 assertions')
+
+// ── Размер в конце названия — не цена ────────────────────────────────────────────────────────
+// Владелец продиктовал две позиции, увидел одну, и про вторую ему не сказали ничего: правило
+// склеивало любые соседние числа, и «…-ЛАЙМ-50 22000» превращалось в цену 5 022 000 при рознице
+// 339 500, а имя товара теряло размер и не находилось. Имена SKU на Uzum кончаются размером как
+// правило, так что это был обычный случай, а не краевой.
+const glued = parseCostBatch('AYOL88-КУПАЛЬНИК1-ЛАЙМ-50 22000')
+assert.equal(glued.items.length, 1)
+assert.equal(glued.items[0].query, 'AYOL88-КУПАЛЬНИК1-ЛАЙМ-50', 'размер остаётся частью имени')
+assert.equal(glued.items[0].costUzs, 22000, 'ценой становится последнее число, а не склейка')
+
+const thirteen = parseCostBatch('AYOL88-TONOGICHLAR-БЕЛЫЙ-13 33950')
+assert.equal(thirteen.items[0].query, 'AYOL88-TONOGICHLAR-БЕЛЫЙ-13')
+assert.equal(thirteen.items[0].costUzs, 33950, 'было 1 333 950')
+
+// Обе позиции доезжают целиком — ровно та диктовка, что потерялась.
+const both = parseCostBatch('AYOL88-CHECHENKA-ТЕМНЗЕЛ 18000, AYOL88-КУПАЛЬНИК1-ЛАЙМ-50 22000')
+assert.equal(both.items.length, 2, 'ни одна позиция не пропадает молча')
+assert.deepEqual(both.items.map((i) => i.costUzs), [18000, 22000])
+
+// А разряды по-прежнему склеиваются: это ради них правило и писалось.
+assert.equal(parseCostBatch('XALTA 18 000').items[0].costUzs, 18000)
+assert.equal(parseCostBatch('MESHOK 27 500 сум').items[0].costUzs, 27500)
+assert.equal(parseCostBatch('товар 1 234 567').items[0].costUzs, 1234567)
+// Цифры в середине имени всегда работали и должны продолжать.
+assert.equal(parseCostBatch('заколки 6шт 9000').items[0].query, 'заколки 6шт')
+assert.equal(parseCostBatch('бони 46 размер 18000').items[0].costUzs, 18000)
+console.log('[OK] Cost campaign behaviour: 65 assertions')
