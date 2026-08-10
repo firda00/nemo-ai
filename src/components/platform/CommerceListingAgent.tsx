@@ -1,7 +1,39 @@
 import { useState } from 'react'
-import { Check, Loader2, PenLine, Sparkles, Trash2 } from 'lucide-react'
+import { Check, Copy, Loader2, PenLine, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { useI18n } from '../../i18n'
+
+/**
+ * Копирование по одному полю, а не всей карточки.
+ *
+ * В кабинете Uzum заголовок, описание и каждая характеристика — отдельные поля, и «скопировать
+ * всё» там бесполезно: пришлось бы вычищать из буфера чужие строки прямо в форме. Поэтому кнопка
+ * стоит у каждого куска, который куда-то вставляется целиком.
+ *
+ * Подтверждение галочкой обязательно: буфер обмена не виден, и без ответа непонятно, сработало ли
+ * нажатие — а повторное нажатие «на всякий случай» ничего не проверяет.
+ */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [done, setDone] = useState(false)
+  if (!text) return null
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setDone(true)
+          window.setTimeout(() => setDone(false), 1500)
+        } catch { /* буфер недоступен — молчим, кнопка просто не подтвердит */ }
+      }}
+      className={`shrink-0 rounded-md p-1 transition ${done ? 'text-teal' : 'text-muted hover:text-accent-cyan'}`}
+    >
+      {done ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  )
+}
 
 export type ListingDraft = {
   id: string
@@ -109,19 +141,49 @@ export function CommerceListingAgent({
           <div key={draft.id} className="rounded-xl border border-ice/10 bg-panel/60 p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-text">{draft.title_ru ?? t('commerce.listing.noTitle')}</p>
-                {draft.title_uz && <p className="truncate text-xs text-muted">{draft.title_uz}</p>}
-              </div>
-              {ready
-                ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal"><Check size={13} /> {t('commerce.listing.ready')}</span>
-                : (
-                  <div className="flex shrink-0 gap-2">
-                    <Button variant="outline" onClick={() => void decide(draft.id, true)} disabled={missing.length > 0 || busy === draft.id}>
-                      {busy === draft.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {t('commerce.listing.approve')}
-                    </Button>
-                    <Button variant="ghost" onClick={() => void decide(draft.id, false)} disabled={busy === draft.id}><Trash2 size={13} /></Button>
+                <div className="flex items-center gap-1">
+                  <p className="truncate text-sm font-semibold text-text">{draft.title_ru ?? t('commerce.listing.noTitle')}</p>
+                  <CopyButton text={draft.title_ru ?? ''} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.titleRu')}`} />
+                </div>
+                {draft.title_uz && (
+                  <div className="flex items-center gap-1">
+                    <p className="truncate text-xs text-muted">{draft.title_uz}</p>
+                    <CopyButton text={draft.title_uz} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.titleUz')}`} />
                   </div>
                 )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {/* Один блок для документа или заметки — когда переносят не в форму, а «к себе».
+                    Подписан по полям, потому что без подписей это просто слипшийся текст. */}
+                <Button
+                  variant="ghost" size="sm"
+                  onClick={async () => {
+                    const block = [
+                      [t('commerce.listing.titleRu'), draft.title_ru],
+                      [t('commerce.listing.titleUz'), draft.title_uz],
+                      [t('commerce.listing.descRu'), draft.description_ru],
+                      [t('commerce.listing.descUz'), draft.description_uz],
+                      [t('commerce.listing.category'), draft.uzum_category],
+                      ...(draft.attributes ?? []).map((attribute) => [attribute.name, attribute.value] as const),
+                      [t('commerce.listing.floor'), money(draft.min_selling_price_tiyin, t('commerce.sku.currency'))],
+                    ].filter(([, value]) => value).map(([name, value]) => `${name}: ${value}`).join('\n')
+                    try { await navigator.clipboard.writeText(block) } catch { /* буфер недоступен */ }
+                  }}
+                  leftIcon={<Copy size={13} />}
+                >
+                  {t('commerce.listing.copyAll')}
+                </Button>
+                {ready
+                  ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal"><Check size={13} /> {t('commerce.listing.ready')}</span>
+                  : (
+                    <>
+                      <Button variant="outline" onClick={() => void decide(draft.id, true)} disabled={missing.length > 0 || busy === draft.id}>
+                        {busy === draft.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {t('commerce.listing.approve')}
+                      </Button>
+                      <Button variant="ghost" onClick={() => void decide(draft.id, false)} disabled={busy === draft.id}><Trash2 size={13} /></Button>
+                    </>
+                  )}
+              </div>
             </div>
 
             {/* The economics are the reason this exists: a listing that knows its floor price
@@ -138,13 +200,29 @@ export function CommerceListingAgent({
               </div>
             </dl>
 
-            {draft.description_ru && <p className="mt-3 text-xs leading-relaxed text-fog">{draft.description_ru}</p>}
+            {/* Узбекское описание раньше лежало в базе и не показывалось вовсе — а на Uzum его
+                вставляют в отдельное поле, и без него карточка неполная. */}
+            {draft.description_ru && (
+              <div className="mt-3 flex items-start gap-1">
+                <p className="text-xs leading-relaxed text-fog">{draft.description_ru}</p>
+                <CopyButton text={draft.description_ru} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.descRu')}`} />
+              </div>
+            )}
+            {draft.description_uz && (
+              <div className="mt-2 flex items-start gap-1">
+                <p className="text-xs leading-relaxed text-muted">{draft.description_uz}</p>
+                <CopyButton text={draft.description_uz} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.descUz')}`} />
+              </div>
+            )}
 
+            {/* Копируется ЗНАЧЕНИЕ, а не «Цвет: Чёрный»: в форме Uzum название поля уже написано
+                слева, и вставлять его повторно значит чинить текст руками после каждой вставки. */}
             {(draft.attributes ?? []).length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {(draft.attributes ?? []).map((attribute) => (
-                  <span key={attribute.name} className="rounded-lg bg-bg/60 px-2 py-1 text-[11px] text-fog">
+                  <span key={attribute.name} className="flex items-center gap-1 rounded-lg bg-bg/60 px-2 py-1 text-[11px] text-fog">
                     <span className="text-muted">{attribute.name}:</span> {attribute.value}
+                    <CopyButton text={attribute.value} label={`${t('commerce.listing.copy')} — ${attribute.name}`} />
                   </span>
                 ))}
               </div>

@@ -55,6 +55,7 @@ const stockoutMigration = read('supabase/migrations/20260806280000_commerce_stoc
 const llmShared = read('supabase/functions/_shared/llm.ts')
 const skuTable = read('src/components/platform/CommerceSkuTable.tsx')
 const findingsUi = read('src/components/platform/CommerceFindings.tsx')
+const listingAgent = read('src/components/platform/CommerceListingAgent.tsx')
 const providerKey = read('supabase/functions/_shared/providerKey.ts')
 const connectProvider = read('supabase/functions/connect-provider/index.ts')
 const extensionExtract = read('extensions/nemo-browser/extract.js')
@@ -436,6 +437,32 @@ const checks = [
 
   ['the tab labels exist in all three languages',
     ['tabs": { "overview": "Umumiy', 'tabs": { "overview": "Обзор', 'tabs": { "overview": "Overview']
+      .every((label) => i18nExtra.includes(label))],
+
+  // В кабинете Uzum заголовок, описание и каждая характеристика — отдельные поля. «Скопировать
+  // всё» там бесполезно: пришлось бы вычищать чужие строки из буфера прямо в форме.
+  ['each listing field can be copied on its own',
+    /function CopyButton/.test(listingAgent)
+    && /navigator\.clipboard\.writeText\(text\)/.test(listingAgent)
+    && ['draft.title_ru ?? \'\'', 'draft.title_uz', 'draft.description_ru', 'draft.description_uz']
+        .every((field) => listingAgent.includes(`<CopyButton text={${field}}`))],
+
+  // Копируется значение, а не «Цвет: Чёрный»: название поля в форме уже написано слева.
+  ['an attribute copies its value, not its label',
+    /<CopyButton text=\{attribute\.value\}/.test(listingAgent)
+    && !/<CopyButton text=\{`\$\{attribute\.name\}/.test(listingAgent)],
+
+  // Буфер обмена не виден. Без ответа непонятно, сработало ли нажатие, а повторное нажатие
+  // «на всякий случай» ничего не проверяет.
+  ['copying confirms itself, because the clipboard is invisible',
+    /setDone\(true\)/.test(listingAgent) && /done \? <Check/.test(listingAgent)],
+
+  ['the uzbek description is shown, not only stored',
+    /draft\.description_uz && \(/.test(listingAgent)],
+
+  ['the copy strings exist in all three languages',
+    ['"copy": "Nusxa olish"', '"copy": "Скопировать"', '"copy": "Copy"',
+     '"copyAll": "Hammasini nusxalash"', '"copyAll": "Скопировать всё"', '"copyAll": "Copy all"']
       .every((label) => i18nExtra.includes(label))],
 
   ['the page names the bot that serves this shop, taken from the binding',
