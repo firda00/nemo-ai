@@ -113,6 +113,7 @@ Apply-Migration .\supabase\migrations\20260809160000_ops_controller.sql
 Apply-Migration .\supabase\migrations\20260810120000_listing_description_blocks.sql
 Apply-Migration .\supabase\migrations\20260810130000_listing_owner_stated_fees.sql
 Apply-Migration .\supabase\migrations\20260810140000_category_labels.sql
+Apply-Migration .\supabase\migrations\20260810150000_commerce_deadstock.sql
 
 $schemaCheckSql = @'
 select

@@ -49,6 +49,7 @@ const ownerStatedMigration = read('supabase/migrations/20260810130000_listing_ow
 const categoryLabelsMigration = read('supabase/migrations/20260810140000_category_labels.sql')
 const categoryLabelsModule = read('supabase/functions/_shared/categoryLabels.ts')
 const categoryLabelUi = read('src/lib/categoryLabel.ts')
+const deadstockMigration = read('supabase/migrations/20260810150000_commerce_deadstock.sql')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -585,6 +586,45 @@ const checks = [
     /\.catch\(\(\) => \[\] as CategoryLabel\[\]\)/.test(commerceControl)
     && /if \(!apiKey\) return out/.test(commerceControl)
     && deploy.includes('20260810140000_category_labels.sql')],
+
+  // ── Логистические алерты ───────────────────────────────────────────────────────────────────
+
+  // Число считалось и раньше — им решалась срочность, — но наружу не выходило. «Пополнить» без
+  // срока не задача: единственный вопрос владельца — когда.
+  ['the reorder finding says when the stock runs out, not only that it will',
+    /days_left: daysLeft/.test(commerceWorker)
+    && /const daysLeft = dailyVelocity > 0 \? Math\.round\(\(stock \/ dailyVelocity\) \* 10\) \/ 10 : null/.test(commerceWorker)
+    && /calculation\?\.days_left === 'number'/.test(findingsUi)
+    && /calc\.days_left \?\?/.test(commerceDigest)],
+
+  // Порог в 14 дней наблюдений — то, что отличает застой от вторника. На пяти днях истории
+  // детектор пометил бы 45 позиций из 141: формально верно и практически бесполезно.
+  ['deadstock stays silent until there is enough history to mean it',
+    deadstockMigration.includes('p_min_days    integer default 14')
+    && /w\.days_observed >= p_min_days/.test(deadstockMigration)
+    // Считаются НАБЛЮДАВШИЕСЯ дни, а не разница дат: пропущенная синхронизация не должна
+    // превращаться в «наблюдали, всё было плохо».
+    && /count\(distinct date_trunc\('day', s\.observed_slot\)\)/.test(deadstockMigration)
+    && /coalesce\(w\.max_sold, 0\) = 0/.test(deadstockMigration)
+    && /coalesce\(l\.stock_total, 0\) > 0/.test(deadstockMigration)],
+
+  ['deadstock never wakes anyone at night',
+    /kind: 'deadstock',[\s\S]{0,400}?severity: 'warning'/.test(commerceWorker)
+    && deadstockMigration.includes("kind in ('reorder', 'price_guard', 'missing_data', 'stockout', 'deadstock')")
+    && deploy.includes('20260810150000_commerce_deadstock.sql')],
+
+  // Без своей ветки застой вышел бы из одиночного алерта словами «Рекомендуем заказать N шт.»
+  // про товар, который и так лежит — тот же дефект, что уже ловили на нулевых остатках.
+  ['a stuck product is not told to be reordered',
+    /row\.kind === 'deadstock'/.test(commerceDigest)
+    && /Товар лежит без движения/.test(commerceDigest)
+    && /function deadstockLine/.test(commerceDigest)],
+
+  ['the digest and the screen both carry the two new alerts',
+    /🧊 <b>Лежит без движения<\/b>/.test(commerceDigest)
+    && /kind === 'deadstock'/.test(findingsUi)
+    && ['"deadstock": "Лежит без движения"', '"deadstock": "Harakatsiz yotibdi"', '"deadstock": "Sitting still"']
+      .every((label) => i18nExtra.includes(label))],
 
   ['the returns field says out loud that it does not move the price',
     ['на цену не влияет', 'narxga ta’sir qilmaydi', 'does not affect the price']

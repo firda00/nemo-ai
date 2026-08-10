@@ -101,6 +101,10 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
   if (historyReady && stock != null && sold7d != null && sku.lead_time_days != null && sku.safety_stock != null) {
     const dailyVelocity = sold7d / 7
     const reorderPoint = Math.ceil(dailyVelocity * sku.lead_time_days) + sku.safety_stock
+    // Через сколько дней остаток кончится при нынешней скорости. Число уже участвовало в
+    // расчёте — им решалась срочность, — но наружу не выходило, и владелец видел «пополнить»
+    // без ответа на единственный вопрос, который он задаёт: когда.
+    const daysLeft = dailyVelocity > 0 ? Math.round((stock / dailyVelocity) * 10) / 10 : null
     const targetUnits = Math.ceil(dailyVelocity * (sku.lead_time_days + 7)) + sku.safety_stock
     const rawUnits = Math.max(0, targetUnits - stock)
     const units = sku.moq ? Math.ceil(rawUnits / sku.moq) * sku.moq : rawUnits
@@ -123,7 +127,7 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
     if (dailyVelocity > 0 && stock <= reorderPoint) rows.push({
       ...base, kind: 'reorder', severity: severityFor(stock / dailyVelocity <= sku.lead_time_days, reorderInputs),
       dedupe_key: `commerce:${sku.id}:reorder`,
-      calculation: { sold_units_7d: sold7d, daily_velocity: dailyVelocity, stock_total: stock, lead_time_days: sku.lead_time_days, safety_stock: sku.safety_stock, reorder_point: reorderPoint, target_units: targetUnits, reorder_units: units, batch: outcome, estimated_inputs: estimatesUsed(outcome ? valueInputs : reorderInputs) },
+      calculation: { sold_units_7d: sold7d, daily_velocity: dailyVelocity, days_left: daysLeft, stock_total: stock, lead_time_days: sku.lead_time_days, safety_stock: sku.safety_stock, reorder_point: reorderPoint, target_units: targetUnits, reorder_units: units, batch: outcome, estimated_inputs: estimatesUsed(outcome ? valueInputs : reorderInputs) },
       suggested_action: { type: 'review_reorder', units, investment_tiyin: outcome?.investment_tiyin ?? null, profit_tiyin: outcome?.profit_tiyin ?? null, roi_percent: outcome?.roi_percent ?? null }, last_detected_at: new Date().toISOString(),
     })
   }
@@ -283,6 +287,8 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   // Every alert this run raises stamps last_detected_at. Anything still open afterwards that this
   // run did not stamp is an alert the sync no longer makes.
   const runStartedAt = new Date().toISOString()
+  const snapshotBySku = new Map<string, string>()
+  const revisionBySku = new Map<string, number>()
 
   for (const row of productRows) {
     const sku = skuByExternal.get(row.sku)
@@ -306,6 +312,10 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     const { data: historical, error: historyError } = await db.from('commerce_inventory_snapshots')
       .select('id').eq('sku_id', sku.id).lte('observed_slot', historyCutoff).limit(1).maybeSingle()
     if (historyError) throw historyError
+    // Снимок этого прогона для каждого товара: детектор застоя ниже обязан сослаться на снимок,
+    // а свой у него взяться неоткуда — он смотрит на историю, а не на сегодняшнее чтение.
+    snapshotBySku.set(sku.id, snapshotId)
+    revisionBySku.set(sku.id, sku.economics_revision)
     const recommendations = recommendation(sku, snapshotId, priceTiyin, stock, sold7d, Boolean(historical))
     if (recommendations.length) {
       const { error: recommendationError } = await db.from('commerce_recommendations').upsert(recommendations, { onConflict: 'dedupe_key' })
@@ -324,6 +334,40 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   //
   // Neither statement touches `dismissed` or `accepted`. Those are the owner's verbs, and nothing
   // writes them yet — when something does, a sync still must not overwrite them.
+  // Застрявший товар считается по каталогу целиком, а не по одному SKU: вопрос «лежит ли он без
+  // движения» — вопрос к истории, и ответ на него живёт в снимках, а не в сегодняшних числах.
+  //
+  // Функция сама молчит, пока наблюдений меньше двух недель. Порог не косметический: на пяти
+  // днях истории она пометила бы 45 позиций из 141 — формально верно и практически бесполезно,
+  // потому что «не продавалось пять дней» не отличает застой от вторника.
+  const deadstockSnapshot = [...snapshotBySku.values()][0] ?? null
+  if (deadstockSnapshot) {
+    const { data: stuck, error: stuckError } = await db.rpc('commerce_deadstock', { p_catalog_id: typedCatalog.id })
+    if (stuckError) throw stuckError
+    const stuckRows = (stuck ?? []).map((row: Record<string, unknown>) => ({
+      sku_id: row.sku_id,
+      snapshot_id: snapshotBySku.get(String(row.sku_id)) ?? deadstockSnapshot,
+      kind: 'deadstock',
+      // Никогда не critical: застой — потеря денег на хранении, а не остановка продаж, и будить
+      // им ночью некого. Срочное в этом каталоге — нули и маржа.
+      severity: 'warning',
+      economics_revision: revisionBySku.get(String(row.sku_id)) ?? 0,
+      dedupe_key: `commerce:${row.sku_id}:deadstock`,
+      calculation: {
+        stock_total: row.stock_total,
+        price_tiyin: row.price_tiyin,
+        days_observed: row.days_observed,
+        first_observed_at: row.first_observed_at,
+      },
+      suggested_action: { type: 'review_deadstock', days_observed: row.days_observed },
+      last_detected_at: new Date().toISOString(),
+    }))
+    if (stuckRows.length) {
+      const { error: stuckWriteError } = await db.from('commerce_recommendations').upsert(stuckRows, { onConflict: 'dedupe_key' })
+      if (stuckWriteError) throw stuckWriteError
+    }
+  }
+
   const syncedSkuIds = [...skuByExternal.values()].map((sku) => sku.id)
   if (syncedSkuIds.length) {
     const { error: reopenError } = await db.from('commerce_recommendations')

@@ -58,12 +58,30 @@ function criticalText(row: any) {
     ].filter(Boolean).join('\n')
   }
 
+  // Застой — противоположность закупке, и без своей ветки он вышел бы отсюда со словами
+  // «Рекомендуем заказать N шт.» про товар, который и так лежит.
+  if (row.kind === 'deadstock') {
+    return [
+      '🧊 <b>Товар лежит без движения</b>',
+      '',
+      name(row),
+      `Остаток: <b>${num(calc.stock_total)} шт.</b>`,
+      `Без единой продажи: <b>${num(calc.days_observed)} дн. наблюдений</b>`,
+      calc.price_tiyin != null && calc.stock_total != null
+        ? `Заморожено в товаре: ~${num((calc.price_tiyin * calc.stock_total) / 100)} сум`
+        : '',
+      '',
+      '👉 Снизить цену, поставить в акцию или вывезти со склада — он платит за хранение.',
+      ...footer,
+    ].filter(Boolean).join('\n')
+  }
+
   return [
     '🔴 <b>Товар заканчивается</b>',
     '',
     name(row),
     `Осталось: <b>${num(calc.stock_total)} шт.</b>`,
-    `Хватит примерно на: <b>${num(calc.stock_total != null && calc.daily_velocity ? calc.stock_total / calc.daily_velocity : null)} дн.</b>`,
+    `Хватит примерно на: <b>${num(daysLeft(calc))} дн.</b>`,
     `Точка заказа: ${num(calc.reorder_point)} шт.`,
     '',
     `👉 Рекомендуем заказать <b>${num(action.units)} шт.</b>`,
@@ -71,10 +89,29 @@ function criticalText(row: any) {
   ].join('\n')
 }
 
+/** Сколько дней осталось: посчитанное воркером, а на старых строках — выведенное здесь. */
+const daysLeft = (calc: any) =>
+  calc.days_left ?? (calc.stock_total != null && calc.daily_velocity ? calc.stock_total / calc.daily_velocity : null)
+
+/**
+ * Товар лежит и платит за хранение.
+ *
+ * Без срока это была бы жалоба, а не повод: «не продаётся» верно про половину каталога в любой
+ * вторник. Поэтому в строке стоит число НАБЛЮДАВШИХСЯ дней — то, чем детектор обосновал вывод.
+ */
+function deadstockLine(row: any) {
+  const calc = row.calculation ?? {}
+  const money = calc.price_tiyin != null && calc.stock_total != null
+    ? `, заморожено ~${num((calc.price_tiyin * calc.stock_total) / 100)} сум`
+    : ''
+  return `• ${name(row)}: ${num(calc.stock_total)} шт. лежат ${num(calc.days_observed)} дн. без продаж${money}`
+}
+
 function reorderLine(row: any) {
   const calc = row.calculation ?? {}
   const action = row.suggested_action ?? {}
-  const days = calc.stock_total != null && calc.daily_velocity ? ` (хватит на ${num(calc.stock_total / calc.daily_velocity)} дн.)` : ''
+  const left = daysLeft(calc)
+  const days = left != null ? ` (хватит на ${num(left)} дн.)` : ''
   const money = action.investment_tiyin != null && action.profit_tiyin != null
     ? `\n  Вложения ${num(action.investment_tiyin / 100)} сум · прибыль ${num(action.profit_tiyin / 100)} сум${action.roi_percent != null ? ` (ROI ${action.roi_percent.toFixed(0)}%)` : ''}`
     : ''
@@ -110,11 +147,12 @@ function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   const stockouts = rows.filter((row) => row.kind === 'stockout')
   const urgentStockouts = stockouts.filter((row) => row.severity === 'critical')
   const quietStockouts = stockouts.length - urgentStockouts.length
+  const deadstock = rows.filter((row) => row.kind === 'deadstock')
   const today = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'Asia/Tashkent' }).format(new Date())
 
   const blocks: string[] = [`☀️ <b>Nemo Commerce — сводка за ${today}</b>`, '']
 
-  if (!reorders.length && !priceIssues.length && !stockouts.length) {
+  if (!reorders.length && !priceIssues.length && !stockouts.length && !deadstock.length) {
     blocks.push(stats.skus ? `✅ Срочных рисков нет. Все ${stats.skus} товаров под наблюдением.` : '✅ Срочных рисков нет.')
   }
   if (urgentStockouts.length) {
@@ -128,6 +166,13 @@ function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   if (priceIssues.length) {
     blocks.push('', '💰 <b>Маржа ниже минимума</b>', priceIssues.slice(0, 5).map(priceLine).join('\n'))
     if (priceIssues.length > 5) blocks.push(`…и ещё ${priceIssues.length - 5} в Commerce.`)
+  }
+  // Застой идёт последним намеренно: он не срочен. Деньги там теряются медленно, и поставить его
+  // выше «закончился, а спрос есть» значило бы предложить владельцу заняться этим первым.
+  if (deadstock.length) {
+    blocks.push('', '🧊 <b>Лежит без движения</b>', deadstock.slice(0, 5).map(deadstockLine).join('\n'))
+    if (deadstock.length > 5) blocks.push(`…и ещё ${deadstock.length - 5} в Commerce.`)
+    blocks.push('Что делать: снизить цену, поставить в акцию или вывезти со склада.')
   }
 
   // One line, never a list. Ninety-four names would bury the handful that need a decision today.

@@ -1,4 +1,4 @@
-import { AlertTriangle, PackageX, TrendingDown } from 'lucide-react'
+import { AlertTriangle, PackageX, Snowflake, TrendingDown } from 'lucide-react'
 import { useI18n } from '../../i18n'
 
 export type Finding = {
@@ -69,6 +69,7 @@ export function CommerceFindings({ findings, loading, onAccept, acceptedIds, bus
   const quietStockouts = stockouts.length - urgentStockouts.length
   const priceIssues = findings.filter((row) => row.kind === 'price_guard')
   const reorders = findings.filter((row) => row.kind === 'reorder')
+  const deadstock = findings.filter((row) => row.kind === 'deadstock')
 
   return (
     // Семьдесят восемь маржинальных находок растягивали страницу так, что до блока «Проблемы
@@ -109,7 +110,15 @@ export function CommerceFindings({ findings, loading, onAccept, acceptedIds, bus
               <li key={row.id} className="rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs">
                 <p className="font-medium text-text">{row.title}</p>
                 <p className="mt-0.5 text-muted">
-                  {t('commerce.findings.stockLeft')} {String(row.calculation?.stock_total ?? '—')} · {t('commerce.findings.order')} <span className="text-text">{String(row.suggested_action?.units ?? '—')}</span>
+                  {t('commerce.findings.stockLeft')} {String(row.calculation?.stock_total ?? '—')}
+                  {/* Единственный вопрос владельца — КОГДА. Число считалось и раньше, им решалась
+                      срочность, но на экран не выходило: «пополнить» без срока — не задача. */}
+                  {typeof row.calculation?.days_left === 'number' && (
+                    <> · <span className={row.severity === 'critical' ? 'text-danger' : 'text-amber'}>
+                      {t('commerce.findings.daysLeft', { n: row.calculation.days_left })}
+                    </span></>
+                  )}
+                  {' · '}{t('commerce.findings.order')} <span className="text-text">{String(row.suggested_action?.units ?? '—')}</span>
                 </p>
                 {accept(row.id)}
               </li>
@@ -143,6 +152,28 @@ export function CommerceFindings({ findings, loading, onAccept, acceptedIds, bus
               )
             })}
             {priceIssues.length > 10 && <li className="px-3 text-xs text-muted">{t('commerce.findings.andMore').replace('{n}', String(priceIssues.length - 10))}</li>}
+          </ul>
+        </section>
+      )}
+
+      {/* Застой стоит после срочного: деньги там теряются медленно, и поднять его выше значило бы
+          предложить владельцу заняться этим первым. */}
+      {deadstock.length > 0 && (
+        <section>
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            <Snowflake size={14} /> {t('commerce.findings.deadstock')} · {deadstock.length}
+          </h3>
+          <ul className="mt-2 space-y-1.5">
+            {deadstock.slice(0, 10).map((row) => (
+              <li key={row.id} className="rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs">
+                <p className="font-medium text-text">{row.title}</p>
+                <p className="mt-0.5 text-muted">
+                  {t('commerce.findings.stockLeft')} {String(row.calculation?.stock_total ?? '—')}
+                  {' · '}{t('commerce.findings.noSalesFor', { n: String(row.calculation?.days_observed ?? '—') })}
+                </p>
+              </li>
+            ))}
+            {deadstock.length > 10 && <li className="px-3 text-xs text-muted">{t('commerce.findings.andMore').replace('{n}', String(deadstock.length - 10))}</li>}
           </ul>
         </section>
       )}
