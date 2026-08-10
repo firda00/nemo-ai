@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
 import { CommerceListingAgent, type CategoryChoice, type ListingDraft, type ManualFees } from '../../components/platform/CommerceListingAgent'
+import { type CategoryLabel } from '../../lib/categoryLabel'
 import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
@@ -66,6 +67,7 @@ export default function CommercePage() {
   const [drafts, setDrafts] = useState<ListingDraft[]>([])
   const [findings, setFindings] = useState<Finding[]>([])
   const [categories, setCategories] = useState<CategoryChoice[]>([])
+  const [categoryLabels, setCategoryLabels] = useState<Record<string, CategoryLabel>>({})
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -117,11 +119,12 @@ export default function CommercePage() {
   const loadDrafts = useCallback(async () => {
     if (!supabase) { setDrafts([]); return }
     const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_listing_drafts' } })
-    const result = data as { ok?: boolean; drafts?: ListingDraft[]; categories?: CategoryChoice[] } | null
+    const result = data as { ok?: boolean; drafts?: ListingDraft[]; categories?: CategoryChoice[]; category_labels?: Record<string, CategoryLabel> } | null
     setDrafts(result?.ok ? result.drafts ?? [] : [])
     // Полки приезжают со списком черновиков: черновик без категории переживает перезагрузку
     // страницы, а список из ответа на генерацию — нет.
     setCategories(result?.ok ? result.categories ?? [] : [])
+    setCategoryLabels(result?.ok ? result.category_labels ?? {} : {})
   }, [])
 
   const load = useCallback(async (selectedCatalogId = catalogId) => {
@@ -591,6 +594,7 @@ export default function CommercePage() {
           <CommerceListingAgent
             drafts={drafts}
             categories={categories}
+            categoryLabels={categoryLabels}
             onDraft={draftListing}
             onCategory={setDraftCategory}
             onApprove={(draftId) => decideDraft(draftId, 'approve_listing_draft')}

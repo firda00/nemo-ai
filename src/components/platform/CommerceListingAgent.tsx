@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Copy, Loader2, PenLine, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { useI18n } from '../../i18n'
+import { categoryLabel, type CategoryLabel } from '../../lib/categoryLabel'
 
 /**
  * Копирование по одному полю, а не всей карточки.
@@ -83,8 +84,10 @@ const DEFAULT_RETURNS = 5
  * Названное владельцем не выдаётся за прочитанное у Uzum: результат помечается знаком ≈ и
  * остаётся таким, пока полка не появится среди своих.
  */
-function CategoryPicker({ categories, busy, onPick, onManual, t }: {
+function CategoryPicker({ categories, labels, lang, busy, onPick, onManual, t }: {
   categories: CategoryChoice[]
+  labels: Record<string, CategoryLabel>
+  lang: string
   busy: boolean
   onPick: (category: string) => void
   onManual: (input: ManualFees) => void
@@ -116,9 +119,11 @@ function CategoryPicker({ categories, busy, onPick, onManual, t }: {
           }}
         >
           <option value="">{busy ? t('commerce.listing.recalculating') : t('commerce.listing.noCategory')}</option>
+          {/* value — всегда узбекское имя от Uzum: это ключ, по которому сходятся товары и
+              считается комиссия. На экран идёт перевод, на сервер — ключ. */}
           {categories.map((choice) => (
             <option key={choice.category} value={choice.category} className="bg-panel">
-              {choice.category} — {choice.commission_percent}% ({choice.skus})
+              {categoryLabel(choice.category, labels, lang)} — {choice.commission_percent}% ({choice.skus})
             </option>
           ))}
           <option value={MANUAL} className="bg-panel">{t('commerce.listing.manualOption')}</option>
@@ -170,6 +175,7 @@ const inputClass = 'w-full rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 te
 export function CommerceListingAgent({
   drafts,
   categories,
+  categoryLabels,
   onDraft,
   onCategory,
   onApprove,
@@ -178,12 +184,14 @@ export function CommerceListingAgent({
   drafts: ListingDraft[]
   /** Все полки аккаунта — чтобы выбрать её для черновика, который уже написан. */
   categories: CategoryChoice[]
+  /** Подписи полок по-русски и по-английски. Uzum отдаёт только узбекское имя. */
+  categoryLabels: Record<string, CategoryLabel>
   onDraft: (sourceText: string, category: string | null) => Promise<boolean>
   onCategory: (draftId: string, category: string, manual?: ManualFees) => Promise<boolean>
   onApprove: (draftId: string) => Promise<boolean>
   onDiscard: (draftId: string) => Promise<boolean>
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [sourceText, setSourceText] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -293,6 +301,8 @@ export function CommerceListingAgent({
             {!draft.uzum_category && draft.status === 'draft' && categories.length > 0 && (
               <CategoryPicker
                 categories={categories}
+                labels={categoryLabels}
+                lang={lang}
                 busy={busy === draft.id}
                 onPick={(category) => pick(draft.id, category)}
                 onManual={(input) => pick(draft.id, input.category, input)}
@@ -306,7 +316,13 @@ export function CommerceListingAgent({
                 никто, включая саму систему, не отличил бы одно от другого. Тот же знак ≈, что
                 и на оценочной себестоимости в находках. */}
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
-              <div><dt className="text-muted">{t('commerce.listing.category')}</dt><dd className="text-text">{draft.uzum_category ?? '—'}</dd></div>
+              <div>
+                <dt className="text-muted">{t('commerce.listing.category')}</dt>
+                {/* Узбекское имя остаётся в title: именно его владелец ищет в кабинете Uzum. */}
+                <dd className="text-text" title={draft.uzum_category ?? undefined}>
+                  {draft.uzum_category ? categoryLabel(draft.uzum_category, categoryLabels, lang) : '—'}
+                </dd>
+              </div>
               <div>
                 <dt className="text-muted">{t('commerce.listing.commission')}</dt>
                 <dd className="text-text">

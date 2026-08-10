@@ -13,14 +13,61 @@ import {
   OWNER_STATED_FEE_FIELDS,
 } from '../_shared/listingDraft.ts'
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
+import { parseLabels, TRANSLATE_SYSTEM_PROMPT, type CategoryLabel } from '../_shared/categoryLabels.ts'
+
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
-import { PRIMARY_MODEL } from '../_shared/llm.ts'
+import { callOpenRouter, PRIMARY_MODEL, stripJsonFence } from '../_shared/llm.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHA256 = /^[a-f0-9]{64}$/
+
+/**
+ * Подписи полок на русском и английском: из справочника, а новые — переводом.
+ *
+ * Справочник платформенный: полки Uzum одни и те же у всех продавцов, и перевод, купленный на
+ * одном аккаунте, достаётся остальным даром. У продавца их дюжина, так что перевод случается
+ * один раз в жизни полки и больше никогда.
+ *
+ * Отказ модели ничего не ломает: вернутся те подписи, что уже есть, а непереведённая полка
+ * покажется узбекским именем — тем самым, которое владелец видит в кабинете Uzum.
+ */
+async function resolveCategoryLabels(db: any, names: string[]): Promise<Record<string, CategoryLabel>> {
+  const wanted = names.filter((name) => typeof name === 'string' && name.trim()).slice(0, 200)
+  if (!wanted.length) return {}
+  const { data: known } = await db.from('commerce_category_labels').select('category, label_ru, label_en').in('category', wanted)
+  const out: Record<string, CategoryLabel> = {}
+  for (const row of known ?? []) out[row.category] = row
+
+  const missing = wanted.filter((name) => !out[name])
+  if (!missing.length) return out
+
+  const apiKey = Deno.env.get('OPENROUTER_API_KEY') ?? ''
+  if (!apiKey) return out
+  const translated = await callOpenRouter({
+    apiKey,
+    model: PRIMARY_MODEL,
+    temperature: 0,
+    maxTokens: 1200,
+    responseFormat: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify(missing.slice(0, 40)) },
+    ],
+  })
+    .then((res) => parseLabels(JSON.parse(stripJsonFence(res.content)), missing))
+    .catch(() => [] as CategoryLabel[])
+
+  if (translated.length) {
+    // Слово владельца переводом не затирается: onConflict обновляет только машинные строки.
+    await db.from('commerce_category_labels')
+      .upsert(translated.map((row) => ({ ...row, source: 'model', updated_at: new Date().toISOString() })), { onConflict: 'category' })
+    for (const row of translated) out[row.category] = row
+  }
+  return out
+}
 
 type ImportRow = Record<string, unknown>
 
@@ -645,7 +692,12 @@ Deno.serve(async (req) => {
     // живёт дольше одного ответа: после перезагрузки страницы выбирать было бы не из чего, и
     // единственным способом добраться до комиссии снова стала бы повторная генерация.
     const context = await catalogueContext(admin, profile.account_id)
-    return json({ ok: true, drafts: drafts ?? [], categories: context.options })
+    const names = [...new Set([
+      ...context.options.map((option) => option.category),
+      ...(drafts ?? []).map((row: Record<string, unknown>) => row.uzum_category).filter((name): name is string => typeof name === 'string'),
+    ])]
+    const labels = await resolveCategoryLabels(admin, names)
+    return json({ ok: true, drafts: drafts ?? [], categories: context.options, category_labels: labels })
   }
 
   if (action === 'set_listing_category') {

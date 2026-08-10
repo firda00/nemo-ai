@@ -46,6 +46,9 @@ const resolvedMigration = read('supabase/migrations/20260806220000_commerce_reco
 const listingModule = read('supabase/functions/_shared/listingDraft.ts')
 const descriptionMigration = read('supabase/migrations/20260810120000_listing_description_blocks.sql')
 const ownerStatedMigration = read('supabase/migrations/20260810130000_listing_owner_stated_fees.sql')
+const categoryLabelsMigration = read('supabase/migrations/20260810140000_category_labels.sql')
+const categoryLabelsModule = read('supabase/functions/_shared/categoryLabels.ts')
+const categoryLabelUi = read('src/lib/categoryLabel.ts')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -556,6 +559,33 @@ const checks = [
   // Резерв на возвраты в минимальную цену не входит: RETURN_FEE_MULTIPLIER = 0, возврат по
   // тарифу Uzum не тарифицируется. Подпись поля обязана это сказать, иначе оно читается как
   // часть цены — и владелец будет крутить его, ожидая, что цена поедет.
+  // ── Полки читаются на языке владельца ──────────────────────────────────────────────────────
+  // Uzum отдаёт ОДНО имя полки, узбекское: в товарном ответе есть `category` и нет ни локали, ни
+  // второго названия. «Забирать оба языка при синхронизации» — не вариант реализации.
+
+  ['the shelf name is translated once and kept, not translated per render',
+    categoryLabelsMigration.includes('create table if not exists public.commerce_category_labels')
+    && /resolveCategoryLabels/.test(commerceControl)
+    && /const missing = wanted\.filter\(\(name\) => !out\[name\]\)/.test(commerceControl)
+    && /if \(!missing\.length\) return out/.test(commerceControl)],
+
+  // Перевод — подпись. Ключом везде остаётся узбекское имя: по нему сходятся товары, считается
+  // комиссия и лежат черновики. Полка, сменившая имя из-за нового перевода, разошлась бы со
+  // своими же товарами — молча и необратимо.
+  ['the translated name is never what gets sent back',
+    /value=\{choice\.category\}/.test(listingAgent)
+    && /\{categoryLabel\(choice\.category, labels, lang\)\}/.test(listingAgent)
+    && /if \(!wanted\.has\(category\) \|\| seen\.has\(category\)\) continue/.test(categoryLabelsModule)],
+
+  ['an untranslated shelf shows the name Uzum gave it, not a blank',
+    /if \(!row\) return category/.test(categoryLabelsModule)
+    && /return row\.label_ru \?\? category/.test(categoryLabelsModule)],
+
+  ['a model outage costs the labels, not the list',
+    /\.catch\(\(\) => \[\] as CategoryLabel\[\]\)/.test(commerceControl)
+    && /if \(!apiKey\) return out/.test(commerceControl)
+    && deploy.includes('20260810140000_category_labels.sql')],
+
   ['the returns field says out loud that it does not move the price',
     ['на цену не влияет', 'narxga ta’sir qilmaydi', 'does not affect the price']
       .every((label) => i18nExtra.includes(label))
