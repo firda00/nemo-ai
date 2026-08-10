@@ -391,6 +391,38 @@ const checks = [
 
   // Аккаунт держит несколько ботов, и назвать нужный можно только по привязке. Имя агента вдобавок
   // врёт: «Создай AI-команду для управления магазином» звучит как нужный бот и им не является.
+  // Одиннадцать карточек подряд — лента, а не страница. Разложены по вкладкам, но вкладка ПРЯЧЕТ,
+  // и это тот же дефект, что «страница есть, а пункта в меню нет», только внутри страницы.
+  // marginTitle ждём дважды: заголовок карточки и aria-label поля ввода — поле без имени
+  // недоступно для чтения с экрана, и убирать его ради круглого числа было бы регрессом.
+  ['every block survived the split exactly once',
+    Object.entries({
+      'commerce.findings.title': 1, 'commerce.syncIssuesTitle': 1, 'commerce.proposalsTitle': 1,
+      'commerce.economicsTitle': 1, 'commerce.listing.title': 1, 'commerce.stagedTitle': 1,
+      'commerce.feesTitle': 1, 'commerce.marginTitle': 2, 'commerce.tgTitle': 1,
+      'commerce.economicsFile': 1,
+    }).every(([key, want]) => (commercePage.match(new RegExp(key.replace(/\./g, '\\.'), 'g')) ?? []).length === want)],
+
+  // Выводы и сбои синка — единственное, что требует внимания сегодня. За корешком им не место.
+  ['conclusions and sync failures stay on the first tab, never behind one',
+    /\{\(tab === 'overview' \|\| !catalogs\.length\) && \(<>/.test(commercePage)
+    && commercePage.indexOf("commerce.findings.title") > commercePage.indexOf("tab === 'overview'")
+    && commercePage.indexOf("commerce.syncIssuesTitle") > commercePage.indexOf("tab === 'overview'")
+    && commercePage.indexOf("commerce.syncIssuesTitle") < commercePage.indexOf("tab === 'costs'")],
+
+  ['what waits for a decision is counted on the tab it hides behind',
+    /\['costs', t\('commerce\.tabs\.costs'\), proposals\.length\]/.test(commercePage)
+    && /waiting > 0 && <span/.test(commercePage)],
+
+  // От выбора магазина зависят комиссия, маржа, автозаполнение и загрузка файла — на четырёх
+  // разных вкладках. Спрятать его на одной значило бы обесточить кнопки на трёх остальных.
+  ['the shop selector sits above the tabs, not inside one',
+    commercePage.indexOf("commerce.selectCatalog") < commercePage.indexOf("role=\"tablist\"")],
+
+  ['the tab labels exist in all three languages',
+    ['tabs": { "overview": "Umumiy', 'tabs": { "overview": "Обзор', 'tabs": { "overview": "Overview']
+      .every((label) => i18nExtra.includes(label))],
+
   ['the page names the bot that serves this shop, taken from the binding',
     commerceControl.includes('notify_bot: notifyBot')
     && /select\('credentials'\)\.eq\('id', notificationProfile\.notify_channel_id\)/.test(commerceControl)

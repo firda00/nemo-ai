@@ -15,7 +15,6 @@ type Proposal = { id: string; source: string; sku_id: string | null; catalog_id:
 type Batch = { id: string; status: string; total_rows: number; valid_rows: number; unmatched_rows: number; error_rows: number; created_at: string }
 
 const headers = ['external_sku', 'unit_cost_uzs', 'commission_percent', 'fulfillment_uzs', 'returns_reserve_percent', 'lead_time_days', 'moq', 'safety_stock', 'min_margin_percent'] as const
-const inputClass = 'w-full rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60'
 
 function parseDelimited(text: string): string[][] {
   const rows: string[][] = []
@@ -70,6 +69,12 @@ export default function CommercePage() {
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  // Одиннадцать карточек подряд — это не страница, а лента. Разложены по четырём вкладкам, но с
+  // одним правилом: вкладка ПРЯЧЕТ, а тревожное прятать нельзя. Поэтому выводы и сбои синка
+  // остаются в «Обзоре», а то, что ждёт решения на других вкладках, помечено счётчиком на
+  // корешке. Иначе получится ровно тот дефект, который мы ловили весь день: существует, а дойти
+  // нельзя.
+  const [tab, setTab] = useState<'overview' | 'costs' | 'listing' | 'settings'>('overview')
 
   const loadSkus = useCallback(async (selectedCatalogId: string) => {
     if (!supabase || !selectedCatalogId) { setSkus([]); return }
@@ -371,6 +376,7 @@ export default function CommercePage() {
 
   const staged = batches.filter((batch) => batch.status === 'staged')
   const selectedCatalog = catalogs.find((catalog) => catalog.id === catalogId)
+  const syncIssues = catalogs.filter((catalog) => catalog.last_sync_error)
 
   return (
     <div className="container-page max-w-5xl py-8">
@@ -387,6 +393,48 @@ export default function CommercePage() {
       </div>
 
       {message && <div className={`mt-5 flex items-start gap-2 rounded-xl px-3 py-2 text-sm ${message.ok ? 'bg-teal/10 text-teal border border-teal/20' : 'bg-danger/10 text-danger'}`}><>{message.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}</><span>{message.text}{!message.ok && /owner|владел|egasi/i.test(message.text) && t('commerce.ownerHint')}</span></div>}
+
+      {/* Выбор магазина живёт в шапке, а не во вкладке импорта, где он стоял раньше. От него
+          зависят комиссия, маржа, автозаполнение и загрузка файла — спрятать его на одной
+          вкладке значило бы обесточить кнопки на трёх других без видимой причины. */}
+      {catalogs.length > 1 && (
+        <label className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalog')}</span>
+          <select
+            value={catalogId}
+            onChange={(event) => { setCatalogId(event.target.value); void load(event.target.value) }}
+            className="rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60"
+          >
+            <option value="">{t('commerce.selectCatalog')}</option>
+            {catalogs.map((catalog) => <option key={catalog.id} value={catalog.id} className="bg-panel">{catalog.name}</option>)}
+          </select>
+        </label>
+      )}
+
+      {catalogs.length > 0 && (
+        <nav className="mt-5 flex flex-wrap gap-1 border-b border-ice/10" role="tablist">
+          {([
+            ['overview', t('commerce.tabs.overview'), syncIssues.length],
+            ['costs', t('commerce.tabs.costs'), proposals.length],
+            ['listing', t('commerce.tabs.listing'), 0],
+            ['settings', t('commerce.tabs.settings'), 0],
+          ] as const).map(([key, label, waiting]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`-mb-px flex items-center gap-1.5 rounded-t-xl border-b-2 px-4 py-2.5 text-sm transition ${
+                tab === key ? 'border-accent-cyan text-text' : 'border-transparent text-muted hover:text-text'}`}
+            >
+              {label}
+              {/* Счётчик на корешке: то, что ждёт решения, не должно исчезать вместе со вкладкой. */}
+              {waiting > 0 && <span className="rounded-full bg-amber/15 px-1.5 text-[11px] font-semibold text-amber">{waiting}</span>}
+            </button>
+          ))}
+        </nav>
+      )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2" padding="md"><p className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.pilotStatus')}</p><p className="mt-2 text-lg font-semibold text-text">{loading ? t('common.loading') : pilot?.status ?? t('commerce.notStarted')}</p><p className="mt-1 text-xs text-muted">{pilot?.expires_at ? t('commerce.expires', { date: new Date(pilot.expires_at).toLocaleDateString() }) : t('commerce.noPilot')}</p></Card>
@@ -408,6 +456,10 @@ export default function CommercePage() {
         </Card>
       )}
 
+      {/* ── Обзор ──────────────────────────────────────────────────────────────────────────
+          Выводы и сбои синка остаются здесь всегда: это единственное, что требует внимания
+          сегодня, и прятать его за корешком было бы возвратом к «существует, но не видно». */}
+      {(tab === 'overview' || !catalogs.length) && (<>
       {/* The conclusions, first. Everything below this card is an input to them. */}
       <Card className="mt-4" padding="md">
         <div>
@@ -425,7 +477,7 @@ export default function CommercePage() {
         </div>
       </Card>
 
-      {catalogs.some((catalog) => catalog.last_sync_error) && (
+      {syncIssues.length > 0 && (
         <Card className="mt-4" padding="md">
           <p className="text-sm font-semibold text-text">{t('commerce.syncIssuesTitle')}</p>
           <p className="mt-1 text-xs text-muted">{t('commerce.syncIssuesHint')}</p>
@@ -439,7 +491,10 @@ export default function CommercePage() {
           </div>
         </Card>
       )}
+      </>)}
 
+      {/* ── Себестоимость и каталог ─────────────────────────────────────────────────────── */}
+      {tab === 'costs' && catalogs.length > 0 && (<>
       {proposals.length > 0 && (
         <Card className="mt-4" padding="md">
           <p className="text-sm font-semibold text-text">{t('commerce.proposalsTitle')}</p>
@@ -464,6 +519,55 @@ export default function CommercePage() {
         </Card>
       )}
 
+      <Card className="mt-4" padding="md">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-text">{t('commerce.economicsTitle')}</p>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.economicsHint')}</p>
+          </div>
+          <Button variant="outline" onClick={autofill} loading={busy === 'autofill'} disabled={!catalogs.length} leftIcon={<Wand2 size={15} />}>{t('commerce.autofill')}</Button>
+        </div>
+        <div className="mt-4">{loading ? <p className="text-sm text-muted">{t('commerce.loadingSkus')}</p> : <CommerceSkuTable skus={skus} onSave={saveSku} />}</div>
+      </Card>
+
+      {/* Загрузка файла стоит сразу под таблицей: 128 позиций диктовать незачем, и путь к
+          массовому вводу должен быть виден там же, где виден масштаб задачи. */}
+      <Card className="mt-4" padding="md">
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.economicsFile')}</span>
+          <span className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-accent-indigo/40 bg-accent-indigo/[0.05] px-3 py-3 text-sm text-accent-indigo hover:bg-accent-indigo/[0.1]">
+            <Upload size={15} />{busy === 'stage' ? t('commerce.staging') : t('commerce.chooseFile')}
+            <input className="sr-only" type="file" accept=".csv,.xlsx" disabled={!catalogId || busy === 'stage'} onChange={(event) => { const file = event.target.files?.[0]; if (file) void stageFile(file); event.currentTarget.value = '' }} />
+          </span>
+        </label>
+        <p className="mt-3 text-xs leading-relaxed text-muted">{t('commerce.bulkHint')} <code className="text-fog">{headers.join(', ')}</code>. <code className="text-fog">unit_cost_uzs</code> and <code className="text-fog">fulfillment_uzs</code> {t('commerce.bulkHintTail')}</p>
+        {!catalogId && <p className="mt-2 text-xs text-amber">{t('commerce.selectCatalog')}</p>}
+      </Card>
+
+      <Card className="mt-4" padding="md"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">{t('commerce.stagedTitle')}</p><p className="text-xs text-muted">{t('commerce.stagedCount', { count: staged.length })}</p></div><span className="rounded-full bg-accent-indigo/10 px-3 py-1 text-sm font-semibold text-accent-indigo border border-accent-indigo/20">{t('commerce.rowsCount', { count: staged.reduce((sum, batch) => sum + batch.total_rows, 0) })}</span></div>{staged.length > 0 && <div className="mt-4 space-y-2">{staged.map((batch) => <div key={batch.id} className="flex flex-col gap-1 rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"><span>{new Date(batch.created_at).toLocaleString()}</span><span>{batch.total_rows} rows · {batch.valid_rows} valid · {batch.unmatched_rows} unmatched · {batch.error_rows} invalid</span></div>)}</div>}</Card>
+      </>)}
+
+      {/* ── Генератор листингов ─────────────────────────────────────────────────────────── */}
+      {tab === 'listing' && catalogs.length > 0 && (
+      <Card className="mt-4" padding="md">
+        <div>
+          <p className="text-sm font-semibold text-text">{t('commerce.listing.title')}</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.listing.hint')}</p>
+        </div>
+        <div className="mt-4">
+          <CommerceListingAgent
+            drafts={drafts}
+            categoryChoices={categoryChoices}
+            onDraft={draftListing}
+            onApprove={(draftId) => decideDraft(draftId, 'approve_listing_draft')}
+            onDiscard={(draftId) => decideDraft(draftId, 'discard_listing_draft')}
+          />
+        </div>
+      </Card>
+      )}
+
+      {/* ── Настройки интеграции ────────────────────────────────────────────────────────── */}
+      {tab === 'settings' && catalogs.length > 0 && (<>
       <Card className="mt-4" padding="md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div><p className="text-sm font-semibold text-text">{t('commerce.feesTitle')}</p><p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.feesHint')}</p></div>
@@ -492,39 +596,7 @@ export default function CommercePage() {
     по привязке. Ссылка ведёт прямо в тот чат, куда приходят сводки и где ждут /costs. */}
 {notifyBot && <p className="mt-3 text-xs text-muted">{t('commerce.tgBot')} <a href={`https://t.me/${notifyBot}`} target="_blank" rel="noreferrer" className="font-medium text-accent-cyan underline">@{notifyBot}</a></p>}{telegramLink && <a href={telegramLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-medium text-accent-cyan underline">{t('commerce.tgOpen')}</a>}{!telegramConnected && !telegramLink && <p className="mt-3 text-xs text-amber">{t('commerce.tgHint')}</p>}</Card>
 
-      <Card className="mt-4" padding="md">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-text">{t('commerce.economicsTitle')}</p>
-            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.economicsHint')}</p>
-          </div>
-          <Button variant="outline" onClick={autofill} loading={busy === 'autofill'} disabled={!catalogs.length} leftIcon={<Wand2 size={15} />}>{t('commerce.autofill')}</Button>
-        </div>
-        <div className="mt-4">{loading ? <p className="text-sm text-muted">{t('commerce.loadingSkus')}</p> : <CommerceSkuTable skus={skus} onSave={saveSku} />}</div>
-      </Card>
-
-      <Card className="mt-4" padding="md">
-        <div>
-          <p className="text-sm font-semibold text-text">{t('commerce.listing.title')}</p>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.listing.hint')}</p>
-        </div>
-        <div className="mt-4">
-          <CommerceListingAgent
-            drafts={drafts}
-            categoryChoices={categoryChoices}
-            onDraft={draftListing}
-            onApprove={(draftId) => decideDraft(draftId, 'approve_listing_draft')}
-            onDiscard={(draftId) => decideDraft(draftId, 'discard_listing_draft')}
-          />
-        </div>
-      </Card>
-
-      <Card className="mt-4" padding="md">
-        <div className="grid gap-4 sm:grid-cols-2 sm:items-end"><label className="space-y-1.5"><span className="block text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalog')}</span><select value={catalogId} onChange={(event) => { setCatalogId(event.target.value); void load(event.target.value) }} className={inputClass} disabled={!catalogs.length}><option value="">{t('commerce.selectCatalog')}</option>{catalogs.map((catalog) => <option key={catalog.id} value={catalog.id} className="bg-panel">{catalog.name} ({catalog.source})</option>)}</select></label><label className="block"><span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.economicsFile')}</span><span className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-accent-indigo/40 bg-accent-indigo/[0.05] px-3 py-2 text-sm text-accent-indigo hover:bg-accent-indigo/[0.1]"><Upload size={15} />{busy === 'stage' ? t('commerce.staging') : t('commerce.chooseFile')}<input className="sr-only" type="file" accept=".csv,.xlsx" disabled={!catalogId || busy === 'stage'} onChange={(event) => { const file = event.target.files?.[0]; if (file) void stageFile(file); event.currentTarget.value = '' }} /></span></label></div>
-        <p className="mt-3 text-xs leading-relaxed text-muted">{t('commerce.bulkHint')} <code className="text-fog">{headers.join(', ')}</code>. <code className="text-fog">unit_cost_uzs</code> and <code className="text-fog">fulfillment_uzs</code> {t('commerce.bulkHintTail')}</p>
-      </Card>
-
-      <Card className="mt-4" padding="md"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">{t('commerce.stagedTitle')}</p><p className="text-xs text-muted">{t('commerce.stagedCount', { count: staged.length })}</p></div><span className="rounded-full bg-accent-indigo/10 px-3 py-1 text-sm font-semibold text-accent-indigo border border-accent-indigo/20">{t('commerce.rowsCount', { count: staged.reduce((sum, batch) => sum + batch.total_rows, 0) })}</span></div>{staged.length > 0 && <div className="mt-4 space-y-2">{staged.map((batch) => <div key={batch.id} className="flex flex-col gap-1 rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between"><span>{new Date(batch.created_at).toLocaleString()}</span><span>{batch.total_rows} rows · {batch.valid_rows} valid · {batch.unmatched_rows} unmatched · {batch.error_rows} invalid</span></div>)}</div>}</Card>
+      </>)}
     </div>
   )
 }
