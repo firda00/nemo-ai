@@ -109,6 +109,7 @@ Apply-Migration .\supabase\migrations\20260808170000_commerce_empty_shop.sql
 Apply-Migration .\supabase\migrations\20260808180000_org_metrics_registry.sql
 Apply-Migration .\supabase\migrations\20260808190000_register_refuses_unwired.sql
 Apply-Migration .\supabase\migrations\20260808200000_composite_expectations.sql
+Apply-Migration .\supabase\migrations\20260809160000_ops_controller.sql
 
 $schemaCheckSql = @'
 select
@@ -452,7 +453,14 @@ if ($cronLine) {
   $cronSql = @'
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
-  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent', 'nemo-org-memory-every-five-minutes', 'nemo-org-outcomes-hourly');
+  select cron.unschedule(jobid) from cron.job where jobname in ('nemo-autopost-every-minute', 'nemo-follow-up-every-five-minutes', 'nemo-agent-evolution-daily', 'nemo-ops-watchdog-every-ten-minutes', 'nemo-daily-digest-tashkent', 'nemo-autonomous-worker-every-minute', 'nemo-commerce-worker-tashkent', 'nemo-commerce-digest-tashkent', 'nemo-commerce-alerts-tashkent', 'nemo-org-memory-every-five-minutes', 'nemo-org-outcomes-hourly', 'nemo-ops-sweep-hourly');
+-- Операционный контролёр: закрывает просроченные предложения. Чистый SQL, как и резолвер —
+-- у него нет ни HTTP, ни секрета, ни холодного старта, а значит и трёх способов отказать молча.
+select cron.schedule(
+  'nemo-ops-sweep-hourly',
+  '10 * * * *',
+  $job$select public.ops_sweep_stale();$job$
+);
 -- Резолвер исходов зовётся прямым SQL, без edge-функции: у него нет ни HTTP, ни секрета, ни
 -- холодного старта, а значит и трёх способов отказать молча.
 select cron.schedule(

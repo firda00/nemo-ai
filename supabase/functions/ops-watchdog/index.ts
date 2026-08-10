@@ -116,6 +116,26 @@ Deno.serve(async (req) => {
     return { ok: verdict.ok, info: `${verdict.state}: ${verdict.info}${tail}` }
   })
 
+  // 8) stuck work — the operations controller's watching half.
+  //
+  // Every category here already has a mechanism: leases on runs and jobs, an hourly resolver on
+  // decisions, a five-minute worker on embeddings. Nothing is repaired from here, deliberately: a
+  // non-zero count means THAT mechanism broke, and clearing the symptom would hide it. Today all
+  // of them are zero — and until this check existed there was no way to learn otherwise.
+  details.stuck_work = await timed(async () => {
+    const { data, error } = await db.rpc('ops_stuck_report')
+    if (error) return { ok: false, info: `rpc error: ${error.message.slice(0, 80)}` }
+    const rows = (data ?? []) as { kind: string; stuck: number; oldest_hours: number | null }[]
+    const stuck = rows.filter((row) => Number(row.stuck) > 0)
+    if (!stuck.length) return { ok: true, info: 'hech narsa osilmagan' }
+    // Named, with age: "3 stuck" sends someone hunting, "decisions_past_horizon 3 · 26h" says
+    // which mechanism to look at first.
+    return {
+      ok: false,
+      info: stuck.map((row) => `${row.kind} ${row.stuck}${row.oldest_hours ? ` · ${row.oldest_hours}h` : ''}`).join(' | ').slice(0, 160),
+    }
+  })
+
   // The monitor's own liveness, read BEFORE writing this tick. pg_cron was configured
   // correctly and still stopped writing for twelve days while the newest row said `ok` —
   // so a gap in this table is itself an incident and must alert even when nothing changed.

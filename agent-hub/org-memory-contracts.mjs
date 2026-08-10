@@ -31,6 +31,7 @@ const commerceFindings = read('src/components/platform/CommerceFindings.tsx')
 const registry = read('supabase/migrations/20260808180000_org_metrics_registry.sql')
 const unwiredGate = read('supabase/migrations/20260808190000_register_refuses_unwired.sql')
 const composite = read('supabase/migrations/20260808200000_composite_expectations.sql')
+const opsController = read('supabase/migrations/20260809160000_ops_controller.sql')
 
 const checks = [
   // ── Уверенность нельзя присвоить ──────────────────────────────────────────────────────────
@@ -578,6 +579,34 @@ const checks = [
 
   ['the composite migration is registered for deploy',
     deploy.includes('20260808200000_composite_expectations.sql')],
+
+  // ── Операционный контролёр ────────────────────────────────────────────────────────────────
+  // Роль задумывалась шире. Проверка живой базы показала, что чинить нечего: подвисших прогонов,
+  // заданий, решений и векторов ровно ноль. Настоящих задач осталось две, и это честный размер.
+  ['only what is unambiguously dead gets swept',
+    /create or replace function public\.ops_sweep_stale/.test(opsController)
+    && /set status = 'expired'\s*\r?\n\s*where status = 'pending' and expires_at < now\(\)/.test(opsController)
+    && /Ставится 'expired', а не 'rejected'/.test(opsController)],
+
+  // У каждой категории есть свой механизм — лизы, резолвер, воркер эмбеддингов. Ненулевой счётчик
+  // означает поломку ТОГО механизма, и убрать симптом значило бы её спрятать.
+  ['stuck work is counted and named, never quietly cleared',
+    /create or replace function public\.ops_stuck_report/.test(opsController)
+    && /sync_runs_running/.test(opsController) && /decisions_past_horizon/.test(opsController)
+    && /claims_without_vector/.test(opsController)
+    && !/update[\s\S]{0,200}ops_stuck_report/.test(opsController)],
+
+  ['the watchdog reports which mechanism broke, with the age of the oldest',
+    /details\.stuck_work = await timed/.test(opsWatchdog)
+    && /ops_stuck_report/.test(opsWatchdog)
+    && /row\.oldest_hours/.test(opsWatchdog)
+    && /Nothing is repaired from here, deliberately/.test(opsWatchdog)],
+
+  ['the sweep runs as plain SQL on cron, like the resolver',
+    /select public\.ops_sweep_stale\(\);/.test(deploy) && /nemo-ops-sweep-hourly/.test(deploy)],
+
+  ['the ops controller migration is registered for deploy',
+    deploy.includes('20260809160000_ops_controller.sql')],
 ]
 
 let failed = 0
