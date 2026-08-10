@@ -491,6 +491,43 @@ const checks = [
   ['two structured descriptions have room to be generated',
     /maxTokens: 1800/.test(listingModule)],
 
+  // ── Полка выбирается для существующего черновика ───────────────────────────────────────────
+
+  ['picking a category recomputes an existing draft instead of regenerating it',
+    /action === 'set_listing_category'/.test(commerceControl)
+    // Модель не вызывается: полка меняет арифметику, а не текст.
+    // Граница берётся по САМОМУ обработчику: имя действия встречается раньше, в списке
+    // owner-действий, и отрезанный от него кусок захватил бы генерацию целиком.
+    && !/generateCopy/.test(commerceControl.split("if (action === 'set_listing_category') {")[1].split("if (action === 'approve_listing_draft'")[0])
+    && /min_selling_price_tiyin: economics\.min_selling_price_tiyin/.test(commerceControl)],
+
+  ['the recompute is owner-only and refuses a draft already decided',
+    /action === 'set_listing_category' \|\| action === 'onboard'/.test(commerceControl)
+    && /draft\.status !== 'draft'/.test(commerceControl)],
+
+  // Черновик без категории переживает перезагрузку страницы, а список из ответа на генерацию — нет.
+  ['the shelves travel with the draft list, not only with a generation',
+    /categories: context\.options/.test(commerceControl)
+    && /setCategories\(result\?\.ok \? result\.categories \?\? \[\] : \[\]\)/.test(commercePage)],
+
+  ['the picker sits on the card that lacks a category, not above the form',
+    /!draft\.uzum_category && draft\.status === 'draft' && categories\.length > 0/.test(listingAgent)
+    && !/categoryChoices/.test(listingAgent)
+    && !/categoryChoices/.test(commercePage)],
+
+  // Ключ с точкой внутри имени не разрешается резолвером t(): он идёт по вложенным путям, и
+  // "missing.category" превращается в подпись `commerce.listing.missing.category` на экране.
+  // Исключение — metricLabel и subjectWord: они читаются как словарь через dict, не через t().
+  ['no i18n key hides a dot inside its own name',
+    (() => {
+      const withoutMaps = i18nExtra.replace(/"(metricLabel|subjectWord)": \{[\s\S]*?\n {4}\},/g, '')
+      return [...withoutMaps.matchAll(/^\s*"([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z0-9_.]+)":/gm)].length === 0
+    })()],
+
+  ['every missing-field label resolves, in all three languages',
+    (i18nExtra.match(/"missing": \{/g) ?? []).length === 3
+    && i18nExtra.includes('"category": "Категория"')],
+
   ['the copy strings exist in all three languages',
     ['"copy": "Nusxa olish"', '"copy": "Скопировать"', '"copy": "Copy"',
      '"copyAll": "Hammasini nusxalash"', '"copyAll": "Скопировать всё"', '"copyAll": "Copy all"']

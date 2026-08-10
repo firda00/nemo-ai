@@ -68,29 +68,28 @@ const inputClass = 'w-full rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 te
 
 export function CommerceListingAgent({
   drafts,
-  categoryChoices,
+  categories,
   onDraft,
+  onCategory,
   onApprove,
   onDiscard,
 }: {
   drafts: ListingDraft[]
-  categoryChoices: CategoryChoice[]
+  /** Все полки аккаунта — чтобы выбрать её для черновика, который уже написан. */
+  categories: CategoryChoice[]
   onDraft: (sourceText: string, category: string | null) => Promise<boolean>
+  onCategory: (draftId: string, category: string) => Promise<boolean>
   onApprove: (draftId: string) => Promise<boolean>
   onDiscard: (draftId: string) => Promise<boolean>
 }) {
   const { t } = useI18n()
   const [sourceText, setSourceText] = useState('')
-  const [category, setCategory] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
 
   const submit = async () => {
     if (sourceText.trim().length < 10 || busy) return
     setBusy('draft')
-    if (await onDraft(sourceText.trim(), category || null)) {
-      setSourceText('')
-      setCategory('')
-    }
+    if (await onDraft(sourceText.trim(), null)) setSourceText('')
     setBusy(null)
   }
 
@@ -98,6 +97,13 @@ export function CommerceListingAgent({
     if (busy) return
     setBusy(draftId)
     await (approve ? onApprove(draftId) : onDiscard(draftId))
+    setBusy(null)
+  }
+
+  const pick = async (draftId: string, category: string) => {
+    if (!category || busy) return
+    setBusy(draftId)
+    await onCategory(draftId, category)
     setBusy(null)
   }
 
@@ -110,22 +116,13 @@ export function CommerceListingAgent({
           value={sourceText}
           onChange={(event) => setSourceText(event.target.value)}
         />
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          {/* Shown only when the last draft could not match a category on its own. Picking is one
-              tap and always right; a guessed commission would silently move every price. */}
-          {categoryChoices.length > 0 && (
-            <label className="flex-1">
-              <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-amber">{t('commerce.listing.pickCategory')}</span>
-              <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option value="">{t('commerce.listing.noCategory')}</option>
-                {categoryChoices.map((choice) => (
-                  <option key={choice.category} value={choice.category} className="bg-panel">
-                    {choice.category} — {choice.commission_percent}% ({choice.skus})
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+        {/* Селектора категории здесь больше нет.
+            Он относился к СЛЕДУЮЩЕЙ генерации, а появлялся ровно в тот момент, когда владелец
+            смотрел на только что созданный черновик с прочерками вместо комиссии — и читался как
+            «выбери полку для него». Выбор ничего не пересчитывал, а поле ввода к этому моменту
+            уже очищено после успешной генерации, так что и генерировать было нечего. Полка
+            выбирается на самой карточке, где видно, что именно она меняет. */}
+        <div className="flex justify-end">
           <Button onClick={() => void submit()} loading={busy === 'draft'} disabled={sourceText.trim().length < 10} leftIcon={<Sparkles size={15} />}>
             {t('commerce.listing.create')}
           </Button>
@@ -185,6 +182,32 @@ export function CommerceListingAgent({
                   )}
               </div>
             </div>
+
+            {/* Полка выбирается прямо здесь, на карточке.
+                Раньше выпадающий список стоял только над формой генерации и влиял на СЛЕДУЮЩИЙ
+                черновик. Владелец, увидев прочерки вместо комиссии, выбирал категорию — и терял
+                написанный текст, потому что применить выбор можно было только повторной
+                генерацией. Полка меняет арифметику, а не текст, и модель для этого не нужна. */}
+            {!draft.uzum_category && draft.status === 'draft' && categories.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.06] p-2.5">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-amber">{t('commerce.listing.pickCategoryHere')}</span>
+                  <select
+                    className={inputClass}
+                    value=""
+                    disabled={busy === draft.id}
+                    onChange={(event) => void pick(draft.id, event.target.value)}
+                  >
+                    <option value="">{busy === draft.id ? t('commerce.listing.recalculating') : t('commerce.listing.noCategory')}</option>
+                    {categories.map((choice) => (
+                      <option key={choice.category} value={choice.category} className="bg-panel">
+                        {choice.category} — {choice.commission_percent}% ({choice.skus})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
 
             {/* The economics are the reason this exists: a listing that knows its floor price
                 before it is published cannot be sold below cost by accident. */}

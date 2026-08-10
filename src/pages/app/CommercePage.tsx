@@ -65,7 +65,7 @@ export default function CommercePage() {
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [drafts, setDrafts] = useState<ListingDraft[]>([])
   const [findings, setFindings] = useState<Finding[]>([])
-  const [categoryChoices, setCategoryChoices] = useState<CategoryChoice[]>([])
+  const [categories, setCategories] = useState<CategoryChoice[]>([])
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -117,8 +117,11 @@ export default function CommercePage() {
   const loadDrafts = useCallback(async () => {
     if (!supabase) { setDrafts([]); return }
     const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'list_listing_drafts' } })
-    const result = data as { ok?: boolean; drafts?: ListingDraft[] } | null
+    const result = data as { ok?: boolean; drafts?: ListingDraft[]; categories?: CategoryChoice[] } | null
     setDrafts(result?.ok ? result.drafts ?? [] : [])
+    // Полки приезжают со списком черновиков: черновик без категории переживает перезагрузку
+    // страницы, а список из ответа на генерацию — нет.
+    setCategories(result?.ok ? result.categories ?? [] : [])
   }, [])
 
   const load = useCallback(async (selectedCatalogId = catalogId) => {
@@ -185,12 +188,26 @@ export default function CommercePage() {
     const { data, error } = await supabase.functions.invoke('commerce-control', {
       body: { action: 'draft_listing', source_text: sourceText, ...(category ? { uzum_category: category } : {}), ...(catalogId ? { catalog_id: catalogId } : {}) },
     })
-    const result = data as { ok?: boolean; category_choices?: CategoryChoice[]; copy_available?: boolean; error?: string } | null
+    const result = data as { ok?: boolean; copy_available?: boolean; error?: string } | null
     if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errCreate') }); return false }
-    // Offered back only when Nemo could not match a category itself. Keeping them on screen is
-    // what turns "I could not tell" into one tap instead of a wrong commission.
-    setCategoryChoices(result.category_choices ?? [])
+    // Список полок больше не приезжает сюда: он живёт на самой карточке черновика, где выбор
+    // сразу пересчитывает комиссию. Здесь он относился к следующей генерации и вводил в
+    // заблуждение ровно в тот момент, когда владелец смотрел на текущую.
     if (result.copy_available === false) setMessage({ ok: true, text: t('commerce.listing.okNoCopy') })
+    await loadDrafts()
+    return true
+  }
+
+  // Выбор полки для уже написанного черновика. Генерация не повторяется: категория меняет
+  // комиссию, резерв и минимальную цену — текст она не трогает, и терять его незачем.
+  const setDraftCategory = async (draftId: string, category: string) => {
+    if (!supabase) return false
+    setMessage(null)
+    const { data, error } = await supabase.functions.invoke('commerce-control', {
+      body: { action: 'set_listing_category', draft_id: draftId, uzum_category: category },
+    })
+    const result = data as { ok?: boolean; error?: string } | null
+    if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errCategory') }); return false }
     await loadDrafts()
     return true
   }
@@ -566,8 +583,9 @@ export default function CommercePage() {
         <div className="mt-4">
           <CommerceListingAgent
             drafts={drafts}
-            categoryChoices={categoryChoices}
+            categories={categories}
             onDraft={draftListing}
+            onCategory={setDraftCategory}
             onApprove={(draftId) => decideDraft(draftId, 'approve_listing_draft')}
             onDiscard={(draftId) => decideDraft(draftId, 'discard_listing_draft')}
           />

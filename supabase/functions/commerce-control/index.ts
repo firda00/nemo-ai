@@ -106,7 +106,8 @@ Deno.serve(async (req) => {
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
   const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'sync_now' || action === 'apply_proposal' || action === 'reject_proposal'
-    || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft' || action === 'onboard'
+    || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'
+    || action === 'set_listing_category' || action === 'onboard'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -632,7 +633,63 @@ Deno.serve(async (req) => {
     const { data: drafts, error } = await admin.from('commerce_listing_drafts')
       .select('*').eq('account_id', profile.account_id).neq('status', 'discarded')
       .order('created_at', { ascending: false }).limit(50)
-    return error ? json({ error: 'could not load drafts' }, 500) : json({ ok: true, drafts: drafts ?? [] })
+    if (error) return json({ error: 'could not load drafts' }, 500)
+    // Полки едут вместе со списком, а не только в ответе на генерацию. Черновик без категории
+    // живёт дольше одного ответа: после перезагрузки страницы выбирать было бы не из чего, и
+    // единственным способом добраться до комиссии снова стала бы повторная генерация.
+    const context = await catalogueContext(admin, profile.account_id)
+    return json({ ok: true, drafts: drafts ?? [], categories: context.options })
+  }
+
+  if (action === 'set_listing_category') {
+    // Категория выбирается для СУЩЕСТВУЮЩЕГО черновика, без повторной генерации.
+    //
+    // Раньше выбор из списка влиял только на следующую генерацию: владелец, увидев прочерки
+    // вместо комиссии, выбирал полку — и терял весь написанный текст, потому что единственный
+    // способ применить выбор был написать описание заново. Полка меняет не текст, а арифметику:
+    // комиссию, резерв на возвраты и минимальную цену. Модель здесь не нужна и не вызывается.
+    if (typeof body?.draft_id !== 'string' || !UUID.test(body.draft_id)) return json({ error: 'invalid draft_id' }, 400)
+    const chosen = text(body?.uzum_category, 160)
+    if (!chosen) return json({ error: 'invalid category' }, 400)
+
+    const { data: draft } = await admin.from('commerce_listing_drafts')
+      .select('id, source_text, status')
+      .eq('id', body.draft_id).eq('account_id', profile.account_id).maybeSingle()
+    if (!draft) return json({ error: 'draft not found' }, 404)
+    // Одобренный черновик уже перенесён в кабинет. Пересчёт минимальной цены под ним изменил бы
+    // число, по которому владелец уже принял решение, — и сделал бы это молча.
+    if (draft.status !== 'draft') return json({ error: 'draft already decided' }, 409)
+
+    const context = await catalogueContext(admin, profile.account_id)
+    const category = context.options.find((option) => option.category === chosen)
+    if (!category) return json({ error: 'unknown category' }, 400)
+
+    // Числа берутся из исходного текста владельца тем же разбором, что и при генерации: цифра,
+    // однажды вытащенная из его слов, не должна зависеть от того, в какой момент её перечитали.
+    const numbers = extractNumbers(String(draft.source_text ?? ''))
+    const economics = draftEconomics({
+      dimension: numbers.dimension,
+      unitCostTiyin: numbers.unitCostTiyin,
+      category,
+      minMarginPercent: category.min_margin_percent ?? context.defaultMinMargin,
+    })
+
+    const { data: updated, error } = await admin.from('commerce_listing_drafts')
+      .update({
+        catalog_id: category.catalog_id ?? null,
+        uzum_category: category.category,
+        commission_percent: economics.commission_percent,
+        returns_reserve_percent: economics.returns_reserve_percent,
+        fulfillment_tiyin: economics.fulfillment_tiyin,
+        min_margin_percent: economics.min_margin_percent,
+        min_selling_price_tiyin: economics.min_selling_price_tiyin,
+        missing: economics.missing,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', body.draft_id).eq('account_id', profile.account_id).eq('status', 'draft')
+      .select('*').maybeSingle()
+    if (error || !updated) return json({ error: 'could not apply the category' }, 500)
+    return json({ ok: true, draft: updated, volume_litres: economics.volume_litres, fulfillment_basis: economics.fulfillment_basis })
   }
 
   if (action === 'approve_listing_draft' || action === 'discard_listing_draft') {
