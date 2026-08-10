@@ -4,6 +4,7 @@ import {
   categoryCandidates,
   draftEconomics,
   extractNumbers,
+  manualCategory,
   parseCopy,
 } from '../supabase/functions/_shared/listingDraft.ts'
 
@@ -158,6 +159,66 @@ assert.deepEqual(noCost.missing, ['dimensions', 'unit_cost', 'category'], 'every
 assert.equal(noCost.min_selling_price_tiyin, null)
 assert.equal(noCost.fulfillment_tiyin, uzs(50_000), 'the fee is still known even when nothing else is')
 
+// --- A shelf the seller does not have yet ---------------------------------------------------
+// Комиссия берётся из полок, где продавец уже торгует. Товар из новой ниши такой полки не имеет,
+// и без ручного ввода система упиралась в отказ на каждом первом товаре нового направления.
+
+const byHand = manualCategory({
+  category: '  Брелоки  и   аксессуары ',
+  commissionPercent: '18,5',
+  returnsReservePercent: '5',
+  minMarginPercent: 20,
+})
+assert.equal(byHand.category, 'Брелоки и аксессуары', 'the name is normalised, not rejected')
+assert.equal(byHand.commission_percent, 18.5, 'a comma is how the decimal is typed here')
+assert.equal(byHand.skus, 0, 'no SKU of theirs sits on this shelf, and the number says so')
+
+// Пустой резерв — это ноль, а не отказ: он всё равно не входит в минимальную цену.
+assert.equal(manualCategory({ category: 'Брелоки', commissionPercent: 18, returnsReservePercent: '', minMarginPercent: 20 }).returns_reserve_percent, 0)
+
+// Опечатка не «поправляется»: посчитать цену по комиссии 250% значит выдать вымысел за расчёт.
+for (const bad of [
+  { category: 'Брелоки', commissionPercent: 250, returnsReservePercent: 5 },
+  { category: 'Брелоки', commissionPercent: -5, returnsReservePercent: 5 },
+  { category: 'Брелоки', commissionPercent: 'дорого', returnsReservePercent: 5 },
+  { category: 'Б', commissionPercent: 18, returnsReservePercent: 5 },
+  { category: '', commissionPercent: 18, returnsReservePercent: 5 },
+]) {
+  assert.equal(manualCategory({ ...bad, minMarginPercent: 20 }), null, `refused: ${JSON.stringify(bad)}`)
+}
+
+// Комиссия 85% с целевой маржой 20% не оставляет цены вовсе. Отрицательное число, одетое
+// ответом, хуже отказа — и именно оно уехало бы в карточку как «минимальная цена».
+assert.equal(
+  manualCategory({ category: 'Брелоки', commissionPercent: 85, returnsReservePercent: 5, minMarginPercent: 20 }),
+  null,
+  'a commission that eats the whole price has no floor to state',
+)
+
+// Названная руками полка считается тем же кодом, что и своя: расхождение арифметики между
+// «полка есть» и «полки нет» было бы худшим из возможных.
+const handEconomics = draftEconomics({
+  dimension: { length: 25, width: 25, height: 30, weight: 35 },
+  unitCostTiyin: uzs(8_000),
+  category: byHand,
+  minMarginPercent: 20,
+})
+assert.deepEqual(handEconomics.missing, [], 'a stated shelf closes the gap it was blocking')
+assert.equal(handEconomics.commission_percent, 18.5)
+// (8 000 + 5 250) / (1 - 0.185 - 0.20) = 21 544,72. Резерв в делителе не участвует: возврат по
+// тарифу Uzum не тарифицируется, и 5% там или 50% — минимальная цена одна и та же.
+assert.equal(handEconomics.min_selling_price_tiyin, 2_154_472, 'returns do not enter the floor price')
+assert.equal(
+  draftEconomics({
+    dimension: { length: 25, width: 25, height: 30, weight: 35 },
+    unitCostTiyin: uzs(8_000),
+    category: { ...byHand, returns_reserve_percent: 50 },
+    minMarginPercent: 20,
+  }).min_selling_price_tiyin,
+  handEconomics.min_selling_price_tiyin,
+  'ten times the return rate does not move the floor by a single tiyin',
+)
+
 // --- The model writes prose, and only prose ------------------------------------------------
 
 for (const rule of ['Never invent a material', 'Never write a price', 'unknown_attributes']) {
@@ -247,4 +308,4 @@ const long = parseCopy({ description_ru: `Крючок.\n\n${'• Очень д�
 assert.ok(long.description_ru.length <= 2200, 'the stored description stays inside the column check')
 assert.ok(!long.description_ru.endsWith('шиф'), 'the cut lands on a line boundary, not mid-word')
 
-console.log('[OK] Listing draft behaviour: 58 assertions')
+console.log('[OK] Listing draft behaviour: 71 assertions')

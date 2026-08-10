@@ -4,7 +4,14 @@ import { uzumShopList } from '../_shared/uzum.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 import { extractUzumFees, hasAnyFee } from '../_shared/uzumFees.ts'
-import { categoryCandidates, draftEconomics, extractNumbers, generateCopy } from '../_shared/listingDraft.ts'
+import {
+  categoryCandidates,
+  draftEconomics,
+  extractNumbers,
+  generateCopy,
+  manualCategory,
+  OWNER_STATED_FEE_FIELDS,
+} from '../_shared/listingDraft.ts'
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { PRIMARY_MODEL } from '../_shared/llm.ts'
@@ -661,8 +668,18 @@ Deno.serve(async (req) => {
     if (draft.status !== 'draft') return json({ error: 'draft already decided' }, 409)
 
     const context = await catalogueContext(admin, profile.account_id)
-    const category = context.options.find((option) => option.category === chosen)
-    if (!category) return json({ error: 'unknown category' }, 400)
+    // Полка либо своя (комиссию назвал Uzum), либо названная владельцем. Третьего не бывает, и
+    // различие не косметическое: от него зависит, факт перед нами или чужое утверждение.
+    const known = context.options.find((option) => option.category === chosen)
+    const manual = known ? null : manualCategory({
+      category: chosen,
+      commissionPercent: body?.commission_percent,
+      returnsReservePercent: body?.returns_reserve_percent,
+      minMarginPercent: context.defaultMinMargin,
+    })
+    if (!known && !manual) return json({ error: 'invalid_manual_fees' }, 400)
+    const category = known ?? manual!
+    const ownerStated = known ? [] : [...OWNER_STATED_FEE_FIELDS]
 
     // Числа берутся из исходного текста владельца тем же разбором, что и при генерации: цифра,
     // однажды вытащенная из его слов, не должна зависеть от того, в какой момент её перечитали.
@@ -684,6 +701,9 @@ Deno.serve(async (req) => {
         min_margin_percent: economics.min_margin_percent,
         min_selling_price_tiyin: economics.min_selling_price_tiyin,
         missing: economics.missing,
+        // Перезаписывается, а не дополняется: владелец мог сначала назвать комиссию руками, потом
+        // выбрать настоящую полку — и тогда пометка «названо владельцем» обязана исчезнуть.
+        owner_stated_fields: ownerStated,
         updated_at: new Date().toISOString(),
       })
       .eq('id', body.draft_id).eq('account_id', profile.account_id).eq('status', 'draft')

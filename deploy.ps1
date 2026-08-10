@@ -111,6 +111,7 @@ Apply-Migration .\supabase\migrations\20260808190000_register_refuses_unwired.sq
 Apply-Migration .\supabase\migrations\20260808200000_composite_expectations.sql
 Apply-Migration .\supabase\migrations\20260809160000_ops_controller.sql
 Apply-Migration .\supabase\migrations\20260810120000_listing_description_blocks.sql
+Apply-Migration .\supabase\migrations\20260810130000_listing_owner_stated_fees.sql
 
 $schemaCheckSql = @'
 select

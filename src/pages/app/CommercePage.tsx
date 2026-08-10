@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, Database, RefreshCw, Search, Upload, Wand2 }
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
-import { CommerceListingAgent, type CategoryChoice, type ListingDraft } from '../../components/platform/CommerceListingAgent'
+import { CommerceListingAgent, type CategoryChoice, type ListingDraft, type ManualFees } from '../../components/platform/CommerceListingAgent'
 import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
@@ -200,11 +200,18 @@ export default function CommercePage() {
 
   // Выбор полки для уже написанного черновика. Генерация не повторяется: категория меняет
   // комиссию, резерв и минимальную цену — текст она не трогает, и терять его незачем.
-  const setDraftCategory = async (draftId: string, category: string) => {
+  const setDraftCategory = async (draftId: string, category: string, manual?: ManualFees) => {
     if (!supabase) return false
     setMessage(null)
     const { data, error } = await supabase.functions.invoke('commerce-control', {
-      body: { action: 'set_listing_category', draft_id: draftId, uzum_category: category },
+      body: {
+        action: 'set_listing_category',
+        draft_id: draftId,
+        uzum_category: category,
+        // Комиссия едет только когда полки нет среди своих: для своей она факт, прочитанный у
+        // Uzum, и присланное сюда число могло бы его молча заменить.
+        ...(manual ? { commission_percent: manual.commission_percent, returns_reserve_percent: manual.returns_reserve_percent } : {}),
+      },
     })
     const result = data as { ok?: boolean; error?: string } | null
     if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errCategory') }); return false }

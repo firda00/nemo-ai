@@ -57,11 +57,112 @@ export type ListingDraft = {
   min_selling_price_tiyin: number | null
   missing: string[] | null
   evidence: string[] | null
+  /** Поля, значение которых назвал владелец, а не Uzum. */
+  owner_stated_fields: string[] | null
   status: string
   created_at: string
 }
 
 export type CategoryChoice = { category: string; commission_percent: number; returns_reserve_percent: number | null; skus: number }
+
+/** Комиссия и возвраты, названные владельцем для полки, которой у него ещё нет. */
+export type ManualFees = { category: string; commission_percent: number; returns_reserve_percent: number }
+
+/** Значение выбора «моей категории здесь нет». Пустая строка занята вариантом «не выбрано». */
+const MANUAL = '__manual__'
+/** Не-гардеробный товар возвращают редко. Одежду — часто, и это уже видно по своим полкам. */
+const DEFAULT_RETURNS = 5
+
+/**
+ * Выбор полки для черновика — своей или названной руками.
+ *
+ * Список содержит только категории, где продавец УЖЕ торгует: там комиссию назвал сам Uzum, и
+ * она факт. Товар из новой ниши такой полки не имеет, и без ручного ввода система упиралась в
+ * отказ на каждом первом товаре нового направления.
+ *
+ * Названное владельцем не выдаётся за прочитанное у Uzum: результат помечается знаком ≈ и
+ * остаётся таким, пока полка не появится среди своих.
+ */
+function CategoryPicker({ categories, busy, onPick, onManual, t }: {
+  categories: CategoryChoice[]
+  busy: boolean
+  onPick: (category: string) => void
+  onManual: (input: ManualFees) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const [mode, setMode] = useState('')
+  const [name, setName] = useState('')
+  const [commission, setCommission] = useState('')
+  const [returns, setReturns] = useState(String(DEFAULT_RETURNS))
+
+  const commissionValue = Number(commission.replace(',', '.'))
+  const returnsValue = Number(returns.replace(',', '.'))
+  const ready = name.trim().length >= 2
+    && Number.isFinite(commissionValue) && commissionValue >= 0 && commissionValue <= 99.99
+    && Number.isFinite(returnsValue) && returnsValue >= 0 && returnsValue <= 99.99
+
+  return (
+    <div className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.06] p-2.5">
+      <label className="block">
+        <span className="mb-1 block text-[11px] font-medium text-amber">{t('commerce.listing.pickCategoryHere')}</span>
+        <select
+          className={inputClass}
+          value={mode}
+          disabled={busy}
+          onChange={(event) => {
+            const value = event.target.value
+            setMode(value === MANUAL ? MANUAL : '')
+            if (value && value !== MANUAL) onPick(value)
+          }}
+        >
+          <option value="">{busy ? t('commerce.listing.recalculating') : t('commerce.listing.noCategory')}</option>
+          {categories.map((choice) => (
+            <option key={choice.category} value={choice.category} className="bg-panel">
+              {choice.category} — {choice.commission_percent}% ({choice.skus})
+            </option>
+          ))}
+          <option value={MANUAL} className="bg-panel">{t('commerce.listing.manualOption')}</option>
+        </select>
+      </label>
+
+      {mode === MANUAL && (
+        <div className="mt-2 space-y-2">
+          <input
+            className={inputClass}
+            placeholder={t('commerce.listing.manualName')}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1 block text-[10px] text-muted">{t('commerce.listing.manualCommission')}</span>
+              <input className={inputClass} inputMode="decimal" value={commission} onChange={(event) => setCommission(event.target.value)} />
+            </label>
+            <label className="block">
+              {/* Резерв не входит в минимальную цену — возврат по тарифу Uzum не стоит ничего.
+                  Он говорит, сколько стока должно двигаться ради одной продажи, и это вопрос
+                  закупок. Подпись обязана это сказать, иначе поле выглядит частью цены. */}
+              <span className="mb-1 block text-[10px] text-muted">{t('commerce.listing.manualReturns')}</span>
+              <input className={inputClass} inputMode="decimal" value={returns} onChange={(event) => setReturns(event.target.value)} />
+            </label>
+          </div>
+          <p className="text-[10px] leading-relaxed text-muted">{t('commerce.listing.manualHint')}</p>
+          <Button
+            size="sm"
+            disabled={!ready || busy}
+            onClick={() => onManual({
+              category: name.trim(),
+              commission_percent: commissionValue,
+              returns_reserve_percent: returnsValue,
+            })}
+          >
+            {t('commerce.listing.manualApply')}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const money = (tiyin: number | null, unit: string) => (tiyin == null ? '—' : `${(tiyin / 100).toLocaleString('ru-RU')} ${unit}`)
 const inputClass = 'w-full rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60'
@@ -78,7 +179,7 @@ export function CommerceListingAgent({
   /** Все полки аккаунта — чтобы выбрать её для черновика, который уже написан. */
   categories: CategoryChoice[]
   onDraft: (sourceText: string, category: string | null) => Promise<boolean>
-  onCategory: (draftId: string, category: string) => Promise<boolean>
+  onCategory: (draftId: string, category: string, manual?: ManualFees) => Promise<boolean>
   onApprove: (draftId: string) => Promise<boolean>
   onDiscard: (draftId: string) => Promise<boolean>
 }) {
@@ -100,10 +201,10 @@ export function CommerceListingAgent({
     setBusy(null)
   }
 
-  const pick = async (draftId: string, category: string) => {
+  const pick = async (draftId: string, category: string, manual?: ManualFees) => {
     if (!category || busy) return
     setBusy(draftId)
-    await onCategory(draftId, category)
+    await onCategory(draftId, category, manual)
     setBusy(null)
   }
 
@@ -134,6 +235,7 @@ export function CommerceListingAgent({
       {drafts.map((draft) => {
         const missing = draft.missing ?? []
         const ready = draft.status === 'ready'
+        const ownerStated = (draft.owner_stated_fields ?? []).includes('commission_percent')
         return (
           <div key={draft.id} className="rounded-xl border border-ice/10 bg-panel/60 p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -189,36 +291,37 @@ export function CommerceListingAgent({
                 написанный текст, потому что применить выбор можно было только повторной
                 генерацией. Полка меняет арифметику, а не текст, и модель для этого не нужна. */}
             {!draft.uzum_category && draft.status === 'draft' && categories.length > 0 && (
-              <div className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.06] p-2.5">
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-amber">{t('commerce.listing.pickCategoryHere')}</span>
-                  <select
-                    className={inputClass}
-                    value=""
-                    disabled={busy === draft.id}
-                    onChange={(event) => void pick(draft.id, event.target.value)}
-                  >
-                    <option value="">{busy === draft.id ? t('commerce.listing.recalculating') : t('commerce.listing.noCategory')}</option>
-                    {categories.map((choice) => (
-                      <option key={choice.category} value={choice.category} className="bg-panel">
-                        {choice.category} — {choice.commission_percent}% ({choice.skus})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+              <CategoryPicker
+                categories={categories}
+                busy={busy === draft.id}
+                onPick={(category) => pick(draft.id, category)}
+                onManual={(input) => pick(draft.id, input.category, input)}
+                t={t}
+              />
             )}
 
             {/* The economics are the reason this exists: a listing that knows its floor price
                 before it is published cannot be sold below cost by accident. */}
+            {/* Комиссия, названная владельцем, не выдаётся за прочитанную у Uzum: через неделю
+                никто, включая саму систему, не отличил бы одно от другого. Тот же знак ≈, что
+                и на оценочной себестоимости в находках. */}
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
               <div><dt className="text-muted">{t('commerce.listing.category')}</dt><dd className="text-text">{draft.uzum_category ?? '—'}</dd></div>
-              <div><dt className="text-muted">{t('commerce.listing.commission')}</dt><dd className="text-text">{draft.commission_percent == null ? '—' : `${draft.commission_percent}%`}</dd></div>
+              <div>
+                <dt className="text-muted">{t('commerce.listing.commission')}</dt>
+                <dd className="text-text">
+                  {draft.commission_percent == null ? '—' : `${draft.commission_percent}%`}
+                  {ownerStated && <span className="ml-1 text-amber" title={t('commerce.listing.ownerStatedTitle')}>≈</span>}
+                </dd>
+              </div>
               <div><dt className="text-muted">{t('commerce.listing.logistics')}</dt><dd className="text-text">{money(draft.fulfillment_tiyin, t('commerce.sku.currency'))}</dd></div>
               <div>
                 <dt className="text-muted">{t('commerce.listing.floor')}</dt>
                 <dd className={draft.min_selling_price_tiyin == null ? 'text-muted' : 'font-semibold text-accent-cyan'}>
                   {money(draft.min_selling_price_tiyin, t('commerce.sku.currency'))}
+                  {ownerStated && draft.min_selling_price_tiyin != null && (
+                    <span className="ml-1 text-amber" title={t('commerce.listing.ownerStatedTitle')}>≈</span>
+                  )}
                 </dd>
               </div>
             </dl>

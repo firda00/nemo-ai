@@ -178,6 +178,48 @@ export function categoryCandidates(
   return { confident: false, options: scored.map((row) => row.option) }
 }
 
+/**
+ * Полка, названная владельцем, а не прочитанная у Uzum.
+ *
+ * Нужна ровно для одного случая, и случай этот массовый: продавец заходит в нишу, где ещё не
+ * торгует. Комиссию для такой полки взять неоткуда — категорий, где Uzum её уже назвал, среди
+ * своих у продавца нет, — и до сих пор это значило, что минимальной цены у товара не будет
+ * вовсе. Владелец видит комиссию в справочнике Uzum при заведении товара, так что он может её
+ * назвать. Число при этом перестаёт быть фактом маркетплейса, и результат помечается знаком ≈.
+ *
+ * Возвращает null, а не «поправленное» значение: комиссия 250% — это опечатка, и посчитать по
+ * ней цену значит выдать вымысел за расчёт. Отдельно отбрасывается случай, когда комиссия вместе
+ * с целевой маржой уже съедает всю цену: минимальной цены там не существует, и отрицательное
+ * число, одетое ответом, хуже отказа.
+ */
+export const OWNER_STATED_FEE_FIELDS = ['commission_percent', 'returns_reserve_percent'] as const
+
+export function manualCategory(input: {
+  category: unknown
+  commissionPercent: unknown
+  returnsReservePercent: unknown
+  minMarginPercent: number
+}): CategoryOption | null {
+  const name = typeof input.category === 'string' ? input.category.replace(/\s+/g, ' ').trim().slice(0, 160) : ''
+  // Запятая — то, как здесь набирают десятичную дробь. Проверка стоит на границе модуля, а не в
+  // одной форме: через это же место пойдёт и Telegram, где никто не заменит её на точку.
+  const percent = (value: unknown) => Number(typeof value === 'string' ? value.replace(',', '.').trim() : value)
+  const commission = percent(input.commissionPercent)
+  const returns = input.returnsReservePercent == null || input.returnsReservePercent === ''
+    ? 0
+    : percent(input.returnsReservePercent)
+  if (name.length < 2) return null
+  if (!Number.isFinite(commission) || commission < 0 || commission > 99.99) return null
+  if (!Number.isFinite(returns) || returns < 0 || returns > 99.99) return null
+  if (commission + input.minMarginPercent >= 100) return null
+  return {
+    category: name,
+    commission_percent: Math.round(commission * 100) / 100,
+    returns_reserve_percent: Math.round(returns * 100) / 100,
+    skus: 0,
+  }
+}
+
 export interface DraftEconomics {
   fulfillment_tiyin: number
   /** Which branch of the tariff produced the fee, so the number can be argued with. */

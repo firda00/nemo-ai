@@ -45,6 +45,7 @@ const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const resolvedMigration = read('supabase/migrations/20260806220000_commerce_recommendations_resolved.sql')
 const listingModule = read('supabase/functions/_shared/listingDraft.ts')
 const descriptionMigration = read('supabase/migrations/20260810120000_listing_description_blocks.sql')
+const ownerStatedMigration = read('supabase/migrations/20260810130000_listing_owner_stated_fees.sql')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -527,6 +528,38 @@ const checks = [
   ['every missing-field label resolves, in all three languages',
     (i18nExtra.match(/"missing": \{/g) ?? []).length === 3
     && i18nExtra.includes('"category": "Категория"')],
+
+  // ── Полка, которой у продавца ещё нет ──────────────────────────────────────────────────────
+  // Комиссия читается из категорий, где он УЖЕ торгует. Товар из новой ниши такой полки не имеет,
+  // и без ручного ввода система отказывала на каждом первом товаре нового направления.
+
+  ['a commission the owner states is validated, not trusted',
+    /export function manualCategory/.test(listingModule)
+    && /commission \+ input\.minMarginPercent >= 100/.test(listingModule)
+    && /commission > 99\.99/.test(listingModule)],
+
+  ['a stated commission is marked as stated, in the database and on the card',
+    ownerStatedMigration.includes('owner_stated_fields')
+    && /owner_stated_fields: ownerStated/.test(commerceControl)
+    // Перезапись, а не дополнение: выбрав потом настоящую полку, владелец обязан потерять пометку.
+    && /const ownerStated = known \? \[\] : \[\.\.\.OWNER_STATED_FEE_FIELDS\]/.test(commerceControl)
+    && /owner_stated_fields \?\? \[\]\)\.includes\('commission_percent'\)/.test(listingAgent)
+    && (listingAgent.match(/ownerStatedTitle/g) ?? []).length >= 2
+    && deploy.includes('20260810130000_listing_owner_stated_fees.sql')],
+
+  // Число, присланное для СВОЕЙ полки, молча заменило бы факт, прочитанный у Uzum.
+  ['a stated commission cannot overwrite one Uzum already gave',
+    /const known = context\.options\.find/.test(commerceControl)
+    && /const manual = known \? null : manualCategory\(/.test(commerceControl)
+    && /manual \? \{ commission_percent: manual\.commission_percent/.test(commercePage)],
+
+  // Резерв на возвраты в минимальную цену не входит: RETURN_FEE_MULTIPLIER = 0, возврат по
+  // тарифу Uzum не тарифицируется. Подпись поля обязана это сказать, иначе оно читается как
+  // часть цены — и владелец будет крутить его, ожидая, что цена поедет.
+  ['the returns field says out loud that it does not move the price',
+    ['на цену не влияет', 'narxga ta’sir qilmaydi', 'does not affect the price']
+      .every((label) => i18nExtra.includes(label))
+    && /RETURN_FEE_MULTIPLIER = 0/.test(unitEconomics)],
 
   ['the copy strings exist in all three languages',
     ['"copy": "Nusxa olish"', '"copy": "Скопировать"', '"copy": "Copy"',
