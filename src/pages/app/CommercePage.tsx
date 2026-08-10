@@ -382,43 +382,47 @@ export default function CommercePage() {
     <div className="container-page max-w-5xl py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-indigo/15 text-accent-indigo"><Database size={20} /></span><div><h1 className="text-2xl font-semibold tracking-tight text-text">{t('commerce.title')}</h1><p className="text-sm text-muted">{t('commerce.subtitle')}</p></div></div>
-        {/* Nothing connected yet means exactly one thing to do, and the card below is it. These
-            three lived in the header, above that card — "start pilot", "find shops", "sync" — so
-            the topmost button on an empty page was the one that finds shops and syncs nothing.
-            Twice in a row that is what got pressed, and twice the catalogues appeared with no
-            audit behind them. A single action cannot compete with three that look like it. */}
-        {(loading || catalogs.length > 0) && (
-          <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled || pilot?.status === 'active'}>{t('commerce.startPilot')}</Button><Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button><Button variant="outline" onClick={syncNow} loading={busy === 'sync'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<RefreshCw size={15} />}>{t('commerce.syncNow')}</Button></div>
+        {/* Магазин выбирается здесь, у названия модуля: он меняет данные на всех вкладках сразу,
+            и место такого переключателя — над ними, а не между ними.
+            Обновление — иконкой рядом. Три равновеликие кнопки в шапке дважды приводили к тому,
+            что нажималась соседняя; из них осталась одна, и та без слов. */}
+        {catalogs.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {catalogs.length > 1 && (
+              <select
+                value={catalogId}
+                onChange={(event) => { setCatalogId(event.target.value); void load(event.target.value) }}
+                aria-label={t('commerce.catalog')}
+                className="rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60"
+              >
+                {catalogs.map((catalog) => <option key={catalog.id} value={catalog.id} className="bg-panel">{catalog.name}</option>)}
+              </select>
+            )}
+            <Button
+              variant="outline" size="icon" onClick={syncNow} loading={busy === 'sync'}
+              disabled={!isSupabaseEnabled || pilot?.status !== 'active'}
+              title={t('commerce.syncNow')} aria-label={t('commerce.syncNow')}
+            >
+              <RefreshCw size={15} />
+            </Button>
+          </div>
         )}
       </div>
 
       {message && <div className={`mt-5 flex items-start gap-2 rounded-xl px-3 py-2 text-sm ${message.ok ? 'bg-teal/10 text-teal border border-teal/20' : 'bg-danger/10 text-danger'}`}><>{message.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}</><span>{message.text}{!message.ok && /owner|владел|egasi/i.test(message.text) && t('commerce.ownerHint')}</span></div>}
 
-      {/* Выбор магазина живёт в шапке, а не во вкладке импорта, где он стоял раньше. От него
-          зависят комиссия, маржа, автозаполнение и загрузка файла — спрятать его на одной
-          вкладке значило бы обесточить кнопки на трёх других без видимой причины. */}
-      {catalogs.length > 1 && (
-        <label className="mt-5 flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">{t('commerce.catalog')}</span>
-          <select
-            value={catalogId}
-            onChange={(event) => { setCatalogId(event.target.value); void load(event.target.value) }}
-            className="rounded-xl border border-ice/12 bg-bg/60 px-3 py-2 text-sm text-text outline-none focus:border-accent-cyan/60"
-          >
-            <option value="">{t('commerce.selectCatalog')}</option>
-            {catalogs.map((catalog) => <option key={catalog.id} value={catalog.id} className="bg-panel">{catalog.name}</option>)}
-          </select>
-        </label>
-      )}
-
       {catalogs.length > 0 && (
         <nav className="mt-5 flex flex-wrap gap-1 border-b border-ice/10" role="tablist">
+          {/* «Обзор 1» рядом с видимыми 78 находками читается как ошибка счёта, и это
+              справедливо: число на корешке обещает пересчитать содержимое вкладки, а считало
+              только сбои синка. Поломка помечается точкой — она говорит «здесь сломано», а не
+              «одна штука». Числом помечается только то, что ждёт решения и спрятано. */}
           {([
-            ['overview', t('commerce.tabs.overview'), syncIssues.length],
-            ['costs', t('commerce.tabs.costs'), proposals.length],
-            ['listing', t('commerce.tabs.listing'), 0],
-            ['settings', t('commerce.tabs.settings'), 0],
-          ] as const).map(([key, label, waiting]) => (
+            ['overview', t('commerce.tabs.overview'), 0, syncIssues.length > 0],
+            ['costs', t('commerce.tabs.costs'), proposals.length, false],
+            ['listing', t('commerce.tabs.listing'), 0, false],
+            ['settings', t('commerce.tabs.settings'), 0, false],
+          ] as const).map(([key, label, waiting, broken]) => (
             <button
               key={key}
               type="button"
@@ -431,6 +435,7 @@ export default function CommercePage() {
               {label}
               {/* Счётчик на корешке: то, что ждёт решения, не должно исчезать вместе со вкладкой. */}
               {waiting > 0 && <span className="rounded-full bg-amber/15 px-1.5 text-[11px] font-semibold text-amber">{waiting}</span>}
+              {broken && <span className="h-1.5 w-1.5 rounded-full bg-danger" title={t('commerce.syncIssuesTitle')} />}
             </button>
           ))}
         </nav>
@@ -465,6 +470,10 @@ export default function CommercePage() {
         <div>
           <p className="text-sm font-semibold text-text">{t('commerce.findings.title')}</p>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.findings.hint')}</p>
+          {/* Что делает кнопка под каждой находкой. Без этой строки «Беру в работу» — чёрный
+              ящик: непонятно, поменяет ли Nemo цену на Uzum, создаст задачу или просто скроет
+              строку. Сказано прямо, потому что обещание read-only напечатано под каждой сводкой. */}
+          <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.acceptHint')}</p>
         </div>
         <div className="mt-4">
           <CommerceFindings
@@ -568,6 +577,24 @@ export default function CommercePage() {
 
       {/* ── Настройки интеграции ────────────────────────────────────────────────────────── */}
       {tab === 'settings' && catalogs.length > 0 && (<>
+      {/* Редкие действия переехали сюда из шапки. «Начать пилот» при активном пилоте не показан
+          вовсе, а не выключен: оранжевая кнопка «Начать» рядом со статусом «active» заставляет
+          гадать, начат он или нет, и выключенность этого не объясняет. */}
+      <Card className="mt-4" padding="md">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-text">{t('commerce.setupTitle')}</p>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.setupHint')}</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {pilot?.status !== 'active' && (
+              <Button variant="outline" onClick={startPilot} loading={busy === 'start'} disabled={!isSupabaseEnabled}>{t('commerce.startPilot')}</Button>
+            )}
+            <Button variant="outline" onClick={discover} loading={busy === 'discover'} disabled={!isSupabaseEnabled || pilot?.status !== 'active'} leftIcon={<Search size={15} />}>{t('commerce.discover')}</Button>
+          </div>
+        </div>
+      </Card>
+
       <Card className="mt-4" padding="md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div><p className="text-sm font-semibold text-text">{t('commerce.feesTitle')}</p><p className="mt-1 max-w-xl text-xs leading-relaxed text-muted">{t('commerce.feesHint')}</p></div>

@@ -342,7 +342,13 @@ const checks = [
   ['key normalisation lives where it can be tested outside Deno', providerKey.includes('tested outside Deno') && !providerKey.includes('esm.sh')],
   ['onboarding is one idempotent action, not four ordered buttons', commerceControl.includes("action === 'onboard'") && commerceControl.includes('Every step') && commerceControl.includes('alreadyQueued')],
   ['a first sync is started, not awaited and called finished', commerceControl.includes('sync_started: true') && commerceControl.includes('spinner that ends and one that lies')],
-  ['an empty page offers one way to start, not four', commercePage.includes('A single action cannot compete with three that look like it') && commercePage.includes('{(loading || catalogs.length > 0) && (')],
+  ['an empty page offers one way to start, not four',
+    // Раньше три кнопки прятались на пустой странице. Теперь их нет в шапке вовсе: редкие
+    // действия переехали в «Настройки», а обновление осталось иконкой без слов. Свойство стало
+    // строже — соседнюю кнопку больше не с чем спутать.
+    commercePage.includes("Три равновеликие кнопки в шапке дважды приводили к тому")
+    && commercePage.includes("{pilot?.status !== 'active' && (")
+    && commercePage.includes('commerce.onboard.action')],
   ['the connect card disappears once there is something to look at', commercePage.includes('!loading && !catalogs.length') && commercePage.includes('commerce.onboard.action')],
   ['the first sync is kicked through waitUntil, not a bare un-awaited fetch', commerceControl.includes('waitUntil, NOT a bare un-awaited fetch') && commerceControl.includes('runtime?.waitUntil') && commerceControl.includes('const kick = fetch')],
   ['the cost batch migration is registered for deploy', deploy.includes('20260806260000_commerce_cost_batch.sql')],
@@ -397,7 +403,9 @@ const checks = [
   // недоступно для чтения с экрана, и убирать его ради круглого числа было бы регрессом.
   ['every block survived the split exactly once',
     Object.entries({
-      'commerce.findings.title': 1, 'commerce.syncIssuesTitle': 1, 'commerce.proposalsTitle': 1,
+      // syncIssuesTitle ждём дважды: заголовок карточки и подпись красной точки на корешке —
+      // точка без имени недоступна для чтения с экрана.
+      'commerce.findings.title': 1, 'commerce.syncIssuesTitle': 2, 'commerce.proposalsTitle': 1,
       'commerce.economicsTitle': 1, 'commerce.listing.title': 1, 'commerce.stagedTitle': 1,
       'commerce.feesTitle': 1, 'commerce.marginTitle': 2, 'commerce.tgTitle': 1,
       'commerce.economicsFile': 1,
@@ -407,17 +415,24 @@ const checks = [
   ['conclusions and sync failures stay on the first tab, never behind one',
     /\{\(tab === 'overview' \|\| !catalogs\.length\) && \(<>/.test(commercePage)
     && commercePage.indexOf("commerce.findings.title") > commercePage.indexOf("tab === 'overview'")
-    && commercePage.indexOf("commerce.syncIssuesTitle") > commercePage.indexOf("tab === 'overview'")
-    && commercePage.indexOf("commerce.syncIssuesTitle") < commercePage.indexOf("tab === 'costs'")],
+    // Последнее вхождение, а не первое: первое теперь принадлежит подписи точки на корешке,
+    // а карточка со сбоями лежит ниже, внутри «Обзора».
+    && commercePage.lastIndexOf("commerce.syncIssuesTitle") > commercePage.indexOf("tab === 'overview'")
+    && commercePage.lastIndexOf("commerce.syncIssuesTitle") < commercePage.indexOf("tab === 'costs'")],
 
   ['what waits for a decision is counted on the tab it hides behind',
-    /\['costs', t\('commerce\.tabs\.costs'\), proposals\.length\]/.test(commercePage)
-    && /waiting > 0 && <span/.test(commercePage)],
+    /\['costs', t\('commerce\.tabs\.costs'\), proposals\.length, false\]/.test(commercePage)
+    && /waiting > 0 && <span/.test(commercePage)
+    // Поломка помечается точкой, а не числом: «Обзор 1» рядом с видимыми 78 находками читалось
+    // как ошибка счёта — число на корешке обещает пересчитать содержимое вкладки.
+    && /broken && <span className="h-1\.5 w-1\.5 rounded-full bg-danger"/.test(commercePage)],
 
   // От выбора магазина зависят комиссия, маржа, автозаполнение и загрузка файла — на четырёх
   // разных вкладках. Спрятать его на одной значило бы обесточить кнопки на трёх остальных.
   ['the shop selector sits above the tabs, not inside one',
-    commercePage.indexOf("commerce.selectCatalog") < commercePage.indexOf("role=\"tablist\"")],
+    // Он стоит у названия модуля, выше вкладок: выбранный магазин меняет данные на всех сразу.
+    commercePage.indexOf("aria-label={t('commerce.catalog')}") < commercePage.indexOf('role="tablist"')
+    && commercePage.indexOf("aria-label={t('commerce.catalog')}") > commercePage.indexOf("commerce.title")],
 
   ['the tab labels exist in all three languages',
     ['tabs": { "overview": "Umumiy', 'tabs": { "overview": "Обзор', 'tabs": { "overview": "Overview']

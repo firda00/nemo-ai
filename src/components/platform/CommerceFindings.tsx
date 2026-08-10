@@ -71,7 +71,11 @@ export function CommerceFindings({ findings, loading, onAccept, acceptedIds, bus
   const reorders = findings.filter((row) => row.kind === 'reorder')
 
   return (
-    <div className="space-y-5">
+    // Семьдесят восемь маржинальных находок растягивали страницу так, что до блока «Проблемы
+    // синхронизации» под ними приходилось скроллить весь экран. Список получает свою высоту и
+    // свою прокрутку: сводка сверху остаётся видимой, а сколько строк внутри — уже не влияет на
+    // то, как выглядит страница.
+    <div className="max-h-[26rem] space-y-5 overflow-y-auto pr-1">
       {urgentStockouts.length > 0 && (
         <section>
           <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-danger">
