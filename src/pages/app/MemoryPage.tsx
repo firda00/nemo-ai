@@ -142,7 +142,7 @@ export default function MemoryPage() {
 
       {/* Что система умеет измерять. Без этого «поддержка подключена, CRM нет» остаётся словами,
           и владелец не знает, на что вправе рассчитывать, а на что нет. */}
-      {metrics.length > 0 && <Measurable metrics={metrics} t={t} />}
+      {metrics.length > 0 && <Measurable metrics={metrics} />}
 
       {loading && <div className="mt-6 space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-20 animate-pulse rounded-2xl bg-panel/60" />)}</div>}
 
@@ -175,7 +175,13 @@ export default function MemoryPage() {
  * и «CRM не измеряется, потому что коннектор только пишет наружу» — разные обещания, и второе
  * можно проверить.
  */
-function Measurable({ metrics, t }: { metrics: Metric[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
+function Measurable({ metrics }: { metrics: Metric[] }) {
+  const { t, dict } = useI18n()
+  // Название метрики на языке владельца. В базе оно лежит по-русски и в одном экземпляре — это
+  // словарь платформы, а не текст аккаунта, поэтому перевод живёт в i18n. Метрика, зарегистрированная
+  // после этой сборки, покажет русскую подпись из базы: подпись из базы хуже перевода, но лучше
+  // ключа, и не требует релиза фронтенда ради новой строки в реестре.
+  const translated = ((dict as unknown as Record<string, Record<string, unknown>>).memory?.metricLabel ?? {}) as Record<string, string>
   // Сначала то, что работает. Поддержка — второй подключённый домен, а по алфавиту она вставала
   // последней, под четырьмя блоками «канала нет»: экран читался как список неготового, хотя
   // готового ровно половина. Внутри групп порядок остаётся алфавитным, чтобы он не прыгал.
@@ -200,9 +206,11 @@ function Measurable({ metrics, t }: { metrics: Metric[]; t: (key: string, vars?:
               </div>
               <ul className="mt-2 space-y-1 text-xs text-muted">
                 {rows.map((metric) => (
-                  <li key={metric.key} className="flex flex-wrap items-baseline gap-2">
-                    <span className={metric.is_wired ? 'text-text' : ''}>{metric.label}</span>
-                    <code className="text-[11px] opacity-60">{metric.key}</code>
+                  // Ключ вроде `crm.deals.closed` на экране не показывается: это имя переменной, и
+                  // владельцу оно говорит ровно столько же, сколько номер строки в коде. Он остаётся
+                  // в title — при разборе «о какой метрике речь» его достаточно навести мышью.
+                  <li key={metric.key} className="flex flex-wrap items-baseline gap-2" title={metric.key}>
+                    <span className={metric.is_wired ? 'text-text' : ''}>{translated[metric.key] ?? metric.label}</span>
                     {/* Причина, а не многоточие: её можно устранить, и владелец видит чем. */}
                     {!metric.is_wired && metric.unwired_reason && <span className="w-full text-amber/80">{metric.unwired_reason}</span>}
                   </li>
@@ -225,11 +233,31 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: 'wa
   )
 }
 
+/**
+ * Тема утверждения человеческими словами.
+ *
+ * Агент записывает её кодом — `commerce:pricing`, `data:missing`. Внутри это удобно: по префиксу
+ * видно сферу, тема ищется точным сравнением. На экране владельца это переменная, и выглядит она
+ * ровно как то, что попало сюда по ошибке.
+ *
+ * Словарь частичный намеренно. Темы придумывает агент, закрытого списка нет и быть не может, и
+ * незнакомое слово проходит как есть — «Товары · retention» читается, а пустой ярлык не говорит
+ * ничего.
+ */
+function subjectLabel(subject: string, words: Record<string, string>): string {
+  return String(subject ?? '')
+    .split(':')
+    .map((word) => words[word] ?? word.replace(/_/g, ' '))
+    .join(' · ')
+}
+
 function Group({ title, hint, claims, busy, onRetire, onAffirm, t, muted }: {
   title: string; hint?: string; claims: Claim[]; busy: string | null
   onRetire?: (id: string) => void; onAffirm?: (id: string) => void
   t: (key: string, vars?: Record<string, string | number>) => string; muted?: boolean
 }) {
+  const { dict } = useI18n()
+  const words = ((dict as unknown as Record<string, Record<string, unknown>>).memory?.subjectWord ?? {}) as Record<string, string>
   if (!claims.length) return null
   return (
     <section className="mt-6">
@@ -241,7 +269,7 @@ function Group({ title, hint, claims, busy, onRetire, onAffirm, t, muted }: {
             <p className="text-sm text-text">{claim.statement}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <Pill>{t(`memory.kind.${claim.kind}`)}</Pill>
-              <Pill>{claim.subject}</Pill>
+              <Pill>{subjectLabel(claim.subject, words)}</Pill>
               {/* Происхождение видно всегда: слово владельца и догадка агента не должны выглядеть одинаково. */}
               <Pill tone={claim.source === 'owner' ? 'owner' : undefined}>
                 {claim.source === 'owner' ? <User className="mr-1 inline h-3 w-3" /> : null}
@@ -255,7 +283,8 @@ function Group({ title, hint, claims, busy, onRetire, onAffirm, t, muted }: {
               ) : (
                 <Pill tone="unknown">{t('memory.noEvidence')}</Pill>
               )}
-              <Pill>{t('memory.confidence', { v: claim.confidence.toFixed(2) })}</Pill>
+              {/* Проценты, а не 0.50: доля от единицы — способ хранения, а не способ читать. */}
+              <Pill>{t('memory.confidence', { v: `${Math.round(claim.confidence * 100)}%` })}</Pill>
               {claim.valid_until && (
                 <Pill tone={claim.expired ? 'bad' : undefined}>
                   <Clock className="mr-1 inline h-3 w-3" />

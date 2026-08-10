@@ -44,6 +44,7 @@ const economics = read('supabase/functions/_shared/unitEconomics.ts')
 const logistics = read('supabase/functions/_shared/uzumLogistics.ts')
 const resolvedMigration = read('supabase/migrations/20260806220000_commerce_recommendations_resolved.sql')
 const listingModule = read('supabase/functions/_shared/listingDraft.ts')
+const descriptionMigration = read('supabase/migrations/20260810120000_listing_description_blocks.sql')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -459,6 +460,36 @@ const checks = [
 
   ['the uzbek description is shown, not only stored',
     /draft\.description_uz && \(/.test(listingAgent)],
+
+  // ── Описание — четыре блока, а не абзац ────────────────────────────────────────────────────
+
+  ['the prompt asks for hook, intro, advantages and specs in both languages',
+    ['Block 1 — HOOK', 'Block 2 — INTRO', 'Основные преимущества:', 'Характеристики:',
+     'Asosiy afzalliklari:', 'Xususiyatlari:'].every((part) => listingModule.includes(part))],
+
+  // Разметка не переживает буфер обмена: writeText несёт голые символы, и `**жирный**` доедет до
+  // формы Uzum звёздочками. Выделение делает структура, а не звёздочки.
+  ['the generated text carries no markup, because the clipboard carries none',
+    listingModule.includes('PLAIN TEXT ONLY') && /No markdown, no \*\*bold\*\*/.test(listingModule)],
+
+  // Три символа регулярного выражения обесценивали бы весь промпт: \s+ → ' ' схлопывает буллеты
+  // в абзац ещё до записи в базу.
+  ['the parser keeps line breaks in a description and drops them in a title',
+    /const block = \(value: unknown, limit: number\)/.test(listingModule)
+    && /description_ru: block\(row\.description_ru, 2200\)/.test(listingModule)
+    && /title_ru: text\(row\.title_ru, 100\)/.test(listingModule)],
+
+  ['the column accepts the text the parser is willing to store',
+    descriptionMigration.includes('char_length(description_ru) <= 2200')
+    && descriptionMigration.includes('char_length(description_uz) <= 2200')
+    && deploy.includes('20260810120000_listing_description_blocks.sql')],
+
+  // Иначе в буфер уходит структура, а на экране остаётся абзац — расхождение хуже обоих вариантов.
+  ['the screen renders the breaks it stores',
+    (listingAgent.match(/whitespace-pre-line/g) ?? []).length >= 2],
+
+  ['two structured descriptions have room to be generated',
+    /maxTokens: 1800/.test(listingModule)],
 
   ['the copy strings exist in all three languages',
     ['"copy": "Nusxa olish"', '"copy": "Скопировать"', '"copy": "Copy"',

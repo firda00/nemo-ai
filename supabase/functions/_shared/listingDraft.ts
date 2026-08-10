@@ -249,7 +249,8 @@ export interface ListingCopy {
 
 export const COPY_SCHEMA =
   '{"title_ru":"string, up to 100 chars, Russian","title_uz":"string, up to 100 chars, Uzbek latin",'
-  + '"description_ru":"string, 1-3 sentences, Russian","description_uz":"string, 1-3 sentences, Uzbek latin",'
+  + '"description_ru":"string, Russian, MULTI-LINE, in the four blocks described below",'
+  + '"description_uz":"string, Uzbek latin, MULTI-LINE, the same four blocks",'
   + '"attributes":[{"name":"string, characteristic name","value":"string, its value EXACTLY as the owner stated it"}],'
   + '"unknown_attributes":["string, names of characteristics a buyer would expect but the owner did not state"]}'
 
@@ -257,7 +258,27 @@ export const COPY_SCHEMA =
  * The only place a model is allowed to speak. It writes the listing text and nothing else: no
  * price, no fee, no dimension, no invented characteristic. `unknown_attributes` is the useful
  * half of its answer — it turns "the model does not know" into a checklist for the owner.
+ *
+ * Описание — не абзац, а четыре блока: крючок, введение, преимущества, характеристики. Так
+ * устроены карточки, которые на Uzum действительно продают, и так их читают с телефона: сплошной
+ * текст на маленьком экране пролистывают, не дочитав до сути.
+ *
+ * Разметки нет намеренно. Текст переносится в кабинет через буфер обмена, а буфер несёт голые
+ * символы — звёздочки `**жирного**` доехали бы до формы звёздочками. Роль выделения играет сама
+ * структура: название фишки стоит первым и отделено тире.
  */
+const BLOCKS_RU = [
+  'Block 1 — HOOK: one sentence naming the single strongest benefit. No greeting, no "представляем".',
+  'Block 2 — INTRO: two or three sentences on what it is and who it is for.',
+  'Block 3 — ADVANTAGES: the line "Основные преимущества:" then 3 to 6 lines, each starting "• ",',
+  '  each shaped "Короткое название — что это даёт покупателю."',
+  'Block 4 — SPECS: the line "Характеристики:" then one "• Название: значение" line per entry of',
+  '  "attributes". Omit this whole block if "attributes" is empty. Never add a spec that is not there.',
+]
+const BLOCKS_UZ = [
+  'The same four blocks, with the headers "Asosiy afzalliklari:" and "Xususiyatlari:".',
+]
+
 export const COPY_SYSTEM_PROMPT = [
   'You write marketplace listing copy for an Uzbek seller on Uzum Market.',
   'Reply with JSON only, matching this schema exactly:',
@@ -269,6 +290,25 @@ export const COPY_SYSTEM_PROMPT = [
   '4. No superlatives that cannot be checked: no "best", "premium", "highest quality", "eng yaxshi".',
   '5. Russian in the _ru fields, Uzbek latin script in the _uz fields. The Uzbek is a translation of the same claims, not a different product.',
   '6. If the owner text is too vague to name the product at all, return nulls and list what you would need in "unknown_attributes".',
+  '7. Every description is built from these blocks, separated by a blank line, in this order:',
+  ...BLOCKS_RU,
+  ...BLOCKS_UZ,
+  '8. An advantage must rest on a fact from the owner text: name the fact, then say what it gives the buyer.',
+  '   An advantage with no fact behind it is an invention and rule 1 forbids it.',
+  '9. PLAIN TEXT ONLY. No markdown, no **bold**, no #, no HTML, no emoji. The text is pasted into a',
+  '   form field that shows every character literally, so markup arrives as visible junk.',
+  '10. Line breaks are real "\\n" characters inside the JSON string, and a BLANK line separates',
+  '    every block from the next. The Russian description looks exactly like this:',
+  'Хук одним предложением.',
+  '',
+  'Введение в два-три предложения.',
+  '',
+  'Основные преимущества:',
+  '• Название — что это даёт покупателю.',
+  '• Название — что это даёт покупателю.',
+  '',
+  'Характеристики:',
+  '• Название: значение',
 ].join('\n')
 
 /**
@@ -282,7 +322,9 @@ export async function generateCopy(apiKey: string, model: string, sourceText: st
     apiKey,
     model,
     temperature: 0.2,
-    maxTokens: 700,
+    // Два структурированных описания на двух языках не помещались в 700: ответ обрывался на
+    // середине узбекского блока, JSON не разбирался, и карточка приходила вообще без текста.
+    maxTokens: 1800,
     responseFormat: { type: 'json_object' },
     messages: [
       { role: 'system', content: COPY_SYSTEM_PROMPT },
@@ -302,6 +344,47 @@ export function parseCopy(raw: unknown): ListingCopy | null {
     const cleaned = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
     return cleaned ? cleaned.slice(0, limit) : null
   }
+  /**
+   * Описание сохраняет переносы строк, заголовок — нет.
+   *
+   * `\s+ → ' '` схлопывал абзацы и буллеты в один слипшийся абзац ЕЩЁ ДО записи в базу. Промпт мог
+   * требовать структуру сколько угодно: она умирала здесь, в трёх символах регулярного выражения.
+   * Внутри строки пробелы по-прежнему нормализуются, пустых строк подряд не бывает больше одной.
+   */
+  const block = (value: unknown, limit: number): string | null => {
+    if (typeof value !== 'string') return null
+    const cleaned = value
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .join('\n')
+      // Пустая строка перед заголовком блока ставится здесь, а не выпрашивается у модели. Модель
+      // выполняет требование о структуре и теряет требование о воздухе между блоками — на экране
+      // телефона это опять сплошная стена. Заголовок узнаётся по форме: строка кончается
+      // двоеточием и не является пунктом списка. Правило языконезависимое, поэтому одинаково
+      // работает на «Характеристики:» и на «Xususiyatlari:».
+      .replace(/([^\n])\n(?=[^\n•\-*][^\n]*:$)/gm, '$1\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    if (!cleaned) return null
+    // Хук стоит отдельной строкой. Модель послушно пишет первым предложением главную пользу и
+    // тут же приклеивает к нему введение — на телефоне это снова абзац, в котором взгляду не за
+    // что зацепиться. Отделяется первая строка, а если её нет — первое предложение. Граница
+    // предложения требует пробела после точки, поэтому «190 г/м2» и «1.5 м» не разрезаются.
+    const paragraphs = cleaned.split('\n\n')
+    const opening = paragraphs[0]
+    const split = opening.includes('\n')
+      ? [opening.slice(0, opening.indexOf('\n')), opening.slice(opening.indexOf('\n') + 1)]
+      : (opening.match(/^(.+?[.!?])\s+(\S.*)$/s)?.slice(1) ?? null)
+    const withHook = split && split[1].length >= 20 && !opening.endsWith(':')
+      ? [split[0], split[1], ...paragraphs.slice(1)].join('\n\n')
+      : cleaned
+    if (withHook.length <= limit) return withHook
+    // Обрез по границе строки: половина буллета выглядит поломкой, а не длинным текстом.
+    const cut = withHook.slice(0, limit)
+    const lastBreak = cut.lastIndexOf('\n')
+    return (lastBreak > limit * 0.6 ? cut.slice(0, lastBreak) : cut).trim()
+  }
   const attributes = Array.isArray(row.attributes)
     ? row.attributes
       .map((entry) => ({ name: text((entry as Record<string, unknown>)?.name, 60), value: text((entry as Record<string, unknown>)?.value, 200) }))
@@ -314,8 +397,8 @@ export function parseCopy(raw: unknown): ListingCopy | null {
   return {
     title_ru: text(row.title_ru, 100),
     title_uz: text(row.title_uz, 100),
-    description_ru: text(row.description_ru, 800),
-    description_uz: text(row.description_uz, 800),
+    description_ru: block(row.description_ru, 2200),
+    description_uz: block(row.description_uz, 2200),
     attributes,
     unknown_attributes: unknown,
   }

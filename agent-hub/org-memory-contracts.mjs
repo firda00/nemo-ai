@@ -607,6 +607,32 @@ const checks = [
 
   ['the ops controller migration is registered for deploy',
     deploy.includes('20260809160000_ops_controller.sql')],
+
+  // ── Экран Памяти говорит словами, а не именами переменных ──────────────────────────────────
+  // `crm.deals.closed` — имя поля в коде. Владельцу оно сообщает столько же, сколько номер строки.
+
+  ['a metric key is never printed on the owner screen',
+    !/<code[^>]*>\{metric\.key\}<\/code>/.test(memoryPage)
+    && /title=\{metric\.key\}/.test(memoryPage)],
+
+  ['a metric shows a translated name, and falls back to the registry label',
+    /translated\[metric\.key\] \?\? metric\.label/.test(memoryPage)
+    && /memory\?\.metricLabel/.test(memoryPage)],
+
+  ['every wired metric has a human name in all three languages',
+    ['commerce.sku.stock_total', 'support.dialogue.first_response_minutes', 'crm.deals.closed']
+      .every((key) => (i18n.match(new RegExp(`"${key.replace(/\./g, '\\.')}":`, 'g')) ?? []).length === 3)
+    && i18n.includes('"crm.deals.closed": "Закрытые сделки в CRM"')],
+
+  ['a claim subject is shown as words, not as a code',
+    /<Pill>\{subjectLabel\(claim\.subject, words\)\}<\/Pill>/.test(memoryPage)
+    && /function subjectLabel/.test(memoryPage)
+    // Незнакомое слово проходит как есть: список тем открытый, и пустой ярлык хуже английского.
+    && /words\[word\] \?\? word/.test(memoryPage)],
+
+  ['confidence is read as a percentage, not as a fraction',
+    /Math\.round\(claim\.confidence \* 100\)/.test(memoryPage)
+    && !/claim\.confidence\.toFixed/.test(memoryPage)],
 ]
 
 let failed = 0

@@ -202,15 +202,18 @@ export function CommerceListingAgent({
 
             {/* Узбекское описание раньше лежало в базе и не показывалось вовсе — а на Uzum его
                 вставляют в отдельное поле, и без него карточка неполная. */}
+            {/* whitespace-pre-line обязателен: описание теперь состоит из блоков и буллетов, а без
+                него HTML схлопнет переносы и на экране снова будет тот же сплошной абзац —
+                при том, что в буфер уйдёт правильная разметка. Расхождение хуже обоих вариантов. */}
             {draft.description_ru && (
               <div className="mt-3 flex items-start gap-1">
-                <p className="text-xs leading-relaxed text-fog">{draft.description_ru}</p>
+                <p className="whitespace-pre-line text-xs leading-relaxed text-fog">{draft.description_ru}</p>
                 <CopyButton text={draft.description_ru} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.descRu')}`} />
               </div>
             )}
             {draft.description_uz && (
               <div className="mt-2 flex items-start gap-1">
-                <p className="text-xs leading-relaxed text-muted">{draft.description_uz}</p>
+                <p className="whitespace-pre-line text-xs leading-relaxed text-muted">{draft.description_uz}</p>
                 <CopyButton text={draft.description_uz} label={`${t('commerce.listing.copy')} — ${t('commerce.listing.descUz')}`} />
               </div>
             )}

@@ -190,4 +190,61 @@ assert.deepEqual(empty.unknown_attributes, [])
 assert.equal(parseCopy(null), null)
 assert.equal(parseCopy('{"title_ru":"x"}'), null, 'a string is not a parsed object')
 
-console.log('[OK] Listing draft behaviour: 45 assertions')
+// --- The description keeps its blocks -------------------------------------------------------
+// Схлопывание пробелов уничтожало структуру раньше, чем она доезжала до базы, — и промпт со
+// всеми правилами о буллетах не менял ничего. Здесь проверяется именно граница парсера.
+
+for (const rule of ['Основные преимущества:', 'Характеристики:', 'Asosiy afzalliklari:', 'Xususiyatlari:']) {
+  assert.ok(COPY_SYSTEM_PROMPT.includes(rule), `the prompt must ask for the block header: ${rule}`)
+}
+assert.ok(COPY_SYSTEM_PROMPT.includes('PLAIN TEXT ONLY'), 'markup would arrive in the Uzum form as literal characters')
+
+const structured = parseCopy({
+  title_ru: 'Хиджаб шифоновый',
+  description_ru: 'Крючок  в   одну строку.\r\n\n\n\nВведение.\n\nОсновные преимущества:\n•  Шифон —  дышит.\n• Лёгкий — не давит.',
+  description_uz: 'Ilgak.\n\nAsosiy afzalliklari:\n• Shifon — nafas oladi.',
+})
+assert.ok(structured.description_ru.includes('\n'), 'the description keeps its line breaks')
+assert.equal(
+  structured.description_ru,
+  'Крючок в одну строку.\n\nВведение.\n\nОсновные преимущества:\n• Шифон — дышит.\n• Лёгкий — не давит.',
+  'spaces collapse inside a line, breaks survive, and a run of blank lines becomes one',
+)
+assert.ok(structured.description_uz.includes('Asosiy afzalliklari:'), 'the uzbek block header survives too')
+// Заголовок остаётся однострочным: перенос в поле названия на Uzum — не структура, а мусор.
+assert.equal(parseCopy({ title_ru: 'Хиджаб\nшифоновый' }).title_ru, 'Хиджаб шифоновый')
+
+// Воздух между блоками ставит парсер, а не уговоры. Модель выполняет требование о структуре и
+// теряет требование о пустой строке — на телефоне это снова стена текста.
+const glued = parseCopy({
+  description_ru: 'Хук про шифон.\nВведение в две строки.\nОсновные преимущества:\n• Один — да.\nХарактеристики:\n• Цвет: пудровый',
+})
+assert.equal(
+  glued.description_ru,
+  'Хук про шифон.\n\nВведение в две строки.\n\nОсновные преимущества:\n• Один — да.\n\nХарактеристики:\n• Цвет: пудровый',
+  'a header gets a blank line before it, a bullet does not',
+)
+// Хук отделяется и когда модель склеила его с введением в один абзац.
+assert.ok(
+  parseCopy({ description_ru: 'Хук про шифон. Введение, которое приклеили к хуку.' }).description_ru
+    .startsWith('Хук про шифон.\n\n'),
+  'the first sentence stands on its own',
+)
+// Граница предложения требует пробела после точки — иначе резались бы числа.
+assert.equal(
+  parseCopy({ description_ru: 'Плотность 190 г/м2.' }).description_ru,
+  'Плотность 190 г/м2.',
+  'a single sentence is left alone',
+)
+assert.equal(
+  parseCopy({ description_ru: 'Хлопок 1.5 мм плотный и мягкий.' }).description_ru,
+  'Хлопок 1.5 мм плотный и мягкий.',
+  'a decimal point is not a sentence boundary',
+)
+
+// Обрез длинного описания идёт по границе строки: половина буллета читается как поломка вёрстки.
+const long = parseCopy({ description_ru: `Крючок.\n\n${'• Очень длинный пункт про шифон.\n'.repeat(200)}` })
+assert.ok(long.description_ru.length <= 2200, 'the stored description stays inside the column check')
+assert.ok(!long.description_ru.endsWith('шиф'), 'the cut lands on a line boundary, not mid-word')
+
+console.log('[OK] Listing draft behaviour: 58 assertions')
