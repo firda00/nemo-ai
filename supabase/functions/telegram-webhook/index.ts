@@ -15,6 +15,7 @@ import { CB_COST_BATCH, costCampaignState } from '../_shared/commerceCostCampaig
 import {
   acceptedText, ownPricePrompt, parseOwnPrice, parsePriceCallback, refusalText, replyTarget,
 } from '../_shared/commercePriceChat.ts'
+import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
@@ -192,6 +193,10 @@ async function handlePriceCallback(db: any, channelId: string, botToken: string 
 
   const found = await priceRecommendation(db, channelId, chatId, parsed.id)
   if (!found) { await tgAnswerCallback(botToken, cb.id, 'Этот совет недоступен.'); return }
+  // Кнопка живёт в чате дольше подписки. Проверка стоит на НАЖАТИИ, а не на отправке: иначе
+  // вчерашняя кнопка применяла бы решение аккаунта, который уже не платит.
+  const access = await entitlementFor(db, found.owner.accountId)
+  if (!access.allowed) { await tgAnswerCallback(botToken, cb.id, 'Подписка истекла'); await tgSendHtml(botToken, chatId, lockMessage(access)); return }
   const { row, sku } = found
   const title = String(sku?.title ?? sku?.external_sku ?? 'товар')
   const floor = Number(row.calculation?.min_selling_price_tiyin ?? 0) || null
@@ -235,6 +240,8 @@ async function handleOwnPriceReply(db: any, channelId: string, botToken: string 
 
   const found = await priceRecommendation(db, channelId, chatId, target)
   if (!found) return false
+  const access = await entitlementFor(db, found.owner.accountId)
+  if (!access.allowed) { await tgSendHtml(botToken, chatId, lockMessage(access)); return true }
   const price = parseOwnPrice(message?.text)
   const title = String(found.sku?.title ?? found.sku?.external_sku ?? 'товар')
   if (price == null) {

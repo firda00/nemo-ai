@@ -13,6 +13,7 @@ import {
   OWNER_STATED_FEE_FIELDS,
 } from '../_shared/listingDraft.ts'
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
+import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { parseLabels, TRANSLATE_SYSTEM_PROMPT, type CategoryLabel } from '../_shared/categoryLabels.ts'
 
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
@@ -577,6 +578,12 @@ Deno.serve(async (req) => {
     // Categories, exemplars and margin targets come from the SAME helper the Telegram flow uses —
     // it reads every active catalogue on the account. A per-surface copy of this is what let one
     // surface price a hijab against a catalogue of washing bags.
+    // Замок на НОВОЕ действие. Уже собранные черновики остаются читаемыми — list_listing_drafts
+    // проверки не делает намеренно: отобрать у владельца его же работу значит потерять его, а не
+    // продать ему подписку.
+    const access = await entitlementFor(admin, profile.account_id)
+    if (!access.allowed) return json({ error: 'subscription_required', reason: access.reason, message: lockMessage(access) }, 402)
+
     const context = await catalogueContext(admin, profile.account_id)
     if (!context.hasCatalogue) return json({ error: 'connect a catalogue first — the commission comes from categories you already sell in' }, 409)
 

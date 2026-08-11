@@ -6,6 +6,7 @@ import { tgSendHtml, tgSendKeyboard } from '../_shared/telegram.ts'
 import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { adviceForDeadstock, adviceForMargin, adviceMessage } from '../_shared/priceTarget.ts'
 import { priceKeyboard } from '../_shared/commercePriceChat.ts'
+import { entitlementFor } from '../_shared/entitlement.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
 import { staleCatalogues, staleWarningText, brokenCatalogues, emptyNotice, type CatalogueFreshness } from '../_shared/commerceFreshness.ts'
 
@@ -330,6 +331,11 @@ Deno.serve(async (req) => {
     const target = await telegramTarget(db, accountId)
     if (!target) continue
     const multiShop = (catalogsPerAccount.get(accountId) ?? 0) > 1
+
+    // Замок: истёкшая подписка молчит целиком. Данные при этом никуда не деваются — их видно
+    // в интерфейсе; перестаёт работать только то, что Nemo делает САМ.
+    const access = await entitlementFor(db, accountId)
+    if (!access.allowed) continue
 
     if (action === 'alerts') {
       // Подключённый магазин без товаров — не авария. Продавец, который ещё не завёл карточки,
