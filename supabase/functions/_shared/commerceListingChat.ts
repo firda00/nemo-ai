@@ -18,6 +18,8 @@ import {
   type CategoryOption,
 } from './listingDraft.ts'
 import { escapeHtml } from './telegramFormat.ts'
+import { signImages } from './listingImages.ts'
+import { generateVision, mergeVisionIntoSource } from './listingVision.ts'
 import type { OwnerChat } from './commerceEconomicsChat.ts'
 
 export const CB_LISTING = 'cld'
@@ -63,6 +65,12 @@ export const NEW_LISTING_HELP = [
   '<code>новый товар: женский хиджаб-бони из шифона, молочный, упаковка 238x138x34 мм, вес 120 г, себестоимость 18000 сум</code>',
   '',
   'Габариты и себестоимость нужны, чтобы посчитать минимальную цену. Без габаритов Uzum берёт максимальный тариф 50 000 сум — так и посчитаю.',
+  '',
+  // Сказано прямо, потому что иначе владелец приложит снимок и будет ждать, что размеры
+  // заполнятся сами. По фотографии их не видно, и придумывать их система не станет.
+  '📷 Можно приложить фотографию — подписью к ней. По снимку я определю вид, цвет, узор и материал.',
+  'Габариты, вес и себестоимость с фотографии не берутся: их там не видно. Пишите их текстом.',
+  'Альбом Telegram присылает по одному сообщению на снимок, поэтому в работу идёт то фото, под которым написан текст.',
 ].join('\n')
 
 export type DraftRow = {
@@ -278,6 +286,8 @@ export async function buildListingDraft(
   apiKey: string,
   owner: OwnerChat,
   sourceText: string,
+  /** Пути уже загруженных фотографий в приватном бакете. Пустой список — обычный текстовый путь. */
+  imagePaths: string[] = [],
 ): Promise<{ draft: DraftRow; categories: CategoryOption[] } | null> {
   const context = await catalogueContext(db, owner.accountId)
   if (!context.hasCatalogue) return null
@@ -293,12 +303,23 @@ export async function buildListingDraft(
     // holding most of the catalogue sets it.
     minMarginPercent: category?.min_margin_percent ?? context.defaultMinMargin,
   })
+  // ЧИСЛА ВЫШЕ УЖЕ ПОСЧИТАНЫ — из sourceText, слов владельца. Фотография ниже влияет только на
+  // прозу: то же разделение, что в веб-пути, и по той же причине. Габарит, угаданный по снимку,
+  // ушёл бы в тариф логистики и оттуда в минимальную цену.
+  const model = Deno.env.get('PRIMARY_MODEL') ?? 'openai/gpt-4o-mini'
+  const imageUrls = imagePaths.length ? await signImages(db, owner.accountId, imagePaths) : []
+  const vision = apiKey && imageUrls.length ? await generateVision(apiKey, model, imageUrls) : null
   // The copy is optional: a model outage must not cost the owner the economics, which is the half
   // no model produced.
-  const copy = apiKey ? await generateCopy(apiKey, Deno.env.get('PRIMARY_MODEL') ?? 'openai/gpt-4o-mini', sourceText) : null
+  const copy = apiKey ? await generateCopy(apiKey, model, mergeVisionIntoSource(sourceText, vision)) : null
 
+  const row = draftRow({ accountId: owner.accountId, catalogId: category?.catalog_id ?? null, sourceText, numbers, economics, category, copy })
+  // То, что зрению не разрешили утверждать, приезжает вопросом в «не хватает».
   const { data: draft, error } = await db.from('commerce_listing_drafts')
-    .insert(draftRow({ accountId: owner.accountId, catalogId: category?.catalog_id ?? null, sourceText, numbers, economics, category, copy }))
+    .insert({
+      ...row,
+      unknown_attributes: [...new Set([...(row.unknown_attributes ?? []), ...(vision?.unknown_attributes ?? [])])].slice(0, 20),
+    })
     .select('*').single()
   if (error || !draft) return null
   return { draft: draft as DraftRow, categories: candidates.options }

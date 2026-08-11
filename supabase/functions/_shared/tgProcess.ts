@@ -14,6 +14,7 @@ import {
 import {
   buildListingDraft, draftCard, draftKeyboard, NEW_LISTING_HELP, newListingText,
 } from './commerceListingChat.ts'
+import { storeTelegramPhoto } from './listingImages.ts'
 import {
   asksWhatNext, batchCard, batchKeyboard, costCampaignState, latestPricesUzs, looksLikeCostBatch, matchBatch,
   nextCard, parseCostBatch,
@@ -298,7 +299,10 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
         try {
           if (!listingText) { await tgSendHtml(botToken, chatId, NEW_LISTING_HELP); return }
           const apiKey = await resolveOpenRouterKey(db, agent.account_id, OPENROUTER_API_KEY)
-          const built = await buildListingDraft(db, apiKey, owner, listingText)
+          // Фотография из этого же сообщения: подпись и снимок приходят вместе, и связывать их
+          // ничем не нужно. Неудача загрузки не отменяет карточку — она делает её беднее.
+          const imagePaths = await storeTelegramPhoto(db, botToken, owner.accountId, msg)
+          const built = await buildListingDraft(db, apiKey, owner, listingText, imagePaths)
           if (!built) {
             await tgSendHtml(botToken, chatId, '🆕 Пока не с чем считать: подключите магазин Uzum в Nemo — комиссия берётся из категорий, в которых вы уже продаёте.')
             return

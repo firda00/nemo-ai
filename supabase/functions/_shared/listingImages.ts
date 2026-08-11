@@ -81,6 +81,43 @@ export async function fetchTelegramPhoto(botToken: string, fileId: string): Prom
   }
 }
 
+/**
+ * Самый крупный размер из присланных.
+ *
+ * Telegram отдаёт одну фотографию несколькими размерами по возрастанию, и мелкий превью-вариант
+ * — это 90 пикселей, на которых не видно ни материала, ни узора. Порядок в массиве документирован,
+ * но полагаться на него не нужно: сравнение по площади надёжнее и стоит одну строку.
+ */
+export function largestPhotoId(photo: unknown): string | null {
+  if (!Array.isArray(photo) || !photo.length) return null
+  let best: { id: string; area: number } | null = null
+  for (const size of photo) {
+    const id = (size as Record<string, unknown>)?.file_id
+    if (typeof id !== 'string' || !id) continue
+    const area = Number((size as Record<string, unknown>)?.width ?? 0) * Number((size as Record<string, unknown>)?.height ?? 0)
+    if (!best || area > best.area) best = { id, area: Number.isFinite(area) ? area : 0 }
+  }
+  return best?.id ?? null
+}
+
+/**
+ * Фотография из сообщения бота — в бакет.
+ *
+ * ОДНА за раз, и это ограничение Telegram, а не лень: альбом приходит несколькими отдельными
+ * обновлениями с общим media_group_id, подпись несёт только первое, а связать их между собой без
+ * хранимого состояния нельзя. Вебхук состояния не держит, поэтому в работу идёт снимок из того
+ * сообщения, где написан текст. Владельцу это сказано словами в подсказке, а не оставлено на
+ * догадку.
+ */
+export async function storeTelegramPhoto(admin: any, botToken: string, accountId: string, message: unknown): Promise<string[]> {
+  const fileId = largestPhotoId((message as Record<string, unknown>)?.photo)
+  if (!fileId || !botToken) return []
+  const file = await fetchTelegramPhoto(botToken, fileId)
+  if (!file) return []
+  const path = await storeImage(admin, accountId, file.bytes, file.mimeType, crypto.randomUUID())
+  return path ? [path] : []
+}
+
 /** Кладёт байты в бакет и возвращает путь. Null — если тип не поддержан или запись не удалась. */
 export async function storeImage(admin: any, accountId: string, bytes: Uint8Array, mimeType: string, id: string): Promise<string | null> {
   const path = imagePathFor(accountId, mimeType, id)

@@ -846,6 +846,31 @@ const checks = [
   ['the uploader is covered by the gate',
     quality.includes('npm run test:listing-upload')],
 
+  // ── Фото из Telegram ───────────────────────────────────────────────────────────────────────
+
+  // Мелкий превью-вариант Telegram — 90 пикселей, на которых не видно ни материала, ни узора.
+  ['the largest size is taken, by area rather than by array order',
+    /export function largestPhotoId/.test(imagesModule)
+    && imagesModule.includes('if (!best || area > best.area) best =')],
+
+  // Подпись и снимок приходят одним сообщением, связывать их ничем не нужно.
+  ['a captioned photo drafts a listing with the picture attached',
+    /const imagePaths = await storeTelegramPhoto\(db, botToken, owner\.accountId, msg\)/.test(tgProcess)
+    && /buildListingDraft\(db, apiKey, owner, listingText, imagePaths\)/.test(tgProcess)],
+
+  // Альбом приходит несколькими обновлениями, подпись несёт только первое, а связать их без
+  // хранимого состояния нельзя. Ограничение названо владельцу словами, а не оставлено на догадку.
+  ['the album limitation is stated to the owner, not hidden',
+    listingChat.includes('Альбом Telegram присылает по одному сообщению на снимок')
+    && listingChat.includes('Габариты, вес и себестоимость с фотографии не берутся')],
+
+  // То же разделение, что в веб-пути, и по той же причине: габарит, угаданный по снимку, ушёл бы
+  // в тариф логистики и оттуда в минимальную цену.
+  ['the telegram path computes numbers before it ever looks at the photo',
+    listingChat.includes('const numbers = extractNumbers(sourceText)')
+    && listingChat.includes('generateCopy(apiKey, model, mergeVisionIntoSource(sourceText, vision))')
+    && listingChat.includes('...(vision?.unknown_attributes ?? [])')],
+
   ['the image helpers are covered by the gate',
     quality.includes('npm run test:listing-images')
     && deploy.includes('20260811130000_listing_images_bucket.sql')],

@@ -5,6 +5,7 @@ import {
   SIGNED_URL_TTL_SECONDS,
   imagePathFor,
   ownsImagePath,
+  largestPhotoId,
   signImages,
 } from '../supabase/functions/_shared/listingImages.ts'
 
@@ -92,4 +93,26 @@ assert.equal(many.length, MAX_IMAGES)
 assert.deepEqual(await signImages(admin, ACCOUNT, null), [])
 assert.deepEqual(await signImages(admin, ACCOUNT, []), [])
 
-console.log('[OK] Listing images behaviour: 26 assertions')
+// --- Самый крупный размер из присланных --------------------------------------------------------
+// Telegram отдаёт одну фотографию несколькими размерами. Мелкий превью-вариант — 90 пикселей, на
+// которых не видно ни материала, ни узора.
+
+assert.equal(largestPhotoId([
+  { file_id: 'tiny', width: 90, height: 90 },
+  { file_id: 'big', width: 1280, height: 960 },
+  { file_id: 'mid', width: 320, height: 240 },
+]), 'big', 'выбирается по площади, а не по порядку в массиве')
+
+// Порядок документирован, но полагаться на него незачем: сравнение стоит одну строку.
+assert.equal(largestPhotoId([
+  { file_id: 'big', width: 1280, height: 960 },
+  { file_id: 'tiny', width: 90, height: 90 },
+]), 'big')
+
+// Размер без габаритов — всё равно кандидат: лучше отправить его, чем не отправить ничего.
+assert.equal(largestPhotoId([{ file_id: 'only' }]), 'only')
+assert.equal(largestPhotoId([]), null)
+assert.equal(largestPhotoId(null), null)
+assert.equal(largestPhotoId([{ width: 100, height: 100 }]), null, 'без file_id брать нечего')
+
+console.log('[OK] Listing images behaviour: 33 assertions')
