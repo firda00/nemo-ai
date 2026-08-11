@@ -61,6 +61,7 @@
     "test:returns-reserve": "node --experimental-strip-types agent-hub/returns-reserve-behavior.mjs",
     "test:unit-economics": "node --experimental-strip-types agent-hub/unit-economics-behavior.mjs",
     "test:listing-draft": "node --experimental-strip-types agent-hub/listing-draft-behavior.mjs",
+    "test:price-target": "node --experimental-strip-types agent-hub/price-target-behavior.mjs",
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",
     "test:cost-campaign": "node --experimental-strip-types agent-hub/cost-campaign-behavior.mjs",
     "test:onboarding-keys": "node --experimental-strip-types agent-hub/onboarding-behavior.mjs",

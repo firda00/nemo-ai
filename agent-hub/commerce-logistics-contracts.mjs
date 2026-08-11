@@ -50,6 +50,9 @@ const categoryLabelsMigration = read('supabase/migrations/20260810140000_categor
 const categoryLabelsModule = read('supabase/functions/_shared/categoryLabels.ts')
 const categoryLabelUi = read('src/lib/categoryLabel.ts')
 const deadstockMigration = read('supabase/migrations/20260810150000_commerce_deadstock.sql')
+const priceTarget = read('supabase/functions/_shared/priceTarget.ts')
+const quality = read('agent-hub/quality-gate.ps1')
+const packageJson = read('package.json')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -625,6 +628,30 @@ const checks = [
     && /kind === 'deadstock'/.test(findingsUi)
     && ['"deadstock": "Лежит без движения"', '"deadstock": "Harakatsiz yotibdi"', '"deadstock": "Sitting still"']
       .every((label) => i18nExtra.includes(label))],
+
+  // ── Целевая цена ───────────────────────────────────────────────────────────────────────────
+
+  // Пол — не рекомендация, а граница. Совет ниже него означал бы «продайте дешевле, чем вы сами
+  // назвали приемлемым», и владелец перенёс бы это число в кабинет.
+  ['no price advice ever goes below the floor',
+    /Math\.max\(target, floor\)/.test(priceTarget)
+    && /Math\.max\(discounted, floor\)/.test(priceTarget)
+    && /if \(floor >= input\.currentTiyin\) return null/.test(priceTarget)],
+
+  // Своей алгебры здесь нет: две копии одной формулы однажды разойдутся, и продавец встретит
+  // противоречие — калькулятор назовёт цену, а дайджест назовёт её убыточной.
+  ['the advice borrows the platform arithmetic instead of copying it',
+    /from '\.\/unitEconomics\.ts'/.test(priceTarget)
+    && !/\/ \(100 - load\)/.test(priceTarget)],
+
+  // Неразрывный пробел из toLocaleString уехал бы вместе с числом в поле цены Uzum.
+  ['the number meant for the clipboard is bare digits',
+    /<code>\$\{Math\.round\(advice\.target_tiyin \/ 100\)\}<\/code>/.test(priceTarget)
+    && /Nemo не меняет цену на Uzum/.test(priceTarget)],
+
+  ['the price engine is covered by the gate, not only by hope',
+    quality.includes('npm run test:price-target')
+    && packageJson.includes('agent-hub/price-target-behavior.mjs')],
 
   ['the returns field says out loud that it does not move the price',
     ['на цену не влияет', 'narxga ta’sir qilmaydi', 'does not affect the price']
