@@ -4,9 +4,24 @@
 import { roleSkillBlock } from './skills.ts'
 import { selectedSkillBlock } from './capabilitySkills.ts'
 
+/**
+ * Кусок сообщения. Текст или картинка.
+ *
+ * Формат — OpenRouter/OpenAI: он же принимается Claude Vision и GPT-4o, и уходит в тело запроса
+ * как есть. Своего преобразования здесь нет намеренно — лишний слой между нашей структурой и
+ * провайдерской однажды разойдётся с провайдером, и разойдётся молча.
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+
 export interface ChatMsg {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  /**
+   * Строка или части. Строка осталась разрешённой, потому что так вызывает вся платформа: сузить
+   * тип до массива значило бы переписать каждый вызов ради одной новой возможности.
+   */
+  content: string | ContentPart[]
 }
 
 // Primary model for platform workflows (team orchestration, research, test chat).

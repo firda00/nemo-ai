@@ -54,6 +54,8 @@ const priceTarget = read('supabase/functions/_shared/priceTarget.ts')
 const quality = read('agent-hub/quality-gate.ps1')
 const packageJson = read('package.json')
 const paywallLib = read('src/lib/paywall.ts')
+const visionModule = read('supabase/functions/_shared/listingVision.ts')
+const llmModule = read('supabase/functions/_shared/llm.ts')
 const paywallDialog = read('src/components/ui/PaywallDialog.tsx')
 const priceChat = read('supabase/functions/_shared/commercePriceChat.ts')
 const priceChatTest = read('agent-hub/price-chat-behavior.mjs')
@@ -735,6 +737,40 @@ const checks = [
   ['the sales link comes from the environment, not from a hardcoded guess',
     paywallLib.includes('import.meta.env?.VITE_SALES_TELEGRAM')
     && paywallLib.includes("configured.startsWith('https://t.me/')")],
+
+  // ── Зрение ─────────────────────────────────────────────────────────────────────────────────
+  // Габариты и вес на фотографии НЕ ВИДНЫ. Угаданный габарит уходит в тариф логистики Uzum и
+  // оттуда в минимальную цену: одно правдоподобное число молча портит каждый расчёт по товару.
+
+  ['the forbidden fields are refused in code, not only asked for in the prompt',
+    visionModule.includes('NEVER state size, dimensions, weight')
+    && /const MEASURED_VALUE =/.test(visionModule)
+    && /const MEASURED_NAME =/.test(visionModule)
+    && /if \(measured\) rejected\.push\(entry\.name\)/.test(visionModule)],
+
+  // «Модель промолчала» и «модель не имела права это утверждать» — разные вещи, и вторая должна
+  // оставлять след: отброшенное имя превращается в вопрос владельцу.
+  ['what vision is not allowed to claim becomes a question, not silence',
+    /\[\.\.\.new Set\(\[\.\.\.stated, \.\.\.rejected\]\)\]/.test(visionModule)],
+
+  // Слово владельца главнее снимка: числа по-прежнему берутся только из его текста.
+  ['a photograph adds to the owner text and never replaces it',
+    /export function mergeVisionIntoSource/.test(visionModule)
+    && visionModule.includes('!seen.includes(attribute.value.toLowerCase())')
+    && /return `\$\{sourceText\}/.test(visionModule)],
+
+  // Строка осталась разрешённой: сузить content до массива значило бы переписать каждый вызов
+  // на платформе ради одной новой возможности.
+  ['the message type widened without breaking every existing caller',
+    /content: string \| ContentPart\[\]/.test(llmModule)
+    && /type: 'image_url'; image_url: \{ url: string/.test(llmModule)],
+
+  // llm.ts читает Deno.env при загрузке и под Node не импортируется вовсе — логика, которую
+  // нельзя проверить тестом, это логика, о которой мы узнаём от владельца.
+  ['the testable half of vision lives outside the Deno-bound module',
+    /export function visionMessage/.test(visionModule)
+    && !/export function visionMessage/.test(llmModule)
+    && quality.includes('npm run test:listing-vision')],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')
