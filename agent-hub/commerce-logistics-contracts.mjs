@@ -56,6 +56,8 @@ const packageJson = read('package.json')
 const paywallLib = read('src/lib/paywall.ts')
 const visionModule = read('supabase/functions/_shared/listingVision.ts')
 const llmModule = read('supabase/functions/_shared/llm.ts')
+const imagesModule = read('supabase/functions/_shared/listingImages.ts')
+const imagesMigration = read('supabase/migrations/20260811130000_listing_images_bucket.sql')
 const paywallDialog = read('src/components/ui/PaywallDialog.tsx')
 const priceChat = read('supabase/functions/_shared/commercePriceChat.ts')
 const priceChatTest = read('agent-hub/price-chat-behavior.mjs')
@@ -771,6 +773,47 @@ const checks = [
     /export function visionMessage/.test(visionModule)
     && !/export function visionMessage/.test(llmModule)
     && quality.includes('npm run test:listing-vision')],
+
+  // ── Фотографии ─────────────────────────────────────────────────────────────────────────────
+
+  // Фото нового товара — коммерческая тайна продавца до публикации. Публичный бакет отдал бы его
+  // ассортимент любому, кто угадает имя файла.
+  ['product photographs sit in a private bucket, not a public one',
+    imagesMigration.includes("'listing-temp-images'")
+    && /public, file_size_limit, allowed_mime_types/.test(imagesMigration)
+    && imagesMigration.includes('false,')
+    && imagesMigration.includes('array[\'image/jpeg\', \'image/png\', \'image/webp\']')],
+
+  // RLS защищает ЗАГРУЗКУ из браузера. Читаем мы сервисным ключом, которому доступно всё, поэтому
+  // проверка владения обязана стоять в коде: путь приходит из тела запроса.
+  ['a path from the request body is checked against the account that sent it',
+    /export function ownsImagePath/.test(imagesModule)
+    && imagesModule.includes("path.includes('..')")
+    && imagesModule.includes("path.startsWith('/')")
+    && /\.filter\(\(path\) => ownsImagePath\(path, accountId\)\)/.test(imagesModule)],
+
+  ['the signature lives minutes, not hours',
+    /SIGNED_URL_TTL_SECONDS = 900/.test(imagesModule)
+    && /createSignedUrl\(path, SIGNED_URL_TTL_SECONDS\)/.test(imagesModule)],
+
+  // Бакет, из которого никто не выносит мусор, растёт молча и обнаруживается счётом за хранение.
+  ['the temporary bucket is actually emptied',
+    /create or replace function public\.commerce_purge_listing_images/.test(imagesMigration)
+    && imagesMigration.includes("created_at < now() - p_older_than")],
+
+  // Разбор фотографии уже выбрасывает измеримое. Здесь стоит ВТОРАЯ преграда: числа читаются из
+  // исходного текста владельца, а не из объединённого с увиденным.
+  ['numbers are still read from the owner text, never from the merged one',
+    /const numbers = extractNumbers\(sourceText\)/.test(commerceControl)
+    && /const copyText = mergeVisionIntoSource\(sourceText, vision\)/.test(commerceControl)
+    && /generateCopy\(apiKey, PRIMARY_MODEL, copyText\)/.test(commerceControl)],
+
+  ['what vision was refused becomes a gap on the card',
+    commerceControl.includes('...(vision?.unknown_attributes ?? [])')],
+
+  ['the image helpers are covered by the gate',
+    quality.includes('npm run test:listing-images')
+    && deploy.includes('20260811130000_listing_images_bucket.sql')],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')

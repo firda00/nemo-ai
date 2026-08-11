@@ -117,6 +117,7 @@ Apply-Migration .\supabase\migrations\20260810150000_commerce_deadstock.sql
 Apply-Migration .\supabase\migrations\20260810160000_commerce_accept_price.sql
 Apply-Migration .\supabase\migrations\20260810170000_price_advice_sent.sql
 Apply-Migration .\supabase\migrations\20260811120000_billing_subscriptions.sql
+Apply-Migration .\supabase\migrations\20260811130000_listing_images_bucket.sql
 
 $schemaCheckSql = @'
 select

@@ -119,6 +119,32 @@ export function parseVision(raw: unknown): VisionFacts | null {
 }
 
 /**
+ * Смотрит на фотографии и возвращает то, что на них видно.
+ *
+ * llm.ts импортируется лениво — он читает `Deno.env` при загрузке, и статический импорт лишил бы
+ * этот модуль тестов под Node. Отказ модели возвращает null: карточка соберётся по тексту, потому
+ * что отсутствие фотографии — это меньше фактов, а не отказ в работе.
+ */
+export async function generateVision(apiKey: string, model: string, imageUrls: string[]): Promise<VisionFacts | null> {
+  if (!imageUrls.length) return null
+  const { callOpenRouter, stripJsonFence } = await import('./llm.ts')
+  const raw = await callOpenRouter({
+    apiKey,
+    model,
+    temperature: 0,
+    maxTokens: 700,
+    responseFormat: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: VISION_SYSTEM_PROMPT },
+      visionMessage('Опиши товар на фотографиях.', imageUrls),
+    ],
+  })
+    .then((res) => JSON.parse(stripJsonFence(res.content)) as unknown)
+    .catch(() => null)
+  return parseVision(raw)
+}
+
+/**
  * Описание товара словами владельца плюс то, что видно на фото.
  *
  * Фото ДОПОЛНЯЕТ текст, а не заменяет его. Числа по-прежнему берутся только из слов владельца

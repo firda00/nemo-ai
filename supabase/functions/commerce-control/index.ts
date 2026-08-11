@@ -14,6 +14,8 @@ import {
 } from '../_shared/listingDraft.ts'
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
+import { signImages } from '../_shared/listingImages.ts'
+import { generateVision, mergeVisionIntoSource } from '../_shared/listingVision.ts'
 import { parseLabels, TRANSLATE_SYSTEM_PROMPT, type CategoryLabel } from '../_shared/categoryLabels.ts'
 
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
@@ -594,6 +596,11 @@ Deno.serve(async (req) => {
       ? context.options.find((option) => option.category === chosen) ?? null
       : (candidates.confident ? candidates.options[0] : null)
 
+    // ЧИСЛА БЕРУТСЯ ИЗ ИСХОДНОГО ТЕКСТА, а не из объединённого с увиденным.
+    //
+    // Разбор фотографии уже выбрасывает всё измеримое, но полагаться на одну преграду там, где
+    // ошибка портит тариф логистики и каждую минимальную цену по товару, — плохая ставка. Здесь
+    // стоит вторая: числу неоткуда взяться, потому что оно читается из слов владельца.
     const numbers = extractNumbers(sourceText)
     const economics = draftEconomics({
       dimension: numbers.dimension,
@@ -605,7 +612,15 @@ Deno.serve(async (req) => {
     // The copy is optional on purpose: a model outage must not cost the owner the economics,
     // which is the half of this that no model produced.
     const apiKey = await resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY') ?? '')
-    const copy = apiKey ? await generateCopy(apiKey, PRIMARY_MODEL, sourceText) : null
+
+    // Фотографии: подписываются на минуты и уходят модели. Владелец грузит их в приватный бакет
+    // сам, сюда приезжают только пути — и каждый проверяется на принадлежность его аккаунту,
+    // потому что читаем мы сервисным ключом, которому доступно всё.
+    const imageUrls = await signImages(admin, profile.account_id, body?.image_paths)
+    const vision = apiKey && imageUrls.length ? await generateVision(apiKey, PRIMARY_MODEL, imageUrls) : null
+    // Увиденное дополняет ТЕКСТ для прозы. Числа выше уже посчитаны и сюда не смотрят.
+    const copyText = mergeVisionIntoSource(sourceText, vision)
+    const copy = apiKey ? await generateCopy(apiKey, PRIMARY_MODEL, copyText) : null
 
     const { data: draft, error } = await admin.from('commerce_listing_drafts').insert({
       account_id: profile.account_id,
@@ -616,7 +631,9 @@ Deno.serve(async (req) => {
       description_ru: copy?.description_ru ?? null,
       description_uz: copy?.description_uz ?? null,
       attributes: copy?.attributes ?? [],
-      unknown_attributes: copy?.unknown_attributes ?? [],
+      // То, что зрение НЕ ИМЕЛО ПРАВА утверждать, приезжает сюда вопросом: габарит и вес, которые
+      // модель попыталась назвать по фотографии, становятся строкой «не хватает», а не тишиной.
+      unknown_attributes: [...new Set([...(copy?.unknown_attributes ?? []), ...(vision?.unknown_attributes ?? [])])].slice(0, 20),
       uzum_category: category?.category ?? null,
       commission_percent: economics.commission_percent,
       returns_reserve_percent: economics.returns_reserve_percent,

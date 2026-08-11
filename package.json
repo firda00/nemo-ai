@@ -66,6 +66,7 @@
     "test:entitlement": "node --experimental-strip-types agent-hub/entitlement-behavior.mjs",
     "test:paywall": "node --experimental-strip-types agent-hub/paywall-behavior.mjs",
     "test:listing-vision": "node --experimental-strip-types agent-hub/listing-vision-behavior.mjs",
+    "test:listing-images": "node --experimental-strip-types agent-hub/listing-images-behavior.mjs",
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",
     "test:cost-campaign": "node --experimental-strip-types agent-hub/cost-campaign-behavior.mjs",
     "test:onboarding-keys": "node --experimental-strip-types agent-hub/onboarding-behavior.mjs",
