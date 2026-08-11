@@ -26,6 +26,7 @@ $steps = @(
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },
   @{ Name = 'Listing images behavior'; Command = { npm run test:listing-images } },
+  @{ Name = 'Listing upload behavior'; Command = { npm run test:listing-upload } },
   @{ Name = 'Listing Telegram behavior'; Command = { npm run test:listing-telegram } },
   @{ Name = 'Cost campaign behavior'; Command = { npm run test:cost-campaign } },
   @{ Name = 'Onboarding key normalisation'; Command = { npm run test:onboarding-keys } },

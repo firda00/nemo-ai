@@ -57,6 +57,8 @@ const paywallLib = read('src/lib/paywall.ts')
 const visionModule = read('supabase/functions/_shared/listingVision.ts')
 const llmModule = read('supabase/functions/_shared/llm.ts')
 const imagesModule = read('supabase/functions/_shared/listingImages.ts')
+const uploadLib = read('src/lib/listingImageUpload.ts')
+const uploadUi = read('src/components/platform/ListingImageUpload.tsx')
 const imagesMigration = read('supabase/migrations/20260811130000_listing_images_bucket.sql')
 const paywallDialog = read('src/components/ui/PaywallDialog.tsx')
 const priceChat = read('supabase/functions/_shared/commercePriceChat.ts')
@@ -810,6 +812,39 @@ const checks = [
 
   ['what vision was refused becomes a gap on the card',
     commerceControl.includes('...(vision?.unknown_attributes ?? [])')],
+
+  // ── Загрузчик ──────────────────────────────────────────────────────────────────────────────
+
+  // Восьмимегабайтный снимок в теле запроса упёрся бы в лимит функции, а base64 раздул бы его
+  // ещё на треть. В edge-функцию едет строка пути, файл идёт в Storage напрямую из браузера.
+  ['the browser uploads to storage and sends only the path',
+    uploadUi.includes(".upload(path, file, { contentType: file.type, upsert: false })")
+    && commercePage.includes('image_paths: imagePaths')
+    && !/FileReader|readAsDataURL|arrayBuffer()/.test(uploadUi)],
+
+  // Владелец перетащил пять фотографий, увидел четыре — и должен знать, какая пропала и почему.
+  ['every refused file says why it was refused',
+    /reason: 'type'/.test(uploadLib) && /reason: 'size'/.test(uploadLib) && /reason: 'limit'/.test(uploadLib)
+    && uploadUi.includes("t(`commerce.listing.photoRejected.${item.reason}`)")
+    && ['"limit": "больше четырёх фото не берём"', '"limit": "to‘rttadan ortiq rasm olinmaydi"', '"limit": "no more than four photos"']
+      .every((label) => i18nExtra.includes(label))],
+
+  // Лимит считается вместе с уже загруженными: иначе четыре плюс четыре дали бы восемь.
+  ['the limit counts what is already there',
+    uploadLib.includes('already + accepted.length >= MAX_IMAGES')],
+
+  // Иначе владелец приложит снимок и будет ждать, что габариты заполнятся сами.
+  ['the uploader says out loud what a photo cannot give',
+    uploadUi.includes("t('commerce.listing.photoProvenance')")
+    && i18nExtra.includes('Габариты, вес и себестоимость — нет')],
+
+  // Ссылки на объекты живут до отзыва: без этого каждая перевыбранная фотография оставляет за
+  // собой удерживаемый blob, и вкладка растёт, пока её не закроют.
+  ['object urls are revoked, not leaked',
+    (uploadUi.match(/URL\.revokeObjectURL/g) ?? []).length >= 2],
+
+  ['the uploader is covered by the gate',
+    quality.includes('npm run test:listing-upload')],
 
   ['the image helpers are covered by the gate',
     quality.includes('npm run test:listing-images')

@@ -188,11 +188,18 @@ export default function CommercePage() {
     setBusy(null)
   }
 
-  const draftListing = async (sourceText: string, category: string | null) => {
+  const draftListing = async (sourceText: string, category: string | null, imagePaths: string[] = []) => {
     if (!supabase) return false
     setMessage(null)
     const { data, error } = await supabase.functions.invoke('commerce-control', {
-      body: { action: 'draft_listing', source_text: sourceText, ...(category ? { uzum_category: category } : {}), ...(catalogId ? { catalog_id: catalogId } : {}) },
+      body: {
+        action: 'draft_listing', source_text: sourceText,
+        ...(category ? { uzum_category: category } : {}),
+        ...(catalogId ? { catalog_id: catalogId } : {}),
+        // Пути, а не файлы: снимок уехал в приватный бакет прямо из браузера, и телу запроса
+        // остаётся строка вместо восьми мегабайт.
+        ...(imagePaths.length ? { image_paths: imagePaths } : {}),
+      },
     })
     // Тело отказа лежит НЕ в `data`: на любой не-2xx invoke возвращает FunctionsHttpError, а
     // исходный Response прячет в error.context. Без этого 402 выглядел бы как «не удалось

@@ -3,6 +3,7 @@ import { Check, Copy, Loader2, PenLine, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { useI18n } from '../../i18n'
 import { categoryLabel, type CategoryLabel } from '../../lib/categoryLabel'
+import { ListingImageUpload } from './ListingImageUpload'
 
 /**
  * Копирование по одному полю, а не всей карточки.
@@ -186,19 +187,25 @@ export function CommerceListingAgent({
   categories: CategoryChoice[]
   /** Подписи полок по-русски и по-английски. Uzum отдаёт только узбекское имя. */
   categoryLabels: Record<string, CategoryLabel>
-  onDraft: (sourceText: string, category: string | null) => Promise<boolean>
+  onDraft: (sourceText: string, category: string | null, imagePaths: string[]) => Promise<boolean>
   onCategory: (draftId: string, category: string, manual?: ManualFees) => Promise<boolean>
   onApprove: (draftId: string) => Promise<boolean>
   onDiscard: (draftId: string) => Promise<boolean>
 }) {
   const { t, lang } = useI18n()
   const [sourceText, setSourceText] = useState('')
+  const [imagePaths, setImagePaths] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
 
   const submit = async () => {
     if (sourceText.trim().length < 10 || busy) return
     setBusy('draft')
-    if (await onDraft(sourceText.trim(), null)) setSourceText('')
+    // Пути очищаются только при успехе: неудачная генерация не должна стоить владельцу
+    // повторной загрузки четырёх фотографий.
+    if (await onDraft(sourceText.trim(), null, imagePaths)) {
+      setSourceText('')
+      setImagePaths([])
+    }
     setBusy(null)
   }
 
@@ -231,6 +238,8 @@ export function CommerceListingAgent({
             «выбери полку для него». Выбор ничего не пересчитывал, а поле ввода к этому моменту
             уже очищено после успешной генерации, так что и генерировать было нечего. Полка
             выбирается на самой карточке, где видно, что именно она меняет. */}
+        <ListingImageUpload paths={imagePaths} onChange={setImagePaths} disabled={busy === 'draft'} />
+
         <div className="flex justify-end">
           <Button onClick={() => void submit()} loading={busy === 'draft'} disabled={sourceText.trim().length < 10} leftIcon={<Sparkles size={15} />}>
             {t('commerce.listing.create')}
