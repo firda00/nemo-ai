@@ -5,6 +5,8 @@ import { Card } from '../../components/ui/Card'
 import { CommerceSkuTable, type CommerceSku } from '../../components/platform/CommerceSkuTable'
 import { CommerceListingAgent, type CategoryChoice, type ListingDraft, type ManualFees } from '../../components/platform/CommerceListingAgent'
 import { type CategoryLabel } from '../../lib/categoryLabel'
+import { PaywallDialog } from '../../components/ui/PaywallDialog'
+import { payloadOf, paywallFrom, type Paywall } from '../../lib/paywall'
 import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
@@ -68,6 +70,7 @@ export default function CommercePage() {
   const [findings, setFindings] = useState<Finding[]>([])
   const [categories, setCategories] = useState<CategoryChoice[]>([])
   const [categoryLabels, setCategoryLabels] = useState<Record<string, CategoryLabel>>({})
+  const [paywall, setPaywall] = useState<Paywall | null>(null)
   const [marginInput, setMarginInput] = useState('20')
   const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -191,7 +194,13 @@ export default function CommercePage() {
     const { data, error } = await supabase.functions.invoke('commerce-control', {
       body: { action: 'draft_listing', source_text: sourceText, ...(category ? { uzum_category: category } : {}), ...(catalogId ? { catalog_id: catalogId } : {}) },
     })
-    const result = data as { ok?: boolean; copy_available?: boolean; error?: string } | null
+    // Тело отказа лежит НЕ в `data`: на любой не-2xx invoke возвращает FunctionsHttpError, а
+    // исходный Response прячет в error.context. Без этого 402 выглядел бы как «не удалось
+    // собрать черновик», и владелец не узнал бы, что дело в подписке.
+    const payload = await payloadOf(error, data)
+    const locked = paywallFrom(payload)
+    if (locked) { setPaywall(locked); return false }
+    const result = payload as { ok?: boolean; copy_available?: boolean; error?: string } | null
     if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errCreate') }); return false }
     // Список полок больше не приезжает сюда: он живёт на самой карточке черновика, где выбор
     // сразу пересчитывает комиссию. Здесь он относился к следующей генерации и вводил в
@@ -653,6 +662,10 @@ export default function CommercePage() {
 {notifyBot && <p className="mt-3 text-xs text-muted">{t('commerce.tgBot')} <a href={`https://t.me/${notifyBot}`} target="_blank" rel="noreferrer" className="font-medium text-accent-cyan underline">@{notifyBot}</a></p>}{telegramLink && <a href={telegramLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-medium text-accent-cyan underline">{t('commerce.tgOpen')}</a>}{!telegramConnected && !telegramLink && <p className="mt-3 text-xs text-amber">{t('commerce.tgHint')}</p>}</Card>
 
       </>)}
+
+      {/* Замок живёт на уровне страницы, а не вкладки: закрыв его, владелец остаётся там, где
+          был, и видит свои данные — они никуда не делись, и это половина всего сообщения. */}
+      <PaywallDialog paywall={paywall} onClose={() => setPaywall(null)} />
     </div>
   )
 }

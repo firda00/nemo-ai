@@ -43,6 +43,28 @@ function stopServer() {
   else server.kill('SIGTERM')
 }
 
+/**
+ * Уборка не выносит вердикт.
+ *
+ * puppeteer держит профиль во временной папке и удаляет её при закрытии. На Windows Chrome ещё
+ * держит lockfile в этот момент: удаление падает с EBUSY, отказ всплывает как необработанный, и
+ * процесс умирает с кодом 1 — ПОСЛЕ того, как все проверки прошли. Гейт печатал «[FAIL] Website
+ * smoke test», и отличить сломанный сайт от неудачного rmdir было нельзя.
+ *
+ * Гасится ровно этот случай и только он: ошибка файловой системы во временном профиле. Любая
+ * другая необработанная ошибка по-прежнему валит прогон, как и должна.
+ */
+const PROFILE_CLEANUP = /puppeteer_dev_chrome_profile|EBUSY|ENOTEMPTY|EPERM/
+process.on('unhandledRejection', (reason) => {
+  const text = reason instanceof Error ? `${reason.message} ${reason.stack ?? ''}` : String(reason)
+  if (PROFILE_CLEANUP.test(text)) {
+    console.warn(`[warn] профиль браузера не удалился, на результат не влияет: ${text.split('\n')[0]}`)
+    return
+  }
+  console.error(reason)
+  process.exit(1)
+})
+
 let browser
 let page
 try {
@@ -63,8 +85,24 @@ try {
   async function checkRoute(route) {
     // Vite keeps a development/HMR connection open, so networkidle0 can hang
     // even after the route is fully rendered. Assert the actual app surface.
-    const response = await page.goto(baseUrl + route, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    if (!response || response.status() >= 400) throw new Error(`${route} returned ${response?.status() ?? 'no response'}`)
+    // Адрес и код ответа печатаются всегда, а не только при отказе.
+    //
+    // Гейт однажды упал строкой «[FAIL] Website smoke test» и больше ничем — понять, какой
+    // маршрут и почему, было нельзя, и падение осталось неотличимым от сетевого сбоя во время
+    // деплоя. Тест, не объясняющий себя, заставляет гадать; гадание про упавшую проверку стоит
+    // дороже одной строки вывода.
+    const url = baseUrl + route
+    let response
+    try {
+      response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    } catch (error) {
+      // Сетевая ошибка не несёт адреса сама по себе: «net::ERR_CONNECTION_REFUSED» без URL
+      // одинаково выглядит на любом из четырнадцати маршрутов.
+      throw new Error(`${url} — запрос не состоялся: ${error?.message ?? error}`)
+    }
+    if (!response) throw new Error(`${url} — ответа нет`)
+    const status = response.status()
+    if (status >= 400) throw new Error(`${url} — HTTP ${status}`)
     await page.waitForFunction(() => {
       const root = document.querySelector('#root')
       return Boolean(root?.childElementCount && document.body.innerText.trim().length >= 30)
@@ -75,9 +113,9 @@ try {
       viteError: Boolean(document.querySelector('vite-error-overlay')),
       path: window.location.pathname,
     }))
-    if (result.viteError || result.rootChildren === 0 || result.text.length < 30) throw new Error(`${route} rendered an empty or broken page`)
-    if (result.path !== route) throw new Error(`${route} unexpectedly redirected to ${result.path}`)
-    console.log(`[OK] ${route}`)
+    if (result.viteError || result.rootChildren === 0 || result.text.length < 30) throw new Error(`${url} — HTTP ${status}, но страница пустая или сломана`)
+    if (result.path !== route) throw new Error(`${url} — HTTP ${status}, но перебросило на ${result.path}`)
+    console.log(`[OK] ${status} ${url}`)
   }
 
   for (const route of publicRoutes) await checkRoute(route)

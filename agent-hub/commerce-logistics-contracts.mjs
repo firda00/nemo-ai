@@ -53,6 +53,8 @@ const deadstockMigration = read('supabase/migrations/20260810150000_commerce_dea
 const priceTarget = read('supabase/functions/_shared/priceTarget.ts')
 const quality = read('agent-hub/quality-gate.ps1')
 const packageJson = read('package.json')
+const paywallLib = read('src/lib/paywall.ts')
+const paywallDialog = read('src/components/ui/PaywallDialog.tsx')
 const priceChat = read('supabase/functions/_shared/commercePriceChat.ts')
 const priceChatTest = read('agent-hub/price-chat-behavior.mjs')
 const webhook = read('supabase/functions/telegram-webhook/index.ts')
@@ -707,6 +709,36 @@ const checks = [
     && /inline_keyboard: priceKeyboard\(row\.id, advice\.target_tiyin\)/.test(commerceDigest)
     && deploy.includes('20260810160000_commerce_accept_price.sql')
     && deploy.includes('20260810170000_price_advice_sent.sql')],
+
+  // ── Замок на экране ────────────────────────────────────────────────────────────────────────
+
+  // На любой не-2xx invoke кладёт null в data, а тело прячет в error.context. Без чтения оттуда
+  // 402 выглядел бы как «не удалось собрать черновик», и про подписку владелец не узнал бы.
+  ['the 402 body is read from where supabase actually puts it',
+    paywallLib.includes('(error as { context?: unknown })?.context')
+    && paywallLib.includes('await (context as Response).json()')
+    && commercePage.includes('const payload = await payloadOf(error, data)')
+    && commercePage.includes('if (locked) { setPaywall(locked); return false }')],
+
+  // Владелец, решивший, что потерял каталог, не платит, а уходит. Поэтому «данные на месте» —
+  // не вежливость, а половина сообщения, и она обязана быть на всех трёх языках.
+  ['the lock says the data is still there',
+    paywallDialog.includes("t('paywall.dataKept')")
+    && ['"dataKept": "Каталоги', '"dataKept": "Kataloglar', '"dataKept": "Catalogues']
+      .every((label) => i18nExtra.includes(label))],
+
+  ['the lock names what stopped, not just that something did',
+    ["t('paywall.lockedListing')", "t('paywall.lockedDigest')", "t('paywall.lockedPrice')"]
+      .every((key) => paywallDialog.includes(key))],
+
+  // Вписать чужой телеграм-хендл в код значит однажды отправить клиента не туда и не узнать.
+  ['the sales link comes from the environment, not from a hardcoded guess',
+    paywallLib.includes('import.meta.env?.VITE_SALES_TELEGRAM')
+    && paywallLib.includes("configured.startsWith('https://t.me/')")],
+
+  ['the paywall helper is covered by the gate',
+    quality.includes('npm run test:paywall')
+    && packageJson.includes('agent-hub/paywall-behavior.mjs')],
 
   ['the price engine is covered by the gate, not only by hope',
     quality.includes('npm run test:price-target')

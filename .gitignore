@@ -42,3 +42,4 @@ agent-hub/artifacts/
 
 # gstack worktrees — a nested checkout, never part of the repo
 .claude/worktrees/
+agent-hub/artifacts/

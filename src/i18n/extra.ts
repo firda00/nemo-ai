@@ -3,6 +3,17 @@
 // Safe to edit by hand: add/adjust a key here and it flows through t('<namespace>.<key>').
 
 export const extraUz = {
+  "paywall": {
+    "trialTitle": "3 kunlik bepul sinov tugadi",
+    "lapsedTitle": "Obuna muddati tugagan",
+    "subtitle": "Nemo siz uchun ishlashda davom etishi uchun tarifni faollashtiring. Hozir to‘xtaganlari:",
+    "lockedListing": "Yangi kartochka qoralamalarini yig‘ish",
+    "lockedDigest": "Ertalabki Telegram xulosasi",
+    "lockedPrice": "Narx bo‘yicha maslahatlar va ulardagi tugmalar",
+    "dataKept": "Kataloglar, qoralamalar, qarorlar tarixi va hisob-kitoblar joyida qoladi — ularni ko‘rishda davom etasiz.",
+    "cta": "Tarifni tanlash",
+    "later": "Keyinroq",
+  },
   "memory": {
     "eyebrow": "Tashkilot xotirasi",
     "title": "Tizim nimaga ishonadi",
@@ -1720,6 +1731,17 @@ export const extraUz = {
 } as const
 
 export const extraRu = {
+  "paywall": {
+    "trialTitle": "3-дневный бесплатный триал завершён",
+    "lapsedTitle": "Срок подписки истёк",
+    "subtitle": "Оформите тариф, чтобы Nemo продолжил работать за вас. Сейчас остановлено:",
+    "lockedListing": "Сборка новых черновиков карточек",
+    "lockedDigest": "Утренняя сводка в Telegram",
+    "lockedPrice": "Ценовые советы и кнопки решений под ними",
+    "dataKept": "Каталоги, черновики, история решений и расчёты остаются на месте — вы продолжаете их видеть.",
+    "cta": "Выбрать тариф",
+    "later": "Позже",
+  },
   "memory": {
     "eyebrow": "Память организации",
     "title": "Во что верит система",
@@ -3437,6 +3459,17 @@ export const extraRu = {
 } as const
 
 export const extraEn = {
+  "paywall": {
+    "trialTitle": "Your 3-day free trial has ended",
+    "lapsedTitle": "The subscription has lapsed",
+    "subtitle": "Activate a plan to keep Nemo working for you. Stopped for now:",
+    "lockedListing": "Building new listing drafts",
+    "lockedDigest": "The morning Telegram digest",
+    "lockedPrice": "Price advice and the decision buttons under it",
+    "dataKept": "Catalogues, drafts, decision history and calculations stay where they are — you keep seeing them.",
+    "cta": "Choose a plan",
+    "later": "Later",
+  },
   "memory": {
     "eyebrow": "Organizational memory",
     "title": "What the system believes",
