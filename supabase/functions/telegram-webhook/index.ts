@@ -12,6 +12,9 @@ import {
   applyCategory, catalogueContext, categoryToken, CB_LISTING, CB_LISTING_CATEGORY, draftCard, draftKeyboard,
 } from '../_shared/commerceListingChat.ts'
 import { CB_COST_BATCH, costCampaignState } from '../_shared/commerceCostCampaign.ts'
+import {
+  acceptedText, ownPricePrompt, parseOwnPrice, parsePriceCallback, refusalText, replyTarget,
+} from '../_shared/commercePriceChat.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
@@ -152,6 +155,109 @@ async function handleCostBatchCallback(db: any, channelId: string, botToken: str
  * a read-only integration can honestly offer. The same ownership check as the economics handler
  * applies: a button forwarded out of this chat must not move another account's draft.
  */
+/**
+ * Загружает совет и проверяет, что он принадлежит владельцу этого чата.
+ *
+ * Кнопку можно переслать, а callback_data — подделать: единственное, что делает нажатие
+ * безопасным, — это проверка владения на сервере при каждом нажатии.
+ */
+async function priceRecommendation(db: any, channelId: string, chatId: string, idOrPrefix: string) {
+  const owner = await ownerChatFor(db, channelId, chatId)
+  if (!owner) return null
+  const { data: catalogs } = await db.from('commerce_catalogs').select('id').eq('account_id', owner.accountId)
+  const catalogIds = (catalogs ?? []).map((row: { id: string }) => row.id)
+  if (!catalogIds.length) return null
+  const { data: skus } = await db.from('commerce_skus').select('id, title, external_sku').in('catalog_id', catalogIds)
+  const byId = new Map((skus ?? []).map((row: any) => [row.id, row]))
+  if (!byId.size) return null
+  const query = db.from('commerce_recommendations')
+    .select('id, kind, status, sku_id, calculation, suggested_action')
+    .in('sku_id', [...byId.keys()])
+    .in('kind', ['price_guard', 'deadstock'])
+  // Метка в приглашении «своя цена» — первые восемь символов id: полный uuid в текст сообщения
+  // не влезает по смыслу, а не по длине — его незачем показывать владельцу.
+  const { data: rows } = idOrPrefix.length === 36
+    ? await query.eq('id', idOrPrefix).limit(1)
+    : await query.like('id', `${idOrPrefix}%`).limit(2)
+  // Два совпадения по префиксу — не повод выбрать одно наугад: это чужая цена на чужом товаре.
+  if (!rows?.length || rows.length > 1) return null
+  return { owner, row: rows[0], sku: byId.get(rows[0].sku_id) as any }
+}
+
+async function handlePriceCallback(db: any, channelId: string, botToken: string | undefined, cb: any): Promise<void> {
+  const parsed = parsePriceCallback(cb?.data)
+  const chatId = String(cb?.message?.chat?.id ?? '')
+  const messageId = Number(cb?.message?.message_id ?? 0)
+  if (!botToken || !chatId || !parsed) return
+
+  const found = await priceRecommendation(db, channelId, chatId, parsed.id)
+  if (!found) { await tgAnswerCallback(botToken, cb.id, 'Этот совет недоступен.'); return }
+  const { row, sku } = found
+  const title = String(sku?.title ?? sku?.external_sku ?? 'товар')
+  const floor = Number(row.calculation?.min_selling_price_tiyin ?? 0) || null
+
+  if (parsed.action === 'n') {
+    await db.from('commerce_recommendations').update({ status: 'dismissed', updated_at: new Date().toISOString() })
+      .eq('id', row.id).eq('status', 'open')
+    await tgAnswerCallback(botToken, cb.id, 'Отклонено.')
+    await tgEditMessage(botToken, chatId, messageId, `❌ Совет по цене отклонён — ${escapeHtml(title)}`)
+    return
+  }
+
+  if (parsed.action === 'c') {
+    await tgAnswerCallback(botToken, cb.id, 'Пришлите число')
+    // force_reply, потому что ответ обязан нести исходное сообщение: метка в нём — единственное,
+    // что связывает набранное число с товаром. Состояние держать негде, вебхук без памяти.
+    await tgSendKeyboard(botToken, chatId, ownPricePrompt(row.id, escapeHtml(title), floor ?? 0), { force_reply: true })
+    return
+  }
+
+  const result = await db.rpc('commerce_accept_price', {
+    p_account_id: found.owner.accountId,
+    p_recommendation_id: row.id,
+    p_price_tiyin: parsed.priceTiyin,
+  })
+  const payload = result?.data ?? {}
+  if (!payload.ok) {
+    await tgAnswerCallback(botToken, cb.id, 'Не принято')
+    await tgSendHtml(botToken, chatId, refusalText(String(payload.reason ?? ''), Number(payload.floor_tiyin) || floor))
+    return
+  }
+  await tgAnswerCallback(botToken, cb.id, 'Принято')
+  await tgEditMessage(botToken, chatId, messageId, acceptedText(escapeHtml(title), Number(payload.price_tiyin), payload.horizon_at ?? null))
+}
+
+/** Ответ числом на приглашение «своя цена». Возвращает true, если сообщение было для нас. */
+async function handleOwnPriceReply(db: any, channelId: string, botToken: string | undefined, message: any): Promise<boolean> {
+  const target = replyTarget(message?.reply_to_message?.text)
+  const chatId = String(message?.chat?.id ?? '')
+  if (!botToken || !chatId || !target) return false
+
+  const found = await priceRecommendation(db, channelId, chatId, target)
+  if (!found) return false
+  const price = parseOwnPrice(message?.text)
+  const title = String(found.sku?.title ?? found.sku?.external_sku ?? 'товар')
+  if (price == null) {
+    await tgSendHtml(botToken, chatId, refusalText('invalid_price', null))
+    return true
+  }
+
+  // Пол проверяется в базе, а не здесь: число пришло из чата, и единственное место, где проверку
+  // нельзя обойти, — RPC. Здесь только показывается его ответ.
+  const result = await db.rpc('commerce_accept_price', {
+    p_account_id: found.owner.accountId,
+    p_recommendation_id: found.row.id,
+    p_price_tiyin: price,
+  })
+  const payload = result?.data ?? {}
+  if (!payload.ok) {
+    await tgSendHtml(botToken, chatId, refusalText(String(payload.reason ?? ''), Number(payload.floor_tiyin) || null))
+    return true
+  }
+  await tgSendHtml(botToken, chatId, acceptedText(escapeHtml(title), Number(payload.price_tiyin), payload.horizon_at ?? null))
+  return true
+}
+
 async function handleListingCallback(db: any, channelId: string, botToken: string | undefined, cb: any): Promise<void> {
   const data = String(cb?.data ?? '')
   const chatId = String(cb?.message?.chat?.id ?? '')
@@ -249,7 +355,15 @@ Deno.serve(async (req) => {
       await handleCommerceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handleListingCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handleCostBatchCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      await handlePriceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       return new Response('ok')
+    }
+
+    // Ответ числом на приглашение «своя цена». Стоит ДО остальных обработчиков сообщений: иначе
+    // «58750» уедет агенту как реплика в разговоре, и владелец не получит ни цены, ни отказа.
+    if (update?.message?.reply_to_message) {
+      const handled = await handleOwnPriceReply(db, channelId, channel.credentials?.bot_token, update.message)
+      if (handled) return new Response('ok')
     }
 
     const startToken = String(update?.message?.text ?? '').match(/^\/start\s+commerce_([0-9a-f-]{36})$/i)?.[1]

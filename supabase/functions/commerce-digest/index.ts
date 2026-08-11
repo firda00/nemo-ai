@@ -2,8 +2,10 @@
 // the message; no recommendation is executed or turned into an external marketplace action.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { tgSendHtml } from '../_shared/telegram.ts'
+import { tgSendHtml, tgSendKeyboard } from '../_shared/telegram.ts'
 import { escapeHtml } from '../_shared/telegramFormat.ts'
+import { adviceForDeadstock, adviceForMargin, adviceMessage } from '../_shared/priceTarget.ts'
+import { priceKeyboard } from '../_shared/commercePriceChat.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
 import { staleCatalogues, staleWarningText, brokenCatalogues, emptyNotice, type CatalogueFreshness } from '../_shared/commerceFreshness.ts'
 
@@ -138,6 +140,51 @@ function stockoutLine(row: any) {
   return `• ${name(row)}: остаток 0${sold ? `, продано за неделю ${num(sold)} шт.` : ''}`
 }
 
+/**
+ * Ценовые советы с кнопками — по одному сообщению на товар.
+ *
+ * Считается ровно тем же движком, что и везде: своей алгебры здесь нет, иначе кнопка предложила
+ * бы одно число, а утренняя сводка назвала бы его убыточным.
+ *
+ * Совет без пола не отправляется вовсе. Кнопка «Принять» под ценой, которую не с чем сравнить,
+ * означала бы «согласитесь вслепую», и база такое всё равно отвергнет — лучше не спрашивать.
+ */
+async function sendPriceAdvice(db: any, target: { token: string; chatId: string }, rows: any[]): Promise<number> {
+  let sent = 0
+  for (const row of rows) {
+    if (row.advice_sent_at || row.status !== 'open') continue
+    if (row.kind !== 'price_guard' && row.kind !== 'deadstock') continue
+    const calc = row.calculation ?? {}
+    const fees = {
+      commission_percent: Number(calc.commission_percent ?? calc.fees?.commission_percent ?? NaN),
+      returns_reserve_percent: Number(calc.returns_reserve_percent ?? calc.fees?.returns_reserve_percent ?? 0),
+      fulfillment_tiyin: Number(calc.fulfillment_tiyin ?? calc.fees?.fulfillment_tiyin ?? NaN),
+    }
+    const cost = Number(calc.unit_cost_tiyin ?? NaN)
+    const price = Number(calc.price_tiyin ?? 0)
+    const minMargin = Number(calc.min_margin_percent ?? NaN)
+    if (![fees.commission_percent, fees.fulfillment_tiyin, cost, minMargin].every(Number.isFinite)) continue
+
+    const advice = row.kind === 'price_guard'
+      ? adviceForMargin({ currentTiyin: price, unitCostTiyin: cost, minMarginPercent: minMargin, targetMarginPercent: minMargin + 10, fees })
+      : adviceForDeadstock({ currentTiyin: price, unitCostTiyin: cost, minMarginPercent: minMargin, fees })
+    if (!advice) continue
+
+    const title = String(row.commerce_skus?.title ?? row.commerce_skus?.external_sku ?? 'товар')
+    const ok = await tgSendKeyboard(
+      target.token, target.chatId,
+      adviceMessage(escapeHtml(title), advice),
+      { inline_keyboard: priceKeyboard(row.id, advice.target_tiyin) },
+    )
+    if (!ok) continue
+    await db.from('commerce_recommendations')
+      .update({ advice_sent_at: new Date().toISOString() })
+      .eq('id', row.id).is('advice_sent_at', null)
+    sent++
+  }
+  return sent
+}
+
 function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   const reorders = rows.filter((row) => row.kind === 'reorder')
   const priceIssues = rows.filter((row) => row.kind === 'price_guard')
@@ -203,7 +250,7 @@ Deno.serve(async (req) => {
   const accountIds = (pilots ?? []).map((pilot: { account_id: string }) => pilot.account_id)
   if (!accountIds.length) return json({ ok: true, sent: 0 })
   const { data: rows, error } = await db.from('commerce_recommendations')
-    .select('id, severity, kind, calculation, suggested_action, alerted_at, digest_sent_at, commerce_skus!inner(external_sku, title, commerce_catalogs!inner(account_id))')
+    .select('id, status, severity, kind, calculation, suggested_action, alerted_at, digest_sent_at, advice_sent_at, commerce_skus!inner(external_sku, title, commerce_catalogs!inner(account_id))')
     .eq('status', 'open').in('commerce_skus.commerce_catalogs.account_id', accountIds).order('created_at', { ascending: false }).limit(500)
   if (error) return json({ error: 'recommendation_lookup_failed' }, 500)
   // Freshness is read here, in the delivery path, rather than in the worker that produces findings.
@@ -301,6 +348,7 @@ Deno.serve(async (req) => {
           sent++
         }
       }
+      sent += await sendPriceAdvice(db, target, accountRows)
     } else {
       const unsent = accountRows.filter((item) => item.digest_sent_at !== today)
       const stats = statsByAccount.get(accountId) ?? { skus: 0, approximate: 0 }
@@ -312,6 +360,10 @@ Deno.serve(async (req) => {
       // The warning leads, and the digest is sent even when there is nothing new to report —
       // silence was the bug. Everything under the warning was computed from data that stopped
       // arriving, and the seller has to know that before reading a single number.
+      // Совет по цене уходит ОТДЕЛЬНЫМ сообщением с кнопками. В сводке он остался бы строкой,
+      // а строку нельзя нажать: между «маржа ниже минимума» и решением стояла бы вкладка в
+      // браузере, до которой владелец дойдёт вечером или не дойдёт.
+      sent += await sendPriceAdvice(db, target, accountRows)
       const text = [warning, unsent.length ? digestText(unsent, stats) : null].filter(Boolean).join('\n\n')
       if (await tgSendHtml(target.token, target.chatId, text)) {
         if (unsent.length) {

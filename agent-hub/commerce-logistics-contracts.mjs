@@ -53,6 +53,11 @@ const deadstockMigration = read('supabase/migrations/20260810150000_commerce_dea
 const priceTarget = read('supabase/functions/_shared/priceTarget.ts')
 const quality = read('agent-hub/quality-gate.ps1')
 const packageJson = read('package.json')
+const priceChat = read('supabase/functions/_shared/commercePriceChat.ts')
+const priceChatTest = read('agent-hub/price-chat-behavior.mjs')
+const webhook = read('supabase/functions/telegram-webhook/index.ts')
+const acceptPriceMigration = read('supabase/migrations/20260810160000_commerce_accept_price.sql')
+const adviceSentMigration = read('supabase/migrations/20260810170000_price_advice_sent.sql')
 const listingMigration = read('supabase/migrations/20260806240000_commerce_listing_drafts.sql')
 const listingUi = read('src/components/platform/CommerceListingAgent.tsx')
 const listingChat = read('supabase/functions/_shared/commerceListingChat.ts')
@@ -649,9 +654,56 @@ const checks = [
     /<code>\$\{Math\.round\(advice\.target_tiyin \/ 100\)\}<\/code>/.test(priceTarget)
     && /Nemo не меняет цену на Uzum/.test(priceTarget)],
 
+  // ── Кнопки и гипотеза ──────────────────────────────────────────────────────────────────────
+
+  // Кнопку можно переслать, callback_data — подделать, а число из чата набирает человек.
+  // Единственное место, где проверку пола нельзя обойти, — база.
+  ['the floor is enforced in the database, not only in the button',
+    acceptPriceMigration.includes('if p_price_tiyin < v_floor then')
+    && acceptPriceMigration.includes("'below_floor'")
+    && acceptPriceMigration.includes("'no_floor'")
+    && /kind not in \('price_guard', 'deadstock'\)/.test(acceptPriceMigration)],
+
+  // Ожидание называет ЧИСЛО. «Цена выше пола» сбудется и когда владелец поставил пол, и когда он
+  // поставил ровно то, что советовали, — а это разные исходы с разной прибылью.
+  ['accepting a price registers that exact number as the hypothesis',
+    /'value', p_price_tiyin/.test(acceptPriceMigration)
+    && /make_interval\(days => 7\)/.test(acceptPriceMigration)
+    && /org_decision_register/.test(acceptPriceMigration)
+    && /accepted_price_tiyin/.test(acceptPriceMigration)],
+
+  ['a repeated press cannot register a second decision',
+    /if v_rec\.status <> 'open' then/.test(acceptPriceMigration)
+    && /where id = p_recommendation_id and status = 'open'/.test(acceptPriceMigration)],
+
+  // Лимит Telegram — 64 БАЙТА. Кнопка, вышедшая за него, приходит обрезанной и не совпадает ни с
+  // чем: нажатие молча не делает ничего.
+  ['the price buttons fit the telegram limit and carry the number they show',
+    /callback_data: `\$\{CB_PRICE\}:\$\{recommendationId\}:y:\$\{uzs\}`/.test(priceChat)
+    && /const encoder = new TextEncoder\(\)/.test(priceChatTest)],
+
+  // Вебхук без памяти: состояние «ждём число от этого чата» держать негде, и потерянное
+  // состояние означало бы молча проглоченный ответ.
+  ['own price is matched by a marker in the reply, not by stored state',
+    /export function replyTarget/.test(priceChat)
+    && /force_reply: true/.test(webhook)
+    && /rows\.length > 1\) return null/.test(webhook)],
+
+  // Фраза не содержит цены. Угаданная из неё цифра уехала бы в решение как согласие владельца.
+  ['a sentence is not a price',
+    priceChat.includes(String.raw`.test(raw)) return null`) && priceChat.includes('return Number.isSafeInteger(uzs) && uzs > 0 ? uzs * 100 : null') && /if \(!\/\^\[/.test(priceChat)],
+
+  ['the advice is sent once, with its own mark',
+    adviceSentMigration.includes('advice_sent_at')
+    && /if \(row\.advice_sent_at \|\| row\.status !== 'open'\) continue/.test(commerceDigest)
+    && /inline_keyboard: priceKeyboard\(row\.id, advice\.target_tiyin\)/.test(commerceDigest)
+    && deploy.includes('20260810160000_commerce_accept_price.sql')
+    && deploy.includes('20260810170000_price_advice_sent.sql')],
+
   ['the price engine is covered by the gate, not only by hope',
     quality.includes('npm run test:price-target')
-    && packageJson.includes('agent-hub/price-target-behavior.mjs')],
+    && packageJson.includes('agent-hub/price-target-behavior.mjs')
+    && quality.includes('npm run test:price-chat')],
 
   ['the returns field says out loud that it does not move the price',
     ['на цену не влияет', 'narxga ta’sir qilmaydi', 'does not affect the price']
