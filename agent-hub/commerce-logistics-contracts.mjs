@@ -693,9 +693,17 @@ const checks = [
   ['a sentence is not a price',
     priceChat.includes(String.raw`.test(raw)) return null`) && priceChat.includes('return Number.isSafeInteger(uzs) && uzs > 0 ? uzs * 100 : null') && /if \(!\/\^\[/.test(priceChat)],
 
+  // Предела не было, ручной запуск на всём каталоге выдал 78 сообщений с кнопками подряд.
+  // Кнопка требует решения по каждому товару, а семьдесят восемь решений подряд не принимает
+  // никто — все они превращаются в непрочитанное.
+  ['no run can bury the owner in buttons',
+    /const ADVICE_PER_RUN = 3/.test(commerceDigest)
+    && commerceDigest.includes('if (sent >= ADVICE_PER_RUN) break')
+    && commerceDigest.includes('.sort((a, b) => Math.abs(')],
+
   ['the advice is sent once, with its own mark',
     adviceSentMigration.includes('advice_sent_at')
-    && /if \(row\.advice_sent_at \|\| row\.status !== 'open'\) continue/.test(commerceDigest)
+    && commerceDigest.includes("!row.advice_sent_at && row.status === 'open'")
     && /inline_keyboard: priceKeyboard\(row\.id, advice\.target_tiyin\)/.test(commerceDigest)
     && deploy.includes('20260810160000_commerce_accept_price.sql')
     && deploy.includes('20260810170000_price_advice_sent.sql')],

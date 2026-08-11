@@ -118,7 +118,24 @@ const uzs = (tiyin: number) => Math.round(tiyin / 100).toLocaleString('ru-RU')
  * Число, которое переносят в кабинет, стоит отдельной строкой и без разметки: его выделяют
  * пальцем на телефоне, и любой символ рядом уедет вместе с ним.
  */
-export function adviceMessage(title: string, advice: PriceAdvice): string {
+export function adviceMessage(title: string, advice: PriceAdvice, estimated: string[] = []): string {
+  // Совет, выведенный из угаданной себестоимости, обязан назвать себя таковым. Здесь это дороже,
+  // чем где-либо: на экране число можно перепроверить, а в чате под ним стоит кнопка «Принять»,
+  // и одно нажатие превращает догадку в цену на витрине.
+  const guessed = estimated.filter((field) => field === 'unit_cost_tiyin' || field === 'commission_percent' || field === 'fulfillment_tiyin')
+  const caveat = guessed.length
+    ? ['', `≈ Расчёт опирается на оценку Nemo (${guessed.map((f) => FIELD_NAMES[f] ?? f).join(', ')}). Подтвердите её, прежде чем менять цену.`]
+    : []
+  return adviceBody(title, advice, caveat)
+}
+
+const FIELD_NAMES: Record<string, string> = {
+  unit_cost_tiyin: 'себестоимость',
+  commission_percent: 'комиссия',
+  fulfillment_tiyin: 'логистика',
+}
+
+function adviceBody(title: string, advice: PriceAdvice, caveat: string[]): string {
   const head = advice.direction === 'raise'
     ? `📉 <b>Маржа ниже минимума</b>`
     : `🧊 <b>Товар лежит без движения</b>`
@@ -139,5 +156,6 @@ export function adviceMessage(title: string, advice: PriceAdvice): string {
     `<code>${Math.round(advice.target_tiyin / 100)}</code>`,
     '',
     '<i>Nemo не меняет цену на Uzum. Скопируйте число и поставьте его в кабинете.</i>',
+    ...caveat,
   ].join('\n')
 }

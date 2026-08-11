@@ -149,11 +149,23 @@ function stockoutLine(row: any) {
  * Совет без пола не отправляется вовсе. Кнопка «Принять» под ценой, которую не с чем сравнить,
  * означала бы «согласитесь вслепую», и база такое всё равно отвергнет — лучше не спрашивать.
  */
+const ADVICE_PER_RUN = 3
+
 async function sendPriceAdvice(db: any, target: { token: string; chatId: string }, rows: any[]): Promise<number> {
   let sent = 0
-  for (const row of rows) {
-    if (row.advice_sent_at || row.status !== 'open') continue
-    if (row.kind !== 'price_guard' && row.kind !== 'deadstock') continue
+  // Не больше трёх советов за прогон, и это не вкусовщина, а цена ошибки: у отправки не было
+  // предела, ручной запуск на всём каталоге выдал 78 сообщений с кнопками подряд, и владелец
+  // получил ровно ту стену, против которой построено правило Zero Noise. Кнопка требует решения
+  // по каждому товару — семьдесят восемь решений подряд не принимает никто, и все они
+  // превращаются в непрочитанное.
+  //
+  // Первыми идут те, где на кону больше денег: разрыв между нынешней ценой и рекомендуемой.
+  const candidates = rows
+    .filter((row) => !row.advice_sent_at && row.status === 'open' && (row.kind === 'price_guard' || row.kind === 'deadstock'))
+    .sort((a, b) => Math.abs(Number(b.calculation?.min_selling_price_tiyin ?? 0) - Number(b.calculation?.price_tiyin ?? 0))
+                  - Math.abs(Number(a.calculation?.min_selling_price_tiyin ?? 0) - Number(a.calculation?.price_tiyin ?? 0)))
+  for (const row of candidates) {
+    if (sent >= ADVICE_PER_RUN) break
     const calc = row.calculation ?? {}
     const fees = {
       commission_percent: Number(calc.commission_percent ?? calc.fees?.commission_percent ?? NaN),
@@ -173,7 +185,7 @@ async function sendPriceAdvice(db: any, target: { token: string; chatId: string 
     const title = String(row.commerce_skus?.title ?? row.commerce_skus?.external_sku ?? 'товар')
     const ok = await tgSendKeyboard(
       target.token, target.chatId,
-      adviceMessage(escapeHtml(title), advice),
+      adviceMessage(escapeHtml(title), advice, Array.isArray(calc.estimated_inputs) ? calc.estimated_inputs : []),
       { inline_keyboard: priceKeyboard(row.id, advice.target_tiyin) },
     )
     if (!ok) continue
