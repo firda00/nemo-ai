@@ -7,6 +7,7 @@
 // второго задания, а повторный забор берёт ту же строку и доводит её до конца.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
+import { entitlementFor } from '../_shared/entitlement.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { embedText } from '../_shared/knowledge.ts'
@@ -83,6 +84,11 @@ async function runJob(db: any, job: { id: string; account_id: string; run_ref: s
   const now = new Date()
   const researchRunId = String(job.payload?.research_run_id ?? '')
   if (!researchRunId) return outcome
+
+  // Извлечение памяти — вызовы модели и эмбеддингов, то есть платная работа. Задание могло быть
+  // поставлено в очередь при живой подписке и дождаться очереди уже после её конца: проверять
+  // надо здесь, перед работой, а не там, где задание создавалось.
+  if (!(await entitlementFor(db, job.account_id)).allowed) return outcome
 
   const { data: run } = await db.from('research_runs').select('task, report').eq('id', researchRunId).eq('account_id', job.account_id).maybeSingle()
   const report = String(run?.report ?? '').trim()

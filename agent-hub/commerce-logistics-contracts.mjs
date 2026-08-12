@@ -58,6 +58,9 @@ const visionModule = read('supabase/functions/_shared/listingVision.ts')
 const llmModule = read('supabase/functions/_shared/llm.ts')
 const imagesModule = read('supabase/functions/_shared/listingImages.ts')
 const uploadLib = read('src/lib/listingImageUpload.ts')
+const agentWorker = read('supabase/functions/agent-worker/index.ts')
+const opsAutopilot = read('supabase/functions/ops-autopilot/index.ts')
+const orgMemoryWorker = read('supabase/functions/org-memory-worker/index.ts')
 const uploadUi = read('src/components/platform/ListingImageUpload.tsx')
 const imagesMigration = read('supabase/migrations/20260811130000_listing_images_bucket.sql')
 const paywallDialog = read('src/components/ui/PaywallDialog.tsx')
@@ -880,6 +883,24 @@ const checks = [
   ['the image helpers are covered by the gate',
     quality.includes('npm run test:listing-images')
     && deploy.includes('20260811130000_listing_images_bucket.sql')],
+
+  // ── Замок стоит там, где ТРАТЯТСЯ деньги ───────────────────────────────────────────────────
+  //
+  // Первая версия проверяла подписку на трёх дверях, куда стучится человек. Платную работу при
+  // этом делают воркеры по расписанию и очередь — обращения владельца там нет вовсе, и аккаунт с
+  // истёкшим триалом продолжал получать синхронизацию, автопилот, память и вызовы модели.
+  // Оплата закрывала три двери, а дом стоял открытым с четырёх сторон.
+  ['every worker that spends money checks the subscription first',
+    [agentWorker, commerceWorker, opsAutopilot, orgMemoryWorker].every((file) => file.includes('entitlementFor('))],
+
+  // pgmq вернёт сообщение через время видимости: аккаунт без подписки крутил бы одну задачу вечно.
+  ['a blocked queue message is dropped, not retried forever',
+    agentWorker.includes('const stopped = !agent?.account_id')
+    && agentWorker.includes('if (stopped) {') && agentWorker.includes("q_delete', { mid: m.msg_id }")],
+
+  // Пакетный прогон, где один плательщик открывает работу всем в списке, — имитация замка.
+  ['a batch run checks each account on its own',
+    opsAutopilot.includes('!(await entitlementFor(db, r.account_id)).allowed')],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')

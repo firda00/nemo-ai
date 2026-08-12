@@ -2,6 +2,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { uzumProductRows, uzumSalesRows, type UzumProductRow } from '../_shared/uzum.ts'
+import { entitlementFor } from '../_shared/entitlement.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { batchOutcome, effectiveFulfillmentTiyin, MARGIN_INPUTS, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
@@ -183,6 +184,17 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
   if (pilotError) throw pilotError
   if (!pilot) {
     if (!await finish(db, run, 'skipped', 'commerce pilot is inactive or expired')) throw new Error('claim lost')
+    return 'skipped'
+  }
+  // Синхронизация — платная работа: чтение Uzum, расчёты, находки, вызовы модели ниже по цепочке.
+  // Она идёт по расписанию, без всякого обращения владельца, поэтому замок на входных действиях
+  // её не касался вовсе.
+  //
+  // Прогон помечается пропущенным с причиной, а не падает: истёкшая подписка — это решение
+  // владельца не платить, а не сбой, и в отчёте сбоев ей не место.
+  const access = await entitlementFor(db, typedCatalog.account_id)
+  if (!access.allowed) {
+    if (!await finish(db, run, 'skipped', `subscription ${access.reason}`)) throw new Error('claim lost')
     return 'skipped'
   }
   const { data: keyRow, error: keyError } = await db.from('provider_keys')

@@ -4,11 +4,13 @@
 // delivers a short brief to the owner and logs it. No human watches the numbers — the platform
 // runs its own operations.
 //   POST /functions/v1/ops-autopilot   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { entitlementFor } from '../_shared/entitlement.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -38,17 +40,31 @@ Deno.serve(async (req) => {
   const active = ((rows ?? []) as Any[]).filter((r) => Number(r.dialogues) + Number(r.leads) + Number(r.open_tasks) + Number(r.needs_operator) > 0).slice(0, 50)
   if (!active.length) return json({ ok: true, accounts: (rows ?? []).length, sent: 0 })
 
-  const accIds = active.map((r) => r.account_id)
+  // Каждый аккаунт проверяется отдельно: пакетный прогон, где один плательщик открывает работу
+  // всем остальным в списке, — это не замок, а его имитация.
+  const deliverable = (await Promise.all(active.map(async (r) =>
+    (await blocksExternalActions(db, r.account_id)) || !(await entitlementFor(db, r.account_id)).allowed
+      ? null
+      : r))).filter(Boolean) as Any[]
+  const accIds = deliverable.map((r) => r.account_id)
   // report language + account bot token (via the account's telegram channels)
-  const { data: bps } = await db.from('business_profiles').select('account_id, report_lang').in('account_id', accIds)
+  let bps: Any[] = []
+  let agents: Any[] = []
+  if (accIds.length) {
+    const [{ data: profileRows }, { data: agentRows }] = await Promise.all([
+      db.from('business_profiles').select('account_id, report_lang').in('account_id', accIds),
+      db.from('agents').select('id, account_id').in('account_id', accIds),
+    ])
+    bps = profileRows ?? []
+    agents = agentRows ?? []
+  }
   const langByAcc = new Map<string, string>()
-  for (const b of (bps ?? []) as Any[]) langByAcc.set(b.account_id, norm(b.report_lang))
-  const { data: agents } = await db.from('agents').select('id, account_id').in('account_id', accIds)
+  for (const b of bps) langByAcc.set(b.account_id, norm(b.report_lang))
   const agentsByAcc: Record<string, string[]> = {}
-  for (const a of (agents ?? []) as Any[]) (agentsByAcc[a.account_id] ??= []).push(a.id)
+  for (const a of agents) (agentsByAcc[a.account_id] ??= []).push(a.id)
 
   let sent = 0
-  for (const r of active) {
+  for (const r of deliverable) {
     try {
       const agentIds = agentsByAcc[r.account_id] ?? []
       if (!agentIds.length) continue
@@ -59,6 +75,7 @@ Deno.serve(async (req) => {
 
       const apiKey = await resolveOpenRouterKey(db, r.account_id, OPENROUTER_API_KEY)
       const signals = `dialogues_today=${r.dialogues}, new_leads_today=${r.leads}, open_tasks=${r.open_tasks}, overdue_tasks=${r.overdue_tasks}, unattended_support=${r.needs_operator}`
+      if (await blocksExternalActions(db, r.account_id)) continue
       const resp = await callOpenRouter({
         apiKey, model: PRIMARY_MODEL, fallbackModel: FALLBACK_MODEL, temperature: 0.4, maxTokens: 350,
         messages: [
@@ -73,6 +90,7 @@ Deno.serve(async (req) => {
 
       const msg = `${HEAD[lang]}\n${summary}` + (actions.length ? TODO[lang] + '\n' + actions.map((a, i) => `${i + 1}. ${a}`).join('\n') : '')
       await db.from('ops_reports').insert({ account_id: r.account_id, kind: 'autopilot', summary, actions })
+      if (await blocksExternalActions(db, r.account_id)) continue
       if (await tgSend(String(token), String(r.notify_chat_id), msg)) sent++
     } catch { /* best effort per account */ }
   }
