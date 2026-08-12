@@ -8,6 +8,15 @@ project_id = "nemo-ai"
 [functions.telegram-webhook]
 verify_jwt = false
 
+# Кассы Payme и Click. Публичны по необходимости: ни один платёжный провайдер не умеет
+# присылать JWT Supabase. Это не «без авторизации» — у Payme HTTP Basic с ключом мерчанта, у
+# Click подпись MD5, и обе проверяются до единого обращения к базе.
+[functions.payme-webhook]
+verify_jwt = false
+
+[functions.click-webhook]
+verify_jwt = false
+
 # Setup helper is gated by the SETUP_SECRET header, so it is also public.
 [functions.setup-telegram]
 verify_jwt = false

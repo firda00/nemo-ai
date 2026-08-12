@@ -20,7 +20,9 @@ const classified = [...publicFunctions, ...authenticatedFunctions, ...excludedFu
 
 assert.equal(new Set(classified).size, classified.length, 'a function may appear in only one deployment class')
 assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory must be deployed or explicitly excluded')
-assert.equal(publicFunctions.length, 28)
+// 30 после касс Payme и Click. Публичны они по необходимости: ни один провайдер не умеет
+// присылать JWT Supabase, и авторизация у них своя — Basic и подпись, — проверяемая до базы.
+assert.equal(publicFunctions.length, 30)
 assert.equal(authenticatedFunctions.length, 47)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')

@@ -63,6 +63,10 @@ const billingLive = read('agent-hub/billing-entitlement-live.mjs')
 const entitlementModule = read('supabase/functions/_shared/entitlement.ts')
 const protocolModule = read('supabase/functions/_shared/paymentProtocol.ts')
 const protocolTest = read('agent-hub/payment-protocol-behavior.mjs')
+const paymeEndpoint = read('supabase/functions/payme-webhook/index.ts')
+const clickEndpoint = read('supabase/functions/click-webhook/index.ts')
+const transactionsMigration = read('supabase/migrations/20260812130000_billing_transactions.sql')
+const planMigration = read('supabase/migrations/20260812120000_invoice_sets_plan.sql')
 const agentWorker = read('supabase/functions/agent-worker/index.ts')
 const opsAutopilot = read('supabase/functions/ops-autopilot/index.ts')
 const orgMemoryWorker = read('supabase/functions/org-memory-worker/index.ts')
@@ -1004,6 +1008,43 @@ const checks = [
   // Провайдеру нужно различие «уже оплачено» и «сумма не та», иначе он будет повторять.
   ['a settled invoice answers already_paid, not a wrong amount',
     protocolModule.indexOf("reason: 'already_paid'") < protocolModule.indexOf("reason: 'wrong_amount'")],
+
+  // ── Эндпоинты касс ─────────────────────────────────────────────────────────────────────────
+
+  // Обе кассы читают ТЕЛО, а не код: 4xx и 5xx они считают сбоем связи и повторяют запрос, а
+  // покупатель видит бесконечное ожидание вместо внятного отказа.
+  ['both endpoints answer 200 and speak the protocol in the body',
+    (paymeEndpoint.match(/status: 200/g) ?? []).length >= 1
+    && (clickEndpoint.match(/status: 200/g) ?? []).length >= 1
+    && paymeEndpoint.includes('return reply(paymeFailure(id, PAYME_ERRORS.CANNOT_PERFORM')
+    && clickEndpoint.includes('return fail(CLICK_ERRORS.BAD_REQUEST)')],
+
+  // Неавторизованный запрос не должен уметь даже узнать, существует ли счёт с таким номером.
+  ['authentication runs before the database is touched',
+    paymeEndpoint.indexOf('checkPaymeAuth(') < paymeEndpoint.indexOf('createClient(URL, SERVICE)')
+    && clickEndpoint.indexOf('checkClickSignature(') < clickEndpoint.indexOf('createClient(URL, SERVICE)')],
+
+  // Perform до Create — транзакции нет. Создавать её задним числом значит подтвердить платёж,
+  // которого не было.
+  ['a perform without a create is refused, not invented',
+    paymeEndpoint.includes('if (!existing) return reply(paymeFailure(id, PAYME_ERRORS.TRANSACTION_NOT_FOUND')],
+
+  // Именно эта сверка не даёт второму Complete закрыться по чужой подготовке.
+  ['click complete must match its own prepare',
+    clickEndpoint.includes("String(request.merchant_prepare_id ?? '') !== String(existing.merchant_prepare_id ?? '')")
+    && clickEndpoint.includes('amount !== Number(existing.amount_tiyin)')],
+
+  // Уникальность по провайдеру не запрещает две РАЗНЫЕ транзакции на один счёт: две попытки Click
+  // или оплату через Payme и Click сразу. Запрещает частичный индекс.
+  ['one invoice can be settled by exactly one transaction',
+    transactionsMigration.includes('billing_transactions_one_performed_per_invoice')
+    && transactionsMigration.includes('on public.billing_transactions (invoice_id) where state = 2')],
+
+  // Замок читает подписку, а квоты — accounts.plan. Оплата обязана двигать обе, иначе клиент,
+  // заплативший вчера, упирается в лимит бесплатного тарифа сегодня.
+  ['a payment moves the quota as well as the lock',
+    planMigration.includes('update public.accounts')
+    && planMigration.includes('set plan = v_invoice.plan_code')],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')

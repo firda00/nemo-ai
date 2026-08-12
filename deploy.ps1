@@ -120,6 +120,8 @@ Apply-Migration .\supabase\migrations\20260811120000_billing_subscriptions.sql
 Apply-Migration .\supabase\migrations\20260811130000_listing_images_bucket.sql
 Apply-Migration .\supabase\migrations\20260812100000_telegram_inbound_log.sql
 Apply-Migration .\supabase\migrations\20260812110000_billing_invoices.sql
+Apply-Migration .\supabase\migrations\20260812120000_invoice_sets_plan.sql
+Apply-Migration .\supabase\migrations\20260812130000_billing_transactions.sql
 
 $schemaCheckSql = @'
 select
