@@ -58,6 +58,8 @@ const visionModule = read('supabase/functions/_shared/listingVision.ts')
 const llmModule = read('supabase/functions/_shared/llm.ts')
 const imagesModule = read('supabase/functions/_shared/listingImages.ts')
 const uploadLib = read('src/lib/listingImageUpload.ts')
+const invoicesMigration = read('supabase/migrations/20260812110000_billing_invoices.sql')
+const billingLive = read('agent-hub/billing-entitlement-live.mjs')
 const agentWorker = read('supabase/functions/agent-worker/index.ts')
 const opsAutopilot = read('supabase/functions/ops-autopilot/index.ts')
 const orgMemoryWorker = read('supabase/functions/org-memory-worker/index.ts')
@@ -901,6 +903,40 @@ const checks = [
   // Пакетный прогон, где один плательщик открывает работу всем в списке, — имитация замка.
   ['a batch run checks each account on its own',
     opsAutopilot.includes('!(await entitlementFor(db, r.account_id)).allowed')],
+
+  // ── Фундамент биллинга ─────────────────────────────────────────────────────────────────────
+  //
+  // Уникальность (provider, transaction_id) защищает СТРОКУ, а не начисление. Две попытки Click
+  // дают разные click_trans_id при одном merchant_trans_id, и обе продлили бы срок; тот же счёт
+  // можно оплатить и через Payme, и через Click. Единица покупки — счёт, и права по нему выдаются
+  // ровно один раз, чем бы за него ни платили.
+  ['entitlement is granted once per invoice, not once per payment row',
+    invoicesMigration.includes('entitlement_applied_at timestamptz')
+    && invoicesMigration.includes('if v_invoice.entitlement_applied_at is not null then')
+    && invoicesMigration.includes('where id = v_invoice.id and entitlement_applied_at is null')
+    && invoicesMigration.includes('for update')],
+
+  // От now() всегда — крадёт остаток у продлившего заранее. От paid_until всегда — продлевает в
+  // прошлое вернувшемуся после перерыва: платёж прошёл, а замок не открылся.
+  ['the period stacks forward without stealing or backdating',
+    invoicesMigration.includes('greatest(coalesce(paid_until, pg_catalog.now()), pg_catalog.now())')],
+
+  // Иначе защита по сумме бессмысленна: подправил amount под пришедший платёж — и «сумма совпала».
+  ['invoice terms cannot be edited after issuing',
+    invoicesMigration.includes('invoice terms are immutable once issued')
+    && invoicesMigration.includes('create trigger billing_invoices_freeze before update')],
+
+  // Триал по почте обходится новым ящиком раз в три дня и стоит ноль.
+  ['the trial belongs to the shop, not to the email',
+    invoicesMigration.includes('create table if not exists public.billing_trial_claims')
+    && invoicesMigration.includes('shop_id    text primary key')
+    && invoicesMigration.includes('create or replace function public.trial_allowed_for_account')],
+
+  // Гейт обязан быть воспроизводимым без боевых ключей, поэтому живой тест запускается руками.
+  ['the race is covered by a live test, kept out of the offline gate',
+    packageJson.includes('agent-hub/billing-entitlement-live.mjs')
+    && !quality.includes('test:billing-live')
+    && billingLive.includes('await Promise.all([')],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')
