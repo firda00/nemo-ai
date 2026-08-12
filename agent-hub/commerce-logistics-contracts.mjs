@@ -61,6 +61,8 @@ const uploadLib = read('src/lib/listingImageUpload.ts')
 const invoicesMigration = read('supabase/migrations/20260812110000_billing_invoices.sql')
 const billingLive = read('agent-hub/billing-entitlement-live.mjs')
 const entitlementModule = read('supabase/functions/_shared/entitlement.ts')
+const protocolModule = read('supabase/functions/_shared/paymentProtocol.ts')
+const protocolTest = read('agent-hub/payment-protocol-behavior.mjs')
 const agentWorker = read('supabase/functions/agent-worker/index.ts')
 const opsAutopilot = read('supabase/functions/ops-autopilot/index.ts')
 const orgMemoryWorker = read('supabase/functions/org-memory-worker/index.ts')
@@ -955,6 +957,53 @@ const checks = [
     packageJson.includes('agent-hub/billing-entitlement-live.mjs')
     && !quality.includes('test:billing-live')
     && billingLive.includes('await Promise.all([')],
+
+  // ── Протоколы касс ─────────────────────────────────────────────────────────────────────────
+  //
+  // Модуль намеренно чист: ни Deno.env, ни базы, ни сети. Здесь весь риск платёжного контура, и
+  // потому здесь же проверяются ветки, случающиеся в бою раз в год.
+  ['the protocol module stays pure enough to be tested',
+    // Исполняемая форма, а не слово: `Deno.env` встречается в шапке модуля объяснением того,
+    // почему его там нет. Пятый случай в проекте, когда контракт ловил прозу вместо кода.
+    !protocolModule.includes('Deno.env.get(')
+    && !protocolModule.includes('createClient(')
+    && quality.includes('npm run test:payment-protocol')],
+
+  // Обычное === выходит на первом несовпавшем байте, и подпись подбирается побайтово по времени.
+  ['signatures and keys are compared without leaking time',
+    protocolModule.includes('export function constantTimeEqual')
+    && protocolModule.includes('diff |= (left[i] ?? 0) ^ (right[i] ?? 0)')
+    && protocolModule.includes('constantTimeEqual(clickSignature(request, secret).toLowerCase()')],
+
+  // Ненастроенная касса не должна принимать оплату ни от кого.
+  ['an unconfigured merchant accepts nothing',
+    protocolModule.includes('if (!expectedKey || !expectedLogin) return false')
+    && protocolModule.includes('if (!secret) return false')],
+
+  // «290000.00» * 100 через Number однажды даст 28999999.999999996.
+  ['the amount is parsed from the string, never multiplied into a float',
+    protocolModule.includes('Number.isSafeInteger(tiyin) && tiyin > 0')
+    && protocolTest.includes("amountToTiyin('2.9e5')") === false
+    && protocolTest.includes("'2.9e5'")],
+
+  // Порядок полей — часть протокола: перестановка даёт другой хеш, и проверка начинает пропускать
+  // либо всё, либо ничего. У Complete в середине merchant_prepare_id — он связывает фазы.
+  ['the click signature keeps the documented field order for both phases',
+    protocolModule.includes('request.merchant_prepare_id ?? ')
+    && protocolTest.includes('порядок полей Prepare')
+    && protocolTest.includes('порядок полей Complete')],
+
+  // Общий 400 или 500 провайдер считает сбоем связи и ретраит вечно.
+  ['refusals speak the provider protocol, not HTTP',
+    protocolModule.includes('UNAUTHORIZED: -32504')
+    && protocolModule.includes('INVALID_AMOUNT: -31001')
+    && protocolModule.includes('TRANSACTION_NOT_FOUND: -31003')
+    && protocolModule.includes('SIGN_CHECK_FAILED: -1')
+    && protocolModule.includes('TRANSACTION_NOT_FOUND: -6')],
+
+  // Провайдеру нужно различие «уже оплачено» и «сумма не та», иначе он будет повторять.
+  ['a settled invoice answers already_paid, not a wrong amount',
+    protocolModule.indexOf("reason: 'already_paid'") < protocolModule.indexOf("reason: 'wrong_amount'")],
 
   ['the paywall helper is covered by the gate',
     quality.includes('npm run test:paywall')

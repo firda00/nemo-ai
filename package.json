@@ -67,6 +67,7 @@
     "test:paywall": "node --experimental-strip-types agent-hub/paywall-behavior.mjs",
     "test:listing-vision": "node --experimental-strip-types agent-hub/listing-vision-behavior.mjs",
     "test:listing-images": "node --experimental-strip-types agent-hub/listing-images-behavior.mjs",
+    "test:payment-protocol": "node --experimental-strip-types agent-hub/payment-protocol-behavior.mjs",
     "test:billing-live": "node agent-hub/billing-entitlement-live.mjs",
     "test:listing-upload": "node --experimental-strip-types agent-hub/listing-upload-behavior.mjs",
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",

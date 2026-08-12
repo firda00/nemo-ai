@@ -23,6 +23,7 @@ $steps = @(
   @{ Name = 'Price target behavior'; Command = { npm run test:price-target } },
   @{ Name = 'Price chat behavior'; Command = { npm run test:price-chat } },
   @{ Name = 'Entitlement behavior'; Command = { npm run test:entitlement } },
+  @{ Name = 'Payment protocol behavior'; Command = { npm run test:payment-protocol } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },
   @{ Name = 'Listing images behavior'; Command = { npm run test:listing-images } },
