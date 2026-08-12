@@ -860,6 +860,12 @@ const checks = [
 
   // Альбом приходит несколькими обновлениями, подпись несёт только первое, а связать их без
   // хранимого состояния нельзя. Ограничение названо владельцу словами, а не оставлено на догадку.
+  // Требование волшебного слова перед фотографией теряло каждую попытку, где оно не угадано, и
+  // понять причину владелец не мог: подпись есть, карточки нет, объяснения нет.
+  ['a captioned photo is intent enough, without a magic word',
+    tgProcess.includes('const hasPhoto = Array.isArray(msg.photo) && msg.photo.length > 0')
+    && tgProcess.includes('newListingText(text) ?? (hasPhoto && text.trim().length >= 10 ? text.trim() : null)')],
+
   ['the album limitation is stated to the owner, not hidden',
     listingChat.includes('Альбом Telegram присылает по одному сообщению на снимок')
     && listingChat.includes('Габариты, вес и себестоимость с фотографии не берутся')],

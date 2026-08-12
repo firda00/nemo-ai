@@ -294,7 +294,17 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
       // BEFORE the economics branch on purpose. "новый товар, себестоимость 18000" satisfies
       // looksLikeEconomics too, and taking that path would hunt for an existing SKU to edit
       // instead of drafting the new product the owner just announced.
-      const listingText = newListingText(text)
+      // ФОТОГРАФИЯ С ПОДПИСЬЮ — сама по себе заявка на товар, без волшебного слова.
+      //
+      // Требование начинать с «новый товар» я поставил в текстовом сценарии, где оно осмысленно:
+      // сообщение без него — это разговор, а не заведение позиции. Со снимком всё иначе. Владелец
+      // фотографирует товар и подписывает его — другого смысла у этого действия нет, и заставлять
+      // угадывать пароль значит терять каждую попытку, где он не угадан. Именно это и произошло:
+      // подпись пришла, триггер не совпал, карточка не собралась, и понять почему было нельзя.
+      //
+      // Порог в десять символов тот же, что и для текста: «спасибо» под фото — не описание товара.
+      const hasPhoto = Array.isArray(msg.photo) && msg.photo.length > 0
+      const listingText = newListingText(text) ?? (hasPhoto && text.trim().length >= 10 ? text.trim() : null)
       if (listingText !== null) {
         try {
           if (!listingText) { await tgSendHtml(botToken, chatId, NEW_LISTING_HELP); return }

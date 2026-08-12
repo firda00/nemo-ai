@@ -6,6 +6,7 @@ import {
   parseVision,
   visionMessage,
 } from '../supabase/functions/_shared/listingVision.ts'
+import { newListingText } from '../supabase/functions/_shared/commerceListingChat.ts'
 
 // --- Сообщение с картинками -------------------------------------------------------------------
 
@@ -83,4 +84,21 @@ assert.equal(noEcho, 'Хиджаб-бони пудровый')
 // Пустое зрение не портит исходный текст.
 assert.equal(mergeVisionIntoSource('Хиджаб', null), 'Хиджаб')
 
-console.log('[OK] Listing vision behaviour: 24 assertions')
+// --- Фото с подписью не требует волшебного слова -----------------------------------------------
+// Владелец фотографирует товар и подписывает его — другого смысла у этого действия нет. Требование
+// начинать с «новый товар» теряло каждую попытку, где слово не угадано, и понять почему было нельзя.
+
+const captionIntent = (text, hasPhoto) =>
+  newListingText(text) ?? (hasPhoto && text.trim().length >= 10 ? text.trim() : null)
+
+assert.equal(captionIntent('Брелок-кликер антистресс, 25х25х30 мм', true), 'Брелок-кликер антистресс, 25х25х30 мм',
+  'подпись под фото идёт в работу как есть')
+assert.equal(captionIntent('Брелок-кликер антистресс, 25х25х30 мм', false), null,
+  'без фото прежнее правило в силе: текст без триггера — это разговор')
+assert.equal(captionIntent('новый товар: брелок-кликер антистресс', false), 'брелок-кликер антистресс', 'триггер работает как и работал')
+// Триггер есть, а описания нет — это просьба о подсказке, и подпись её не подменяет.
+assert.equal(captionIntent('новый товар: брелок', true), '', 'короткое описание после триггера остаётся просьбой о помощи')
+assert.equal(captionIntent('спасибо', true), null, 'короткая подпись — не описание товара')
+assert.equal(captionIntent('  ', true), null)
+
+console.log('[OK] Listing vision behaviour: 30 assertions')
