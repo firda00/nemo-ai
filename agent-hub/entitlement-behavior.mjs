@@ -4,7 +4,7 @@ import { entitled, lockMessage, TRIAL_DAYS } from '../supabase/functions/_shared
 const NOW = new Date('2026-08-11T12:00:00Z')
 const daysAgo = (n) => new Date(NOW.getTime() - n * 86_400_000).toISOString()
 const daysAhead = (n) => new Date(NOW.getTime() + n * 86_400_000).toISOString()
-const check = (subscription, accountCreatedAt) => entitled({ subscription, accountCreatedAt, now: NOW })
+const check = (subscription, accountCreatedAt, trialAllowed) => entitled({ subscription, accountCreatedAt, trialAllowed, now: NOW })
 
 // --- Триал считается от создания аккаунта -----------------------------------------------------
 // Не от первого платежа и не от первого входа: иначе «три дня» начинались бы в момент, который
@@ -54,4 +54,21 @@ assert.ok(text.includes('Пробные три дня закончились'))
 assert.ok(text.includes('остаётся доступным'), 'отказ обязан сказать, что данные не отобрали')
 assert.ok(lockMessage(overdue).includes('Срок подписки истёк'))
 
-console.log('[OK] Entitlement behaviour: 18 assertions')
+// --- Магазин, уже отработавший триал -----------------------------------------------------------
+// Триал по почте обходится новым ящиком раз в три дня и стоит ноль. Привязка к магазину поднимает
+// цену обхода до «другой настоящий магазин».
+
+const taken = check(null, daysAgo(1), false)
+assert.equal(taken.allowed, false, 'магазин уже пробовал Nemo под другой почтой')
+assert.equal(taken.reason, 'trial_taken')
+assert.ok(lockMessage(taken).includes('по этому магазину уже был использован'), 'отказ называет причину, а не «закрыто»')
+assert.ok(lockMessage(taken).includes('остаётся доступным'), 'и по-прежнему говорит, что данные на месте')
+
+// ЗАПЛАТИЛ — работает, чей бы магазин ни был. Правило про бесплатный период, а не про доступ.
+assert.equal(check({ status: 'active', trial_ends_at: null, paid_until: daysAhead(10) }, daysAgo(90), false).allowed, true)
+
+// Неизвестность трактуется в пользу владельца: сбой запроса о магазине не должен закрывать доступ.
+assert.equal(check(null, daysAgo(1), undefined).allowed, true, 'по умолчанию право есть')
+assert.equal(check(null, daysAgo(1), true).allowed, true)
+
+console.log('[OK] Entitlement behaviour: 24 assertions')

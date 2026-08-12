@@ -60,6 +60,7 @@ const imagesModule = read('supabase/functions/_shared/listingImages.ts')
 const uploadLib = read('src/lib/listingImageUpload.ts')
 const invoicesMigration = read('supabase/migrations/20260812110000_billing_invoices.sql')
 const billingLive = read('agent-hub/billing-entitlement-live.mjs')
+const entitlementModule = read('supabase/functions/_shared/entitlement.ts')
 const agentWorker = read('supabase/functions/agent-worker/index.ts')
 const opsAutopilot = read('supabase/functions/ops-autopilot/index.ts')
 const orgMemoryWorker = read('supabase/functions/org-memory-worker/index.ts')
@@ -927,6 +928,23 @@ const checks = [
     && invoicesMigration.includes('create trigger billing_invoices_freeze before update')],
 
   // Триал по почте обходится новым ящиком раз в три дня и стоит ноль.
+  // Правило, записанное в базе и никем не вызываемое, — это не правило, а комментарий.
+  ['the shop rule is actually asked, and only where it matters',
+    entitlementModule.includes("admin.rpc('trial_allowed_for_account'")
+    && entitlementModule.includes("const onTrial = !sub || sub.status === 'trial'")
+    && entitlementModule.includes('if (onTrial) {')],
+
+  // Заплатил — работает, чей бы магазин ни был: правило про бесплатный период, а не про доступ.
+  ['a paid account is never refused for a shop that is not its own',
+    entitlementModule.indexOf('trialAllowed === false') > entitlementModule.indexOf("sub?.status === 'active'")],
+
+  // Сбой запроса о магазине не должен закрывать доступ владельцу.
+  ['a failed lookup is read in the owner favour',
+    entitlementModule.includes('trialAllowed = error ? true : data !== false')],
+
+  ['the refusal names the reason instead of saying access is closed',
+    entitlementModule.includes('Пробный период по этому магазину уже был использован')],
+
   ['the trial belongs to the shop, not to the email',
     invoicesMigration.includes('create table if not exists public.billing_trial_claims')
     && invoicesMigration.includes('shop_id    text primary key')

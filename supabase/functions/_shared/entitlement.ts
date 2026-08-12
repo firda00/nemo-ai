@@ -20,7 +20,7 @@ export type SubscriptionRow = {
 export type Verdict = {
   allowed: boolean
   /** Почему отказано. Отказ без причины неотличим от поломки. */
-  reason: 'ok' | 'trial_expired' | 'subscription_expired' | 'cancelled'
+  reason: 'ok' | 'trial_expired' | 'subscription_expired' | 'cancelled' | 'trial_taken'
   /** Сколько дней триала осталось. null — когда триал уже не при чём. */
   trial_days_left: number | null
 }
@@ -39,6 +39,15 @@ const DAY = 86_400_000
 export function entitled(input: {
   subscription: SubscriptionRow
   accountCreatedAt: string | null
+  /**
+   * Отработал ли магазин этого аккаунта чужой триал.
+   *
+   * По умолчанию true — «право есть». Значение false должен ПРИНЕСТИ вызывающий, узнав его у
+   * базы; неизвестность здесь трактуется в пользу владельца, как и всё остальное в этом модуле.
+   * Оплаченной подписки правило не касается вовсе: заплатил — значит работает, чей бы магазин
+   * ни был.
+   */
+  trialAllowed?: boolean
   now?: Date
 }): Verdict {
   const now = input.now ?? new Date()
@@ -53,6 +62,13 @@ export function entitled(input: {
   }
   if (sub?.status === 'cancelled') return { allowed: false, reason: 'cancelled', trial_days_left: null }
   if (sub?.status === 'past_due') return { allowed: false, reason: 'subscription_expired', trial_days_left: null }
+
+  // Магазин уже отработал триал под другим аккаунтом.
+  //
+  // Проверка стоит ЗДЕСЬ, после оплаченных веток: заплативший работает независимо от того, чей
+  // магазин он подключил, — деньги закрывают вопрос. Правило касается только бесплатного
+  // периода, где обход стоил заведения новой почты раз в три дня.
+  if (input.trialAllowed === false) return { allowed: false, reason: 'trial_taken', trial_days_left: 0 }
 
   // Триал: явная дата из подписки, иначе три дня от создания аккаунта.
   const started = input.accountCreatedAt ? new Date(input.accountCreatedAt) : null
@@ -76,7 +92,19 @@ export async function entitlementFor(admin: any, accountId: string, now?: Date):
     admin.from('billing_subscriptions').select('status, trial_ends_at, paid_until').eq('account_id', accountId).maybeSingle(),
     admin.from('accounts').select('created_at').eq('id', accountId).maybeSingle(),
   ])
-  return entitled({ subscription: sub ?? null, accountCreatedAt: account?.created_at ?? null, now })
+
+  // Запрос о магазине делается ТОЛЬКО на пути триала. У оплаченного аккаунта ответ ни на что не
+  // влияет, а этот вызов стоит на горячем пути каждого фонового задания — лишнее обращение к базе
+  // там платится на каждом сообщении очереди.
+  const onTrial = !sub || sub.status === 'trial'
+  let trialAllowed = true
+  if (onTrial) {
+    const { data, error } = await admin.rpc('trial_allowed_for_account', { p_account_id: accountId })
+    // Сбой запроса — не отказ. Владелец не должен терять доступ из-за нашей неудачи спросить.
+    trialAllowed = error ? true : data !== false
+  }
+
+  return entitled({ subscription: sub ?? null, accountCreatedAt: account?.created_at ?? null, trialAllowed, now })
 }
 
 const MESSAGES: Record<Verdict['reason'], string> = {
@@ -84,6 +112,9 @@ const MESSAGES: Record<Verdict['reason'], string> = {
   trial_expired: 'Пробные три дня закончились. Продлите тариф, чтобы Nemo снова работал за вас.',
   subscription_expired: 'Срок подписки истёк. Продлите тариф для применения решений.',
   cancelled: 'Подписка отменена. Оформите тариф заново, чтобы продолжить.',
+  // Отказ называет ПРИЧИНУ, а не «доступ закрыт»: владелец, подключивший магазин, который уже
+  // пробовал Nemo под другой почтой, должен понять, что это не сбой и что делать дальше.
+  trial_taken: 'Пробный период по этому магазину уже был использован. Оформите тариф, чтобы продолжить.',
 }
 
 /**
