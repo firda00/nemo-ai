@@ -347,6 +347,31 @@ Deno.serve(async (req) => {
     const secret = req.headers.get('x-telegram-bot-api-secret-token')
     if (!channel.secret_token || !timingSafeEqual(secret, channel.secret_token)) return new Response('forbidden', { status: 403 })
 
+    // ПЕРВОЕ действие после проверки подписи — до дедупа, до кнопок, до очереди.
+    //
+    // Три дня подряд фотография «не доходила», и отличить «Telegram не доставил» от «мы отбросили
+    // раньше нужной ветки» было нечем: tg_updates пишется только в очередной ветке, а логи
+    // аналитики отстают на минуты и однажды уже заставили меня пять раз подряд сказать владельцу
+    // неправду. Теперь у пустоты здесь одно толкование: запроса не было.
+    //
+    // Содержимое не пишется, только форма: переписка владельца с ботом — его дело.
+    const logged = update?.message ?? update?.callback_query?.message
+    await db.from('tg_inbound_log').insert({
+      channel_id: channelId,
+      update_id: typeof update?.update_id === 'number' ? update.update_id : null,
+      kind: update?.callback_query ? 'callback_query' : update?.message ? 'message' : 'other',
+      has_photo: Array.isArray(update?.message?.photo) && update.message.photo.length > 0,
+      has_document: Boolean(update?.message?.document?.file_id),
+      has_voice: Boolean(update?.message?.voice?.file_id),
+      has_text: Boolean(update?.message?.text),
+      has_caption: Boolean(update?.message?.caption),
+      chat_id: logged?.chat?.id != null ? String(logged.chat.id) : null,
+    }).then(() => {}, (error: unknown) => {
+      // Диагностика не имеет права ронять доставку: сломанная запись в журнал — это потерянный
+      // журнал, а не потерянное сообщение владельца.
+      console.error('tg inbound log failed:', error)
+    })
+
     const { data: agent } = channel.agent_id
       ? await db.from('agents').select('account_id').eq('id', channel.agent_id).maybeSingle()
       : { data: null }
