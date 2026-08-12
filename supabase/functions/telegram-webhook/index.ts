@@ -346,6 +346,12 @@ Deno.serve(async (req) => {
 
     const secret = req.headers.get('x-telegram-bot-api-secret-token')
     if (!channel.secret_token || !timingSafeEqual(secret, channel.secret_token)) return new Response('forbidden', { status: 403 })
+    const { data: agent } = channel.agent_id
+      ? await db.from('agents').select('account_id').eq('id', channel.agent_id).maybeSingle()
+      : { data: null }
+    if (!agent?.account_id || await blocksExternalActions(db, agent.account_id)) return new Response('ok')
+
+    const update = await req.json()
 
     // ПЕРВОЕ действие после проверки подписи — до дедупа, до кнопок, до очереди.
     //
@@ -372,12 +378,6 @@ Deno.serve(async (req) => {
       console.error('tg inbound log failed:', error)
     })
 
-    const { data: agent } = channel.agent_id
-      ? await db.from('agents').select('account_id').eq('id', channel.agent_id).maybeSingle()
-      : { data: null }
-    if (!agent?.account_id || await blocksExternalActions(db, agent.account_id)) return new Response('ok')
-
-    const update = await req.json()
 
     // Button presses on a commerce economics proposal. This is the only place money moves, and it
     // moves only for the bound owner chat pressing Yes on a proposal it owns.
