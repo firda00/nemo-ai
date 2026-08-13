@@ -195,4 +195,12 @@ assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceId: INV, amountTiyin: 0 
 // Цена в сумах не выдумывается из долларов по курсу, которого никто не утверждал.
 assert.equal(typeof PLAN_PRICE_UZS, 'object')
 
-console.log('[OK] Payment protocol behaviour: 72 assertions')
+// --- Click сообщает исход платежа полем error ------------------------------------------------
+// Отрицательное значение в Complete означает отказ банка или отмену покупателем. Подпись при этом
+// верная — запрос настоящий, — и без чтения этого поля месяц начислялся за несостоявшуюся оплату.
+
+const failed = parseClickRequest({ ...prepare, action: '1', error: '-5017', merchant_prepare_id: '55' })
+assert.equal(failed.error, '-5017', 'исход платежа доходит до обработчика')
+assert.equal(parseClickRequest({ ...prepare, action: '1' }).error, '', 'успех приходит без error или с нулём')
+
+console.log('[OK] Payment protocol behaviour: 74 assertions')

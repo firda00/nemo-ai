@@ -103,6 +103,19 @@ Deno.serve(async (req) => {
       return reply(clickResponse({ request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS], merchantPrepareId: created.merchant_prepare_id }))
     }
 
+    // ПЛАТЁЖ МОГ НЕ ПРОЙТИ. Click сообщает исход полем error, и отрицательное значение означает
+    // отказ банка, отмену покупателем или недостаток средств. Подпись при этом верная — запрос
+    // настоящий, — и без этой проверки мы начисляли месяц за несостоявшуюся оплату.
+    const providerError = Number(request.error ?? 0)
+    if (providerError < 0) {
+      if (existing && existing.state === 1) {
+        await db.from('billing_transactions')
+          .update({ state: -1, cancelled_at: new Date().toISOString(), cancel_reason: providerError })
+          .eq('id', existing.id).eq('state', 1)
+      }
+      return fail(CLICK_ERRORS.TRANSACTION_CANCELLED)
+    }
+
     // Complete: обязан прийти со своим Prepare и с тем же merchant_prepare_id.
     if (!existing) return fail(CLICK_ERRORS.TRANSACTION_NOT_FOUND)
     if (existing.state < 0) return fail(CLICK_ERRORS.TRANSACTION_CANCELLED)

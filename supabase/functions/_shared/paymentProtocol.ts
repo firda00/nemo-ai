@@ -201,6 +201,9 @@ export function parseClickRequest(body: Record<string, unknown> | null | undefin
     action,
     sign_time: text('sign_time'),
     sign_string: text('sign_string'),
+    // Click сообщает исход платежа ЗДЕСЬ. Отрицательное значение в Complete означает, что
+    // деньги НЕ списаны, и начислять по такому запросу месяц значит раздавать подписку даром.
+    error: text('error'),
   }
   if (!request.click_trans_id || !request.service_id || !request.merchant_trans_id || !request.sign_string) return null
   return request
