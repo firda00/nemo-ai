@@ -956,6 +956,18 @@ const checks = [
     && invoicesMigration.includes('shop_id    text primary key')
     && invoicesMigration.includes('create or replace function public.trial_allowed_for_account')],
 
+  // Заявка на магазин заводится ровно в момент подключения — больше его номер нигде не всплывает.
+  // Без этого вызова занятых магазинов не бывает, и правило выше отвечает «можно» всегда.
+  ['connecting a shop registers the claim',
+    commerceControl.includes("admin.rpc('claim_shop_trial'")
+    && commerceControl.split('await claimShops(').length - 1 === 2],
+
+  // Подключение каталога важнее учёта пробных периодов: сорванная заявка не должна стоить продавцу
+  // магазина.
+  ['a failed claim does not break the connection',
+    commerceControl.includes("console.error('claim_shop_trial failed:'")
+    && !commerceControl.includes('could not claim the shop')],
+
   // Гейт обязан быть воспроизводимым без боевых ключей, поэтому живой тест запускается руками.
   ['the race is covered by a live test, kept out of the offline gate',
     packageJson.includes('agent-hub/billing-entitlement-live.mjs')
@@ -1033,6 +1045,14 @@ const checks = [
   ['click complete must match its own prepare',
     clickEndpoint.includes("String(request.merchant_prepare_id ?? '') !== String(existing.merchant_prepare_id ?? '')")
     && clickEndpoint.includes('amount !== Number(existing.amount_tiyin)')],
+
+  // Click сообщает отказ банка полем error в том же Complete, и подпись при этом верная — запрос
+  // настоящий. Пока поле не читалось, месяц начислялся за деньги, которых никто не списывал.
+  ['a declined click payment does not buy a month',
+    clickEndpoint.includes('const providerError = Number(request.error ?? 0)')
+    && clickEndpoint.includes('if (providerError < 0)')
+    && clickEndpoint.indexOf('providerError < 0') < clickEndpoint.indexOf("db.rpc('apply_invoice_entitlement'")
+    && protocolModule.includes("error: text('error')")],
 
   // Уникальность по провайдеру не запрещает две РАЗНЫЕ транзакции на один счёт: две попытки Click
   // или оплату через Payme и Click сразу. Запрещает частичный индекс.

@@ -230,6 +230,23 @@ Deno.serve(async (req) => {
     return error ? json({ error: 'could not load imports' }, 500) : json({ ok: true, batches: batches ?? [] })
   }
 
+  // Закрепить магазин за аккаунтом в момент подключения — единственная точка, где мы вообще узнаём
+  // его номер. Без этого вызова правило «триал за магазином, а не за почтой» существует только в
+  // базе: заявок никто не создаёт, значит и занятых магазинов нет, и новая почта каждые три дня
+  // снова даёт бесплатный период.
+  //
+  // Отказ НЕ ломает подключение: продавец имеет право подключить чужой по заявке магазин, он просто
+  // не получит за него второго триала. Ошибка вызова тоже не ломает — каталог уже сохранён, и
+  // потерять подключение из-за учёта пробных периодов было бы хуже, чем потерять учёт.
+  async function claimShops(shops: Array<{ external_shop_id?: string | null }>) {
+    for (const shop of shops) {
+      const shopId = String(shop.external_shop_id ?? '')
+      if (!shopId) continue
+      const { error } = await admin.rpc('claim_shop_trial', { p_account_id: profile.account_id, p_shop_id: shopId })
+      if (error) console.error('claim_shop_trial failed:', shopId, error.message)
+    }
+  }
+
   if (action === 'discover_uzum') {
     if (await blocksExternalActions(admin, profile.account_id)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     const { data: keyRow } = await admin.from('provider_keys').select('api_key')
@@ -242,6 +259,7 @@ Deno.serve(async (req) => {
       listed.shops.map((shop) => ({ account_id: profile.account_id, source: 'uzum', external_shop_id: shop.id, name: shop.name })),
       { onConflict: 'account_id,source,external_shop_id' },
     ).select('id, name, external_shop_id, status')
+    if (!error) await claimShops(catalogs ?? [])
     return error ? json({ error: 'could not save Uzum catalogs' }, 500) : json({ ok: true, catalogs: catalogs ?? [] })
   }
 
@@ -275,6 +293,7 @@ Deno.serve(async (req) => {
       { onConflict: 'account_id,source,external_shop_id' },
     ).select('id, name, external_shop_id, status')
     if (catalogError) return json({ error: 'could not save the shops', step: 'shops' }, 500)
+    await claimShops(catalogs ?? [])
 
     // Queue one run per catalogue that has none waiting. Without this check a second press would
     // stack duplicate runs that each re-read the same shop.
