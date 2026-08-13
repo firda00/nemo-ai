@@ -307,9 +307,10 @@ export function checkInvoicePayable(invoice: {
  * Пока строка пуста, касса отказывает с внятной причиной, а не берёт «примерно столько».
  */
 export const PLAN_PRICE_UZS: Record<string, number> = {
-  // starter: 290_000,
-  // pro: 690_000,
-  // business: 1_390_000,
+  starter: 320_000,
+  pro: 750_000,
+  business: 1_500_000,
+  max: 2_500_000,
 }
 
 export const PLAN_DURATION_DAYS = 30

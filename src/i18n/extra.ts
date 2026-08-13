@@ -3,6 +3,14 @@
 // Safe to edit by hand: add/adjust a key here and it flows through t('<namespace>.<key>').
 
 export const extraUz = {
+  "billingPagePay": {
+    "payTitle": "To‘lov usulini tanlang",
+    "paySubtitle": "Oyiga {amount} so‘m. Hisob tayyor — kassani tanlang.",
+    "payPayme": "Payme orqali to‘lash",
+    "payClick": "Click orqali to‘lash",
+    "payHint": "Kassa to‘lovni tasdiqlagach kirish ochiladi — odatda bir necha soniya. Sahifani yopsangiz ham hisob kutib turadi.",
+    "payLater": "Keyinroq",
+  },
   "paywall": {
     "trialTitle": "3 kunlik bepul sinov tugadi",
     "lapsedTitle": "Obuna muddati tugagan",
@@ -1740,6 +1748,14 @@ export const extraUz = {
 } as const
 
 export const extraRu = {
+  "billingPagePay": {
+    "payTitle": "Выберите способ оплаты",
+    "paySubtitle": "{amount} сум в месяц. Счёт выставлен — выберите кассу.",
+    "payPayme": "Оплатить через Payme",
+    "payClick": "Оплатить через Click",
+    "payHint": "Доступ откроется, когда касса подтвердит платёж — обычно за несколько секунд. Счёт дождётся вас, даже если закрыть страницу.",
+    "payLater": "Позже",
+  },
   "paywall": {
     "trialTitle": "3-дневный бесплатный триал завершён",
     "lapsedTitle": "Срок подписки истёк",
@@ -3477,6 +3493,14 @@ export const extraRu = {
 } as const
 
 export const extraEn = {
+  "billingPagePay": {
+    "payTitle": "Choose how to pay",
+    "paySubtitle": "{amount} UZS per month. The invoice is ready — pick a provider.",
+    "payPayme": "Pay with Payme",
+    "payClick": "Pay with Click",
+    "payHint": "Access opens once the provider confirms the payment — usually within seconds. The invoice waits for you even if you close this page.",
+    "payLater": "Later",
+  },
   "paywall": {
     "trialTitle": "Your 3-day free trial has ended",
     "lapsedTitle": "The subscription has lapsed",

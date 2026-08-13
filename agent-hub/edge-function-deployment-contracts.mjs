@@ -23,7 +23,7 @@ assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory mus
 // 30 после касс Payme и Click. Публичны они по необходимости: ни один провайдер не умеет
 // присылать JWT Supabase, и авторизация у них своя — Basic и подпись, — проверяемая до базы.
 assert.equal(publicFunctions.length, 30)
-assert.equal(authenticatedFunctions.length, 47)
+assert.equal(authenticatedFunctions.length, 48)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
 

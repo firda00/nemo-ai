@@ -17,6 +17,9 @@ export default function BillingPage() {
   const [quota, setQuota] = useState(150_000)
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [checkoutBusy, setCheckoutBusy] = useState('')
+  // Выставленный счёт с двумя ссылками. Выбор кассы — за покупателем: у Payme и Click разное
+  // покрытие карт, и «оплатить» одной кнопкой означало бы отказ половине рынка.
+  const [invoice, setInvoice] = useState<{ planId: string; amountUzs: number; payme: string | null; click: string | null } | null>(null)
   const [notice, setNotice] = useState<string | null>(() => (
     new URLSearchParams(window.location.search).get('upgraded') ? t('billingPage.subscribedNotice') : null
   ))
@@ -42,6 +45,18 @@ export default function BillingPage() {
     if (!supabase || checkoutBusy) return
     setCheckoutBusy(id); setNotice(null)
     try {
+      // Сначала местные кассы: рынок узбекский, и Stripe здесь картой не оплатят. Счёт
+      // выставляется на сервере — браузер присылает только код тарифа, потому что назвать сумму
+      // из браузера значит продать Business за тысячу сумов, и проверка платежа честно бы её
+      // подтвердила: она сверяет платёж со СЧЁТОМ, а не с прайсом.
+      const { data: local } = await supabase.functions.invoke('billing-invoice', { body: { plan_code: id } })
+      const invoice = local as { ok?: boolean; payme_url?: string | null; click_url?: string | null; amount_uzs?: number } | null
+      if (invoice?.ok && (invoice.payme_url || invoice.click_url)) {
+        setInvoice({ planId: id, amountUzs: invoice.amount_uzs ?? 0, payme: invoice.payme_url ?? null, click: invoice.click_url ?? null })
+        setCheckoutBusy('')
+        return
+      }
+
       const { data } = await supabase.functions.invoke('create-checkout', { body: { plan: id } })
       const p = data as { ok?: boolean; url?: string; detail?: string } | null
       if (p?.url) { window.location.assign(p.url); return }
@@ -162,6 +177,42 @@ export default function BillingPage() {
         <Sparkles size={15} className="mt-0.5 shrink-0 text-accent-cyan" />
         <span>{t('billingPage.footer1')}<span className="text-text">{t('billingPage.footerHighlight')}</span>{t('billingPage.footer2')}</span>
       </div>
+
+      {/* Выбор кассы за покупателем: у Payme и Click разное покрытие карт, и одна кнопка
+          «оплатить» означала бы отказ половине рынка. Сумма показана до перехода — цена, впервые
+          увиденная на чужой странице, читается как подмена. */}
+      {invoice && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setInvoice(null)} />
+          <div className="card relative w-full max-w-sm rounded-2xl p-6 animate-fadeInUp">
+            <h3 className="text-lg font-semibold text-text">{t('billingPagePay.payTitle')}</h3>
+            <p className="mt-1 text-sm text-muted">
+              {t('billingPagePay.paySubtitle', { amount: invoice.amountUzs.toLocaleString('ru-RU') })}
+            </p>
+            <div className="mt-5 space-y-2">
+              {invoice.payme && (
+                <a href={invoice.payme} target="_blank" rel="noreferrer"
+                   className="block w-full rounded-xl bg-brand-gradient px-4 py-3 text-center text-sm font-semibold text-white">
+                  {t('billingPagePay.payPayme')}
+                </a>
+              )}
+              {invoice.click && (
+                <a href={invoice.click} target="_blank" rel="noreferrer"
+                   className="block w-full rounded-xl border border-ice/15 px-4 py-3 text-center text-sm font-medium text-text hover:border-accent-cyan/50">
+                  {t('billingPagePay.payClick')}
+                </a>
+              )}
+            </div>
+            {/* Доступ открывается по подтверждению кассы, а не по возвращению на страницу: сказать
+                это заранее дешевле, чем объяснять потом, почему после оплаты «ничего не изменилось». */}
+            <p className="mt-4 text-[11px] leading-relaxed text-muted">{t('billingPagePay.payHint')}</p>
+            <button type="button" onClick={() => setInvoice(null)}
+                    className="mt-4 w-full text-center text-xs text-muted hover:text-text">
+              {t('billingPagePay.payLater')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
