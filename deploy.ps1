@@ -125,6 +125,7 @@ Apply-Migration .\supabase\migrations\20260812130000_billing_transactions.sql
 Apply-Migration .\supabase\migrations\20260813090000_billing_numeric_ids.sql
 Apply-Migration .\supabase\migrations\20260813120000_commerce_sales_trend.sql
 Apply-Migration .\supabase\migrations\20260813140000_listing_submissions.sql
+Apply-Migration .\supabase\migrations\20260813160000_extension_submit.sql
 
 $schemaCheckSql = @'
 select

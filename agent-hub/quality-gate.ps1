@@ -26,6 +26,7 @@ $steps = @(
   @{ Name = 'Payment protocol behavior'; Command = { npm run test:payment-protocol } },
   @{ Name = 'Sales trend behavior'; Command = { npm run test:sales-trend } },
   @{ Name = 'Listing submit behavior'; Command = { npm run test:listing-submit } },
+  @{ Name = 'Extension contracts'; Command = { npm run test:extension } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },
   @{ Name = 'Listing images behavior'; Command = { npm run test:listing-images } },

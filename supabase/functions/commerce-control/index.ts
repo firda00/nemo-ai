@@ -242,11 +242,12 @@ Deno.serve(async (req) => {
     || action === 'set_listing_category' || action === 'onboard'
     // Отправка на площадку и переключение режима — деньги и репутация владельца, не сотрудника.
     || action === 'submit_listing' || action === 'set_auto_submit'
+    || action === 'next_extension_task' || action === 'report_extension_result'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
     const [{ data: pilot }, { data: catalogs, error }, { data: notificationProfile }] = await Promise.all([
-      admin.from('commerce_pilots').select('status, started_at, expires_at, read_only_at, auto_submit_to_moderation').eq('account_id', profile.account_id).maybeSingle(),
+      admin.from('commerce_pilots').select('status, started_at, expires_at, read_only_at, auto_submit_to_moderation, auto_extension_submit').eq('account_id', profile.account_id).maybeSingle(),
       admin.from('commerce_catalogs').select('id, name, source, external_shop_id, status, last_synced_at, last_sync_error').eq('account_id', profile.account_id).order('created_at', { ascending: false }),
       admin.from('business_profiles').select('notify_chat_id, notify_channel_id').eq('account_id', profile.account_id).maybeSingle(),
     ])
@@ -923,14 +924,83 @@ Deno.serve(async (req) => {
     return json({ ok: true, draft: updated })
   }
 
-  // Режим отправки. Один тумблер на аккаунт, и он показывается при первом запуске, а не
-  // обнаруживается потом по факту уехавшей карточки.
+  // Режим отправки. Тумблер показывается при первом запуске, а не обнаруживается потом по факту
+  // уехавшей карточки.
+  //
+  // Тумблеров ДВА, и они не связаны. Официальный API живёт по договору с площадкой; расширение
+  // работает вашей сессией в кабинете и, вероятно, противоречит правилам продавца Uzum. Один
+  // переключатель на оба означал бы, что включивший автономию по API незаметно включил и
+  // автоматизацию кабинета.
   if (action === 'set_auto_submit') {
     const enabled = body?.enabled === true
+    const column = body?.channel === 'extension' ? 'auto_extension_submit' : 'auto_submit_to_moderation'
     const { error } = await admin.from('commerce_pilots')
-      .update({ auto_submit_to_moderation: enabled }).eq('account_id', profile.account_id)
+      .update({ [column]: enabled }).eq('account_id', profile.account_id)
     if (error) return json({ error: 'could not change the submit mode' }, 500)
-    return json({ ok: true, auto_submit_to_moderation: enabled })
+    return json({ ok: true, [column]: enabled })
+  }
+
+  // Следующая карточка для расширения. Пусто — это не ошибка, а «работы нет».
+  //
+  // Отдаётся ровно то, что расширение вставит в форму: ни ключей, ни внутренних идентификаторов
+  // чужих сущностей. Расширение работает в чужом кабинете, и лишнее поле в его памяти — это
+  // лишнее поле, которое может утечь вместе с ним.
+  if (action === 'next_extension_task') {
+    const access = await entitlementFor(admin, profile.account_id)
+    if (!access.allowed) return json({ error: 'subscription_required', reason: access.reason, message: lockMessage(access) }, 402)
+
+    const { data: draft } = await admin.from('commerce_listing_drafts')
+      .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')
+      .eq('account_id', profile.account_id).eq('status', 'ready')
+      .order('approved_at', { ascending: true }).limit(1).maybeSingle()
+    if (!draft) return json({ ok: true, task: null })
+
+    return json({
+      ok: true,
+      task: {
+        id: draft.id,
+        title_ru: draft.title_ru, title_uz: draft.title_uz,
+        description_ru: draft.description_ru, description_uz: draft.description_uz,
+        category: draft.uzum_category,
+        attributes: draft.attributes ?? [],
+        // Цена в сумах: в форме кабинета она в сумах, и пересчёт на стороне расширения означал бы
+        // вторую копию арифметики — ту, что однажды разойдётся с первой.
+        price: draft.min_selling_price_tiyin == null ? null : Math.ceil(draft.min_selling_price_tiyin / 100),
+      },
+    })
+  }
+
+  // Исход попытки расширения — в тот же журнал, что и попытки через API.
+  //
+  // Успех записывает РАСШИРЕНИЕ, и это единственное место, где мы верим ему на слово: сервер не
+  // видит кабинет и проверить отправку не может. Поэтому 'sent' здесь означает «расширение
+  // нажало кнопку», и статус черновика меняется вместе с ним — а настоящее подтверждение придёт
+  // синхронизацией, когда товар появится в каталоге.
+  if (action === 'report_extension_result') {
+    if (typeof body?.draft_id !== 'string' || !UUID.test(body.draft_id)) return json({ error: 'invalid draft_id' }, 400)
+    const status = body?.status === 'sent' || body?.status === 'refused' || body?.status === 'failed' ? body.status : 'failed'
+
+    const { data: draft } = await admin.from('commerce_listing_drafts')
+      .select('id').eq('id', body.draft_id).eq('account_id', profile.account_id).maybeSingle()
+    if (!draft) return json({ error: 'draft not found' }, 404)
+
+    await admin.from('commerce_listing_submissions').insert({
+      draft_id: body.draft_id, account_id: profile.account_id,
+      mode: body?.mode === 'auto' ? 'auto' : 'manual',
+      transport: 'extension',
+      status,
+      reason: typeof body?.reason === 'string' ? body.reason.slice(0, 60) : null,
+      owner_message: typeof body?.message === 'string' ? body.message.slice(0, 600) : null,
+      external_product_id: typeof body?.external_product_id === 'string' ? body.external_product_id.slice(0, 120) : null,
+      attempted_by: user.id,
+    })
+
+    if (status === 'sent') {
+      await admin.from('commerce_listing_drafts')
+        .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', body.draft_id).eq('account_id', profile.account_id).eq('status', 'ready')
+    }
+    return json({ ok: true })
   }
 
   // Ручная отправка. Та же дорога, что у автономии, — иначе два пути разошлись бы, и «Отправить»

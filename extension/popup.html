@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Nemo — загрузчик товаров</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; width: 320px; padding: 16px;
+      background: #0A0D1C; color: #E8ECF8;
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+    p { margin: 0 0 12px; color: #8B93AD; font-size: 12px; }
+    .state { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(232,236,248,.1); margin-bottom: 12px; }
+    .bad { border-color: rgba(248,113,113,.35); color: #FCA5A5; }
+    .ok { border-color: rgba(45,212,191,.3); color: #5EEAD4; }
+    button {
+      width: 100%; padding: 10px 12px; margin-bottom: 8px;
+      border: 0; border-radius: 10px; cursor: pointer;
+      background: linear-gradient(135deg, #8B7CF8, #6366F1);
+      color: #fff; font: inherit; font-weight: 600;
+    }
+    button.secondary { background: transparent; border: 1px solid rgba(232,236,248,.15); color: #E8ECF8; font-weight: 500; }
+    button:disabled { opacity: .45; cursor: default; }
+  </style>
+</head>
+<body>
+  <h1>Загрузчик товаров в Uzum</h1>
+  <p>Переносит готовый черновик из Nemo в кабинет и заполняет форму.</p>
+
+  <div class="state" id="state">Проверяю связь…</div>
+
+  <button id="fill">Заполнить форму</button>
+  <button id="send" class="secondary">Заполнить и отправить на модерацию</button>
+
+  <p id="result"></p>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

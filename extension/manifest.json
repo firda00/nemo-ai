@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Nemo — загрузчик товаров в Uzum",
+  "version": "0.1.0",
+  "description": "Переносит готовый черновик карточки из Nemo в кабинет Uzum Seller и отправляет его на модерацию.",
+  "minimum_chrome_version": "116",
+
+  "host_permissions": [
+    "https://seller.uzum.uz/*"
+  ],
+
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://seller.uzum.uz/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "externally_connectable": {
+    "matches": ["https://nemo.185.8.213.144.sslip.io/*"]
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Nemo — загрузчик товаров"
+  }
+}
