@@ -294,3 +294,48 @@ export function checkInvoicePayable(invoice: {
   if (amountTiyin == null || amountTiyin !== Number(invoice.amount_tiyin)) return { ok: false, reason: 'wrong_amount' }
   return { ok: true }
 }
+
+/* ─────────────────────────  Ссылки на оплату  ───────────────────────── */
+
+/**
+ * Цена тарифа В СУМАХ. Пусто, пока владелец не назвал число.
+ *
+ * Курс доллара я не выдумываю: цена в долларах из PLAN_LIMITS — это ориентир для другого рынка, а
+ * счёт выставляется в сумах и сверяется с точностью до тийина. Пересчёт по придуманному курсу
+ * означал бы, что покупатель платит цифру, которую никто не утверждал.
+ *
+ * Пока строка пуста, касса отказывает с внятной причиной, а не берёт «примерно столько».
+ */
+export const PLAN_PRICE_UZS: Record<string, number> = {
+  // starter: 290_000,
+  // pro: 690_000,
+  // business: 1_390_000,
+}
+
+export const PLAN_DURATION_DAYS = 30
+
+/** Ссылка на кассу Payme. Параметры кодируются base64 — так устроен их чекаут. */
+export function paymeCheckoutUrl(input: { merchantId: string; invoiceId: string; amountTiyin: number }): string | null {
+  if (!input.merchantId || !input.invoiceId || !(input.amountTiyin > 0)) return null
+  const params = `m=${input.merchantId};ac.invoice_id=${input.invoiceId};a=${input.amountTiyin}`
+  return `https://checkout.paycom.uz/${btoa(params)}`
+}
+
+/**
+ * Ссылка на кассу Click.
+ *
+ * Сумма здесь В СУМАХ, а не в тийинах: Click принимает десятичное число, и отправить туда 29000000
+ * значит выставить покупателю счёт в тысячу раз больше. Ошибка тихая — форма откроется, и он
+ * увидит её только на экране оплаты.
+ */
+export function clickCheckoutUrl(input: {
+  serviceId: string; merchantId: string; invoiceId: string; amountTiyin: number
+}): string | null {
+  if (!input.serviceId || !input.merchantId || !input.invoiceId || !(input.amountTiyin > 0)) return null
+  const sums = (input.amountTiyin / 100).toFixed(2)
+  return 'https://my.click.uz/services/pay'
+    + `?service_id=${encodeURIComponent(input.serviceId)}`
+    + `&merchant_id=${encodeURIComponent(input.merchantId)}`
+    + `&amount=${sums}`
+    + `&transaction_param=${encodeURIComponent(input.invoiceId)}`
+}

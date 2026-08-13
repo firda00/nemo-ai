@@ -15,6 +15,9 @@ import {
   parsePaymeRequest,
   paymeFailure,
   paymeInvoiceId,
+  paymeCheckoutUrl,
+  clickCheckoutUrl,
+  PLAN_PRICE_UZS,
 } from '../supabase/functions/_shared/paymentProtocol.ts'
 
 // --- Сумма разбирается по строке, а не умножением ---------------------------------------------
@@ -170,4 +173,26 @@ assert.equal(checkInvoicePayable({ ...invoice, expires_at: '2026-08-11T00:00:00Z
 // не та» вместо «уже оплачено» заставила бы провайдера ретраить.
 assert.equal(checkInvoicePayable({ ...invoice, status: 'paid' }, 1, NOW).reason, 'already_paid')
 
-console.log('[OK] Payment protocol behaviour: 64 assertions')
+// --- Ссылки на кассы --------------------------------------------------------------------------
+
+const INV = '9329393e-b5ab-4f20-8b8f-ead0ad466148'
+const payme = paymeCheckoutUrl({ merchantId: 'M1', invoiceId: INV, amountTiyin: 29_000_000 })
+assert.ok(payme.startsWith('https://checkout.paycom.uz/'))
+assert.equal(Buffer.from(payme.split('/').pop(), 'base64').toString(), 'm=M1;ac.invoice_id=' + INV + ';a=29000000',
+  'Payme принимает тийины')
+
+// Click принимает СУМЫ. Отправить туда тийины значит выставить счёт в сто раз больше, и увидит
+// это покупатель только на экране оплаты.
+const click = clickCheckoutUrl({ serviceId: 'S1', merchantId: 'M1', invoiceId: INV, amountTiyin: 29_000_000 })
+assert.ok(click.includes('amount=290000.00'), 'сумма в сумах, не в тийинах')
+assert.ok(click.indexOf('transaction_param=' + INV) > 0, 'номер счёта едет как merchant_trans_id')
+
+// Ненастроенная касса ссылку не строит: лучше отказ, чем ссылка в никуда.
+assert.equal(paymeCheckoutUrl({ merchantId: '', invoiceId: INV, amountTiyin: 100 }), null)
+assert.equal(clickCheckoutUrl({ serviceId: '', merchantId: 'M', invoiceId: INV, amountTiyin: 100 }), null)
+assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceId: INV, amountTiyin: 0 }), null)
+
+// Цена в сумах не выдумывается из долларов по курсу, которого никто не утверждал.
+assert.equal(typeof PLAN_PRICE_UZS, 'object')
+
+console.log('[OK] Payment protocol behaviour: 72 assertions')
