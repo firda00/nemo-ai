@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { callOpenRouter, FALLBACK_MODEL, PRIMARY_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'

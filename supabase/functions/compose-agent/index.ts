@@ -5,7 +5,7 @@
 //
 //   POST /functions/v1/compose-agent   (Authorization: Bearer <user jwt>)
 //   body { "description": "...", "ui_lang": "uz" | "ru" | "en" }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, estimateCostUsd, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'

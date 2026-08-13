@@ -122,6 +122,7 @@ Apply-Migration .\supabase\migrations\20260812100000_telegram_inbound_log.sql
 Apply-Migration .\supabase\migrations\20260812110000_billing_invoices.sql
 Apply-Migration .\supabase\migrations\20260812120000_invoice_sets_plan.sql
 Apply-Migration .\supabase\migrations\20260812130000_billing_transactions.sql
+Apply-Migration .\supabase\migrations\20260813090000_billing_numeric_ids.sql
 
 $schemaCheckSql = @'
 select

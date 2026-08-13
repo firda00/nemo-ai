@@ -4,12 +4,13 @@
 //   POST /functions/v1/browser-task  (Bearer jwt)
 //     { action:'run', task, url? }      -> { ok, result } | { ok, pending, job_id }
 //     { action:'status', job_id }       -> { status, result? }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { runBrowserTask, pollBrowserTask, looksAbusive } from '../_shared/browser.ts'
 import { planOf, monthlyBrowser } from '../_shared/plans.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { redactText, redactValue } from '../_shared/redact.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -29,6 +30,7 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
   const { data: acc } = await admin.from('accounts').select('plan, blocked').eq('id', accountId).single()
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   const plan = planOf(acc?.plan)

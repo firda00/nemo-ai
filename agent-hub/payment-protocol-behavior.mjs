@@ -14,7 +14,13 @@ import {
   parseClickRequest,
   parsePaymeRequest,
   paymeFailure,
-  paymeInvoiceId,
+  paymeInvoiceRef,
+  invoiceRefFrom,
+  sameInvoiceRef,
+  paymeExpired,
+  PAYME_DATA_FIELD,
+  PAYME_CANCEL_TIMEOUT,
+  PAYME_MESSAGES,
   paymeCheckoutUrl,
   clickCheckoutUrl,
   PLAN_PRICE_UZS,
@@ -76,12 +82,63 @@ assert.equal(parsePaymeRequest({ id: 1 }), null, 'без метода это н�
 assert.equal(parsePaymeRequest('строка'), null)
 assert.equal(parsePaymeRequest(null), null)
 
-// Счёт берётся только как uuid: «1 OR 1=1» и прочее в account не должно доехать до базы.
-assert.equal(paymeInvoiceId({ account: { invoice_id: '9329393e-b5ab-4f20-8b8f-ead0ad466148' } }), '9329393e-b5ab-4f20-8b8f-ead0ad466148')
-assert.equal(paymeInvoiceId({ account: { order_id: '9329393e-b5ab-4f20-8b8f-ead0ad466148' } }), '9329393e-b5ab-4f20-8b8f-ead0ad466148')
-assert.equal(paymeInvoiceId({ account: { invoice_id: '1 OR 1=1' } }), null)
-assert.equal(paymeInvoiceId({ account: {} }), null)
-assert.equal(paymeInvoiceId({}), null)
+// Счёт берётся только как номер или uuid: «1 OR 1=1» и прочее в account не должно доехать до базы.
+assert.deepEqual(paymeInvoiceRef({ account: { invoice_no: '100042' } }), { by: 'no', value: 100042 })
+assert.deepEqual(paymeInvoiceRef({ account: { invoice_no: 100042 } }), { by: 'no', value: 100042 },
+  'касса вправе прислать номер числом, а не строкой')
+assert.deepEqual(paymeInvoiceRef({ account: { invoice_id: '9329393e-b5ab-4f20-8b8f-ead0ad466148' } }),
+  { by: 'id', value: '9329393e-b5ab-4f20-8b8f-ead0ad466148' }, 'ссылки, выданные до перехода на номера, работают')
+assert.deepEqual(paymeInvoiceRef({ account: { order_id: '9329393e-b5ab-4f20-8b8f-ead0ad466148' } }),
+  { by: 'id', value: '9329393e-b5ab-4f20-8b8f-ead0ad466148' })
+for (const bad of ['1 OR 1=1', '0', '-5', '1.5', '12e3', '', '   ', '9999999999999999999999']) {
+  assert.equal(invoiceRefFrom(bad), null, `не ссылка на счёт: ${JSON.stringify(bad)}`)
+}
+assert.equal(paymeInvoiceRef({ account: {} }), null)
+assert.equal(paymeInvoiceRef({}), null)
+
+// Повтор Create обязан прийти на ТОТ ЖЕ счёт, каким бы способом касса на него ни сослалась.
+const linked = { id: '9329393e-b5ab-4f20-8b8f-ead0ad466148', invoice_no: 100042 }
+assert.equal(sameInvoiceRef({ by: 'no', value: 100042 }, linked), true)
+assert.equal(sameInvoiceRef({ by: 'id', value: linked.id }, linked), true)
+assert.equal(sameInvoiceRef({ by: 'no', value: 100043 }, linked), false, 'соседний счёт — не тот же счёт')
+assert.equal(sameInvoiceRef(null, linked), false, 'ссылки нет — совпадением это не считается')
+assert.equal(sameInvoiceRef({ by: 'no', value: 100042 }, null), false)
+
+// --- Payme: error.data называет поле ----------------------------------------------------------
+// Требование сертификации: касса подсвечивает покупателю то поле, которое он может исправить. Без
+// data он видит «ошибка» и не знает, ошибся номером счёта или суммой.
+
+const accountError = paymeFailure(1, PAYME_ERRORS.INVOICE_NOT_FOUND, PAYME_MESSAGES.invoice_not_found, PAYME_DATA_FIELD.ACCOUNT)
+assert.equal(accountError.error.data, 'invoice_no')
+assert.equal(paymeFailure(1, PAYME_ERRORS.INVALID_AMOUNT, PAYME_MESSAGES.invalid_amount, PAYME_DATA_FIELD.AMOUNT).error.data, 'amount')
+// Там, где поля нет, data не выдумывается: «ошибка в поле cannot_perform» сбила бы кассу с толку.
+assert.equal('data' in paymeFailure(1, PAYME_ERRORS.CANNOT_PERFORM, PAYME_MESSAGES.cannot_perform).error, false)
+
+// Разбор тела и разбор запроса — разные отказы с разными кодами и разными сообщениями.
+assert.equal(PAYME_ERRORS.PARSE, -32700)
+assert.notEqual(PAYME_MESSAGES.parse_error.ru, PAYME_MESSAGES.method_not_found.ru,
+  'битый JSON — это не «метод не найден»')
+assert.notEqual(PAYME_MESSAGES.invalid_request.ru, PAYME_MESSAGES.parse_error.ru)
+for (const key of ['parse_error', 'invalid_request', 'timeout']) {
+  for (const lang of ['ru', 'uz', 'en']) {
+    assert.ok(PAYME_MESSAGES[key][lang], `${key}.${lang} — сообщение видит покупатель`)
+  }
+}
+
+// --- Payme: транзакция живёт 12 часов ---------------------------------------------------------
+// Незавершённая транзакция старше 12 часов подлежит отмене с причиной 4. Без этого она висит в
+// состоянии 1 вечно и держит счёт занятым: новый платёж касса создать не даст.
+
+assert.equal(PAYME_CANCEL_TIMEOUT, 4)
+const CREATED_AT = '2026-08-13T00:00:00.000Z'
+assert.equal(paymeExpired(CREATED_AT, new Date('2026-08-13T11:59:00Z')), false, 'без пяти минут двенадцать — ещё жива')
+assert.equal(paymeExpired(CREATED_AT, new Date('2026-08-13T12:00:00Z')), false, 'ровно двенадцать — ещё не «больше»')
+assert.equal(paymeExpired(CREATED_AT, new Date('2026-08-13T12:00:01Z')), true)
+assert.equal(paymeExpired(CREATED_AT, new Date('2026-08-14T00:00:00Z')), true, 'через сутки — тем более')
+// Нечитаемая дата НЕ повод отменять чужой платёж: отмена по ошибке разбора отбирает оплаченное.
+assert.equal(paymeExpired('не дата', new Date('2026-08-14T00:00:00Z')), false)
+assert.equal(paymeExpired(null), false)
+assert.equal(paymeExpired(undefined), false)
 
 // Коды не «примерно такие»: на них завязано поведение кассы.
 assert.equal(PAYME_ERRORS.UNAUTHORIZED, -32504)
@@ -175,22 +232,30 @@ assert.equal(checkInvoicePayable({ ...invoice, status: 'paid' }, 1, NOW).reason,
 
 // --- Ссылки на кассы --------------------------------------------------------------------------
 
-const INV = '9329393e-b5ab-4f20-8b8f-ead0ad466148'
-const payme = paymeCheckoutUrl({ merchantId: 'M1', invoiceId: INV, amountTiyin: 29_000_000 })
+const INV_NO = 100042
+const payme = paymeCheckoutUrl({ merchantId: 'M1', invoiceNo: INV_NO, amountTiyin: 29_000_000 })
 assert.ok(payme.startsWith('https://checkout.paycom.uz/'))
-assert.equal(Buffer.from(payme.split('/').pop(), 'base64').toString(), 'm=M1;ac.invoice_id=' + INV + ';a=29000000',
-  'Payme принимает тийины')
+// Имя поля обязано совпасть с объявленным в кабинете мерчанта, иначе касса пришлёт account без
+// известного нам ключа и все платежи упрутся в «счёт не найден».
+assert.equal(Buffer.from(payme.split('/').pop(), 'base64').toString(), 'm=M1;ac.invoice_no=100042;a=29000000',
+  'Payme принимает тийины и объявленное имя поля')
+assert.equal(PAYME_DATA_FIELD.ACCOUNT, 'invoice_no', 'ссылка и отказ называют ОДНО поле')
 
 // Click принимает СУМЫ. Отправить туда тийины значит выставить счёт в сто раз больше, и увидит
 // это покупатель только на экране оплаты.
-const click = clickCheckoutUrl({ serviceId: 'S1', merchantId: 'M1', invoiceId: INV, amountTiyin: 29_000_000 })
+const click = clickCheckoutUrl({ serviceId: 'S1', merchantId: 'M1', invoiceNo: INV_NO, amountTiyin: 29_000_000 })
 assert.ok(click.includes('amount=290000.00'), 'сумма в сумах, не в тийинах')
-assert.ok(click.indexOf('transaction_param=' + INV) > 0, 'номер счёта едет как merchant_trans_id')
+assert.ok(click.includes('transaction_param=100042'), 'номер счёта едет как merchant_trans_id')
+// Click работает целыми числами: uuid проходит по формату строки, но сертификацию не проходит.
+assert.ok(/transaction_param=\d+$/.test(click), 'номер счёта числовой')
 
 // Ненастроенная касса ссылку не строит: лучше отказ, чем ссылка в никуда.
-assert.equal(paymeCheckoutUrl({ merchantId: '', invoiceId: INV, amountTiyin: 100 }), null)
-assert.equal(clickCheckoutUrl({ serviceId: '', merchantId: 'M', invoiceId: INV, amountTiyin: 100 }), null)
-assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceId: INV, amountTiyin: 0 }), null)
+assert.equal(paymeCheckoutUrl({ merchantId: '', invoiceNo: INV_NO, amountTiyin: 100 }), null)
+assert.equal(clickCheckoutUrl({ serviceId: '', merchantId: 'M', invoiceNo: INV_NO, amountTiyin: 100 }), null)
+assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceNo: INV_NO, amountTiyin: 0 }), null)
+// Счёта без номера не бывает, но ссылка на нулевой номер увела бы покупателя платить в никуда.
+assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceNo: 0, amountTiyin: 100 }), null)
+assert.equal(clickCheckoutUrl({ serviceId: 'S', merchantId: 'M', invoiceNo: 0, amountTiyin: 100 }), null)
 
 // Цена в сумах не выдумывается из долларов по курсу, которого никто не утверждал.
 assert.equal(typeof PLAN_PRICE_UZS, 'object')
@@ -203,4 +268,4 @@ const failed = parseClickRequest({ ...prepare, action: '1', error: '-5017', merc
 assert.equal(failed.error, '-5017', 'исход платежа доходит до обработчика')
 assert.equal(parseClickRequest({ ...prepare, action: '1' }).error, '', 'успех приходит без error или с нулём')
 
-console.log('[OK] Payment protocol behaviour: 74 assertions')
+console.log('[OK] Payment protocol behaviour: 112 assertions')

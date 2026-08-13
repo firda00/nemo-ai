@@ -14,6 +14,7 @@ import { SKILL_TOOLS } from './capabilitySkills.ts'
 import { redactText, redactValue } from './redact.ts'
 import { openSecret, providerSecretContext } from './secretBox.ts'
 import { storeSnapshot } from './marketplaceSnapshot.ts'
+import { blocksExternalActions } from './productionE2E.ts'
 
 export { SKILL_TOOLS } from './capabilitySkills.ts'
 
@@ -308,6 +309,11 @@ async function execAnyTool(
   args: any,
   ctx: { orKey: string; db: any; accountId: string; keyByProvider: Record<string, string>; customIndex: Record<string, { row: CustomToolRow; mcpTool?: string }>; tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string } },
 ): Promise<{ ok: boolean; result: string; tokens?: number }> {
+  const internalOnly = new Set(['run_code', 'book_appointment'])
+  const publicReads = new Set(['read_webpage', 'web_search', 'notion_search', 'notion_read_page', 'wb_products', 'wb_orders', 'ozon_products', 'ozon_orders', 'uzum_shops', 'uzum_products'])
+  if (!internalOnly.has(name) && !publicReads.has(name) && await blocksExternalActions(ctx.db, ctx.accountId)) {
+    return { ok: false, result: 'External tools are disabled for the isolated production test account.' }
+  }
   if (ctx.customIndex[name]) return await execCustomTool(ctx.customIndex, name, args)
   if (name === 'run_code') return await execRunCode(args)
   if (name === 'book_appointment') return await execBooking(args, ctx.db, ctx.accountId, ctx.tgCtx?.dialogueId)

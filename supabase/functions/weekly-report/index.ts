@@ -3,10 +3,11 @@
 // activity, posts ONE per-person scorecard to that group: took / done / % / overdue (with
 // the missed-day count). Language per business_profiles.report_lang. Visible accountability.
 //   POST /functions/v1/weekly-report   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { L, normLang, type Lang } from '../_shared/planerkaLocale.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -33,16 +34,24 @@ Deno.serve(async (req) => {
     Number(r.assigned) + Number(r.done) + Number(r.open_cnt) > 0)
   if (active.length === 0) return json({ ok: true, chats: 0, sent: 0 })
 
-  const chatIds = [...new Set(active.map((r) => r.telegram_chat_id).filter(Boolean))]
   const accountIds = [...new Set(active.map((r) => r.account_id).filter(Boolean))]
+  const blockedAccounts = new Set((await Promise.all(accountIds.map(async (accountId) =>
+    await blocksExternalActions(db, accountId) ? accountId : null))).filter(Boolean))
+  const deliveryRows = active.filter((r) => !blockedAccounts.has(r.account_id))
+  const deliveryChatIds = [...new Set(deliveryRows.map((r) => r.telegram_chat_id).filter(Boolean))]
 
   // resolve the group bot token per (account, chat) — a chat_id can belong to two accounts
   // (both bots in one group), so we must NOT collapse on chat alone or one account's scorecard
   // would be posted through the other's bot. Key everything on `${account_id}::${chat_id}`.
-  const { data: chatCh } = await db.from('tasks')
-    .select('account_id, telegram_chat_id, channel_id').in('telegram_chat_id', chatIds).not('channel_id', 'is', null)
+  let chatCh: Any[] = []
+  if (deliveryChatIds.length) {
+    const { data } = await db.from('tasks')
+      .select('account_id, telegram_chat_id, channel_id').in('telegram_chat_id', deliveryChatIds).not('channel_id', 'is', null)
+    chatCh = data ?? []
+  }
   const channelByKey = new Map<string, string>()
-  for (const t of (chatCh ?? []) as Any[]) {
+  for (const t of chatCh) {
+    if (blockedAccounts.has(t.account_id)) continue
     const key = `${t.account_id}::${t.telegram_chat_id}`
     if (!channelByKey.has(key)) channelByKey.set(key, t.channel_id)
   }
@@ -89,6 +98,7 @@ Deno.serve(async (req) => {
       })
       let body = `${d.weeklyHeader}\n\n${lines.join('\n')}${d.weeklyFooter}`
       if (isFreeTier(planByAcc.get(accId))) body += d.poweredBy(NEMO_URL)
+      if (await blocksExternalActions(db, accId)) continue
       if (await tgSend(token, chatId, body)) sent++
     } catch { /* best effort per chat */ }
   }

@@ -5,9 +5,10 @@
 //   { action:'connect', api_key }         -> validates + stores openrouter key
 //   { action:'status' }                   -> { connected, label, limit, usage }
 //   { action:'disconnect' }               -> removes the key
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { openSecret, providerSecretContext, sealSecret } from '../_shared/secretBox.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -28,6 +29,9 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')
+  if (action === 'connect' && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   if (action === 'status') {
     const { data } = await admin.from('provider_keys').select('api_key, created_at').eq('account_id', accountId).eq('provider', 'openrouter').maybeSingle()

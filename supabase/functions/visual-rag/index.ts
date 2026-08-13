@@ -6,7 +6,7 @@
 //   POST /functions/v1/visual-rag   (Authorization: Bearer <user jwt>)
 //   body { action: 'submit', source_path, source_bytes, page_count }
 //   body { action: 'status', job_id }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!

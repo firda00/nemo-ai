@@ -1,9 +1,10 @@
 // SMS broadcast (Nemo → its users). ADMIN-ONLY. Sends a message to every saved phone
 // (business_profiles.phone) via Twilio. Runs on Nemo's own Twilio (env). Logs each run.
 //   POST /functions/v1/send-broadcast  (Bearer jwt, admin)  { message } -> { ok, recipients, sent, failed }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { hasAal2 } from '../_shared/authAssurance.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -31,8 +32,18 @@ Deno.serve(async (req) => {
   if (message.length < 2) return json({ ok: false, error: 'Пустое сообщение.' }, 200)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
-  const { data: rows } = await admin.from('business_profiles').select('phone').not('phone', 'is', null).limit(2000)
-  const phones = [...new Set((rows ?? []).map((r: { phone: string }) => cleanPhone(r.phone)).filter((p) => p.length >= 7))]
+  const { data: rows } = await admin.from('business_profiles').select('account_id, phone').not('phone', 'is', null).limit(2000)
+  const eligibleRows = (await Promise.all((rows ?? []).map(async (r: { account_id: string; phone: string }) =>
+    await blocksExternalActions(admin, r.account_id) ? null : r))).filter(Boolean) as { account_id: string; phone: string }[]
+  const recipients = new Map<string, string[]>()
+  for (const row of eligibleRows) {
+    const phone = cleanPhone(row.phone)
+    if (phone.length < 7) continue
+    const accountIds = recipients.get(phone) ?? []
+    accountIds.push(row.account_id)
+    recipients.set(phone, accountIds)
+  }
+  const phones = [...recipients.keys()]
 
   if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
     return json({ ok: false, code: 'NOT_CONFIGURED', recipients: phones.length, message: `Найдено ${phones.length} номеров. Подключите Twilio на сервере (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM), чтобы отправлять.` }, 200)
@@ -42,6 +53,8 @@ Deno.serve(async (req) => {
   let sent = 0, failed = 0
   for (const to of phones.slice(0, 1000)) {
     try {
+      const accountIds = recipients.get(to) ?? []
+      if ((await Promise.all(accountIds.map((accountId) => blocksExternalActions(admin, accountId)))).some(Boolean)) continue
       const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
         method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ To: to, From: TWILIO_FROM, Body: message }),

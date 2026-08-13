@@ -4,13 +4,14 @@
 // no customer key needed); if the customer connected their own OpenAI key it is used as a
 // fallback. Fair-use limited per plan. Result is saved to media_assets (Library).
 //   POST /functions/v1/content-visual  (Bearer jwt)  { content } -> { ok, prompt, image } | { ok:false, code }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
 import { nemoImage, uploadImage, imgModelDef } from '../_shared/media.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -41,6 +42,7 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
   const { data: acc } = await admin.from('accounts').select('plan, blocked').eq('id', accountId).single()
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   const plan = planOf(acc?.plan)

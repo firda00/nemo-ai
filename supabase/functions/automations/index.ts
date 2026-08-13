@@ -3,7 +3,7 @@
 // Step types: agent (an AI does a task), http (call any API, SSRF-guarded), notify (Telegram).
 //   POST /functions/v1/automations   (Authorization: Bearer <user jwt>)
 //   { action: 'generate'|'list'|'get'|'run'|'delete'|'toggle', ... }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'

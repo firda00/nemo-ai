@@ -5,7 +5,7 @@
 //
 //   POST /functions/v1/test-agent   (Authorization: Bearer <user jwt>)
 //   body { "agent": {...}, "message": "...", "history": [{author, content}] }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, estimateCostUsd, buildSystemPrompt, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { loadMemory, saveMemory } from '../_shared/memory.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'

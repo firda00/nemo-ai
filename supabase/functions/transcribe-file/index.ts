@@ -13,11 +13,12 @@
 // {action:'continue', job_id}. Concurrent/retried continues are serialized by
 // an atomic 3-minute claim lease, and finalize is idempotent (status+billed_at
 // guard) so billing happens exactly once: max(sum provider tokens, chars / 4).
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { transcribeAudioDetailed } from '../_shared/transcribe.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { mergeTranscriptWindows } from '../_shared/transcriptMerge.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -45,7 +46,7 @@ const REQUEST_BUDGET_MS = 150_000
 // a claim older than this is considered crashed and may be re-claimed
 const CLAIM_LEASE_MS = 3 * 60 * 1000
 const NO_SPEECH_MARK = 'NO_SPEECH_IN_RANGE'
-const MEDIA_BUCKET = 'media'
+const MEDIA_BUCKET = 'private-audio'
 
 interface GeminiResult {
   text: string
@@ -77,17 +78,6 @@ function ownedAudioPath(path: string, userId: string): string {
   return normalized
 }
 
-function ownedPathFromPublicUrl(raw: string, userId: string): string {
-  try {
-    const url = new URL(raw)
-    if (url.origin !== new URL(SUPABASE_URL).origin) return ''
-    const prefix = `/storage/v1/object/public/${MEDIA_BUCKET}/`
-    if (!url.pathname.startsWith(prefix)) return ''
-    return ownedAudioPath(decodeURIComponent(url.pathname.slice(prefix.length)), userId)
-  } catch {
-    return ''
-  }
-}
 
 function supportedMime(value: string): string {
   const mime = value.split(';')[0].trim().toLowerCase()
@@ -222,6 +212,8 @@ Deno.serve(async (req) => {
       engine: longAudio ? 'gemini-file' : 'openrouter-short',
     })
   }
+
+  if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
 
   const languageHint = String(body?.language ?? 'auto').replace(/[\r\n]/g, ' ').trim().slice(0, 40)
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -372,11 +364,9 @@ Deno.serve(async (req) => {
   }
 
   const requestedPath = String(body?.storage_path ?? '').trim()
-  const audioUrl = String(body?.audio_url ?? '').trim()
   const audioB64 = String(body?.audio_b64 ?? '').trim()
   let storagePath = requestedPath ? ownedAudioPath(requestedPath, user.id) : ''
-  if (!storagePath && audioUrl) storagePath = ownedPathFromPublicUrl(audioUrl, user.id)
-  if ((requestedPath || audioUrl) && !storagePath) {
+  if (requestedPath && !storagePath) {
     return json({ ok: false, code: 'UNSAFE_AUDIO_SOURCE', message: 'Разрешено расшифровывать только аудио, загруженное в ваше хранилище Nemo.' }, 200)
   }
 

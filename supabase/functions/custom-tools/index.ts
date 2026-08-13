@@ -3,12 +3,14 @@
 // but NEVER returned to the client. Account-scoped via RLS (the anon client carries the user JWT).
 //   POST /functions/v1/custom-tools   (Authorization: Bearer <user jwt>)
 //   { action:'list' | 'create' | 'delete' | 'toggle' | 'test_mcp', ... }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { probeMcp } from '../_shared/customTools.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
+const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,6 +27,13 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? 'list')
+  const { data: profile } = await db.from('users').select('account_id').maybeSingle()
+  const accountId = profile?.account_id
+  if (!accountId) return json({ error: 'no account' }, 403)
+  if ((action === 'create' || action === 'test_mcp' || (action === 'toggle' && Boolean(body?.enabled))) &&
+      await blocksExternalActions(createClient(SUPABASE_URL, SERVICE_ROLE), accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   if (action === 'list') {
     // never select the secret headers columns

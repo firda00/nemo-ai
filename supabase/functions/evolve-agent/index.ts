@@ -2,7 +2,7 @@
 // Owners can request/apply/rollback proposals. A daily cron may auto-apply at most one
 // reviewed prompt-only improvement per agent every seven days. It cannot change tools,
 // integrations, billing, code, deployment, permissions, or database policies.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'

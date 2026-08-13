@@ -46,35 +46,39 @@ Deno.serve(async (req) => {
   // Незакрытый счёт на тот же тариф переиспользуется. Иначе каждое нажатие «Оплатить» плодило бы
   // новый счёт, а в кассе у покупателя оставались бы открытыми старые ссылки на те же деньги.
   const { data: open } = await admin.from('billing_invoices')
-    .select('id, amount_tiyin, expires_at')
+    .select('id, invoice_no, amount_tiyin, expires_at')
     .eq('account_id', profile.account_id).eq('plan_code', planCode).eq('status', 'pending')
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
 
-  let invoiceId = open?.id ?? null
   // Цена изменилась с момента выставления — старый счёт не годится: его условия заморожены, и
   // покупатель заплатил бы по вчерашнему прайсу.
-  if (open && Number(open.amount_tiyin) !== amountTiyin) invoiceId = null
+  let invoice = open && Number(open.amount_tiyin) === amountTiyin ? open : null
 
-  if (!invoiceId) {
+  if (!invoice) {
     const { data: created, error } = await admin.from('billing_invoices').insert({
       account_id: profile.account_id,
       plan_code: planCode,
       amount_tiyin: amountTiyin,
       duration_days: PLAN_DURATION_DAYS,
-    }).select('id').single()
+    }).select('id, invoice_no').single()
     if (error || !created) return json({ error: 'could not create invoice' }, 500)
-    invoiceId = created.id
+    invoice = created
   }
+
+  // Кассам уходит НОМЕР счёта, а не uuid: Click работает целыми числами, и его сертификация uuid
+  // не принимает. Номер к тому же произносится вслух — на него ссылаются в споре об оплате.
+  const invoiceNo = Number(invoice.invoice_no)
 
   // Ссылка строится только для настроенной кассы. Кнопка, ведущая в ненастроенную, — это отказ
   // на чужой странице вместо отказа на своей.
-  const payme = paymeCheckoutUrl({ merchantId: PAYME_MERCHANT_ID, invoiceId, amountTiyin })
-  const click = clickCheckoutUrl({ serviceId: CLICK_SERVICE_ID, merchantId: CLICK_MERCHANT_ID, invoiceId, amountTiyin })
+  const payme = paymeCheckoutUrl({ merchantId: PAYME_MERCHANT_ID, invoiceNo, amountTiyin })
+  const click = clickCheckoutUrl({ serviceId: CLICK_SERVICE_ID, merchantId: CLICK_MERCHANT_ID, invoiceNo, amountTiyin })
 
   return json({
     ok: true,
-    invoice_id: invoiceId,
+    invoice_id: invoice.id,
+    invoice_no: invoiceNo,
     plan_code: planCode,
     amount_uzs: amountUzs,
     duration_days: PLAN_DURATION_DAYS,

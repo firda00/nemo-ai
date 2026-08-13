@@ -4,7 +4,7 @@
 //
 //   POST /functions/v1/redeem-gift   (Authorization: Bearer <user jwt>)
 //   body { "code": "NEMO-XXXX-XXXX" }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!

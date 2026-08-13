@@ -4,7 +4,7 @@
 //   { action:'preview', url, tab }                       -> { ok, headers, rows, detected }  (read + auto-map)
 //   { action:'save', url, tab, map }                     -> { ok, sheet_id, count }
 //   { action:'disconnect' }                              -> { ok }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { googleAccessToken, readSheetValues, extractSheetId } from '../_shared/google.ts'
 import { parseRoster } from '../_shared/planerkaRoster.ts'

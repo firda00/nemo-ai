@@ -19,7 +19,7 @@ export default function BillingPage() {
   const [checkoutBusy, setCheckoutBusy] = useState('')
   // Выставленный счёт с двумя ссылками. Выбор кассы — за покупателем: у Payme и Click разное
   // покрытие карт, и «оплатить» одной кнопкой означало бы отказ половине рынка.
-  const [invoice, setInvoice] = useState<{ planId: string; amountUzs: number; payme: string | null; click: string | null } | null>(null)
+  const [invoice, setInvoice] = useState<{ planId: string; no: number | null; amountUzs: number; payme: string | null; click: string | null } | null>(null)
   const [notice, setNotice] = useState<string | null>(() => (
     new URLSearchParams(window.location.search).get('upgraded') ? t('billingPage.subscribedNotice') : null
   ))
@@ -50,9 +50,9 @@ export default function BillingPage() {
       // из браузера значит продать Business за тысячу сумов, и проверка платежа честно бы её
       // подтвердила: она сверяет платёж со СЧЁТОМ, а не с прайсом.
       const { data: local } = await supabase.functions.invoke('billing-invoice', { body: { plan_code: id } })
-      const invoice = local as { ok?: boolean; payme_url?: string | null; click_url?: string | null; amount_uzs?: number } | null
+      const invoice = local as { ok?: boolean; invoice_no?: number; payme_url?: string | null; click_url?: string | null; amount_uzs?: number } | null
       if (invoice?.ok && (invoice.payme_url || invoice.click_url)) {
-        setInvoice({ planId: id, amountUzs: invoice.amount_uzs ?? 0, payme: invoice.payme_url ?? null, click: invoice.click_url ?? null })
+        setInvoice({ planId: id, no: invoice.invoice_no ?? null, amountUzs: invoice.amount_uzs ?? 0, payme: invoice.payme_url ?? null, click: invoice.click_url ?? null })
         setCheckoutBusy('')
         return
       }
@@ -189,6 +189,13 @@ export default function BillingPage() {
             <p className="mt-1 text-sm text-muted">
               {t('billingPagePay.paySubtitle', { amount: invoice.amountUzs.toLocaleString('ru-RU') })}
             </p>
+            {/* Номер счёта показан ДО перехода в кассу: если платёж потеряется, продиктовать в
+                поддержку «счёт 100042» можно, а uuid из адресной строки — нет. */}
+            {invoice.no != null && (
+              <p className="mt-2 text-xs text-muted">
+                {t('billingPagePay.payInvoiceNo')} <span className="font-mono text-text">{invoice.no}</span>
+              </p>
+            )}
             <div className="mt-5 space-y-2">
               {invoice.payme && (
                 <a href={invoice.payme} target="_blank" rel="noreferrer"

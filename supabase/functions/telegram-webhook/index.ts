@@ -10,6 +10,7 @@ import { escapeHtml } from '../_shared/telegramFormat.ts'
 import { applyKeyboard, CB_APPLY, CB_PICK, ownerChatFor, proposalText } from '../_shared/commerceEconomicsChat.ts'
 import {
   applyCategory, catalogueContext, categoryToken, CB_LISTING, CB_LISTING_CATEGORY, draftCard, draftKeyboard,
+  newListingText,
 } from '../_shared/commerceListingChat.ts'
 import { CB_COST_BATCH, costCampaignState } from '../_shared/commerceCostCampaign.ts'
 import {
@@ -371,6 +372,9 @@ Deno.serve(async (req) => {
       has_voice: Boolean(update?.message?.voice?.file_id),
       has_text: Boolean(update?.message?.text),
       has_caption: Boolean(update?.message?.caption),
+      // Признак, а не текст: сработал ли триггер «новый товар» на подписи. Содержимое переписки
+      // владельца с ботом — его дело, а для диагноза довольно знать, узнала ли его система.
+      has_listing_trigger: newListingText(String(update?.message?.text ?? update?.message?.caption ?? '')) !== null,
       chat_id: logged?.chat?.id != null ? String(logged.chat.id) : null,
     }).then(() => {}, (error: unknown) => {
       // Диагностика не имеет права ронять доставку: сломанная запись в журнал — это потерянный

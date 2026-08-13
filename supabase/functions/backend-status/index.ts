@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const missing = (name: string) => json({ ok: false, code: 'MISSING_BACKEND_SECRET', message: `${name} is not configured on the server.` }, 500)

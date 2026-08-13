@@ -5,7 +5,7 @@
 // Strategist turns it into a ready content plan grounded in the customer's own business.
 //   POST /functions/v1/analyze-content  (Bearer jwt)
 //   { platform, url?, handle?, transcript?, caption?, metrics?, goal? } -> { ok, analysis, retention, plan, id }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'

@@ -2,7 +2,7 @@
 // service POSTs to /automation-hook/<secret>; we find the automation by its unguessable secret
 // and run its steps with the request body as {{input}}. PUBLIC (the secret is the auth).
 //   POST /functions/v1/automation-hook/<secret>   body: any (becomes {{input}})
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { runAutomation } from '../_shared/automationEngine.ts'

@@ -10,6 +10,7 @@ export const extraUz = {
     "payClick": "Click orqali to‘lash",
     "payHint": "Kassa to‘lovni tasdiqlagach kirish ochiladi — odatda bir necha soniya. Sahifani yopsangiz ham hisob kutib turadi.",
     "payLater": "Keyinroq",
+    "payInvoiceNo": "Hisob raqami:",
   },
   "paywall": {
     "trialTitle": "3 kunlik bepul sinov tugadi",
@@ -1755,6 +1756,7 @@ export const extraRu = {
     "payClick": "Оплатить через Click",
     "payHint": "Доступ откроется, когда касса подтвердит платёж — обычно за несколько секунд. Счёт дождётся вас, даже если закрыть страницу.",
     "payLater": "Позже",
+    "payInvoiceNo": "Счёт №",
   },
   "paywall": {
     "trialTitle": "3-дневный бесплатный триал завершён",
@@ -3500,6 +3502,7 @@ export const extraEn = {
     "payClick": "Pay with Click",
     "payHint": "Access opens once the provider confirms the payment — usually within seconds. The invoice waits for you even if you close this page.",
     "payLater": "Later",
+    "payInvoiceNo": "Invoice no.",
   },
   "paywall": {
     "trialTitle": "Your 3-day free trial has ended",

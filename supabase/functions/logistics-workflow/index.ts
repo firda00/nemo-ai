@@ -1,6 +1,6 @@
 // Logistics Control: manual/CSV shipment rows -> deterministic SLA checks ->
 // specialist triage -> durable tasks, alerts, approval-only message drafts and report.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'

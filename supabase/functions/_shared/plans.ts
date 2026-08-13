@@ -9,10 +9,9 @@ export interface PlanLimit {
   teams: number        // max saved teams
   premium: boolean     // access to the premium model (gpt-4o) for manager/steps
   media: boolean       // media generation feature available at all (false = must upgrade)
-  mediaIncluded: boolean // true = generation is INCLUDED on Nemo's keys (no API to connect, "Pro/Max").
-                         // false = BYO tier ("Standard/Plus"): connect your own key, or use the small
-                         // weekly trial below on Nemo's key.
-  mediaTrialWeekly: number // BYO tiers only: free generations / week on Nemo's key before a key is required
+  mediaIncluded: boolean // true = generation is INCLUDED on Nemo's keys (no API to connect).
+                         // false = BYO tier: connect your own provider key.
+  mediaTrialWeekly: number // reserved for explicitly trial-enabled plans
   video: boolean       // VIDEO generation offered on this tier (budgeted feature — Plus/Pro/Max only)
   hiResVideo: boolean  // 1080p and 4K rendering (Pro and above; lower tiers render 720p).
                        // Independent of `premium` — beta keeps hi-res without premium LLMs.
@@ -24,10 +23,9 @@ export interface PlanLimit {
 
 export const PLAN_LIMITS: Record<string, PlanLimit> = {
   // Self-serve ladder approved for launch. Prices flow to Stripe via inline price_data — no Price IDs to sync.
-  // "Standard/Plus" = BYO tiers (mediaIncluded:false) → connect your own key, or a small weekly
-  // trial on Nemo's key. "Pro/Max" = included (mediaIncluded:true) → no API to connect.
+  // Starter is BYO (mediaIncluded:false); Pro and above include generation on Nemo's key.
   free:       { label: 'Free',       price: 0,    tokens: 150_000,     teams: 1,    premium: false, media: false, mediaIncluded: false, mediaTrialWeekly: 0,  video: false, hiResVideo: false, mediaMonthly: 0,     browserMonthly: 0,     videoMonthly: 0,    competitors: 1 },
-  starter:    { label: 'Starter',    price: 25,  tokens: 500_000,    teams: 1,   premium: false, media: true,  mediaIncluded: false, mediaTrialWeekly: 5, video: false, hiResVideo: false, mediaMonthly: 0,     browserMonthly: 20,   videoMonthly: 0,    competitors: 2 },
+  starter:    { label: 'Starter',    price: 25,  tokens: 500_000,    teams: 1,   premium: false, media: true,  mediaIncluded: false, mediaTrialWeekly: 0, video: false, hiResVideo: false, mediaMonthly: 0,     browserMonthly: 20,   videoMonthly: 0,    competitors: 2 },
   pro:        { label: 'Pro',        price: 59,  tokens: 2_000_000,  teams: 2,   premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 100,   browserMonthly: 75,   videoMonthly: 20,   competitors: 3 },
   business:   { label: 'Business',   price: 119, tokens: 6_000_000,  teams: 10,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 400,   browserMonthly: 250,  videoMonthly: 80,   competitors: 5 },
   agency:     { label: 'Agency',     price: 350, tokens: 20_000_000, teams: 30,  premium: true,  media: true,  mediaIncluded: true,  mediaTrialWeekly: 0, video: true,  hiResVideo: true,  mediaMonthly: 1500,  browserMonthly: 1000, videoMonthly: 300,  competitors: 10 },
@@ -43,10 +41,9 @@ export function planOf(p?: string | null): PlanLimit {
 // month-to-date AI tokens for an account (resets on the 1st, UTC)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function monthlyTokens(admin: any, accountId: string): Promise<number> {
-  const start = new Date()
-  start.setUTCDate(1); start.setUTCHours(0, 0, 0, 0)
-  const { data } = await admin.from('usage').select('tokens').eq('account_id', accountId).gte('created_at', start.toISOString()).limit(10000)
-  return (data ?? []).reduce((s: number, u: any) => s + (Number(u.tokens) || 0), 0)
+  const { data, error } = await admin.rpc('monthly_token_usage', { p_account_id: accountId })
+  if (error) throw new Error(`monthly token usage unavailable: ${error.message}`)
+  return Number(data) || 0
 }
 
 // month-to-date in-platform media generations for an account (resets on the 1st, UTC)

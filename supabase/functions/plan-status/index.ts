@@ -1,7 +1,7 @@
 // Plan status for the billing page: the account's current plan, month-to-date token
 // usage, its quota, and the full plan catalog. Read-only.
 //   POST /functions/v1/plan-status  (Bearer jwt) -> { plan, used, quota, limit, plans }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { PLAN_LIMITS, planOf, monthlyTokens } from '../_shared/plans.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 

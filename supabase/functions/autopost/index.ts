@@ -2,13 +2,14 @@
 //   • USER (Bearer jwt): action 'schedule' | 'list' | 'cancel'  — manage own scheduled posts
 //   • CRON (x-cron-secret): action 'run_due'                     — send everything due now
 // A post is sent by a connected bot (channels.credentials.bot_token) to target_chat.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { tgSendDetailed } from '../_shared/telegram.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { twitterPost } from '../_shared/twitter.ts'
 import { redditPost } from '../_shared/reddit.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 import { postFacebook, postInstagram } from '../_shared/metaPost.ts'
 
 const ALL_PLATFORMS = ['telegram', 'facebook', 'instagram', 'twitter', 'reddit', 'tiktok', 'youtube']
@@ -94,6 +95,10 @@ Deno.serve(async (req) => {
     for (const p of due) {
       const platform = p.platform ?? 'telegram'
       try {
+        if (await blocksExternalActions(admin, p.account_id)) {
+          await setStatus(p.id, false, 'production E2E external actions blocked')
+          continue
+        }
         if (platform === 'telegram') {
           const token = p.channel_id ? tokenByChannel.get(p.channel_id) : undefined
           if (!token) { await setStatus(p.id, false, 'no bot token'); continue }
@@ -139,6 +144,9 @@ Deno.serve(async (req) => {
   const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
+  if (['schedule', 'send_now', 'fanout'].includes(action) && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   if (action === 'list') {
     const { data, error } = await admin.from('scheduled_posts')

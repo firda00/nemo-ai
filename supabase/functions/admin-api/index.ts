@@ -5,7 +5,7 @@
 //
 //   POST /functions/v1/admin-api   (Authorization: Bearer <admin jwt>)
 //   body { "action": "list_accounts" | "list_feedback" | "grant" | "set" | "create_gift" | "list_gifts", ... }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { hasAal2 } from '../_shared/authAssurance.ts'
 

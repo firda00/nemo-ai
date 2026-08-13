@@ -6,10 +6,11 @@
 //   { action:'connect', platform:'meta', access_token, page_id, ig_user_id? }
 //   { action:'connect', platform:'twitter', api_key, api_secret, access_token, access_secret }
 //   { action:'connect', platform:'reddit', client_id, client_secret, username, password, subreddit? }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { twitterVerify } from '../_shared/twitter.ts'
 import { redditVerify } from '../_shared/reddit.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -55,6 +56,7 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'connect') {
+    if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     // ---- Twitter / X (OAuth 1.0a BYO 4 keys) ----
     if (platform === 'twitter') {
       const keys = {

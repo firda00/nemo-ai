@@ -4,11 +4,12 @@
 //     on a NEW video, localize title+description into each chosen language as content_drafts,
 //     and (if auto_publish + a Telegram target) publish the post to Telegram right away.
 // YouTube only for now — its per-channel RSS feed is free and needs no API key.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -94,7 +95,7 @@ async function localizeVideo(apiKey: string, langCode: string, title: string, de
 // Process one source: if its feed has a video newer than last_video_id, localize + store
 // drafts (and auto-publish to Telegram when configured). `force` regenerates the latest
 // video even if already seen (used by the "check now" button). Returns a short summary.
-async function processSource(admin: any, src: any, force = false): Promise<{ drafts: number; published: number; video?: string; skipped?: string }> {
+async function processSource(admin: any, src: any, force = false): Promise<{ drafts: number; published: number; video?: string; skipped?: string; external_blocked?: boolean }> {
   if (src.kind !== 'youtube' || !src.external_id) return { drafts: 0, published: 0, skipped: 'no-channel' }
   const { videos } = await fetchFeed(src.external_id)
   const stamp = () => admin.from('watched_sources').update({ last_checked_at: new Date().toISOString() }).eq('id', src.id)
@@ -116,8 +117,9 @@ async function processSource(admin: any, src: any, force = false): Promise<{ dra
 
   const langs: string[] = (Array.isArray(src.languages) && src.languages.length ? src.languages : ['en']).slice(0, MAX_LANGS)
   const wantTelegram = src.auto_publish && Array.isArray(src.platforms) && src.platforms.includes('telegram') && src.tg_channel_id && src.tg_target
+  const externalBlocked = Boolean(wantTelegram && await blocksExternalActions(admin, src.account_id))
   let botToken: string | undefined
-  if (wantTelegram) {
+  if (wantTelegram && !externalBlocked) {
     const { data: ch } = await admin.from('channels').select('credentials').eq('id', src.tg_channel_id).maybeSingle()
     botToken = ch?.credentials?.bot_token
   }
@@ -140,7 +142,7 @@ async function processSource(admin: any, src: any, force = false): Promise<{ dra
     await admin.rpc('decrement_token_balance', { p_account: src.account_id, p_amount: spent })
   }
   await admin.from('watched_sources').update({ last_video_id: newest.id, last_checked_at: new Date().toISOString() }).eq('id', src.id)
-  return { drafts, published, video: newest.title }
+  return { drafts, published, video: newest.title, external_blocked: externalBlocked || undefined }
 }
 
 Deno.serve(async (req) => {
@@ -156,11 +158,11 @@ Deno.serve(async (req) => {
     const auth = req.headers.get('Authorization') ?? ''
     if (!CRON_SECRET || (secret !== CRON_SECRET && auth !== `Bearer ${SERVICE_ROLE}`)) return new Response('forbidden', { status: 403 })
     const { data: sources } = await admin.from('watched_sources').select('*').eq('active', true).order('last_checked_at', { ascending: true, nullsFirst: true }).limit(CRON_SOURCE_CAP)
-    let drafts = 0, published = 0, changed = 0
+    let drafts = 0, published = 0, changed = 0, external_blocked = 0
     for (const s of sources ?? []) {
-      try { const r = await processSource(admin, s); drafts += r.drafts; published += r.published; if (r.drafts) changed++ } catch { /* skip one bad source */ }
+      try { const r = await processSource(admin, s); drafts += r.drafts; published += r.published; if (r.drafts) changed++; if (r.external_blocked) external_blocked++ } catch { /* skip one bad source */ }
     }
-    return json({ ok: true, sources: sources?.length ?? 0, changed, drafts, published })
+    return json({ ok: true, sources: sources?.length ?? 0, changed, drafts, published, external_blocked })
   }
 
   // ---- USER actions ----
@@ -189,6 +191,7 @@ Deno.serve(async (req) => {
     const languages = (Array.isArray(body?.languages) ? body.languages.map((x: any) => String(x)).filter(Boolean) : []).slice(0, MAX_LANGS)
     const platforms = (Array.isArray(body?.platforms) ? body.platforms.map((x: any) => String(x)).filter(Boolean) : []).slice(0, 8)
     const autoPublish = Boolean(body?.auto_publish)
+    if (autoPublish && await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     let tgChannelId = String(body?.tg_channel_id ?? '') || null
     const tgTarget = String(body?.tg_target ?? '').trim() || null
     if (!ytUrl(url)) return json({ ok: false, error: 'Вставьте ссылку на YouTube-канал.' }, 200)
@@ -223,8 +226,9 @@ Deno.serve(async (req) => {
 
   if (action === 'toggle') {
     const id = String(body?.id ?? '')
-    const { data: s } = await admin.from('watched_sources').select('active').eq('id', id).eq('account_id', accountId).maybeSingle()
+    const { data: s } = await admin.from('watched_sources').select('active, auto_publish').eq('id', id).eq('account_id', accountId).maybeSingle()
     if (!s) return json({ ok: false, error: 'not found' }, 200)
+    if (!s.active && s.auto_publish && await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     await admin.from('watched_sources').update({ active: !s.active }).eq('id', id).eq('account_id', accountId)
     return json({ ok: true, active: !s.active })
   }
@@ -239,6 +243,7 @@ Deno.serve(async (req) => {
     const id = String(body?.id ?? '')
     const { data: src } = await admin.from('watched_sources').select('*').eq('id', id).eq('account_id', accountId).maybeSingle()
     if (!src) return json({ ok: false, error: 'not found' }, 200)
+    if (src.auto_publish && Array.isArray(src.platforms) && src.platforms.includes('telegram') && await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
     try { const r = await processSource(admin, src, true); return json({ ok: true, ...r }) }
     catch (e) { return json({ ok: false, error: String(e).slice(0, 200) }, 200) }
   }

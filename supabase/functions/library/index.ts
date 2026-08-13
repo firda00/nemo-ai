@@ -1,7 +1,7 @@
 // Library — everything the AI has created, saved and browsable: team runs (content,
 // strategy, analysis, ops — with their full output) and generated media. Read-only.
 //   POST /functions/v1/library  (Bearer jwt)  { limit? }  -> { runs, media }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!

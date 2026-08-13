@@ -11,13 +11,14 @@
 //     { action:'run_mine', force? }           -> { processed, results }  (owner "run now")
 //   Cron (x-cron-secret header):
 //     { action:'run_due' }                    -> { processed, results }  (all accounts)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, estimateCostUsd, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { googleAccessToken } from '../_shared/google.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent } from '../_shared/riskPolicy.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -59,6 +60,10 @@ function buildRawEmail(from: string, to: string, subject: string, body: string):
 async function processOne(admin: any, row: any): Promise<{ id: string; status: string }> {
   try {
     const accountId = row.account_id
+    if (await blocksExternalActions(admin, accountId)) {
+      await admin.from('follow_ups').update({ status: 'stopped', claimed_at: null, updated_at: new Date().toISOString() }).eq('id', row.id)
+      return { id: row.id, status: 'stopped_production_e2e' }
+    }
     const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
     if (acc?.blocked || Number(acc?.token_balance ?? 0) <= 0) return { id: row.id, status: 'skipped_no_tokens' }
 
@@ -202,6 +207,9 @@ Deno.serve(async (req) => {
   const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
+  if (['enqueue', 'run_mine'].includes(action) && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   if (action === 'enqueue') {
     const channel = body.channel === 'email' ? 'email' : 'telegram'

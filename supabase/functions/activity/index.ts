@@ -2,7 +2,7 @@
 // sub-agent has been doing across all sections: team runs, tasks, client dialogues,
 // scheduled posts, alerts and token load. Read-only, account-scoped.
 //   POST /functions/v1/activity   (Bearer jwt) -> { summary, runs, tasks, dialogues, posts, team, alerts }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!

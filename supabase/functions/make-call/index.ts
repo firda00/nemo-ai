@@ -1,9 +1,10 @@
 // AI voice call on the customer's OWN Bland.ai key. The agent calls the number and
 // talks according to `task`. Logs the call. (Vapi supported similarly if connected.)
 //   POST /functions/v1/make-call  (Bearer jwt)  { phone, task } -> { ok, call_id }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -22,6 +23,7 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
   const { data: account } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).maybeSingle()
   if (!account || account.blocked || Number(account.token_balance ?? 0) <= 0) {
     return json({ ok: false, code: 'NO_CREDITS', message: 'Пополните баланс, чтобы совершать AI-звонки.' }, 402)

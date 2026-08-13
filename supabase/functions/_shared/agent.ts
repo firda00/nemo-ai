@@ -13,6 +13,7 @@ import { ALLOWED_MODEL_IDS } from './models.ts'
 import { amoCreateLead } from './amocrm.ts'
 import { buildLeadKeys, sanitizeLeadPatch } from './leadPatch.ts'
 import { runAgentTools } from './tools.ts'
+import { blocksExternalActions } from './productionE2E.ts'
 import { roleSkillBlock } from './skills.ts'
 import { tgSend } from './telegram.ts'
 
@@ -131,6 +132,7 @@ export async function classifyRoute(apiKey: string, text: string, self: any, sib
 async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>): Promise<{ provider: string | null; attempted: boolean }> {
   let attempted = false
   try {
+    if (await blocksExternalActions(db, accountId)) return { provider: null, attempted: false }
     const { data: keys } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId).in('provider', ['bitrix24', 'hubspot', 'amocrm'])
     const byP: Record<string, string> = {}
     for (const k of (keys ?? []) as any[]) {
@@ -218,7 +220,7 @@ async function extractLead(db: any, apiKey: string, dialogueId: string, history:
   // Only a real provider marker counts as pushed (matching the claim RPC), so junk written
   // through a hostile lead-form label during the deploy window cannot suppress the push.
   const alreadyPushed = ['bitrix24', 'amocrm', 'hubspot'].includes(String(fields.crm_pushed ?? ''))
-  if (rowId && fields.phone && !alreadyPushed) {
+  if (rowId && fields.phone && !alreadyPushed && !await blocksExternalActions(db, accountId)) {
     const { data: claimData, error: claimError } = await db.rpc('claim_lead_crm_push', { p_account_id: accountId, p_lead_id: rowId })
     if (claimError) { console.error('lead claim failed:', claimError); return tokens }
     const claim = Array.isArray(claimData) ? claimData[0] : claimData
@@ -245,6 +247,7 @@ async function extractLead(db: any, apiKey: string, dialogueId: string, history:
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function notifyEscalation(db: any, agent: any, lastCustomer: string, reason: string): Promise<void> {
   try {
+    if (await blocksExternalActions(db, agent.account_id)) return
     const { data: bp } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', agent.account_id).maybeSingle()
     const target = bp?.notify_chat_id
     if (!target) return
@@ -252,6 +255,7 @@ async function notifyEscalation(db: any, agent: any, lastCustomer: string, reaso
     const token = ch?.credentials?.bot_token
     if (!token) return
     const alert = `🔔 Нужен оператор\nАгент: ${agent.name ?? 'ИИ'}\nВопрос клиента: "${String(lastCustomer).slice(0, 300)}"\nПричина: ${reason || '—'}\n\nОткройте раздел «Диалоги» в Nemo и ответьте клиенту.`
+    if (await blocksExternalActions(db, agent.account_id)) return
     await tgSend(String(token), String(target), alert)
   } catch { /* best effort — never block the reply flow */ }
 }

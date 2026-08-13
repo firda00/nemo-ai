@@ -2,11 +2,12 @@
 // connected Google. Authenticated: the caller's JWT identifies the account; we then use the
 // service role to read the Google token + save tasks_sheet_id. No group bot required.
 //   POST /functions/v1/create-planerka-sheet   (Authorization: Bearer <user jwt>)  body { title? }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { extractSheetId, googleAccessToken } from '../_shared/google.ts'
 import { createPlanerkaSheet } from '../_shared/planerkaSheet.ts'
 import { normLang } from '../_shared/planerkaLocale.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -27,6 +28,7 @@ Deno.serve(async (req) => {
 
   // service role: read the account's Google token + persist the sheet id
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
+  if (await blocksExternalActions(db, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
   const g = await googleAccessToken(db, accountId)
   if (!g.token) return json({ ok: false, code: 'GOOGLE_NOT_CONNECTED', error: 'Google is not connected for this account.' }, 400)
 

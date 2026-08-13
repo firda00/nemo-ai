@@ -6,9 +6,10 @@
 //
 //   POST /functions/v1/connect-channel   (Authorization: Bearer <user jwt>)
 //   body { "agent_id": "uuid", "type": "whatsapp"|"instagram"|"widget", "credentials": {...} }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -34,9 +35,11 @@ Deno.serve(async (req) => {
   if (!agentId || !TYPES.has(type)) return json({ error: 'agent_id and valid type required' }, 400)
 
   // ownership check via RLS (agent must belong to the caller's account)
-  const { data: agent } = await db.from('agents').select('id, niche, risk_tier').eq('id', agentId).single()
+  const { data: agent } = await db.from('agents').select('id, account_id, niche, risk_tier, status, config_revision, published_revision').eq('id', agentId).single()
   if (!agent) return json({ error: 'agent not found' }, 404)
+  if (agent.status !== 'active') return json({ error: 'AGENT_EVAL_REQUIRED' }, 409)
   if (isRegulatedAgent(agent)) return json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, 403)
+  if (type !== 'widget' && await blocksExternalActions(db, agent.account_id)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
 
   // minimal per-type credential validation
   const inCreds = (body?.credentials ?? {}) as Record<string, unknown>

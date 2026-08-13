@@ -65,6 +65,8 @@ const protocolModule = read('supabase/functions/_shared/paymentProtocol.ts')
 const protocolTest = read('agent-hub/payment-protocol-behavior.mjs')
 const paymeEndpoint = read('supabase/functions/payme-webhook/index.ts')
 const clickEndpoint = read('supabase/functions/click-webhook/index.ts')
+const invoiceEndpoint = read('supabase/functions/billing-invoice/index.ts')
+const numericIdsMigration = read('supabase/migrations/20260813090000_billing_numeric_ids.sql')
 const transactionsMigration = read('supabase/migrations/20260812130000_billing_transactions.sql')
 const planMigration = read('supabase/migrations/20260812120000_invoice_sets_plan.sql')
 const agentWorker = read('supabase/functions/agent-worker/index.ts')
@@ -1043,7 +1045,7 @@ const checks = [
 
   // Именно эта сверка не даёт второму Complete закрыться по чужой подготовке.
   ['click complete must match its own prepare',
-    clickEndpoint.includes("String(request.merchant_prepare_id ?? '') !== String(existing.merchant_prepare_id ?? '')")
+    clickEndpoint.includes("String(request.merchant_prepare_id ?? '') !== String(existing.transaction_no ?? '')")
     && clickEndpoint.includes('amount !== Number(existing.amount_tiyin)')],
 
   // Click сообщает отказ банка полем error в том же Complete, и подпись при этом верная — запрос
@@ -1053,6 +1055,61 @@ const checks = [
     && clickEndpoint.includes('if (providerError < 0)')
     && clickEndpoint.indexOf('providerError < 0') < clickEndpoint.indexOf("db.rpc('apply_invoice_entitlement'")
     && protocolModule.includes("error: text('error')")],
+
+  // ── Сертификация касс ──────────────────────────────────────────────────────────────────────
+  //
+  // Требования провайдеров, без которых кассу не подключат. Проверяются здесь, а не «на глаз при
+  // сдаче»: сертификация проходится один раз, а ломается любой правкой.
+
+  // Click работает целыми числами. Uuid проходит по формату строки и не проходит сертификацию —
+  // и узнать об этом на приёмке дороже, чем сейчас.
+  ['the cassa gets a number, not a uuid',
+    numericIdsMigration.includes('create sequence if not exists public.billing_invoice_no_seq')
+    && numericIdsMigration.includes('create sequence if not exists public.billing_transaction_no_seq')
+    && numericIdsMigration.includes('create unique index if not exists billing_invoices_no_key')
+    && protocolModule.includes('transaction_param=${input.invoiceNo}')
+    && invoiceEndpoint.includes('const invoiceNo = Number(invoice.invoice_no)')],
+
+  // Подготовку с завершением связывает номер транзакции: отдельный случайный uuid для этого не
+  // нужен, а Click его и не принимает.
+  ['click links its phases by the numeric transaction number',
+    clickEndpoint.includes('merchantPrepareId: existing.transaction_no')
+    && clickEndpoint.includes('merchantConfirmId: existing.transaction_no')
+    && clickEndpoint.includes("String(request.merchant_prepare_id ?? '') !== String(existing.transaction_no ?? '')")
+    && !clickEndpoint.includes('crypto.randomUUID()')],
+
+  // error.data называет поле, которое покупатель может исправить. Имя поля обязано совпадать с
+  // тем, что уходит в ссылку на кассу, иначе Payme пришлёт account без известного нам ключа.
+  ['payme names the field it refuses on',
+    protocolModule.includes("PAYME_DATA_FIELD = { ACCOUNT: 'invoice_no', AMOUNT: 'amount' }")
+    && protocolModule.includes('ac.${PAYME_DATA_FIELD.ACCOUNT}=${input.invoiceNo}')
+    && (paymeEndpoint.match(/PAYME_DATA_FIELD\.ACCOUNT/g) ?? []).length >= 4
+    && paymeEndpoint.includes('PAYME_DATA_FIELD.AMOUNT')],
+
+  // Битый JSON и правильный JSON не того вида — разные отказы. Ответить на первый «метод не
+  // найден» значит послать инженера кассы искать опечатку в методе, которого в запросе не было.
+  ['a broken body is a parse error, not a missing method',
+    paymeEndpoint.includes('const rawBody = await req.text()')
+    && paymeEndpoint.includes('PAYME_ERRORS.PARSE, PAYME_MESSAGES.parse_error')
+    && paymeEndpoint.includes('PAYME_ERRORS.INVALID_REQUEST, PAYME_MESSAGES.invalid_request')
+    // Авторизация всё равно первая: неавторизованный не должен узнавать даже это.
+    && paymeEndpoint.indexOf('checkPaymeAuth(') < paymeEndpoint.indexOf('if (parseFailed)')],
+
+  // Брошенная транзакция иначе висит в состоянии 1 вечно и держит счёт занятым: новый платёж по
+  // нему касса создать не даст, а этот уже никто не завершит.
+  ['a transaction abandoned for 12 hours is cancelled, not left hanging',
+    protocolModule.includes('PAYME_TIMEOUT_MS = 12 * 60 * 60 * 1000')
+    && protocolModule.includes('PAYME_CANCEL_TIMEOUT = 4')
+    && paymeEndpoint.includes('cancel_reason: PAYME_CANCEL_TIMEOUT')
+    // Все три метода, которыми касса может застать просроченную транзакцию.
+    && (paymeEndpoint.match(/paymeExpired\(existing\.created_at\)/g) ?? []).length === 3
+    && paymeEndpoint.includes('PAYME_MESSAGES.timeout')],
+
+  // Отмена по таймауту не должна затирать уже выполненный платёж: условие на состояние 1 — это то,
+  // что отделяет закрытие брошенной попытки от отбирания оплаченного.
+  ['the timeout closes only a waiting transaction',
+    paymeEndpoint.includes(".eq('id', row.id).eq('state', PAYME_STATE.CREATED)")
+    && protocolModule.includes('if (!Number.isFinite(started)) return false')],
 
   // Уникальность по провайдеру не запрещает две РАЗНЫЕ транзакции на один счёт: две попытки Click
   // или оплату через Payme и Click сразу. Запрещает частичный индекс.

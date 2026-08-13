@@ -122,9 +122,20 @@ export const paymeResult = (id: unknown, result: Record<string, unknown>) => ({ 
 /**
  * Отказ Payme. Сообщение на трёх языках, потому что касса показывает его покупателю, а покупатель
  * в Узбекистане читает по-русски, по-узбекски или по-английски.
+ *
+ * data НАЗЫВАЕТ ПОЛЕ, из-за которого отказ. Для ошибок про счёт (-31050 и далее) и про сумму это
+ * требование протокола, а не украшение: касса подсвечивает покупателю именно то поле, которое он
+ * может исправить. Без data он видит «ошибка» и не знает, ошибся ли он номером счёта или суммой.
  */
-export function paymeFailure(id: unknown, code: number, message: { ru: string; uz: string; en: string }) {
-  return { jsonrpc: '2.0', id, error: { code, message } }
+export function paymeFailure(
+  id: unknown,
+  code: number,
+  message: { ru: string; uz: string; en: string },
+  data?: string,
+) {
+  const error: Record<string, unknown> = { code, message }
+  if (data) error.data = data
+  return { jsonrpc: '2.0', id, error }
 }
 
 export const PAYME_MESSAGES: Record<string, { ru: string; uz: string; en: string }> = {
@@ -135,15 +146,63 @@ export const PAYME_MESSAGES: Record<string, { ru: string; uz: string; en: string
   transaction_not_found: { ru: 'Транзакция не найдена', uz: 'Tranzaksiya topilmadi', en: 'Transaction not found' },
   cannot_perform: { ru: 'Операция сейчас невозможна', uz: 'Amalni bajarib bo‘lmaydi', en: 'Operation is not allowed' },
   method_not_found: { ru: 'Метод не найден', uz: 'Metod topilmadi', en: 'Method not found' },
+  // Разбор тела и разбор запроса — РАЗНЫЕ отказы, и у Payme у них разные коды. Отвечать на битый
+  // JSON «метод не найден» значит послать инженера кассы искать опечатку в названии метода,
+  // которого в запросе вообще не было.
+  parse_error: { ru: 'Не удалось разобрать запрос', uz: 'So‘rovni o‘qib bo‘lmadi', en: 'Could not parse the request' },
+  invalid_request: { ru: 'Неверный формат запроса', uz: 'So‘rov formati noto‘g‘ri', en: 'Invalid request' },
+  timeout: { ru: 'Время ожидания оплаты истекло', uz: 'To‘lov kutish vaqti tugadi', en: 'Payment timed out' },
 }
 
-/** Идентификатор счёта из params.account. Payme кладёт туда поля, которые мерчант сам объявил. */
-export function paymeInvoiceId(params: Record<string, unknown>): string | null {
+/** Поле, на которое ссылается error.data. Имена — те же, что объявлены в кабинете мерчанта. */
+export const PAYME_DATA_FIELD = { ACCOUNT: 'invoice_no', AMOUNT: 'amount' } as const
+
+/**
+ * Транзакция Payme живёт 12 часов.
+ *
+ * Требование протокола: незавершённая транзакция старше 12 часов подлежит отмене с причиной 4, а
+ * попытка её выполнить — отказу. Без этого созданная и брошенная транзакция висит в состоянии 1
+ * вечно и блокирует счёт: новый платёж по нему касса создать не даст, а старый уже никто не
+ * завершит.
+ */
+export const PAYME_TIMEOUT_MS = 12 * 60 * 60 * 1000
+export const PAYME_CANCEL_TIMEOUT = 4
+
+export function paymeExpired(createdAt: unknown, now: Date = new Date()): boolean {
+  const started = Date.parse(String(createdAt ?? ''))
+  if (!Number.isFinite(started)) return false // Непрочитанная дата — не повод отменять чужой платёж.
+  return now.getTime() - started > PAYME_TIMEOUT_MS
+}
+
+/**
+ * Ссылка на счёт из params.account.
+ *
+ * Касса присылает то, что мерчант объявил в кабинете. Мы объявляем номер — короткое число, которое
+ * покупатель видит на счёте и может продиктовать. Uuid принимается тоже: он остаётся первичным
+ * ключом, и ссылки, выданные до перехода на номера, обязаны продолжать работать.
+ */
+export type InvoiceRef = { by: 'no'; value: number } | { by: 'id'; value: string }
+
+export function invoiceRefFrom(raw: unknown): InvoiceRef | null {
+  const text = typeof raw === 'string' ? raw.trim() : typeof raw === 'number' ? String(raw) : ''
+  if (/^\d{1,18}$/.test(text)) {
+    const value = Number(text)
+    return Number.isSafeInteger(value) && value > 0 ? { by: 'no', value } : null
+  }
+  return /^[0-9a-f-]{36}$/i.test(text) ? { by: 'id', value: text } : null
+}
+
+export function paymeInvoiceRef(params: Record<string, unknown>): InvoiceRef | null {
   const account = params?.account
   if (!account || typeof account !== 'object') return null
-  const value = (account as Record<string, unknown>).invoice_id ?? (account as Record<string, unknown>).order_id
-  const text = typeof value === 'string' ? value.trim() : ''
-  return /^[0-9a-f-]{36}$/i.test(text) ? text : null
+  const row = account as Record<string, unknown>
+  return invoiceRefFrom(row.invoice_no ?? row.invoice_id ?? row.order_id)
+}
+
+/** Одинаковы ли две ссылки на счёт. Повтор Create обязан прийти на ТОТ ЖЕ счёт. */
+export function sameInvoiceRef(ref: InvoiceRef | null, invoice: { id: string; invoice_no: number | string } | null) {
+  if (!ref || !invoice) return false
+  return ref.by === 'no' ? String(ref.value) === String(invoice.invoice_no) : ref.value === invoice.id
 }
 
 /* ─────────────────────────────  Click  ───────────────────────────── */
@@ -318,10 +377,16 @@ export const PLAN_PRICE_UZS: Record<string, number> = {
 
 export const PLAN_DURATION_DAYS = 30
 
-/** Ссылка на кассу Payme. Параметры кодируются base64 — так устроен их чекаут. */
-export function paymeCheckoutUrl(input: { merchantId: string; invoiceId: string; amountTiyin: number }): string | null {
-  if (!input.merchantId || !input.invoiceId || !(input.amountTiyin > 0)) return null
-  const params = `m=${input.merchantId};ac.invoice_id=${input.invoiceId};a=${input.amountTiyin}`
+/**
+ * Ссылка на кассу Payme. Параметры кодируются base64 — так устроен их чекаут.
+ *
+ * Имя поля счёта — ровно то, что объявлено в кабинете мерчанта (invoice_no). Расхождение здесь
+ * означает, что касса пришлёт account без известного нам ключа и все платежи упрутся в «счёт не
+ * найден».
+ */
+export function paymeCheckoutUrl(input: { merchantId: string; invoiceNo: number; amountTiyin: number }): string | null {
+  if (!input.merchantId || !(input.invoiceNo > 0) || !(input.amountTiyin > 0)) return null
+  const params = `m=${input.merchantId};ac.${PAYME_DATA_FIELD.ACCOUNT}=${input.invoiceNo};a=${input.amountTiyin}`
   return `https://checkout.paycom.uz/${btoa(params)}`
 }
 
@@ -333,13 +398,13 @@ export function paymeCheckoutUrl(input: { merchantId: string; invoiceId: string;
  * увидит её только на экране оплаты.
  */
 export function clickCheckoutUrl(input: {
-  serviceId: string; merchantId: string; invoiceId: string; amountTiyin: number
+  serviceId: string; merchantId: string; invoiceNo: number; amountTiyin: number
 }): string | null {
-  if (!input.serviceId || !input.merchantId || !input.invoiceId || !(input.amountTiyin > 0)) return null
+  if (!input.serviceId || !input.merchantId || !(input.invoiceNo > 0) || !(input.amountTiyin > 0)) return null
   const sums = (input.amountTiyin / 100).toFixed(2)
   return 'https://my.click.uz/services/pay'
     + `?service_id=${encodeURIComponent(input.serviceId)}`
     + `&merchant_id=${encodeURIComponent(input.merchantId)}`
     + `&amount=${sums}`
-    + `&transaction_param=${encodeURIComponent(input.invoiceId)}`
+    + `&transaction_param=${input.invoiceNo}`
 }

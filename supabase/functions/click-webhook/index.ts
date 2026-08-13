@@ -9,7 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import {
   CLICK_ACTION, CLICK_ERRORS, CLICK_NOTES,
   amountToTiyin, checkClickSignature, checkInvoicePayable,
-  clickResponse, parseClickRequest,
+  clickResponse, invoiceRefFrom, parseClickRequest,
 } from '../_shared/paymentProtocol.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
@@ -48,30 +48,36 @@ Deno.serve(async (req) => {
 
   const db = createClient(URL, SERVICE)
   const amount = amountToTiyin(request.amount)
-  // merchant_trans_id — НАШ номер счёта. Он приходит извне, поэтому дальше идёт только как uuid.
-  const invoiceId = /^[0-9a-f-]{36}$/i.test(request.merchant_trans_id) ? request.merchant_trans_id : null
+  // merchant_trans_id — НАШ номер счёта. Click работает числами, поэтому здесь ожидается номер;
+  // uuid принимается тоже, ради ссылок, выданных до перехода на номера. Значение приходит извне и
+  // дальше идёт только как разобранная ссылка, а не как кусок запроса.
+  const invoiceRef = invoiceRefFrom(request.merchant_trans_id)
 
   try {
     if (request.action !== CLICK_ACTION.PREPARE && request.action !== CLICK_ACTION.COMPLETE) {
       return fail(CLICK_ERRORS.ACTION_NOT_FOUND)
     }
-    if (!invoiceId) return fail(CLICK_ERRORS.USER_NOT_FOUND)
+    if (!invoiceRef) return fail(CLICK_ERRORS.USER_NOT_FOUND)
 
-    const { data: invoice } = await db.from('billing_invoices')
-      .select('id, account_id, status, amount_tiyin, entitlement_applied_at, expires_at').eq('id', invoiceId).maybeSingle()
+    const invoiceQuery = db.from('billing_invoices')
+      .select('id, invoice_no, account_id, status, amount_tiyin, entitlement_applied_at, expires_at')
+    const { data: invoice } = invoiceRef.by === 'no'
+      ? await invoiceQuery.eq('invoice_no', invoiceRef.value).maybeSingle()
+      : await invoiceQuery.eq('id', invoiceRef.value).maybeSingle()
 
     const { data: existing } = await db.from('billing_transactions')
       .select('*').eq('provider', 'click').eq('provider_transaction_id', request.click_trans_id).maybeSingle()
 
     if (request.action === CLICK_ACTION.PREPARE) {
       // Повтор Prepare обязан вернуть ТОТ ЖЕ merchant_prepare_id: иначе Complete придёт с одним
-      // номером, а у нас будет записан другой, и фазы не сойдутся.
+      // номером, а у нас будет записан другой, и фазы не сойдутся. Отдельный идентификатор для
+      // этого не нужен — номер транзакции уже уникален, числовой и принадлежит ровно этой строке.
       if (existing) {
         if (existing.state < 0) return fail(CLICK_ERRORS.TRANSACTION_CANCELLED)
         if (existing.state === 2) return fail(CLICK_ERRORS.ALREADY_PAID)
         return reply(clickResponse({
           request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS],
-          merchantPrepareId: existing.merchant_prepare_id ?? existing.id,
+          merchantPrepareId: existing.transaction_no,
         }))
       }
 
@@ -82,7 +88,6 @@ Deno.serve(async (req) => {
         return fail(CLICK_ERRORS.USER_NOT_FOUND)
       }
 
-      const prepareId = crypto.randomUUID()
       const { data: created, error } = await db.from('billing_transactions').insert({
         provider: 'click',
         provider_transaction_id: request.click_trans_id,
@@ -90,17 +95,16 @@ Deno.serve(async (req) => {
         account_id: invoice!.account_id,
         amount_tiyin: amount,
         state: 1,
-        merchant_prepare_id: prepareId,
-      }).select('id, merchant_prepare_id').single()
+      }).select('id, transaction_no').single()
       // Гонка двух Prepare с одним click_trans_id: уникальность отдаёт ошибку, и мы возвращаем то,
       // что записал сосед, а не вторую подготовку на тот же счёт.
       if (error) {
         const { data: again } = await db.from('billing_transactions')
-          .select('id, merchant_prepare_id, state').eq('provider', 'click').eq('provider_transaction_id', request.click_trans_id).maybeSingle()
+          .select('id, transaction_no, state').eq('provider', 'click').eq('provider_transaction_id', request.click_trans_id).maybeSingle()
         if (!again) return fail(CLICK_ERRORS.BAD_REQUEST)
-        return reply(clickResponse({ request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS], merchantPrepareId: again.merchant_prepare_id ?? again.id }))
+        return reply(clickResponse({ request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS], merchantPrepareId: again.transaction_no }))
       }
-      return reply(clickResponse({ request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS], merchantPrepareId: created.merchant_prepare_id }))
+      return reply(clickResponse({ request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS], merchantPrepareId: created.transaction_no }))
     }
 
     // ПЛАТЁЖ МОГ НЕ ПРОЙТИ. Click сообщает исход полем error, и отрицательное значение означает
@@ -120,7 +124,7 @@ Deno.serve(async (req) => {
     if (!existing) return fail(CLICK_ERRORS.TRANSACTION_NOT_FOUND)
     if (existing.state < 0) return fail(CLICK_ERRORS.TRANSACTION_CANCELLED)
     // Именно эта проверка не даёт второму Complete закрыться по чужой подготовке.
-    if (String(request.merchant_prepare_id ?? '') !== String(existing.merchant_prepare_id ?? '')) {
+    if (String(request.merchant_prepare_id ?? '') !== String(existing.transaction_no ?? '')) {
       return fail(CLICK_ERRORS.TRANSACTION_NOT_FOUND)
     }
     // Сумма сверяется ЗАНОВО: Prepare мог пройти по одной, а Complete прийти с другой.
@@ -130,7 +134,7 @@ Deno.serve(async (req) => {
       // Уже оплачено — не ошибка, а сигнал «повторять не нужно».
       return reply(clickResponse({
         request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS],
-        merchantPrepareId: existing.merchant_prepare_id, merchantConfirmId: existing.id,
+        merchantPrepareId: existing.transaction_no, merchantConfirmId: existing.transaction_no,
       }))
     }
 
@@ -143,7 +147,7 @@ Deno.serve(async (req) => {
 
     return reply(clickResponse({
       request, error: CLICK_ERRORS.SUCCESS, note: CLICK_NOTES[CLICK_ERRORS.SUCCESS],
-      merchantPrepareId: existing.merchant_prepare_id, merchantConfirmId: existing.id,
+      merchantPrepareId: existing.transaction_no, merchantConfirmId: existing.transaction_no,
     }))
   } catch (error) {
     console.error('click webhook error:', error)

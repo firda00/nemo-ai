@@ -7,7 +7,7 @@
 // team exists) through OpenRouter, produces strict JSON, and the whole run —
 // per-step agent trace + manager summary + tasks/notifications — is saved to the
 // DB (research_runs + tasks + notifications). Token-guarded + usage-accounted.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { callOpenRouter, PRIMARY_MODEL, FALLBACK_MODEL, type ChatMsg } from '../_shared/llm.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
@@ -15,6 +15,7 @@ import { buildTaskRow, cleanTitle, STATUS } from '../_shared/planerkaSheet.ts'
 import { googleAccessToken, sheetsAppend } from '../_shared/google.ts'
 import { readPlanerkaRoster, matchRoster } from '../_shared/planerkaRoster.ts'
 import { tgSend } from '../_shared/telegram.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -140,14 +141,17 @@ Deno.serve(async (req) => {
   const accountId = prof?.account_id
   if (!accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const body = await req.json().catch(() => ({}))
+  const action = String(body?.action ?? '')
+  if (action === 'meeting_to_tasks' && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
   const { data: acc } = await admin.from('accounts').select('token_balance, blocked').eq('id', accountId).single()
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
   const orKey = await resolveOpenRouterKey(admin, accountId, OPENROUTER_API_KEY)
   if (!orKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
 
-  const body = await req.json().catch(() => ({}))
-  const action = String(body?.action ?? '')
   const lang = String(body?.lang ?? '').trim()
   const departmentId = typeof body?.department_id === 'string' ? body.department_id : null
   const langRule = lang && LANG_NAME[lang] ? `Write all human-facing text in ${LANG_NAME[lang]}.` : 'Write in the same language as the input.'

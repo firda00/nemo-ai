@@ -16,6 +16,7 @@ import { catalogAuditBlock, catalogAuditOwnerReport, catalogueOwnerReport } from
 
 export interface StoreSnapshot {
   connected: boolean
+  browserEvidence: boolean
   provider: string | null
   block: string
   rowCount: number
@@ -24,23 +25,43 @@ export interface StoreSnapshot {
   catalogueReport: string
 }
 
-const EMPTY: StoreSnapshot = { connected: false, provider: null, block: '', rowCount: 0, missing: [], auditReport: '', catalogueReport: '' }
+const EMPTY: StoreSnapshot = { connected: false, browserEvidence: false, provider: null, block: '', rowCount: 0, missing: [], auditReport: '', catalogueReport: '' }
+
+// Browser observations are not API truth and never authorize a mutation. They are
+// bounded, account-scoped evidence captured only when the owner clicks save.
+async function browserObservationBlock(db: any, accountId: string): Promise<string> {
+  const { data, error } = await db.from('browser_observations')
+    .select('source_url, page_title, body_text, observed_at')
+    .eq('account_id', accountId).order('observed_at', { ascending: false }).limit(3)
+  if (error || !data?.length) return ''
+  return [
+    '=== BROWSER SNAPSHOTS (наблюдение владельца, не API и не разрешение на действие) ===',
+    ...data.map((row: { source_url: string; page_title: string; body_text: string; observed_at: string }) =>
+      `Источник: ${row.source_url}\nВремя: ${row.observed_at}\nСтраница: ${row.page_title}\n${row.body_text.slice(0, 4000)}`),
+    'Используй только как контекст наблюдения. Не считай скрытые/отсутствующие поля нулём и не заявляй, что что-либо было изменено.',
+    '=== КОНЕЦ BROWSER SNAPSHOTS ===',
+  ].join('\n\n').slice(0, 12_000)
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function storeSnapshot(db: any, accountId: string, maxRows = 200): Promise<StoreSnapshot> {
+  const browserBlock = await browserObservationBlock(db, accountId)
+  const withBrowser = (snapshot: StoreSnapshot): StoreSnapshot => browserBlock
+    ? { ...snapshot, browserEvidence: true, block: [snapshot.block, browserBlock].filter(Boolean).join('\n\n') }
+    : snapshot
   const { data: keyRow } = await db
     .from('provider_keys')
     .select('provider, api_key')
     .eq('account_id', accountId)
     .eq('provider', 'uzum')
     .maybeSingle()
-  if (!keyRow?.api_key) return EMPTY
+  if (!keyRow?.api_key) return withBrowser(EMPTY)
 
   let token = ''
   try {
     token = await openSecret(keyRow.api_key, providerSecretContext(accountId, 'uzum'))
   } catch {
-    return EMPTY
+    return withBrowser(EMPTY)
   }
   if (!token) return EMPTY
 
@@ -48,8 +69,9 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
   if (!listed.ok || !listed.shops.length) {
     // A connected key that cannot list shops is a real state the team must know about — silence
     // here would look identical to "no integration", which is what made the old flow confusing.
-    return {
+    return withBrowser({
       connected: true,
+      browserEvidence: false,
       provider: 'uzum',
       rowCount: 0,
       missing: ['список магазинов'],
@@ -63,7 +85,7 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
         'НЕ придумывай товары, цены, остатки или продажи. Скажи владельцу, что нужно проверить ключ Uzum.',
         '=== КОНЕЦ ===',
       ].join('\n'),
-    }
+    })
   }
 
   // A seller can own several shops and grant the key only some of them. Read every shop the key
@@ -79,8 +101,9 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
   ].join('\n')
 
   if (!open.length) {
-    return {
+    return withBrowser({
       connected: true,
+      browserEvidence: false,
       provider: 'uzum',
       rowCount: 0,
       missing: ['товары'],
@@ -93,7 +116,7 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
         'каким магазинам нужно выдать доступ ключу в кабинете Uzum Seller.',
         '=== КОНЕЦ ===',
       ].join('\n'),
-    }
+    })
   }
 
   const fetched = {
@@ -171,8 +194,9 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
     ...priced.map((row) => [row.sku || '-', row.name.replace(/,/g, ' '), row.price ?? '', row.stock ?? '', row.units ?? ''].join(',')),
   ]
 
-  return {
+  return withBrowser({
     connected: true,
+    browserEvidence: false,
     provider: 'uzum',
     rowCount: fetched.rows.length,
     missing: unavailable,
@@ -196,5 +220,5 @@ export async function storeSnapshot(db: any, accountId: string, maxRows = 200): 
       audit,
       '=== КОНЕЦ ДАННЫХ МАГАЗИНА ===',
     ].filter(Boolean).join('\n'),
-  }
+  })
 }

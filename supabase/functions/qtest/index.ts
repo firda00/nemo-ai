@@ -5,14 +5,21 @@
 //   • metrics: current queue depth.
 // The worker does a real (1-token) OpenRouter call per job to prove the paced real path holds;
 // failed jobs are left in the queue and pgmq re-delivers them after the visibility timeout (retry).
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const SVC = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const OR = Deno.env.get('OPENROUTER_API_KEY') ?? ''
+const QTEST_SECRET = Deno.env.get('QTEST_SECRET') ?? ''
 const CONCURRENCY = 6 // global token bucket: max simultaneous OpenRouter calls across the drain
 
 Deno.serve(async (req) => {
+  if (Deno.env.get('QTEST_ENABLED') !== 'true' || QTEST_SECRET.length < 32) {
+    return new Response(JSON.stringify({ ok: false, error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  }
+  if (req.headers.get('x-qtest-secret') !== QTEST_SECRET) {
+    return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  }
   const db = createClient(URL, SVC)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')

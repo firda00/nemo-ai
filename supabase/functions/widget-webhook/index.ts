@@ -6,7 +6,7 @@
 //
 //   POST /functions/v1/widget-webhook/<channel_id>
 //   body { message, session_id }  ->  { ok, reply, status }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { buildReply } from '../_shared/agent.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'

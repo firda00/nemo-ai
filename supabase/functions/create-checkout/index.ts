@@ -4,9 +4,10 @@
 //
 //   POST /functions/v1/create-checkout   (Authorization: Bearer <user jwt>)
 //   body { "package": "starter" | "pro" | "business" }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { PLAN_LIMITS } from '../_shared/plans.ts'
 import { corsPreflight, json, trustedAppOrigin } from '../_shared/cors.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -48,6 +49,7 @@ Deno.serve(async (req) => {
   const { data: prof0 } = await userDb.from('users').select('account_id').maybeSingle()
   const accountId0 = prof0?.account_id
   if (!accountId0) return json({ error: 'no account' }, 403)
+  if (await blocksExternalActions(userDb, accountId0)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
   const origin0 = trustedAppOrigin(req)
 
   // SUBSCRIPTION — a Nemo plan. Recurring payment to Nemo's Stripe; the webhook sets the

@@ -2,7 +2,7 @@
 // into the Library (media_assets). Two callers:
 //   • USER (Bearer jwt): { action:'status', job_id }  — check one job now
 //   • CRON (x-cron-secret): { action:'run_due' }       — sweep all processing jobs
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 

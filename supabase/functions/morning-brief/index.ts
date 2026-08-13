@@ -3,10 +3,11 @@
 // message: today's plan grouped by person, with a missed-day counter on overdue tasks
 // (each extra day late shows as "overdue N days"). Language per business_profiles.report_lang.
 //   POST /functions/v1/morning-brief   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
 import { L, normLang, fmtDate, overdueDays, type Lang } from '../_shared/planerkaLocale.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -19,9 +20,9 @@ const isFreeTier = (p?: string) => !p || ['free', 'beta', ''].includes(String(p)
 
 // Telegram rejects messages over 4096 chars. Split on line boundaries and send in order,
 // so a big group's brief is never silently dropped. Returns true if every chunk sent.
-async function sendLong(token: string, chatId: string, text: string): Promise<boolean> {
+async function sendLong(db: Any, accountId: string, token: string, chatId: string, text: string): Promise<boolean> {
   const LIMIT = 3800
-  if (text.length <= LIMIT) return await tgSend(token, chatId, text)
+  if (text.length <= LIMIT) return !(await blocksExternalActions(db, accountId)) && await tgSend(token, chatId, text)
   const chunks: string[] = []
   let cur = ''
   for (const line of text.split('\n')) {
@@ -29,7 +30,10 @@ async function sendLong(token: string, chatId: string, text: string): Promise<bo
   }
   if (cur) chunks.push(cur)
   let ok = true
-  for (const c of chunks) ok = (await tgSend(token, chatId, c)) && ok
+  for (const c of chunks) {
+    if (await blocksExternalActions(db, accountId)) return false
+    ok = (await tgSend(token, chatId, c)) && ok
+  }
   return ok
 }
 
@@ -57,11 +61,14 @@ Deno.serve(async (req) => {
   if (!tasks?.length) return json({ ok: true, groups: 0, sent: 0 })
 
   // resolve bot token per channel + report language per account
-  const channelIds = [...new Set((tasks as Any[]).map((t) => t.channel_id).filter(Boolean))]
   const accountIds = [...new Set((tasks as Any[]).map((t) => t.account_id).filter(Boolean))]
+  const blockedAccounts = new Set((await Promise.all(accountIds.map(async (accountId) =>
+    await blocksExternalActions(db, accountId) ? accountId : null))).filter(Boolean))
+  const deliveryTasks = (tasks as Any[]).filter((t) => !blockedAccounts.has(t.account_id))
+  const deliveryChannelIds = [...new Set(deliveryTasks.map((t) => t.channel_id).filter(Boolean))]
   const tokenByChannel = new Map<string, string>()
-  if (channelIds.length) {
-    const { data: chs } = await db.from('channels').select('id, credentials, scope').in('id', channelIds)
+  if (deliveryChannelIds.length) {
+    const { data: chs } = await db.from('channels').select('id, credentials, scope').in('id', deliveryChannelIds)
     for (const c of (chs ?? []) as Any[]) if (c.scope === 'group' && c.credentials?.bot_token) tokenByChannel.set(c.id, c.credentials.bot_token)
   }
   const langByAcc = new Map<string, Lang>()
@@ -75,7 +82,7 @@ Deno.serve(async (req) => {
 
   // group tasks by (channel_id + chat_id)
   const groups = new Map<string, Any[]>()
-  for (const t of tasks as Any[]) {
+  for (const t of deliveryTasks) {
     if (!t.channel_id || !tokenByChannel.has(t.channel_id)) continue // only groups with a live task-bot
     const key = `${t.channel_id}::${t.telegram_chat_id}`
     const arr = groups.get(key) ?? []
@@ -115,7 +122,7 @@ Deno.serve(async (req) => {
       }
       body += d.briefFooter
       if (isFreeTier(planByAcc.get(list[0].account_id))) body += d.poweredBy(NEMO_URL)
-      if (await sendLong(token, chatId, body)) sent++
+      if (await sendLong(db, list[0].account_id, token, chatId, body)) sent++
     } catch { /* best effort per group */ }
   }
 

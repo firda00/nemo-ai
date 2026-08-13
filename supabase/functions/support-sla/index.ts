@@ -5,9 +5,10 @@
 // Reuses the per-account operator channel (business_profiles.notify_chat_id + the account's
 // Telegram bot), so it works without any global admin config.
 //   POST /functions/v1/support-sla   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { tgSend } from '../_shared/telegram.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -56,6 +57,7 @@ Deno.serve(async (req) => {
   let notified = 0
   for (const [accountId, waiting] of Object.entries(byAccount)) {
     try {
+      if (await blocksExternalActions(db, accountId)) continue
       const { data: bp } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', accountId).maybeSingle()
       const target = bp?.notify_chat_id
       if (!target) continue
@@ -69,6 +71,7 @@ Deno.serve(async (req) => {
       const list = waiting.slice(0, 8).map((w) => `• ${w.name} (${w.agent})`).join('\n')
       const more = waiting.length > 8 ? `\n… +${waiting.length - 8}` : ''
       const msg = `⏰ Operator kutilmoqda: ${waiting.length} ta mijoz ${SLA_MIN}+ daqiqadan beri javob kutmoqda:\n${list}${more}\n\nNemo'da «Dialoglar»ni oching va javob bering.`
+      if (await blocksExternalActions(db, accountId)) continue
       if (await tgSend(String(token), String(target), msg)) notified++
     } catch { /* best effort per account */ }
   }

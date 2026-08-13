@@ -4,11 +4,12 @@
 //
 //   POST /functions/v1/operator-send   (Authorization: Bearer <user jwt>)
 //   body { "dialogue_id": "uuid", "text": "..." }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { tgSend } from '../_shared/telegram.ts'
 import { igSend, waSend } from '../_shared/meta.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -41,11 +42,15 @@ Deno.serve(async (req) => {
 
   const { data: dialogueAgent } = await userDb
     .from('agents')
-    .select('id, niche, risk_tier')
+    .select('id, account_id, niche, risk_tier')
     .eq('id', dialogue.agent_id)
     .maybeSingle()
   if (!dialogueAgent) return json({ error: 'agent not found' }, 404)
   if (isRegulatedAgent(dialogueAgent)) return json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, 403)
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  if (dialogue.channel !== 'widget' && await blocksExternalActions(admin, dialogueAgent.account_id)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   // store the operator message (user client -> RLS check enforces ownership);
   // a failed insert must NOT be reported as success — the UI rolls back on it
@@ -62,7 +67,6 @@ Deno.serve(async (req) => {
     // channel UUID authorizes nothing
     const { data: ownedChannel } = await userDb.from('channels').select('id').eq('id', dialogue.channel_id).maybeSingle()
     if (ownedChannel) {
-      const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
       const { data: ch } = await admin.from('channels').select('agent_id, type, status, credentials').eq('id', dialogue.channel_id).single()
       const channel = ch as { agent_id?: string; type?: string; status?: string; credentials?: Record<string, string> } | null
       const credentials = channel?.credentials ?? {}

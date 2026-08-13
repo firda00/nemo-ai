@@ -3,13 +3,14 @@
 //   POST /functions/v1/knowledge-index  (Bearer jwt)
 //     { action:'index',  doc_id }                    -> { ok, chunks }
 //     { action:'search', agent_id, query, k? }       -> { ok, results:[{content,similarity}] }  (for testing)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { chunkText, embedText } from '../_shared/knowledge.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 Deno.serve(async (req) => {
@@ -22,7 +23,7 @@ Deno.serve(async (req) => {
   // Service-role backfill: (re)index every doc that has no chunks yet. Gated by the cron secret —
   // no user JWT — used to light up docs that were indexed before the vector schema existed.
   if (action === 'reindex_missing') {
-    if (req.headers.get('x-cron-secret') !== (Deno.env.get('CRON_SECRET') ?? '')) return json({ error: 'forbidden' }, 403)
+    if (!CRON_SECRET || req.headers.get('x-cron-secret') !== CRON_SECRET) return json({ error: 'forbidden' }, 403)
     const { data: docs } = await admin.from('knowledge_docs').select('id, owner_id, owner_type, content')
     let reindexed = 0, chunksTotal = 0
     for (const doc of (docs ?? [])) {
@@ -40,7 +41,7 @@ Deno.serve(async (req) => {
 
   // Service-role retrieval test: embed a question and run match_knowledge for an agent (cron-gated).
   if (action === 'search_admin') {
-    if (req.headers.get('x-cron-secret') !== (Deno.env.get('CRON_SECRET') ?? '')) return json({ error: 'forbidden' }, 403)
+    if (!CRON_SECRET || req.headers.get('x-cron-secret') !== CRON_SECRET) return json({ error: 'forbidden' }, 403)
     const agentId = String(body?.agent_id ?? '')
     const query = String(body?.query ?? '').trim()
     if (!agentId || query.length < 2) return json({ ok: false, error: 'agent_id + query required' }, 200)

@@ -3,8 +3,7 @@
 //     Available on any paid tier.
 //   • INCLUDED — "Pro/Max" tiers (plan.mediaIncluded): generate on Nemo's key, no API to connect,
 //     monthly fair-use cap.
-//   • TRIAL — "Standard/Plus" tiers (BYO) with no key yet: a small weekly free allowance on Nemo's
-//     key, then they must connect a key or upgrade.
+//   • TRIAL — only plans with an explicit mediaTrialWeekly allowance may temporarily use Nemo's key.
 // resolveMediaAccess returns the API key to use + the source, or a block code + message.
 import { type PlanLimit, monthlyMedia, weeklyMedia } from './plans.ts'
 import { openSecret, providerSecretContext } from './secretBox.ts'
@@ -59,10 +58,11 @@ export async function resolveMediaAccess(
     if (used >= plan.mediaMonthly) return { ok: false, code: 'LIMIT', message: `Лимит генераций по тарифу (${plan.mediaMonthly}/мес) исчерпан.` }
     return { ok: true, key: nemoKey, source: 'included' }
   }
-  // 4) BYO tiers (Standard/Plus) with no key → small weekly trial on Nemo's key
+  // 4) Explicitly trial-enabled plans may use Nemo's key up to their weekly allowance.
   if (plan.mediaTrialWeekly > 0) {
     const usedWk = await weeklyMedia(admin, accountId)
     if (usedWk < plan.mediaTrialWeekly) return { ok: true, key: nemoKey, source: 'trial' }
+    return { ok: false, code: 'NEED_KEY', message: MSG_TRIAL_OUT }
   }
-  return { ok: false, code: 'NEED_KEY', message: MSG_TRIAL_OUT }
+  return { ok: false, code: 'NEED_KEY', message: MSG_NO_NEMO_KEY }
 }

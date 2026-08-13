@@ -5,9 +5,10 @@
 //   { action:'sheets_read', spreadsheet_id, range }
 //   { action:'sheets_append', spreadsheet_id, range, values:[...] }
 //   { action:'calendar_create', summary, start_iso, end_iso, description? }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { googleAccessToken, extractSheetId } from '../_shared/google.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -68,12 +69,15 @@ Deno.serve(async (req) => {
   if (!accountId) return json({ error: 'no account' }, 403)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const body = await req.json().catch(() => ({}))
+  const action = String(body?.action ?? '')
+  if (['gmail_create_draft', 'gmail_send', 'sheets_append', 'calendar_create'].includes(action) && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
   const at = await accessTokenFor(admin, accountId)
   if (at.error) return json({ ok: false, code: at.error, message: 'Connect Google first in Integrations.' }, 400)
   const token = at.token!
 
-  const body = await req.json().catch(() => ({}))
-  const action = String(body?.action ?? '')
   try {
     if (action === 'gmail_inbox') {
       return json({ ok: true, emails: await gmailInbox(token, Number(body.limit ?? 12)) })

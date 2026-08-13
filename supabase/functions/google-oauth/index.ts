@@ -11,9 +11,10 @@
 //   GET  /callback?code&state              -> exchanges code, stores refresh_token, redirects
 // Deployed with --no-verify-jwt (the callback is a public Google redirect); authed actions
 // verify the JWT manually and the callback is protected by a signed state.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
 import { accountSecretContext, openSecret, sealSecret } from '../_shared/secretBox.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -36,25 +37,14 @@ const SCOPES = [
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// sign/verify the account id we round-trip through Google as `state`
-async function hmac(input: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SERVICE_ROLE), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(input))
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-async function makeState(accountId: string): Promise<string> { return `${accountId}.${await hmac(accountId)}` }
-async function readState(state: string): Promise<string | null> {
-  const i = state.lastIndexOf('.'); if (i < 0) return null
-  const id = state.slice(0, i); const sig = state.slice(i + 1)
-  return (await hmac(id)) === sig ? id : null
-}
+const hash = async (value: string): Promise<string> => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).map((b) => b.toString(16).padStart(2, '0')).join('')
 
-async function accountForUser(authHeader: string): Promise<string | null> {
+async function accountForUser(authHeader: string): Promise<{ accountId: string; userId: string } | null> {
   const db = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
   const { data: { user } } = await db.auth.getUser()
   if (!user) return null
   const { data } = await db.from('users').select('account_id').maybeSingle()
-  return data?.account_id ?? null
+  return data?.account_id ? { accountId: data.account_id, userId: user.id } : null
 }
 
 // account's own Google app creds if set, else the shared Nemo app (env)
@@ -79,10 +69,14 @@ Deno.serve(async (req) => {
   if (url.pathname.endsWith('/callback')) {
     const code = url.searchParams.get('code')
     const state = url.searchParams.get('state') ?? ''
-    const accountId = await readState(state)
+    const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+    const { data: consumed } = state.length >= 32 ? await admin.rpc('consume_google_oauth_transaction', { p_state_hash: await hash(state) }) : { data: null }
+    const accountId = consumed?.[0]?.account_id ?? null
     if (!code || !accountId) return Response.redirect(`${APP_URL}/app/integrations?google=error`, 302)
+    if (await blocksExternalActions(admin, accountId)) {
+      return Response.redirect(`${APP_URL}/app/integrations?google=blocked`, 302)
+    }
     try {
-      const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
       const creds = await loadAppCreds(admin, accountId)
       const tok = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -109,11 +103,16 @@ Deno.serve(async (req) => {
 
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'unauthorized' }, 401)
-  const accountId = await accountForUser(authHeader)
-  if (!accountId) return json({ error: 'unauthorized' }, 401)
+  const current = await accountForUser(authHeader)
+  if (!current) return json({ error: 'unauthorized' }, 401)
+  const { accountId } = current
   const body = await req.json().catch(() => ({}))
   const action = url.searchParams.get('action') ?? body?.action ?? ''
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+
+  if ((action === 'set_app' || action === 'authorize') && await blocksExternalActions(admin, accountId)) {
+    return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  }
 
   if (action === 'get_app') {
     const { data } = await admin.from('google_oauth_apps').select('client_id').eq('account_id', accountId).maybeSingle()
@@ -148,7 +147,9 @@ Deno.serve(async (req) => {
   if (action === 'authorize') {
     const creds = await loadAppCreds(admin, accountId)
     if (!creds.id) return json({ ok: false, code: 'GOOGLE_NOT_CONFIGURED', message: 'Сначала подключите Google-приложение: вставьте Client ID и Client Secret по инструкции.', redirect_uri: REDIRECT_URI }, 200)
-    const state = await makeState(accountId)
+    const state = crypto.randomUUID() + crypto.randomUUID()
+    const { error: stateError } = await admin.from('google_oauth_transactions').insert({ state_hash: await hash(state), account_id: accountId, created_by: current.userId, expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() })
+    if (stateError) return json({ ok: false, error: 'could not start Google authorization' }, 500)
     const params = new URLSearchParams({
       client_id: creds.id, redirect_uri: REDIRECT_URI, response_type: 'code', scope: SCOPES,
       access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state,

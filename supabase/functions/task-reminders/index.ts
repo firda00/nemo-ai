@@ -5,8 +5,9 @@
 // authenticity is the shared cron secret.
 //
 //   POST /functions/v1/task-reminders   (header: x-cron-secret: <CRON_SECRET>)
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { tgSend } from '../_shared/telegram.ts'
+import { blocksExternalActions } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -59,8 +60,13 @@ Deno.serve(async (req) => {
   })
   if (!pending.length) return new Response(JSON.stringify({ ok: true, reminded: 0 }), { headers: { 'Content-Type': 'application/json' } })
 
+  const accountIds = [...new Set(pending.map((t) => t.account_id).filter(Boolean))]
+  const blockedAccounts = new Set((await Promise.all(accountIds.map(async (accountId) =>
+    await blocksExternalActions(db, accountId) ? accountId : null))).filter(Boolean))
+  const deliveryPending = pending.filter((t) => !blockedAccounts.has(t.account_id))
+
   // resolve bot tokens per channel once
-  const channelIds = [...new Set(pending.map((t) => t.channel_id).filter(Boolean))]
+  const channelIds = [...new Set(deliveryPending.map((t) => t.channel_id).filter(Boolean))]
   const tokenByChannel = new Map<string, string>()
   if (channelIds.length) {
     const { data: chs } = await db.from('channels').select('id, credentials').in('id', channelIds)
@@ -68,7 +74,6 @@ Deno.serve(async (req) => {
   }
 
   // resolve each account's language once (so an Uzbek team gets Uzbek reminders)
-  const accountIds = [...new Set(pending.map((t) => t.account_id).filter(Boolean))]
   const langByAccount = new Map<string, keyof typeof LOC>()
   if (accountIds.length) {
     const { data: bps } = await db.from('business_profiles').select('account_id, report_lang').in('account_id', accountIds)
@@ -76,12 +81,12 @@ Deno.serve(async (req) => {
   }
 
   // Group due tasks by chat and send ONE digest per group instead of spamming a message per task.
-  const groups = new Map<string, { token: string; chatId: string; lang: keyof typeof LOC; items: typeof pending }>()
-  for (const t of pending) {
+  const groups = new Map<string, { accountId: string; token: string; chatId: string; lang: keyof typeof LOC; items: typeof pending }>()
+  for (const t of deliveryPending) {
     const token = t.channel_id ? tokenByChannel.get(t.channel_id) : undefined
     if (!token) continue
     const key = `${t.channel_id}|${t.telegram_chat_id}`
-    if (!groups.has(key)) groups.set(key, { token, chatId: String(t.telegram_chat_id), lang: langByAccount.get(t.account_id) ?? 'uz', items: [] })
+    if (!groups.has(key)) groups.set(key, { accountId: t.account_id, token, chatId: String(t.telegram_chat_id), lang: langByAccount.get(t.account_id) ?? 'uz', items: [] })
     groups.get(key)!.items.push(t)
   }
 
@@ -95,6 +100,7 @@ Deno.serve(async (req) => {
       return `${i + 1}. ${overdue ? '⚠️' : '•'} ${who} — «${t.title}» — ${overdue ? L.overdue : L.due} ${fmtDate(due, L.locale)}`
     })
     try {
+      if (await blocksExternalActions(db, g.accountId)) continue
       await tgSend(g.token, g.chatId, `${L.header}\n${lines.join('\n')}\n${L.foot}`)
       for (const t of g.items) {
         const overdue = (effDue(t) ?? nowIso) <= nowIso

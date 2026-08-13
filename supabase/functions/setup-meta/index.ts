@@ -5,9 +5,10 @@
 //   body { "type": "whatsapp"|"instagram", "agent_id"?, "credentials": {...}, "verify_token"? }
 //   whatsapp credentials: { phone_number_id, token }
 //   instagram credentials: { page_token, ig_id }
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { isRegulatedAgent, REGULATED_CHANNEL_ERROR } from '../_shared/riskPolicy.ts'
+import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -26,25 +27,18 @@ Deno.serve(async (req) => {
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE)
 
-  let agentId = body.agent_id as string | undefined
-  if (!agentId) {
-    const { data: acc } = await db.from('accounts').insert({ name: `Demo · ${type}` }).select('id').single()
-    const { data: agent } = await db
-      .from('agents')
-      .insert({
-        account_id: acc!.id,
-        name: body.agent_name ?? 'Nemo agent',
-        model: body.model ?? 'openai/gpt-4o-mini',
-        default_lang: body.default_lang ?? 'auto',
-        status: 'active',
-      })
-      .select('id')
-      .single()
-    agentId = agent!.id
+  if (body.agent_id) {
+    const { data: owner } = await db.from('agents').select('account_id').eq('id', body.agent_id).maybeSingle()
+    if (!owner) return Response.json({ error: 'agent not found' }, { status: 404 })
+    if (await blocksExternalActions(db, owner.account_id)) return Response.json(PRODUCTION_E2E_EXTERNAL_BLOCK, { status: 403 })
   }
 
-  const { data: targetAgent } = await db.from('agents').select('id, niche, risk_tier').eq('id', agentId).maybeSingle()
+  const agentId = body.agent_id as string | undefined
+  if (!agentId) return Response.json({ error: 'AGENT_EVAL_REQUIRED' }, { status: 409 })
+
+  const { data: targetAgent } = await db.from('agents').select('id, account_id, niche, risk_tier, status, config_revision, published_revision').eq('id', agentId).maybeSingle()
   if (!targetAgent) return Response.json({ error: 'agent not found' }, { status: 404 })
+  if (targetAgent.status !== 'active') return Response.json({ error: 'AGENT_EVAL_REQUIRED' }, { status: 409 })
   if (isRegulatedAgent(targetAgent)) {
     return Response.json({ error: REGULATED_CHANNEL_ERROR, code: 'REGULATED_CHANNEL_BLOCKED' }, { status: 403 })
   }
