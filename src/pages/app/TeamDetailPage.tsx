@@ -34,7 +34,7 @@ interface RunStep {
     needs_human_review?: boolean
   }
 }
-interface Run { id: string; task: string; kind: string; status?: string; report?: string; steps?: RunStep[]; created_at: string }
+interface Run { id: string; task: string; kind: string; status?: string; human_review_status?: 'pending' | 'approved' | 'rejected' | null; report?: string; steps?: RunStep[]; created_at: string }
 
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 const riskCls = (r?: string) => (r === 'high' ? 'bg-danger/15 text-danger' : r === 'medium' ? 'bg-amber/15 text-amber' : 'bg-teal/15 text-teal')
@@ -65,7 +65,7 @@ export default function TeamDetailPage() {
     const [{ data: t }, { data: n }, { data: r }] = await Promise.all([
       supabase.from('tasks').select('*').eq('department_id', deptId).order('created_at', { ascending: false }).limit(40),
       supabase.from('notifications').select('*').eq('department_id', deptId).order('created_at', { ascending: false }).limit(20),
-      supabase.from('research_runs').select('id, task, kind, status, report, steps, created_at').eq('department_id', deptId).order('created_at', { ascending: false }).limit(10),
+      supabase.from('research_runs').select('id, task, kind, status, human_review_status, report, steps, created_at').eq('department_id', deptId).order('created_at', { ascending: false }).limit(10),
     ])
     setTasks((t ?? []) as Task[])
     setNotifs((n ?? []) as Notif[])
@@ -162,7 +162,7 @@ export default function TeamDetailPage() {
   } : {
     badge: 'Safety beta · Nemo only',
     specialist: 'Nemo only',
-    notice: 'Safety beta: use de-identified or minimum necessary data, review every result, and keep decisions with an authorized professional. Nemo does not yet provide an enforced approval queue for this team.',
+    notice: 'Safety beta: use de-identified or minimum necessary data, review every result, and keep decisions with an authorized professional. Consequential browser actions create an owner approval request; approval alone never executes an action.',
     blockedTitle: 'Live channel connection is blocked in this beta',
     blockedBody: 'Test this team only inside Nemo with non-sensitive or de-identified data. Telegram can be enabled after enforced approval, audit and data-protection controls are implemented and verified.',
     status: 'Safety beta: this team runs only inside Nemo. Review the result; decisions and external actions remain with an authorized professional.',
@@ -407,7 +407,9 @@ export default function TeamDetailPage() {
                   <div key={run.id} className="min-w-0 overflow-hidden rounded-xl border border-ice/[0.07]">
                     <button onClick={() => setOpenRun(isOpen ? null : run.id)} className="flex w-full min-w-0 items-center gap-2.5 px-3.5 py-2.5 text-left">
                       <span className="shrink-0 rounded-full bg-violet/10 px-2 py-0.5 text-[10px] text-violet">{run.kind}</span>
-                      {run.status === 'needs_review' && <span className="shrink-0 rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
+                       {(run.human_review_status === 'pending' || (!run.human_review_status && run.status === 'needs_review')) && <span className="shrink-0 rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
+                       {run.human_review_status === 'approved' && <span className="shrink-0 rounded-full bg-teal/10 px-2 py-0.5 text-[10px] text-teal">owner approved</span>}
+                       {run.human_review_status === 'rejected' && <span className="shrink-0 rounded-full bg-danger/10 px-2 py-0.5 text-[10px] text-danger">owner rejected</span>}
                       <span title={run.task} className="min-w-0 flex-1 truncate text-sm text-text">{run.task}</span>
                       <span className="hidden shrink-0 text-[11px] text-muted min-[1800px]:inline">{new Date(run.created_at).toLocaleString()}</span>
                       <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
@@ -421,7 +423,7 @@ export default function TeamDetailPage() {
                               <p className={cn('mb-1.5 text-[10.5px]', s.review.needs_human_review ? 'text-amber' : s.review.approved ? 'text-teal' : 'text-muted')}>
                                 {s.review.reviewed_by ? `Peer: ${s.review.reviewed_by} / ${s.review.score ?? 0}/100` : 'Peer review'}
                                 {s.review.revised ? ` / revised ${s.review.revisions ?? 1}x` : ''}
-                                {s.review.needs_human_review ? ' / human review required' : ''}
+                                 {s.review.needs_human_review && (run.human_review_status === 'pending' || !run.human_review_status) ? ' / human review required' : ''}
                               </p>
                             )}
                             <div className="min-w-0 overflow-x-auto text-[12px] text-muted"><Markdown content={(s.findings || '—').slice(0, 1200)} /></div>

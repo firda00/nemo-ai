@@ -17,7 +17,7 @@ export interface PlanLimit {
 
 export const PLANS: Record<string, PlanLimit> = {
   free: { label: 'Free', price: 0, tokens: 150_000, teams: 1, premium: false, media: false, mediaIncluded: false, mediaTrialWeekly: 0, video: false, mediaMonthly: 0, browserMonthly: 0, videoMonthly: 0, competitors: 1 },
-  starter: { label: 'Starter', price: 25, tokens: 500_000, teams: 1, premium: false, media: true, mediaIncluded: false, mediaTrialWeekly: 5, video: false, mediaMonthly: 0, browserMonthly: 20, videoMonthly: 0, competitors: 2 },
+  starter: { label: 'Starter', price: 25, tokens: 500_000, teams: 1, premium: false, media: true, mediaIncluded: false, mediaTrialWeekly: 0, video: false, mediaMonthly: 0, browserMonthly: 20, videoMonthly: 0, competitors: 2 },
   pro: { label: 'Pro', price: 59, tokens: 2_000_000, teams: 2, premium: true, media: true, mediaIncluded: true, mediaTrialWeekly: 0, video: true, mediaMonthly: 100, browserMonthly: 75, videoMonthly: 20, competitors: 3 },
   business: { label: 'Business', price: 119, tokens: 6_000_000, teams: 10, premium: true, media: true, mediaIncluded: true, mediaTrialWeekly: 0, video: true, mediaMonthly: 400, browserMonthly: 250, videoMonthly: 80, competitors: 5 },
   agency: { label: 'Agency', price: 350, tokens: 20_000_000, teams: 30, premium: true, media: true, mediaIncluded: true, mediaTrialWeekly: 0, video: true, mediaMonthly: 1_500, browserMonthly: 1_000, videoMonthly: 300, competitors: 10 },

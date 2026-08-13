@@ -78,6 +78,7 @@ function mapAgent(row: any): PlatformAgent {
     purpose: row.purpose ?? '',
     niche: row.niche ?? '',
     riskTier: row.risk_tier === 'regulated' ? 'regulated' : 'standard',
+    actionPolicy: row.action_policy === 'read_only' ? 'read_only' : 'approval_required',
     templateKey: row.template_key ?? '',
     voiceEnabled: Boolean(row.voice_enabled),
     voiceMode: (row.voice_mode ?? 'both') as PlatformAgent['voiceMode'],
@@ -86,6 +87,10 @@ function mapAgent(row: any): PlatformAgent {
     personaMode: (row.persona_mode ?? 'business') as PlatformAgent['personaMode'],
     ownerName: row.owner_name ?? '',
     skills: Array.isArray(row.skills) ? row.skills : [],
+    configRevision: Number(row.config_revision ?? 1),
+    publishedRevision: row.published_revision == null ? null : Number(row.published_revision),
+    publishedAt: row.published_at ?? null,
+    latestEvalRunId: row.latest_eval_run_id ?? null,
     status: row.status ?? 'active',
     channels,
     knowledge: [],
@@ -112,6 +117,7 @@ function toRow(a: PlatformAgent): any {
     purpose: a.purpose?.trim() ? a.purpose.trim() : null,
     niche: a.niche?.trim() ? a.niche.trim() : null,
     risk_tier: a.riskTier ?? 'standard',
+    action_policy: a.actionPolicy ?? 'approval_required',
     template_key: a.templateKey?.trim() ? a.templateKey.trim() : null,
     voice_enabled: Boolean(a.voiceEnabled),
     voice_mode: a.voiceMode ?? 'both',
@@ -120,7 +126,8 @@ function toRow(a: PlatformAgent): any {
     persona_mode: a.personaMode ?? 'business',
     owner_name: a.personaMode === 'personal' && a.ownerName?.trim() ? a.ownerName.trim() : null,
     skills: Array.isArray(a.skills) ? a.skills : [],
-    status: a.status,
+    // Publication is a server-owned transition. All authoring writes remain drafts.
+    status: a.status === 'active' ? 'draft' : a.status,
     lead_form: a.leadForm,
   }
 }
@@ -260,8 +267,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
       const merged = get().agents.find((a) => a.id === id)
       if (merged) {
-        const { error } = await supabase.from('agents').update(toRow(merged)).eq('id', id).eq('account_id', get().accountId as string)
-        if (error) return { error: error.message }
+        const { data, error } = await supabase.from('agents').update(toRow(merged)).eq('id', id).eq('account_id', get().accountId as string).select('*, channels(type)').single()
+        if (error || !data) return { error: error?.message ?? 'update failed' }
+        set((s) => ({ agents: s.agents.map((a) => a.id === id ? mapAgent(data) : a) }))
       }
     }
     return {}
@@ -302,17 +310,18 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   },
 
   toggleAgent: async (id) => {
-    set((s) => ({
-      agents: s.agents.map((a) =>
-        a.id === id ? { ...a, status: a.status === 'active' ? 'paused' : 'active' } : a,
-      ),
-    }))
+    const before = get().agents
+    const current = before.find((a) => a.id === id)
+    if (!current) return { error: 'agent not found' }
+    if (current.status !== 'active') return { error: 'Run a passing evaluation before publishing this agent.' }
+    set((s) => ({ agents: s.agents.map((a) => a.id === id ? { ...a, status: 'paused' } : a) }))
     if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
-      const a = get().agents.find((x) => x.id === id)
-      if (a) {
-        const { error } = await supabase.from('agents').update({ status: a.status }).eq('id', id).eq('account_id', get().accountId as string)
-        if (error) return { error: error.message }
-      }
+        const { data, error } = await supabase.from('agents').update({ status: 'paused' }).eq('id', id).eq('account_id', get().accountId as string).select('*, channels(type)').single()
+        if (error || !data) {
+          set({ agents: before })
+          return { error: error?.message ?? 'pause failed' }
+        }
+        set((s) => ({ agents: s.agents.map((a) => a.id === id ? mapAgent(data) : a) }))
     }
     return {}
   },

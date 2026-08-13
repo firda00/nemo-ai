@@ -39,6 +39,25 @@ interface Spec {
   sources?: string[]
   status: 'pending' | 'running' | 'review' | 'fixing' | 'done'
 }
+interface CheckpointState {
+  goal: string
+  orchestratedGoal: string
+  inputArtifacts: AutonomousInputArtifact[]
+  specs: Spec[]
+  nextSpecialist: number
+  nextReview: number
+}
+interface RunCheckpoint {
+  id: string
+  run_ref: string
+  phase: 'team' | 'review' | 'synth'
+  state: CheckpointState
+  status?: 'active' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  transition?: 'staff' | 'specialist' | 'review' | 'revision' | 'synth'
+  specialist_cursor?: number
+  review_cursor?: number
+  last_error?: string | null
+}
 
 function subSystem(s: Spec): string {
   return [
@@ -119,6 +138,7 @@ export function AutonomousRunner({
   const [saveSphere, setSaveSphere] = useState('')
   const [inputArtifacts, setInputArtifacts] = useState<AutonomousInputArtifact[]>([])
   const [filesBusy, setFilesBusy] = useState(false)
+  const [resumeCheckpoint, setResumeCheckpoint] = useState<RunCheckpoint | null>(null)
   // A connected marketplace IS source data — the server fetches the catalogue for the run. Asking
   // the owner to upload a file while their store is connected was the loudest wrong thing on this
   // screen, so the warning must know whether a connection exists.
@@ -170,6 +190,9 @@ export function AutonomousRunner({
   // One id for the whole run, stamped on every call, so the server can add up what the run
   // actually cost instead of the billing page guessing from a constant.
   const runRef = useRef<string | null>(null)
+  const workerPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const checkpointContext = departmentId ? `department:${departmentId}` : 'ad-hoc'
+  const workerRunStorageKey = `nemo.autonomous.run:${checkpointContext}`
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const call = async (b: Record<string, unknown>): Promise<any> => {
@@ -182,13 +205,169 @@ export function AutonomousRunner({
     return data
   }
 
-  const run = async () => {
-    const task = goal.trim()
+  const showWorkerRun = (workerRun: RunCheckpoint) => {
+    const state = workerRun.state
+    const restoredSpecs = Array.isArray(state?.specs) ? state.specs : []
+    const activeIndex = workerRun.transition === 'specialist' ? workerRun.specialist_cursor : workerRun.review_cursor
+    const visibleSpecs = restoredSpecs.map((spec, index) => index === activeIndex && workerRun.status === 'running'
+      ? { ...spec, status: workerRun.transition === 'review' ? 'review' as const : workerRun.transition === 'revision' ? 'fixing' as const : 'running' as const }
+      : spec)
+    setResumeCheckpoint(workerRun)
+    if (state?.goal) {
+      if (onGoalChange) onGoalChange(state.goal)
+      else setInternalGoal(state.goal)
+    }
+    setInputArtifacts(state?.inputArtifacts ?? [])
+    setSpecs(visibleSpecs)
+    setEscalatedCount(Number((state as CheckpointState & { escalatedCount?: number })?.escalatedCount) || restoredSpecs.filter((spec) => spec.escalated).length)
+    if (workerRun.status === 'completed') {
+      setResult(String((state as CheckpointState & { result?: string })?.result ?? ''))
+      setRunning(false)
+      setPhase('idle')
+      setResumeCheckpoint(null)
+      localStorage.removeItem(workerRunStorageKey)
+      if (onRunSaved) void onRunSaved()
+      return true
+    }
+    if (workerRun.status === 'failed' || workerRun.status === 'cancelled') {
+      setError(workerRun.status === 'cancelled' ? t('autonomousRunner.runCancelled') : workerRun.last_error || t('autonomousRunner.workerFailed'))
+      setRunning(false)
+      setPhase('idle')
+      if (workerRun.status === 'cancelled') {
+        setResumeCheckpoint(null)
+        localStorage.removeItem(workerRunStorageKey)
+      }
+      return true
+    }
+    setRunning(true)
+    setPhase(workerRun.transition === 'staff' ? 'architect' : workerRun.phase)
+    return false
+  }
+
+  const pollWorkerRun = async (workerRunRef: string) => {
+    if (!live || !supabase) return
+    runRef.current = workerRunRef
+    const status = await call({ action: 'run_status', context_key: checkpointContext })
+    const workerRun = status?.run as RunCheckpoint | null
+    if (!workerRun) {
+      setError(t('autonomousRunner.workerMissing'))
+      setRunning(false)
+      return
+    }
+    const terminal = showWorkerRun(workerRun)
+    if (!terminal) workerPollTimer.current = setTimeout(() => void pollWorkerRun(workerRunRef), 2500)
+  }
+
+  const enqueueWorkerRun = async (task: string) => {
+    if (!live || !supabase) return
+    const workerRunRef = crypto.randomUUID()
+    runRef.current = workerRunRef
+    const orchestratedGoal = contextHint ? `${contextHint}\n\nЗадача: ${task}` : task
+    setError('')
+    setDataWarning(!storeConnected && marketplaceInputMissing(task, inputArtifacts, contextHint) ? t('autonomousRunner.marketplacePlanningWithoutData') : '')
+    setResult(null)
+    setSpecs([])
+    setEscalatedCount(0)
+    setRunning(true)
+    setPhase(presetSpecs?.length ? 'team' : 'architect')
+    const response = await call({
+      action: 'run_enqueue',
+      goal: task,
+      orchestrated_goal: orchestratedGoal,
+      context_key: checkpointContext,
+      input_artifacts: inputArtifacts,
+      ...(departmentId ? { department_id: departmentId } : {}),
+      ...(presetSpecs?.length ? { preset_specs: presetSpecs } : {}),
+    })
+    const workerRun = response?.run as RunCheckpoint | null
+    if (!workerRun) {
+      setError(t('autonomousRunner.workerFailed'))
+      setRunning(false)
+      setPhase('idle')
+      return
+    }
+    const activeRunRef = workerRun.run_ref || workerRunRef
+    runRef.current = activeRunRef
+    localStorage.setItem(workerRunStorageKey, activeRunRef)
+    showWorkerRun(workerRun)
+    workerPollTimer.current = setTimeout(() => void pollWorkerRun(activeRunRef), 800)
+  }
+
+  const cancelWorkerRun = async () => {
+    if (!runRef.current || !running) return
+    if (workerPollTimer.current) clearTimeout(workerPollTimer.current)
+    const response = await call({ action: 'run_cancel', context_key: checkpointContext })
+    const cancelled = response?.run as RunCheckpoint | null
+    if (!cancelled) {
+      setError(t('autonomousRunner.cancelFailed'))
+      workerPollTimer.current = setTimeout(() => void pollWorkerRun(runRef.current!), 1000)
+      return
+    }
+    showWorkerRun(cancelled)
+  }
+
+  useEffect(() => {
+    if (!live) return
+    const activeRunRef = localStorage.getItem(workerRunStorageKey)
+    if (activeRunRef) void pollWorkerRun(activeRunRef)
+    return () => {
+      if (workerPollTimer.current) clearTimeout(workerPollTimer.current)
+    }
+    // The context key intentionally owns one polling lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workerRunStorageKey])
+
+  useEffect(() => {
+    if (!live || !supabase) return
+    if (localStorage.getItem(workerRunStorageKey)) return
+    let active = true
+    supabase.functions.invoke('orchestrate', {
+      body: { action: 'checkpoint_get', context_key: checkpointContext, lang, ...(model ? { model } : {}) },
+    }).then(({ data, error: checkpointError }) => {
+      const checkpoint = (data as { checkpoint?: RunCheckpoint | null } | null)?.checkpoint
+      if (active && !checkpointError && checkpoint?.state?.goal && Array.isArray(checkpoint.state.specs)) {
+        setResumeCheckpoint(checkpoint)
+        if (onGoalChange) onGoalChange(checkpoint.state.goal)
+        else setInternalGoal(checkpoint.state.goal)
+        setInputArtifacts(checkpoint.state.inputArtifacts ?? [])
+        setSpecs(checkpoint.state.specs)
+      }
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [checkpointContext, lang, model, onGoalChange, workerRunStorageKey])
+
+  const persistCheckpoint = async (phase: RunCheckpoint['phase'], state: CheckpointState): Promise<boolean> => {
+    const saved = await call({ action: 'checkpoint_save', context_key: checkpointContext, phase, state })
+    if (!saved?.checkpoint) {
+      setError(t('autonomousRunner.checkpointFailed'))
+      return false
+    }
+    setResumeCheckpoint(saved.checkpoint as RunCheckpoint)
+    return true
+  }
+
+  const run = async (resume?: RunCheckpoint) => {
+    const restored = resume?.state
+    const task = restored?.goal?.trim() || goal.trim()
     if (task.length < 4 || running) return
-    runRef.current = crypto.randomUUID()
-    const marketplaceDataMissing = !storeConnected && marketplaceInputMissing(task, inputArtifacts, contextHint)
+    if (!resume && live) {
+      await enqueueWorkerRun(task)
+      return
+    }
+    if (resume?.status && resume.status !== 'active') {
+      localStorage.setItem(workerRunStorageKey, resume.run_ref)
+      await pollWorkerRun(resume.run_ref)
+      return
+    }
+    runRef.current = resume?.run_ref || crypto.randomUUID()
+    const runArtifacts = restored?.inputArtifacts ?? inputArtifacts
+    const marketplaceDataMissing = !storeConnected && marketplaceInputMissing(task, runArtifacts, contextHint)
     // the manager reasons on the task; a saved team also gets its team context
-    const g = contextHint ? `${contextHint}\n\nЗадача: ${task}` : task
+    const g = restored?.orchestratedGoal || (contextHint ? `${contextHint}\n\nЗадача: ${task}` : task)
+    if (restored) {
+      setGoal(task)
+      setInputArtifacts(runArtifacts)
+    }
     setError('')
     setDataWarning(marketplaceDataMissing ? t('autonomousRunner.marketplacePlanningWithoutData') : '')
     setResult(null)
@@ -202,12 +381,15 @@ export function AutonomousRunner({
       }
       // 1) get the team: use the SAVED team when provided, else design a fresh one
       let created: Spec[]
-      if (presetSpecs?.length) {
+      if (restored?.specs?.length) {
+        created = restored.specs
+        setSpecs(created)
+      } else if (presetSpecs?.length) {
         created = presetSpecs.map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: { role: s.prompt.role ?? '', tasks: s.prompt.tasks ?? '', tone: s.prompt.tone ?? '', rules: s.prompt.rules ?? '' }, status: 'pending' as const }))
         setSpecs(created)
       } else {
         setPhase('architect')
-        const staff = await call({ action: 'staff', goal: g, use_skills: true, input_artifacts: inputArtifacts })
+        const staff = await call({ action: 'staff', goal: g, use_skills: true, input_artifacts: runArtifacts })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         created = (staff?.subagents ?? []).map((s: any) => ({ ...s, status: 'pending' as const }))
         if (!created.length) {
@@ -217,11 +399,22 @@ export function AutonomousRunner({
         setSpecs(created)
       }
 
+      if (!restored && !await persistCheckpoint('team', {
+        goal: task,
+        orchestratedGoal: g,
+        inputArtifacts: runArtifacts,
+        specs: created,
+        nextSpecialist: 0,
+        nextReview: 0,
+      })) return
+
       // 2) each SPECIALIST executes its part (live)
       setPhase('team')
-      const done: Spec[] = []
+      const specialistStart = restored ? Math.max(0, Math.min(created.length, Number(restored.nextSpecialist) || 0)) : 0
+      const done: Spec[] = created.slice(0, specialistStart)
       const runSources = new Set<string>()
-      for (let i = 0; i < created.length; i++) {
+      done.forEach((spec) => (spec.sources ?? []).forEach((source) => runSources.add(source)))
+      for (let i = specialistStart; i < created.length; i++) {
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'running' } : s)))
         const role = mapRole(created[i].role)
         const r = await call({
@@ -232,15 +425,24 @@ export function AutonomousRunner({
           system: subSystem(created[i]),
           skills: created[i].skills ?? [],
           context: artifactHandoffContext(done),
-          input_artifacts: inputArtifacts,
+          input_artifacts: runArtifacts,
           web_research: role === 'researcher',
         })
         const output = r?.output ?? ''
         const sources = Array.isArray(r?.sources) ? r.sources.map(String).filter(Boolean).slice(0, 12) : []
         sources.forEach((source: string) => runSources.add(source))
         const filled: Spec = { ...created[i], output, sources, status: 'done' }
+        created[i] = filled
         done.push(filled)
         setSpecs((prev) => prev.map((s, idx) => (idx === i ? filled : s)))
+        if (!await persistCheckpoint('team', {
+          goal: task,
+          orchestratedGoal: g,
+          inputArtifacts: runArtifacts,
+          specs: created,
+          nextSpecialist: i + 1,
+          nextReview: 0,
+        })) return
       }
 
       // 3) PEER REVIEW — each specialist's work is checked by a TEAMMATE (round-robin), and
@@ -248,7 +450,12 @@ export function AutonomousRunner({
       // checks the copywriter — agents verify each other, not just a single QA.
       if (done.length >= 2) {
         setPhase('review')
-        for (let i = 0; i < done.length; i++) {
+        const reviewStart = resume?.phase === 'synth'
+          ? done.length
+          : resume?.phase === 'review'
+            ? Math.max(0, Math.min(done.length, Number(restored?.nextReview) || 0))
+            : 0
+        for (let i = reviewStart; i < done.length; i++) {
           const reviewer = done[(i + 1) % done.length]
           setSpecs((prev) => prev.map((s, idx) => (idx === i ? { ...s, status: 'review' } : s)))
           // CONVERGENCE LOOP: review -> if issues, revise -> RE-REVIEW the revision, up to N rounds.
@@ -267,7 +474,7 @@ export function AutonomousRunner({
             const v = await call({
               action: 'review', goal: g, work: done[i].output ?? '', author_role: done[i].role,
               author_task: done[i].prompt.tasks,
-              input_artifacts: inputArtifacts,
+              input_artifacts: runArtifacts,
               reviewer_system: subSystem(reviewer),
               criteria: 'соответствие задаче; конкретика и факты; отсутствие воды и клише; готовность без доработки',
               previous_score: previousReview?.score ?? 0,
@@ -288,7 +495,7 @@ export function AutonomousRunner({
               task: 'Перепиши свою работу, устранив ВСЕ замечания коллеги. Верни улучшенную версию целиком, в том же формате.',
               system: subSystem(done[i]),
               skills: done[i].skills ?? [],
-              input_artifacts: inputArtifacts,
+              input_artifacts: runArtifacts,
               context: `ТВОЯ РАБОТА:\n${(done[i].output ?? '').slice(0, 3000)}\n\nПРОШЛАЯ ОЦЕНКА: ${review.score}/100.\nЗАМЕЧАНИЯ КОЛЛЕГИ (${reviewer.name}):\n${review.fix}\n${review.issues.join('\n')}\n\nСохрани всё, что уже сделано хорошо. Исправь перечисленные проблемы. Не добавляй выдуманные цифры, компании, трафик, отзывы или проценты; если факта и источника нет, явно напиши «Не подтверждено».`,
             })
             if (!fix?.output) break
@@ -299,7 +506,16 @@ export function AutonomousRunner({
           revised = bestOutput !== originalOutput
           escalated = !review?.approved
           done[i] = { ...done[i], review, reviewedBy: reviewer.name, revised, revisions: rounds, escalated, status: 'done' }
+          created[i] = done[i]
           setSpecs((prev) => prev.map((s, idx) => (idx === i ? done[i] : s)))
+          if (!await persistCheckpoint('review', {
+            goal: task,
+            orchestratedGoal: g,
+            inputArtifacts: runArtifacts,
+            specs: created,
+            nextSpecialist: created.length,
+            nextReview: i + 1,
+          })) return
         }
       }
 
@@ -308,12 +524,21 @@ export function AutonomousRunner({
       const escN = done.filter((d) => d.escalated).length
       setEscalatedCount(escN)
 
+      if (!await persistCheckpoint('synth', {
+        goal: task,
+        orchestratedGoal: g,
+        inputArtifacts: runArtifacts,
+        specs: done,
+        nextSpecialist: done.length,
+        nextReview: done.length,
+      })) return
+
       // 4) MANAGER synthesizes the final deliverable (from the peer-reviewed outputs)
       setPhase('synth')
       const synth = await call({
         action: 'synth',
         goal: g,
-        input_artifacts: inputArtifacts,
+        input_artifacts: runArtifacts,
         ...(departmentId ? { department_id: departmentId } : {}),
         steps: done.map((d) => ({
           role: d.role,
@@ -333,6 +558,8 @@ export function AutonomousRunner({
         return
       }
       setResult(synth.result)
+      await call({ action: 'checkpoint_complete' })
+      setResumeCheckpoint(null)
       if (synth.id && onRunSaved) await onRunSaved()
     } finally {
       setRunning(false)
@@ -365,7 +592,9 @@ export function AutonomousRunner({
     setGoal('')
     setInputArtifacts([])
     setDataWarning('')
+    setResumeCheckpoint(null)
   }
+  const canResume = Boolean(resumeCheckpoint && resumeCheckpoint.state.goal.trim() === goal.trim())
 
   return (
     <div>
@@ -379,7 +608,7 @@ export function AutonomousRunner({
           placeholder={placeholder ?? t('autonomousRunner.placeholderDefault')}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-text outline-none placeholder:text-muted/70"
         />
-        <button onClick={run} disabled={running || goal.trim().length < 4} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition disabled:opacity-40">
+        <button onClick={() => void run(canResume ? resumeCheckpoint ?? undefined : undefined)} disabled={running || goal.trim().length < 4} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition disabled:opacity-40">
           {running ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
         </button>
       </div>
@@ -429,11 +658,32 @@ export function AutonomousRunner({
           ))}
         </div>
       )}
+      {resumeCheckpoint && !running && !result && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-cyan/20 bg-cyan/[0.06] px-3 py-2.5 text-xs text-text">
+          <span>{t('autonomousRunner.resumeCheckpoint')}</span>
+          <button
+            type="button"
+            onClick={() => void run(resumeCheckpoint)}
+            className="shrink-0 rounded-lg bg-cyan px-3 py-1.5 font-semibold text-[#041018]"
+          >
+            {t('autonomousRunner.resumeAction')}
+          </button>
+        </div>
+      )}
       {error && <p className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{error}</p>}
       {dataWarning && (
         <p className="mt-3 rounded-lg border border-amber/20 bg-amber/10 px-3 py-2 text-center text-xs text-amber">
           {dataWarning}
         </p>
+      )}
+      {running && resumeCheckpoint?.status && ['queued', 'running'].includes(resumeCheckpoint.status) && (
+        <button
+          type="button"
+          onClick={() => void cancelWorkerRun()}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-danger/30 px-3 py-2 text-xs font-medium text-danger transition hover:bg-danger/10"
+        >
+          <X size={13} /> {t('autonomousRunner.cancelRun')}
+        </button>
       )}
 
       {running && phase === 'architect' && (

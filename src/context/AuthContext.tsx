@@ -12,6 +12,28 @@ import type { Role, User } from '../types'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
 
 const STORAGE_KEY = 'nemo.user'
+const ACCOUNT_STORAGE_KEY = 'nemo.local-account-id'
+const ACCOUNT_LOCAL_KEYS = [
+  'nemo-current-team-id', 'nemo-team-name', 'nemo-team-goal', 'nemo-workflow-input',
+  'nemo-workflow-results', 'nemo-education-workflow-v2', 'nemo-saved-report', 'nemo-yc-waitlist',
+]
+
+function clearAccountLocalData() {
+  if (typeof window === 'undefined') return
+  for (const key of ACCOUNT_LOCAL_KEYS) window.localStorage.removeItem(key)
+  for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+    const key = window.localStorage.key(i)
+    if (key?.startsWith('nemo-team-blueprint:')) window.localStorage.removeItem(key)
+  }
+}
+
+function bindLocalDataToAccount(userId: string | null) {
+  if (typeof window === 'undefined') return
+  const previous = window.localStorage.getItem(ACCOUNT_STORAGE_KEY)
+  if (!userId || (previous && previous !== userId)) clearAccountLocalData()
+  if (userId) window.localStorage.setItem(ACCOUNT_STORAGE_KEY, userId)
+  else window.localStorage.removeItem(ACCOUNT_STORAGE_KEY)
+}
 
 interface AuthResult {
   error?: string
@@ -49,6 +71,7 @@ function makeUser(email: string, name?: string): User {
     createdAt: '2026-06-01',
     quotaUsed: 37,
     quotaLimit: 100,
+    onboardingCompleted: false,
   }
 }
 
@@ -77,6 +100,7 @@ function userFromSession(sessionUser: any): User {
     createdAt: (sessionUser?.created_at ?? '').slice(0, 10) || '2026-06-01',
     quotaUsed: 0,
     quotaLimit: 100,
+    onboardingCompleted: sessionUser?.user_metadata?.onboarding_completed === true,
   }
 }
 
@@ -85,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => (live ? null : loadUser()))
   const [loading, setLoading] = useState<boolean>(live)
   const profileSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingMetadata = useRef<Record<string, string>>({})
+  const pendingMetadata = useRef<Record<string, string | boolean>>({})
 
   useEffect(() => () => {
     if (profileSaveTimer.current) clearTimeout(profileSaveTimer.current)
@@ -98,10 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     client.auth.getSession().then(({ data }) => {
       if (!active) return
+      bindLocalDataToAccount(data.session?.user.id ?? null)
       setUser(data.session ? userFromSession(data.session.user) : null)
       setLoading(false)
     })
     const { data: sub } = client.auth.onAuthStateChange((_event, session) => {
+      bindLocalDataToAccount(session?.user.id ?? null)
       setUser(session ? userFromSession(session.user) : null)
       setLoading(false)
     })
@@ -157,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (live && supabase) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin + '/app' },
+        options: { redirectTo: window.location.origin + '/setup' },
       })
       return error ? { error: error.message } : {}
     }
@@ -166,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [live, persist])
 
   const logout = useCallback(async () => {
+    bindLocalDataToAccount(null)
     if (live && supabase) {
       // Explicitly revoke refresh tokens on every device. Supabase currently
       // defaults to global scope, but keeping it explicit prevents a future
@@ -191,6 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (typeof patch.name === 'string') pendingMetadata.current.name = patch.name
     if (patch.lang === 'uz' || patch.lang === 'ru' || patch.lang === 'en') pendingMetadata.current.lang = patch.lang
+    if (typeof patch.onboardingCompleted === 'boolean') pendingMetadata.current.onboarding_completed = patch.onboardingCompleted
     if (!Object.keys(pendingMetadata.current).length) return
     if (profileSaveTimer.current) clearTimeout(profileSaveTimer.current)
     profileSaveTimer.current = setTimeout(() => {

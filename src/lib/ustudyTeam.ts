@@ -1,5 +1,5 @@
 import { supabase, isSupabaseEnabled } from './supabase'
-import { blankAgent } from '../store/useAgentStore'
+import { blankAgent, useAgentStore } from '../store/useAgentStore'
 import type { PlatformAgent, AgentPrompt } from '../types/platform'
 
 const OPS_MODEL = 'openai/gpt-4o-mini'
@@ -95,74 +95,15 @@ export async function createUstudyOperationsTeam(
   deleteAgent?: DeleteAgent,
 ): Promise<SeedResult> {
   const lead = OPERATIONS_SUBAGENTS[0]
-  const base = blankAgent()
-  const agent: PlatformAgent = {
-    ...base,
+  return await saveDynamicTeam(addAgent, {
     name: 'Operations Team',
-    type: 'workflow',
-    role: 'Operations Lead Agent',
     niche: 'IT Academy education operations nemo-workflow:operations nemo-risk:standard',
     riskTier: 'standard',
-    purpose: 'Automate routine operations: payment reminders, admin escalation, meeting-to-tasks and manager reports.',
-    model: OPS_MODEL,
-    status: 'active',
-    channels: ['telegram', 'widget'],
-    prompt: lead.prompt,
-  }
-
-  const res = await addAgent(agent)
-  if (res.error || !res.id) return { agentId: '', error: res.error ?? 'could not create team agent' }
-  const agentId = res.id
-
-  const cleanupLead = async (cause: string): Promise<SeedResult> => {
-    if (!deleteAgent) return { agentId, error: `${cause}; rollback unavailable: deleteAgent callback is required` }
-    const cleanupError = (await deleteAgent(agentId)).error
-    return cleanupError
-      ? { agentId, error: `${cause}; rollback failed: agent cleanup: ${cleanupError}` }
-      : { agentId: '', error: cause }
-  }
-
-  if (!isSupabaseEnabled || !supabase) return await cleanupLead('could not create Operations Team: live backend is required')
-  if (!UUID_RE.test(agentId)) return await cleanupLead('could not create Operations Team: persisted lead id is not a valid UUID')
-
-  const db = supabase
-  const rollback = async (cause: string, departmentId?: string): Promise<SeedResult> => {
-    const errors: string[] = []
-    if (departmentId) {
-      const { error } = await db.from('departments').delete().eq('id', departmentId)
-      if (error) errors.push(`department cleanup: ${error.message}`)
-    }
-    if (deleteAgent) {
-      const error = (await deleteAgent(agentId)).error
-      if (error) errors.push(`agent cleanup: ${error}`)
-    } else {
-      const { error } = await db.from('agents').delete().eq('id', agentId)
-      if (error) errors.push(`agent cleanup: ${error.message}`)
-    }
-    return errors.length
-      ? { agentId, departmentId, error: `${cause}; rollback failed: ${errors.join('; ')}` }
-      : { agentId: '', error: cause }
-  }
-
-  const { data: dep, error: depErr } = await db
-    .from('departments')
-    .insert({ main_agent_id: agentId, name: 'Operations', niche: 'IT Academy education operations nemo-workflow:operations nemo-risk:standard' })
-    .select('id')
-    .single()
-  if (depErr || !dep) return await rollback(depErr?.message ?? 'could not create Operations department')
-
-  const rows = OPERATIONS_SUBAGENTS.map((s) => ({
-    department_id: dep.id,
-    role: s.role,
-    name: s.name,
-    prompt: s.prompt,
-    model: OPS_MODEL,
-    status: 'active',
-  }))
-  const { error: subErr } = await db.from('sub_agents').insert(rows)
-  if (subErr) return await rollback(subErr.message, dep.id)
-
-  return { agentId, departmentId: dep.id }
+    workflowMode: 'operations',
+    goal: 'Automate routine operations: payment reminders, admin escalation, meeting-to-tasks and manager reports.',
+    specialists: OPERATIONS_SUBAGENTS.map((specialist) => ({ ...specialist, model: OPS_MODEL, status: 'active' })),
+    lead: { role: 'Operations Lead Agent', prompt: lead.prompt, model: OPS_MODEL },
+  }, deleteAgent)
 }
 
 // Persist a team the manager created ON THE FLY for a goal: a workflow lead agent
@@ -177,6 +118,8 @@ export async function saveDynamicTeam(
     workflowMode?: 'generic' | 'operations' | 'logistics'
     niche?: string
     riskTier?: 'standard' | 'regulated'
+    actionPolicy?: PlatformAgent['actionPolicy']
+    country?: string
     templateKey?: string
     lead?: { role?: string; prompt?: AgentPrompt; model?: string }
     leadForm?: PlatformAgent['leadForm']
@@ -197,6 +140,8 @@ export async function saveDynamicTeam(
     role: opts.lead?.role?.trim() || 'Team lead',
     niche: nicheWithMarkers(120),
     riskTier: opts.riskTier ?? 'standard',
+    actionPolicy: opts.actionPolicy ?? 'approval_required',
+    country: opts.country,
     templateKey: opts.templateKey,
     purpose: opts.goal.slice(0, 500),
     model: opts.lead?.model?.trim() || OPS_MODEL,
@@ -211,79 +156,48 @@ export async function saveDynamicTeam(
     },
     leadForm: opts.leadForm ?? base.leadForm,
   }
-  let res: { id?: string; error?: string }
-  try {
-    res = await addAgent(agent)
-  } catch (error) {
-    return { agentId: '', error: error instanceof Error ? error.message : 'could not create team agent' }
-  }
-  if (res.error || !res.id) return { agentId: '', error: res.error ?? 'could not create team agent' }
-  const agentId = res.id
-  const cleanupLead = async (cause: string): Promise<SeedResult> => {
-    if (!deleteAgent) return { agentId, error: `${cause}; rollback unavailable: deleteAgent callback is required` }
-    let cleanupError: string | undefined
-    try {
-      cleanupError = (await deleteAgent(agentId)).error
-    } catch (error) {
-      cleanupError = error instanceof Error ? error.message : 'unknown agent cleanup error'
-    }
-    return cleanupError
-      ? { agentId, error: `${cause}; rollback failed: agent cleanup: ${cleanupError}` }
-      : { agentId: '', error: cause }
-  }
-  if (!isSupabaseEnabled || !supabase) return await cleanupLead('could not create team: live backend is required')
-  if (!UUID_RE.test(agentId)) return await cleanupLead('could not create team: persisted lead id is not a valid UUID')
-  const db = supabase
-  const rollback = async (departmentId?: string) => {
-    const errors: string[] = []
-    if (departmentId) {
-      const { error } = await db.from('departments').delete().eq('id', departmentId)
-      if (error) errors.push(`department cleanup: ${error.message}`)
-    }
-    if (deleteAgent) {
-      try {
-        const error = (await deleteAgent(agentId)).error
-        if (error) errors.push(`agent cleanup: ${error}`)
-      } catch (error) {
-        errors.push(`agent cleanup: ${error instanceof Error ? error.message : 'unknown error'}`)
-      }
-    } else {
-      const { error } = await db.from('agents').delete().eq('id', agentId)
-      if (error) errors.push(`agent cleanup: ${error.message}`)
-    }
-    return errors.length ? errors.join('; ') : undefined
-  }
+  void addAgent
+  void deleteAgent
+  if (!isSupabaseEnabled || !supabase) return { agentId: '', error: 'could not create team: live backend is required' }
+  if (opts.specialists.length < 2 || opts.specialists.length > 6) return { agentId: '', error: 'a team requires 2 to 6 specialists' }
 
-  const { data: dep, error: depErr } = await supabase
-    .from('departments')
-    .insert({
-      main_agent_id: agentId,
-      name: (opts.name || 'AI Team').slice(0, 60),
-      niche: nicheWithMarkers(120),
-    })
-    .select('id')
-    .single()
-  if (depErr || !dep) {
-    const cause = depErr?.message ?? 'could not create department'
-    const rollbackError = await rollback()
-    return { agentId: rollbackError ? agentId : '', error: rollbackError ? `${cause}; rollback failed: ${rollbackError}` : cause }
+  const { data, error } = await supabase.rpc('create_agent_team', {
+    p_manager: {
+      name: agent.name,
+      avatar_color: agent.avatarColor,
+      prompt: agent.prompt,
+      model: agent.model,
+      temperature: agent.temperature,
+      timezone: agent.timezone,
+      schedule: agent.schedule,
+      work_start: agent.workStart,
+      work_end: agent.workEnd,
+      default_lang: agent.language,
+      country: agent.country,
+      purpose: agent.purpose,
+      niche: agent.niche,
+      risk_tier: agent.riskTier,
+      action_policy: agent.actionPolicy,
+      template_key: agent.templateKey,
+      lead_form: agent.leadForm,
+      skills: agent.skills ?? [],
+    },
+    p_department: { name: agent.name, niche: agent.niche },
+    p_specialists: opts.specialists.slice(0, 6).map((specialist) => ({
+      role: specialist.role,
+      name: specialist.name,
+      prompt: specialist.prompt,
+      skills: Array.isArray(specialist.skills) ? specialist.skills.slice(0, 6) : [],
+      model: specialist.model?.trim() || OPS_MODEL,
+      status: specialist.status === 'inactive' ? 'paused' : 'active',
+    })),
+  })
+  const result = data as { agent_id?: string; department_id?: string } | null
+  if (error || !result?.agent_id || !result.department_id || !UUID_RE.test(result.agent_id) || !UUID_RE.test(result.department_id)) {
+    return { agentId: '', error: error?.message ?? 'atomic team creation failed' }
   }
-
-  const rows = opts.specialists.slice(0, 6).map((s) => ({
-    department_id: dep.id,
-    role: s.role,
-    name: s.name,
-    prompt: s.prompt,
-    skills: Array.isArray(s.skills) ? s.skills.slice(0, 6) : [],
-    model: s.model?.trim() || OPS_MODEL,
-    status: s.status === 'inactive' ? 'inactive' : 'active',
-  }))
-  const { error: subErr } = await supabase.from('sub_agents').insert(rows)
-  if (subErr) {
-    const rollbackError = await rollback(dep.id)
-    return { agentId: rollbackError ? agentId : '', departmentId: rollbackError ? dep.id : undefined, error: rollbackError ? `${subErr.message}; rollback failed: ${rollbackError}` : subErr.message }
-  }
-  return { agentId, departmentId: dep.id }
+  await useAgentStore.getState().hydrate()
+  return { agentId: result.agent_id, departmentId: result.department_id }
 }
 
 // Sample inputs so the demo runs with realistic data out of the box.

@@ -7,7 +7,7 @@ import { useToast } from '../../components/ui/Toast'
 import { MODELS, kindPresets } from '../../data/platform'
 import { blankAgent, useAgentStore } from '../../store/useAgentStore'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
-import type { AgentKind, AgentLang, PlatformAgent } from '../../types/platform'
+import type { AgentActionPolicy, AgentKind, AgentLang, PlatformAgent } from '../../types/platform'
 
 const fieldCls = 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-muted focus:border-violet/50'
 
@@ -48,6 +48,7 @@ export default function CreateAgentPage() {
   const [rules, setRules] = useState('Do not invent prices. If information is missing, ask one short question and offer human handoff.')
   const [language, setLanguage] = useState<AgentLang>('auto')
   const [model, setModel] = useState(MODELS[0]?.id ?? 'openai/gpt-4o-mini')
+  const [actionPolicy, setActionPolicy] = useState<AgentActionPolicy>('approval_required')
   const [knowledge, setKnowledge] = useState('Company services, price lists, team members, integrations, and lead details.')
   // AI composer — describe the business once, AI writes name/role/tasks/tone/rules.
   const [aiDesc, setAiDesc] = useState('')
@@ -80,10 +81,11 @@ export default function CreateAgentPage() {
     language,
     purpose: tasks,
     niche: 'Education / IT Academy',
-    status: 'active',
+    status: 'draft',
+    actionPolicy,
     channels: ['telegram', 'widget'],
     prompt: { role, tasks: `${tasks}\n\nKnowledge source: ${knowledge}`, tone, rules },
-  }), [knowledge, language, model, name, role, rules, tasks, tone, type])
+  }), [actionPolicy, knowledge, language, model, name, role, rules, tasks, tone, type])
 
   const applyType = (value: AgentKind) => {
     const preset = agentTypes.find((x) => x.value === value)
@@ -184,8 +186,9 @@ export default function CreateAgentPage() {
           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Role</span><input value={role} onChange={(e) => setRole(e.target.value)} className={fieldCls} /></label>
           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Tasks</span><textarea value={tasks} onChange={(e) => setTasks(e.target.value)} rows={5} className={`${fieldCls} resize-y`} /></label>
           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Tone</span><input value={tone} onChange={(e) => setTone(e.target.value)} className={fieldCls} /></label>
-          <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Prompt rules</span><textarea value={rules} onChange={(e) => setRules(e.target.value)} rows={3} className={`${fieldCls} resize-y`} /></label>
-          <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Knowledge source</span><textarea value={knowledge} onChange={(e) => setKnowledge(e.target.value)} rows={3} className={`${fieldCls} resize-y`} /></label>
+           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Prompt rules</span><textarea value={rules} onChange={(e) => setRules(e.target.value)} rows={3} className={`${fieldCls} resize-y`} /></label>
+           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Action policy</span><select value={actionPolicy} onChange={(e) => setActionPolicy(e.target.value as AgentActionPolicy)} className={fieldCls}><option value="read_only">Read-only: analyze without external changes</option><option value="approval_required">Draft + owner approval: queue every external action</option></select><span className="block text-xs text-muted">Automatic execution is unavailable until Nemo has a verified executor and audit result.</span></label>
+           <label className="mt-4 block space-y-1.5"><span className="text-xs text-muted">Knowledge source</span><textarea value={knowledge} onChange={(e) => setKnowledge(e.target.value)} rows={3} className={`${fieldCls} resize-y`} /></label>
           {error && <p className="mt-4 rounded-2xl border border-danger/25 bg-danger/10 p-3 text-sm text-danger">{error}</p>}
           {saved && <p className="mt-4 flex items-center gap-2 text-sm text-teal"><CheckCircle2 size={16} /> Agent saved.</p>}
         </section>

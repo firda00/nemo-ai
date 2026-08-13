@@ -44,6 +44,7 @@ import { FileRunner } from '../../components/platform/FileRunner'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
 import { SkillFileImporter } from '../../components/platform/SkillFileImporter'
 import { cn } from '../../lib/cn'
+import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import type { PlatformAgent } from '../../types/platform'
 
 export default function AgentEditorPage() {
@@ -59,12 +60,24 @@ export default function AgentEditorPage() {
   const [tab, setTab] = useState('general')
   const [leaveTo, setLeaveTo] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
+  const [evalState, setEvalState] = useState<{ suite?: { id: string; cases: unknown[] }; run?: { id: string; status: string; passed_count: number; total_count: number; critical_failed_count: number; completed_at?: string }; agent?: { config_revision: number; published_revision?: number | null } }>({})
+  const [evalBusy, setEvalBusy] = useState(false)
+
+  const loadEvalState = async () => {
+    if (!agent || !isSupabaseEnabled || !supabase) return
+    const { data } = await supabase.functions.invoke('agent-evals', { body: { action: 'status', agent_id: agent.id } })
+    if (data?.ok) setEvalState(data)
+  }
 
   // The agent may arrive after an async hydrate (e.g. on a hard reload straight
   // to this URL) — seed the draft once it's available instead of redirecting.
   useEffect(() => {
     if (agent && !draft) window.setTimeout(() => setDraft(agent), 0)
   }, [agent, draft])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadEvalState() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [agent?.id, agent?.configRevision])
 
   // Compare only the fields this editor edits; channels/knowledge are managed
   // live elsewhere and must not flag phantom "unsaved changes".
@@ -114,7 +127,25 @@ export default function AgentEditorPage() {
     if (draft.leadForm.enabled && draft.leadForm.fields.some((field) => !field.label.trim())) { toast('Every lead field needs a label.', 'error'); return }
     const { error } = await updateAgent(draft.id, draft)
     if (error) toast(error, 'error')
-    else toast(t('platform.editor.saved'))
+    else { toast('Saved. This revision is a draft until its evaluation passes.'); void loadEvalState() }
+  }
+
+  const evalAction = async (action: 'generate' | 'run' | 'publish') => {
+    if (!agent || !supabase || evalBusy) return
+    setEvalBusy(true)
+    try {
+      let suiteId = evalState.suite?.id
+      if (action === 'run' && !suiteId) {
+        const generated = await supabase.functions.invoke('agent-evals', { body: { action: 'generate', agent_id: agent.id } })
+        suiteId = generated.data?.suite?.id
+      }
+      const body = action === 'run' ? { action, agent_id: agent.id, suite_id: suiteId } : action === 'publish' ? { action, agent_id: agent.id, run_id: evalState.run?.id } : { action, agent_id: agent.id }
+      const { data, error } = await supabase.functions.invoke('agent-evals', { body })
+      if (error || !data?.ok) { toast(data?.error ?? error?.message ?? 'Evaluation action failed.', 'error'); return }
+      toast(action === 'generate' ? 'Evaluation suite generated.' : action === 'run' ? 'Sandbox evaluation completed.' : 'Agent published.')
+      await loadEvalState()
+      if (action === 'publish') window.location.reload()
+    } finally { setEvalBusy(false) }
   }
 
   const goBack = () => {
@@ -133,6 +164,7 @@ export default function AgentEditorPage() {
         { key: 'model', label: t('platform.editor.tabs.model'), icon: Cpu },
         ...(draft.type === 'workflow' ? [{ key: 'department', label: t('platform.department.tab'), icon: Users }] : []),
         { key: 'run', label: t('platform.agentTypes.runTab'), icon: Telescope },
+        { key: 'quality', label: 'Quality', icon: FlaskConical },
       ]
     : [
         { key: 'general', label: t('platform.editor.tabs.general'), icon: Settings },
@@ -143,6 +175,7 @@ export default function AgentEditorPage() {
         { key: 'leadForms', label: t('platform.editor.tabs.leadForms'), icon: ClipboardList },
         { key: 'channels', label: t('platform.editor.tabs.channels'), icon: Plug },
         { key: 'test', label: t('platform.editor.tabs.test'), icon: FlaskConical },
+        { key: 'quality', label: 'Quality', icon: FlaskConical },
       ]
 
   return (
@@ -173,6 +206,26 @@ export default function AgentEditorPage() {
         </div>
 
         <div className="min-w-0">
+          {tab === 'quality' && (
+            <Card>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-base font-medium text-text">Publish gate</p>
+                  <p className="mt-1 text-sm text-muted">Revision {agent.configRevision ?? 1}. The sandbox never calls tools, channels, memory, or external actions.</p>
+                </div>
+                <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', agent.status === 'active' ? 'bg-teal/15 text-teal' : 'bg-amber/15 text-amber')}>
+                  {agent.status === 'active' ? 'Published' : 'Draft / evaluation required'}
+                </span>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <Button variant="secondary" onClick={() => void evalAction('generate')} disabled={evalBusy}>Generate suite</Button>
+                <Button variant="secondary" onClick={() => void evalAction('run')} disabled={evalBusy}>Run sandbox</Button>
+                <Button onClick={() => void evalAction('publish')} disabled={evalBusy || evalState.run?.status !== 'passed' || (evalState.run?.critical_failed_count ?? 1) > 0}>Publish revision</Button>
+              </div>
+              {evalState.suite && <p className="mt-4 text-sm text-muted">Suite: {evalState.suite.cases.length} task-specific cases.</p>}
+              {evalState.run && <div className="mt-3 rounded-xl border border-ice/10 bg-ice/[0.03] p-3 text-sm text-muted">Latest run: <span className="text-text">{evalState.run.status}</span> · {evalState.run.passed_count}/{evalState.run.total_count} passed · {evalState.run.critical_failed_count} critical failures</div>}
+            </Card>
+          )}
           {tab === 'general' && (
             <Card>
               <Field label={t('platform.onboarding.name')}>

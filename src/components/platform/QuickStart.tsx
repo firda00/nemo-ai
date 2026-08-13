@@ -65,7 +65,7 @@ export function QuickStart() {
   if (allDone && hydrated) return null
 
   return (
-    <section className="card mt-6 overflow-hidden rounded-3xl p-6">
+    <section className="card mt-6 overflow-hidden rounded-3xl p-4 sm:p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Rocket size={20} /></span>
@@ -83,7 +83,7 @@ export function QuickStart() {
 
       <div className="mt-5 space-y-2.5">
         {steps.map((s) => (
-          <div key={s.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <div key={s.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
             <div className="flex flex-wrap items-center gap-3">
               {s.done ? <CheckCircle2 size={20} className="shrink-0 text-teal" /> : <Circle size={20} className="shrink-0 text-muted/50" />}
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet/10 text-violet"><s.icon size={15} /></span>

@@ -51,7 +51,7 @@ export default function AuthPage() {
       setErr(res.error)
       return
     }
-    navigate(isSignup ? '/onboarding' : from) // new users start with the agent wizard
+    navigate(isSignup ? '/setup' : from)
   }
   const google = async () => {
     setErr('')
@@ -60,7 +60,7 @@ export default function AuthPage() {
       setErr(res.error)
       return
     }
-    if (!live) navigate(from) // live OAuth redirects on its own
+    if (!live) navigate('/setup') // live OAuth redirects on its own
   }
   const goAuth = () => {
     setView('auth')

@@ -56,7 +56,7 @@ export default function TemplatesPage() {
       role: tpl.name[lang],
       avatarColor: tpl.color,
       prompt: tpl.preset,
-      status: 'active',
+      status: 'draft',
     })
     toast(t('platform.templatesPage.created'))
     navigate(result.id ? `/app/agents/${result.id}` : '/app/agents')
@@ -70,7 +70,7 @@ export default function TemplatesPage() {
       role: 'Master AI team leader',
       niche: tpl.market,
       purpose: tpl.desc,
-      status: 'active',
+      status: 'draft',
       channels: ['telegram', 'widget'],
       prompt: {
         role: `You are the master agent for ${tpl.title}.`,

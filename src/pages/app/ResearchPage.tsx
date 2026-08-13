@@ -9,8 +9,10 @@ import {
   Clock,
   RotateCcw,
   ListChecks,
+  AlertTriangle,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
+import { useSearchParams } from 'react-router-dom'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Markdown } from '../../components/ui/Markdown'
 import { cn } from '../../lib/cn'
@@ -21,6 +23,15 @@ interface Step {
   query: string
   findings: string
   sources: string[]
+  review?: {
+    reviewed_by?: string
+    approved?: boolean
+    score?: number
+    issues?: string[]
+    revised?: boolean
+    revisions?: number
+    needs_human_review?: boolean
+  }
 }
 interface Result {
   id?: string
@@ -29,6 +40,8 @@ interface Result {
   sources: string[]
   steps: Step[]
   tokens?: number
+  status?: string
+  human_review_status?: 'pending' | 'approved' | 'rejected' | null
 }
 interface HistRow {
   id: string
@@ -66,6 +79,8 @@ const PHASES = ['phasePlan', 'phaseSearch', 'phaseAnalyze', 'phaseWrite'] as con
 
 export default function ResearchPage() {
   const { t, lang } = useI18n()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedRun = searchParams.get('run')
   const [task, setTask] = useState('')
   const [running, setRunning] = useState(false)
   const [phase, setPhase] = useState(0)
@@ -114,7 +129,7 @@ export default function ResearchPage() {
           setError(t('platform.research.error'))
           return
         }
-        setResult({ id: d.id, task: goal, report: d.report, sources: d.sources ?? [], steps: d.steps ?? [], tokens: d.tokens })
+        setResult({ id: d.id, task: goal, report: d.report, sources: d.sources ?? [], steps: d.steps ?? [], tokens: d.tokens, status: d.status ?? 'done' })
         loadHistory()
       } else {
         await new Promise((r) => setTimeout(r, 1800))
@@ -132,11 +147,11 @@ export default function ResearchPage() {
 
   const viewRun = async (id: string) => {
     if (!live || !supabase) return
-    const { data } = await supabase.from('research_runs').select('id, task, report, sources, steps, tokens').eq('id', id).single()
+    const { data } = await supabase.from('research_runs').select('id, task, report, sources, steps, tokens, status, human_review_status').eq('id', id).single()
     if (data) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const d = data as any
-      setResult({ id: d.id, task: d.task, report: d.report, sources: d.sources ?? [], steps: d.steps ?? [], tokens: d.tokens })
+      setResult({ id: d.id, task: d.task, report: d.report, sources: d.sources ?? [], steps: d.steps ?? [], tokens: d.tokens, status: d.status, human_review_status: d.human_review_status })
       setError('')
     }
   }
@@ -145,7 +160,23 @@ export default function ResearchPage() {
     setResult(null)
     setTask('')
     setError('')
+    if (requestedRun) setSearchParams({}, { replace: true })
   }
+  useEffect(() => {
+    if (!requestedRun || !live || !supabase) return
+    let active = true
+    void supabase.from('research_runs').select('id, task, report, sources, steps, tokens, status, human_review_status').eq('id', requestedRun).single().then(({ data }) => {
+      if (!active || !data) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const d = data as any
+      setResult({ id: d.id, task: d.task, report: d.report, sources: d.sources ?? [], steps: d.steps ?? [], tokens: d.tokens, status: d.status, human_review_status: d.human_review_status })
+      setError('')
+    })
+    return () => { active = false }
+  }, [requestedRun])
+  const reviewRequiredCount = result?.steps.filter((step) => step.review?.needs_human_review).length ?? 0
+  const reviewDecision = result?.human_review_status ?? null
+  const needsHumanReview = reviewDecision === 'pending' || (!reviewDecision && (result?.status === 'needs_review' || reviewRequiredCount > 0))
 
   return (
     <div className="container-page max-w-6xl py-8">
@@ -237,6 +268,15 @@ export default function ResearchPage() {
                 </button>
               </div>
 
+              {needsHumanReview && (
+                <div className="flex items-start gap-3 rounded-2xl border border-amber/30 bg-amber/10 p-4 text-sm text-amber">
+                  <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                  <p>{t('autonomousRunner.escalatedBanner', { count: Math.max(1, reviewRequiredCount) })}</p>
+                </div>
+              )}
+              {reviewDecision === 'approved' && <div className="rounded-2xl border border-teal/25 bg-teal/10 p-4 text-sm text-teal">Результат проверен и принят владельцем.</div>}
+              {reviewDecision === 'rejected' && <div className="rounded-2xl border border-danger/25 bg-danger/10 p-4 text-sm text-danger">Результат отклонён владельцем. Исправьте исходные данные или задачу и запустите новую версию.</div>}
+
               {/* report */}
               <div className="card rounded-2xl p-6">
                 <Markdown content={result.report} />
@@ -252,16 +292,35 @@ export default function ResearchPage() {
                     {result.steps.map((s, i) => (
                       <div key={i} className="rounded-xl border border-ice/[0.07]">
                         <button onClick={() => setOpenStep(openStep === i ? null : i)} className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left">
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet/15 text-[10px] text-violet">{i + 1}</span>
-                          <span className="min-w-0 flex-1 truncate text-sm text-text">{s.query}</span>
-                          <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', openStep === i && 'rotate-180')} />
-                        </button>
-                        {openStep === i && (
-                          <div className="border-t border-ice/[0.07] px-3.5 py-3">
-                            <Markdown content={s.findings || '—'} />
-                            {s.sources.length > 0 && (
-                              <p className="mt-2 text-[11px] text-muted">{s.sources.length} {t('platform.research.sources').toLowerCase()}</p>
-                            )}
+                           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet/15 text-[10px] text-violet">{i + 1}</span>
+                           <span className="min-w-0 flex-1 truncate text-sm text-text">{s.query}</span>
+                           {typeof s.review?.score === 'number' && (
+                             <span className={cn('shrink-0 text-[11px] font-medium', s.review.approved ? 'text-teal' : 'text-amber')}>
+                               {s.review.score}/100
+                             </span>
+                           )}
+                           <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', openStep === i && 'rotate-180')} />
+                         </button>
+                         {openStep === i && (
+                           <div className="border-t border-ice/[0.07] px-3.5 py-3">
+                             <Markdown content={s.findings || '—'} />
+                             {s.review && (
+                               <div className={cn('mt-3 rounded-xl border px-3 py-2 text-xs', s.review.approved ? 'border-teal/20 bg-teal/[0.06]' : 'border-amber/20 bg-amber/[0.06]')}>
+                                 <p className={s.review.approved ? 'text-teal' : 'text-amber'}>
+                                   {t('autonomousRunner.reviewedBy', { name: s.review.reviewed_by || '—' })} · {s.review.score ?? 0}/100 · {s.review.approved ? t('autonomousRunner.approved') : t('autonomousRunner.hasIssues')}
+                                 </p>
+                                 {s.review.revised && <p className="mt-1 text-muted">{t('autonomousRunner.revisedNote')}</p>}
+                                  {s.review.needs_human_review && needsHumanReview && <p className="mt-1 text-amber">{t('autonomousRunner.escalatedNote')}</p>}
+                                 {Boolean(s.review.issues?.length) && (
+                                   <ul className="mt-2 list-disc space-y-1 pl-4 text-muted">
+                                     {s.review.issues?.map((issue) => <li key={issue}>{issue}</li>)}
+                                   </ul>
+                                 )}
+                               </div>
+                             )}
+                             {s.sources.length > 0 && (
+                               <p className="mt-2 text-[11px] text-muted">{s.sources.length} {t('platform.research.sources').toLowerCase()}</p>
+                             )}
                           </div>
                         )}
                       </div>

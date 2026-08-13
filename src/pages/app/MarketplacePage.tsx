@@ -114,7 +114,7 @@ const marketplaceUi: Record<CopyLang, {
   en: {
     eyebrow: 'AI Team Templates',
     bannerTitle: 'How templates work:',
-    bannerBody: 'a saved industry team creates one lead and five specialists. Safety limits are prompt guardrails, not an enforced approval queue yet — review and confirm every result before acting on it. HR, clinic, accounting, legal and insurance teams run inside Nemo only; live channel connections are blocked in this beta.',
+    bannerBody: 'a saved industry team creates one lead and five specialists. Consequential browser actions create an owner approval request and are never executed automatically. HR, clinic, accounting, legal and insurance teams run inside Nemo only; live channel connections are blocked in this beta.',
     searchPlaceholder: 'Search by industry or task…',
     searchAria: 'Search AI team templates',
     count: (value) => `${value} teams`,

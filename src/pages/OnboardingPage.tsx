@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { X, ArrowLeft, ArrowRight, Check, Rocket, HelpCircle, FileText, Trash2, Sparkles, Cpu, SlidersHorizontal, ChevronDown, Upload, Loader2, Volume2, KeyRound, Lock } from 'lucide-react'
 import { useI18n } from '../i18n'
@@ -16,7 +16,9 @@ import { Stepper } from '../components/ui/Stepper'
 import { TestChat } from '../components/platform/TestChat'
 import { TimezoneField, LanguageField } from '../components/platform/TimezoneField'
 import { cn } from '../lib/cn'
-import type { ChannelType, PlatformAgent, KnowledgeDoc, AgentKind } from '../types/platform'
+import { recommendFirstTeam, type FirstTeamRecommendation, type OnboardingBusinessProfile } from '../lib/firstTeamRecommendation'
+import { saveDynamicTeam } from '../lib/ustudyTeam'
+import type { ChannelType, PlatformAgent, KnowledgeDoc, AgentKind, AgentPrompt } from '../types/platform'
 
 const inputCls = 'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-cobalt/50 focus:shadow-glow'
 
@@ -110,6 +112,7 @@ export default function OnboardingPage() {
   const [params] = useSearchParams()
   const toast = useToast()
   const addAgent = useAgentStore((s) => s.addAgent)
+  const ensureAccountId = useAgentStore((s) => s.ensureAccountId)
 
   const [mode, setMode] = useState<'start' | 'wizard'>('start')
   const [step, setStep] = useState(1)
@@ -125,7 +128,36 @@ export default function OnboardingPage() {
   const [channelSettings, setChannelSettings] = useState<Partial<Record<ChannelType, Record<string, string>>>>({})
   const [uploadingKnowledge, setUploadingKnowledge] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const [recommendation, setRecommendation] = useState<FirstTeamRecommendation | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase || params.get('team')) return
+    const client = supabase
+    let cancelled = false
+    void ensureAccountId().then(async (accountId) => {
+      if (!accountId || accountId === 'demo') return
+      const { data } = await client
+        .from('business_profiles')
+        .select('name, operating_markets, owner_role, primary_goal, task_types, data_sources, default_action_policy')
+        .eq('account_id', accountId)
+        .maybeSingle()
+      if (cancelled || !data) return
+      const next = recommendFirstTeam(data as OnboardingBusinessProfile)
+      setRecommendation(next)
+      setAiDesc((current) => current.trim() ? current : next.description)
+      setDraft((current) => ({
+        ...current,
+        name: current.name || next.title,
+        purpose: current.purpose || next.purpose,
+        niche: current.niche || next.niche,
+        country: current.country || next.country,
+        channels: current.channels.length ? current.channels : next.channels,
+        actionPolicy: next.actionPolicy,
+      }))
+    })
+    return () => { cancelled = true }
+  }, [ensureAccountId, params])
 
   const set = (patch: Partial<PlatformAgent>) => setDraft((d) => ({ ...d, ...patch }))
   const setPrompt = (patch: Partial<PlatformAgent['prompt']>) => setDraft((d) => ({ ...d, prompt: { ...d.prompt, ...patch } }))
@@ -215,7 +247,7 @@ export default function OnboardingPage() {
         const a = payload.agent
         setDraft((d) => ({
           ...d,
-          name: a.name || d.name,
+          name: a.name || recommendation?.title || d.name,
           type: keepType ? d.type : a.type || d.type,
           role: a.prompt?.role || d.role,
           prompt: {
@@ -226,7 +258,11 @@ export default function OnboardingPage() {
           },
           model: a.model || d.model,
           language: (a.default_lang as PlatformAgent['language']) || d.language,
-          channels: keepType ? d.channels : Array.isArray(a.channels) ? a.channels : d.channels,
+          channels: keepType ? d.channels : recommendation ? recommendation.channels : Array.isArray(a.channels) ? a.channels : d.channels,
+          actionPolicy: recommendation?.actionPolicy ?? d.actionPolicy,
+          country: recommendation?.country ?? d.country,
+          purpose: recommendation?.purpose ?? d.purpose,
+          niche: recommendation?.niche ?? d.niche,
         }))
       } else {
         const text = aiDesc.trim()
@@ -234,7 +270,7 @@ export default function OnboardingPage() {
         const isContent = /content|контент|post|reels|script/.test(lower)
         const isSupport = /support|поддерж|faq|help/.test(lower)
         const isSales = /sales|sale|lead|crm|продаж|лид/.test(lower)
-        const name = isContent ? 'AI Content Team' : isSupport ? 'AI Support Team' : isSales ? 'AI Sales Team' : 'Custom AI Team'
+        const name = recommendation?.title ?? (isContent ? 'AI Content Team' : isSupport ? 'AI Support Team' : isSales ? 'AI Sales Team' : 'Custom AI Team')
         const specialists = isContent
           ? 'Sub-agents: strategist, scriptwriter, copywriter, publishing agent, analyst.'
           : isSupport
@@ -245,8 +281,10 @@ export default function OnboardingPage() {
           name,
           type: 'workflow',
           role: 'Master AI team leader',
-          purpose: text,
-          niche: isContent ? 'Content / Marketing' : isSupport ? 'Customer Support' : 'Sales / SMB',
+          purpose: recommendation?.purpose ?? text,
+          niche: recommendation?.niche ?? (isContent ? 'Content / Marketing' : isSupport ? 'Customer Support' : 'Sales / SMB'),
+          country: recommendation?.country ?? d.country,
+          actionPolicy: recommendation?.actionPolicy ?? d.actionPolicy,
           prompt: {
             role: 'You are the master agent for an AI team. Understand the business goal, route work to specialist sub-agents, synthesize results and escalate to a human when needed.',
             tasks: `${text}\n\n${specialists}\nUse Company Brain, keep an Agent Trace, capture measurable outcomes and calculate Nemo Score.`,
@@ -254,7 +292,7 @@ export default function OnboardingPage() {
             rules: 'Do not act as a single chatbot. Always decompose complex goals, delegate to sub-agents, verify quality and explain the result clearly.',
           },
           leadForm: { ...d.leadForm, enabled: isSales || isSupport, fields: isSales || isSupport ? defaultLeadFields : d.leadForm.fields },
-          channels: ['telegram', 'widget'],
+          channels: recommendation ? recommendation.channels : ['telegram', 'widget'],
         }))
       }
       if (!keepType) {
@@ -292,7 +330,33 @@ export default function OnboardingPage() {
 
   const finish = async () => {
     setSaving(true)
-    const res = await addAgent({ ...draft, status: 'active', lastActivity: 'hozir' })
+    let res: { id?: string; error?: string }
+    if (draft.type === 'workflow' && isSupabaseEnabled && supabase) {
+      const goal = (draft.purpose || aiDesc || draft.prompt.tasks).trim()
+      const { data, error } = await supabase.functions.invoke('orchestrate', {
+        body: { action: 'staff', goal, niche: draft.niche, purpose: draft.purpose, lang },
+      })
+      const specialists = (data as { subagents?: { role: string; name: string; skills?: string[]; prompt: AgentPrompt }[] } | null)?.subagents ?? []
+      if (error || specialists.length < 2) {
+        setSaving(false)
+        toast('Не удалось спроектировать полный состав команды. Попробуйте ещё раз.')
+        return
+      }
+      const team = await saveDynamicTeam(addAgent, {
+        name: draft.name,
+        goal,
+        specialists,
+        niche: draft.niche,
+        riskTier: draft.riskTier,
+        actionPolicy: draft.actionPolicy,
+        country: draft.country,
+        lead: { role: draft.role, prompt: draft.prompt, model: draft.model },
+        leadForm: draft.leadForm,
+      })
+      res = { id: team.agentId, error: team.error }
+    } else {
+      res = await addAgent({ ...draft, status: 'draft', lastActivity: 'hozir' })
+    }
     if (res.error || !res.id) {
       setSaving(false)
       toast(t('platform.onboarding.createError'))
@@ -305,7 +369,7 @@ export default function OnboardingPage() {
     }
     setSaving(false)
     toast(t('platform.onboarding.created'))
-    navigate(`/app/agents/${res.id}`)
+    navigate(draft.type === 'workflow' ? `/app/teams/${res.id}` : `/app/agents/${res.id}`)
   }
 
   const canNext = cur === 'agent' ? draft.name.trim().length > 0 : true
@@ -333,6 +397,15 @@ export default function OnboardingPage() {
             <p className="mt-3 inline-flex items-center gap-1.5 rounded-pill border border-ice/10 bg-ice/[0.03] px-3 py-1 text-xs text-muted">
               {t('platform.billing.perAgent')}: <span className="text-text">${AGENT_PRICE_USD}/{t('platform.billing.mo')}</span> · {t('platform.onboarding.priceTokens')}
             </p>
+
+            {recommendation && (
+              <div className="mt-7 rounded-2xl border border-cyan/30 bg-cyan/[0.06] p-5">
+                <p className="text-xs font-medium uppercase tracking-wider text-cyan">Рекомендация по вашему onboarding</p>
+                <h2 className="mt-2 text-lg font-medium text-text">{recommendation.title}</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted">Цель и состав команды уже подготовлены. Политика: {recommendation.actionPolicy === 'read_only' ? 'Read-only' : 'Draft + owner approval'}. Каналы: {recommendation.channels.length ? recommendation.channels.join(', ') : 'подключить позже'}.</p>
+                <button type="button" onClick={() => setAiDesc(recommendation.description)} className="mt-3 text-sm font-medium text-cyan hover:text-text">Вернуть рекомендованный blueprint</button>
+              </div>
+            )}
 
             <div className="mt-7 grid gap-3 sm:grid-cols-3">
               {TEAM_BLUEPRINTS.map((item) => (
@@ -535,6 +608,14 @@ export default function OnboardingPage() {
                     </Field>
                   </div>
                   <p className="flex items-center gap-2 text-xs text-muted"><HelpCircle size={14} /> {t('platform.onboarding.hint')}</p>
+
+                  <Field label="Action policy">
+                    <select value={draft.actionPolicy ?? 'approval_required'} onChange={(e) => set({ actionPolicy: e.target.value === 'read_only' ? 'read_only' : 'approval_required' })} className={inputCls}>
+                      <option value="read_only">Read-only: analyze without external changes</option>
+                      <option value="approval_required">Draft + owner approval: queue external changes</option>
+                    </select>
+                    <p className="mt-2 text-[11px] text-muted">Automatic execution is unavailable. You can review this recommendation before creating the team.</p>
+                  </Field>
 
                   <div className="space-y-2 border-t border-ice/10 pt-4">
                     <input ref={fileRef} type="file" accept={KNOWLEDGE_ACCEPT} multiple className="hidden" onChange={(e) => addKnowledgeFiles(e.target.files)} />

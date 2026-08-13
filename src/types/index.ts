@@ -13,6 +13,7 @@ export interface User {
   createdAt: string
   quotaUsed: number
   quotaLimit: number
+  onboardingCompleted?: boolean
 }
 
 /** Agent config schema — exactly as TZ 9.3 (code/JSON, not user-built). */

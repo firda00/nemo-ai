@@ -15,6 +15,8 @@ const deploy = read('deploy.ps1')
 const commerceControl = read('supabase/functions/commerce-control/index.ts')
 const commerceWorker = read('supabase/functions/commerce-worker/index.ts')
 const trendModule = read('supabase/functions/_shared/salesTrend.ts')
+const submitModule = read('supabase/functions/_shared/listingSubmit.ts')
+const submissionsMigration = read('supabase/migrations/20260813140000_listing_submissions.sql')
 const uzumModule = read('supabase/functions/_shared/uzum.ts')
 const trendMigration = read('supabase/migrations/20260813120000_commerce_sales_trend.sql')
 const commerceDigest = read('supabase/functions/commerce-digest/index.ts')
@@ -1058,6 +1060,59 @@ const checks = [
     && clickEndpoint.includes('if (providerError < 0)')
     && clickEndpoint.indexOf('providerError < 0') < clickEndpoint.indexOf("db.rpc('apply_invoice_entitlement'")
     && protocolModule.includes("error: text('error')")],
+
+  // ── Отправка карточки на модерацию ─────────────────────────────────────────────────────────
+  //
+  // Отправки пока нет: Uzum закрывает адреса создания товара для ключа продавца. Контур вокруг неё
+  // заведён заранее, и проверяется здесь именно то, что легко подменить заглушкой.
+
+  // Заглушка, возвращающая «успех», сообщала бы, что товар уехал, — а продавец узнавал бы правду
+  // через сутки, не найдя его в кабинете. Успех выставляется ТОЛЬКО по ответу площадки.
+  ['a submission is only successful when the marketplace said so',
+    submitModule.includes('if (httpStatus >= 200 && httpStatus < 300) return { status: \'sent\'')
+    && commerceControl.includes("const outcome = classifyProviderResponse(httpStatus)")
+    && commerceControl.includes("if (outcome.status === 'sent') {")
+    // Черновик помечается отправленным только внутри этой ветки, а не заранее.
+    && commerceControl.indexOf("outcome.status === 'sent'") < commerceControl.indexOf("status: 'submitted'")],
+
+  // Два пути к отправке разошлись бы через месяц, и ручная кнопка начала бы проверять не то, что
+  // проверяет автомат.
+  ['auto and manual submission share one road',
+    (commerceControl.match(/await submitDraft\(admin, \{/g) ?? []).length === 2
+    && commerceControl.includes("mode: 'auto'")
+    && commerceControl.includes("mode: 'manual'")],
+
+  // Автономия решает КОГДА отправить одобренное, а не отменяет одобрение.
+  ['autonomy never skips the owner approval',
+    submitModule.includes("if (input.draft.status !== 'ready') return { attempt: false, reason: 'not_ready' }")
+    && commerceControl.includes('if (approving) {')
+    && commerceControl.indexOf("pilot?.auto_submit_to_moderation !== false") > commerceControl.indexOf("status: 'ready', approved_by: user.id")],
+
+  // Повторная отправка создала бы дубль в чужом кабинете, и разбирать его пришлось бы вручную.
+  ['a submitted listing is not sent twice',
+    submitModule.includes("if (input.draft.status === 'submitted') return { attempt: false, reason: 'already_submitted' }")
+    && submissionsMigration.includes("check (status in ('draft', 'ready', 'discarded', 'submitted'))")],
+
+  // 403 — не поломка и не ошибка владельца. Тот, кому показали «ошибка 403», идёт проверять
+  // интернет; тот, кому назвали причину, идёт в поддержку Uzum за правами.
+  ['the refusal names who can lift it',
+    submitModule.includes("if (httpStatus === 401 || httpStatus === 403) return { status: 'refused', reason: 'no_write_access' }")
+    && submitModule.includes('403')
+    && submitModule.includes('чтение каталога работает')],
+
+  // Журнал, дописанный после того, как отправка заработала, не помнит первых попыток — а
+  // разбирают обычно именно их. Ответ площадки хранится целиком, а не пересказом.
+  ['every attempt leaves a row, refusals included',
+    submissionsMigration.includes('create table if not exists public.commerce_listing_submissions')
+    && submissionsMigration.includes("check (status in ('refused', 'failed', 'sent'))")
+    && submissionsMigration.includes('provider_response text')
+    && submissionsMigration.includes('owner_message text')
+    && commerceControl.includes("status: 'refused', reason: decision.reason")],
+
+  // Тумблер показывается при первом запуске, а не обнаруживается потом по факту уехавшей карточки.
+  ['the mode is a stored setting, defaulted deliberately',
+    submissionsMigration.includes('auto_submit_to_moderation boolean not null default true')
+    && commerceControl.includes("action === 'set_auto_submit'")],
 
   // ── Два окна продаж ────────────────────────────────────────────────────────────────────────
   //

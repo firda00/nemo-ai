@@ -68,7 +68,7 @@ export function SingleAgentRunner() {
         model: MODELS[0]?.id ?? 'openai/gpt-4o-mini',
         language: agent.lang,
         purpose: agent.tasks,
-        status: 'active',
+        status: 'draft',
         channels: ['telegram', 'widget'],
         prompt: { role: agent.role, tasks: agent.tasks, tone: agent.tone, rules: agent.rules },
       }

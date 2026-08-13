@@ -10,8 +10,6 @@ export default function WaitlistPage() {
   const [saved, setSaved] = useState(false)
 
   const submit = () => {
-    const existing = JSON.parse(localStorage.getItem('nemo-yc-waitlist') || '[]') as unknown[]
-    localStorage.setItem('nemo-yc-waitlist', JSON.stringify([...existing, { ...form, createdAt: new Date().toISOString() }]))
     setSaved(true)
   }
 
@@ -43,8 +41,8 @@ export default function WaitlistPage() {
             <div className="grid min-h-[460px] place-items-center text-center">
               <div>
                 <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal/15 text-teal"><CheckCircle2 size={28} /></span>
-                <h2 className="mt-5 text-2xl font-bold text-text">Saved for demo follow-up</h2>
-                <p className="mt-2 max-w-md text-sm text-muted">Your request is stored in demo mode. In production this should go to CRM/email automation.</p>
+                <h2 className="mt-5 text-2xl font-bold text-text">Demo form completed</h2>
+                <p className="mt-2 max-w-md text-sm text-muted">This demo does not store or send your contact details.</p>
                 <div className="mt-6 flex justify-center gap-3"><Button to="/app/create-team">Back to demo</Button><Button to="/app/results" variant="outline">View results</Button></div>
               </div>
             </div>

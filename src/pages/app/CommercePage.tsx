@@ -13,7 +13,10 @@ import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 
 type Catalog = { id: string; name: string; source: string; external_shop_id: string | null; status: string; last_synced_at: string | null; last_sync_error: string | null }
-type Pilot = { status: string; started_at: string | null; expires_at: string | null; read_only_at: string | null }
+type Pilot = { status: string; started_at: string | null; expires_at: string | null; read_only_at: string | null; auto_submit_to_moderation?: boolean }
+// Попытка отправки. owner_message приходит с сервера готовым: отказ по правам площадки выглядит
+// как поломка Nemo, если не сказать, чей он.
+type Submission = { status: 'refused' | 'failed' | 'sent'; reason?: string; http_status?: number | null; owner_message?: string | null }
 type Proposal = { id: string; source: string; sku_id: string | null; catalog_id: string | null; unit_cost_tiyin: number | null; lead_time_days: number | null; min_margin_percent: number | null; commission_percent: number | null; fulfillment_tiyin: number | null; returns_reserve_percent: number | null; commerce_skus?: { title: string; external_sku: string } | null }
 type Batch = { id: string; status: string; total_rows: number; valid_rows: number; unmatched_rows: number; error_rows: number; created_at: string }
 
@@ -53,8 +56,11 @@ async function hashFile(file: File) {
 }
 
 export default function CommercePage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [pilot, setPilot] = useState<Pilot | null>(null)
+  // Режим отправки. Значение приходит с сервера вместе со статусом — тумблер не должен показывать
+  // «включено» просто потому, что так задумано: в базе может быть иначе.
+  const [autoSubmit, setAutoSubmitState] = useState(true)
   const [catalogs, setCatalogs] = useState<Catalog[]>([])
   const [catalogId, setCatalogId] = useState('')
   const [batches, setBatches] = useState<Batch[]>([])
@@ -146,6 +152,7 @@ export default function CommercePage() {
     else {
       const nextCatalogs = status.catalogs ?? []
        setPilot(status.pilot ?? null); setCatalogs(nextCatalogs); setTelegramConnected(Boolean(status.telegram_connected))
+       setAutoSubmitState(status.pilot?.auto_submit_to_moderation !== false)
        setNotifyBot(status.notify_bot ?? null)
       if (!selectedCatalogId && nextCatalogs[0]) setCatalogId(nextCatalogs[0].id)
     }
@@ -241,11 +248,43 @@ export default function CommercePage() {
   const decideDraft = async (draftId: string, action: 'approve_listing_draft' | 'discard_listing_draft') => {
     if (!supabase) return false
     setMessage(null)
-    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action, draft_id: draftId } })
-    const result = data as { ok?: boolean; error?: string } | null
+    const { data, error } = await supabase.functions.invoke('commerce-control', { body: { action, draft_id: draftId, lang } })
+    const result = data as { ok?: boolean; error?: string; submission?: Submission } | null
     if (error || !result?.ok) { setMessage({ ok: false, text: result?.error ?? error?.message ?? t('commerce.listing.errDecide') }); return false }
+    // В «Полной автономии» одобрение сразу пытается отправить. Исход попытки показывается той же
+    // строкой, что и у ручной кнопки: владелец не должен угадывать, уехала карточка или нет.
+    if (result.submission) showSubmission(result.submission)
     await loadDrafts()
     return true
+  }
+
+  /**
+   * Исход попытки отправки — словами площадки, а не нашими.
+   *
+   * Отказ по правам (403) выглядит как поломка Nemo, если не сказать, чей он. Поэтому показывается
+   * готовое объяснение с сервера: оно называет, что именно закрыто и у кого просить доступ.
+   */
+  const showSubmission = (submission: Submission) => {
+    if (submission.status === 'sent') { setMessage({ ok: true, text: t('commerce.submit.sent') }); return }
+    setMessage({ ok: false, text: submission.owner_message ?? t('commerce.submit.failed') })
+  }
+
+  const submitDraft = async (draftId: string) => {
+    if (!supabase) return false
+    setMessage(null)
+    const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'submit_listing', draft_id: draftId, lang } })
+    const result = data as { ok?: boolean; submission?: Submission } | null
+    if (result?.submission) showSubmission(result.submission)
+    else setMessage({ ok: false, text: t('commerce.submit.failed') })
+    await loadDrafts()
+    return Boolean(result?.ok)
+  }
+
+  const setAutoSubmit = async (enabled: boolean) => {
+    if (!supabase) return
+    const { data } = await supabase.functions.invoke('commerce-control', { body: { action: 'set_auto_submit', enabled } })
+    const result = data as { ok?: boolean; auto_submit_to_moderation?: boolean } | null
+    if (result?.ok) setAutoSubmitState(Boolean(result.auto_submit_to_moderation))
   }
 
   const discover = async () => {
@@ -606,8 +645,34 @@ export default function CommercePage() {
           <p className="text-sm font-semibold text-text">{t('commerce.listing.title')}</p>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">{t('commerce.listing.hint')}</p>
         </div>
+
+        {/* Режим отправки виден рядом с генератором, а не спрятан в настройках: он решает, уедет
+            ли карточка сама, и узнавать об этом постфактум — худший способ. */}
+        <div className="mt-4 flex flex-col gap-2 rounded-xl border border-ice/10 bg-panel/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-text">
+              {autoSubmit ? t('commerce.submit.autoTitle') : t('commerce.submit.manualTitle')}
+            </p>
+            <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
+              {autoSubmit ? t('commerce.submit.autoHint') : t('commerce.submit.manualHint')}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoSubmit}
+            aria-label={t('commerce.submit.autoTitle')}
+            onClick={() => setAutoSubmit(!autoSubmit)}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${autoSubmit ? 'bg-brand-gradient' : 'bg-ice/15'}`}
+          >
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${autoSubmit ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+
         <div className="mt-4">
           <CommerceListingAgent
+            onSubmit={submitDraft}
+            autoSubmit={autoSubmit}
             drafts={drafts}
             categories={categories}
             categoryLabels={categoryLabels}

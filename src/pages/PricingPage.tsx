@@ -45,7 +45,7 @@ export default function PricingPage() {
                   <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-fog">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
                   <Feat icon={Users} ok>{t('billingPage.teamsCount', { count: p.teams })}</Feat>
                   <Feat icon={Cpu} ok={p.premium}>{p.premium ? t('billingPage.premiumModel') : t('billingPage.basicModel')}</Feat>
-                  <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly })}</Feat>
+                  <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : p.mediaTrialWeekly > 0 ? t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly }) : t('billingPage.mediaByo')}</Feat>
                   <Feat icon={Globe2} ok={p.browserMonthly > 0}>{t('billingPage.browserTasksCount', { count: p.browserMonthly })}</Feat>
                   <Feat icon={Video} ok={p.video}>{p.video ? t('billingPage.videoCount', { count: p.videoMonthly }) : t('billingPage.videoNotIncluded')}</Feat>
                   <Feat icon={Search} ok>{t('billingPage.competitorsCount', { count: p.competitors })}</Feat>
@@ -84,7 +84,7 @@ export default function PricingPage() {
                 <CompareRow label={t('billingPage.compareTokens')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].tokens))} />
                 <CompareRow label={t('billingPage.compareTeams')} values={PLAN_ORDER.map((id) => String(PLANS[id].teams))} />
                 <CompareRow label={t('billingPage.compareModel')} values={PLAN_ORDER.map((id) => PLANS[id].premium ? t('billingPage.premiumShort') : t('billingPage.basicShort'))} />
-                <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].mediaTrialWeekly > 0 ? t('billingPage.mediaTrialShort', { count: PLANS[id].mediaTrialWeekly }) : t('billingPage.notIncluded'))} />
+                <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].media ? t('billingPage.mediaByoShort') : t('billingPage.notIncluded'))} />
                 <CompareRow label={t('billingPage.compareBrowser')} values={PLAN_ORDER.map((id) => String(PLANS[id].browserMonthly))} />
                 <CompareRow label={t('billingPage.compareVideos')} values={PLAN_ORDER.map((id) => String(PLANS[id].videoMonthly))} />
                 <CompareRow label={t('billingPage.compareCompetitors')} values={PLAN_ORDER.map((id) => String(PLANS[id].competitors))} />

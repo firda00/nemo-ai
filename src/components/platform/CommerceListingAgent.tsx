@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, Loader2, PenLine, Sparkles, Trash2 } from 'lucide-react'
+import { Check, Copy, Loader2, PenLine, Sparkles, Trash2, Upload } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { useI18n } from '../../i18n'
 import { categoryLabel, type CategoryLabel } from '../../lib/categoryLabel'
@@ -181,6 +181,8 @@ export function CommerceListingAgent({
   onCategory,
   onApprove,
   onDiscard,
+  onSubmit,
+  autoSubmit,
 }: {
   drafts: ListingDraft[]
   /** Все полки аккаунта — чтобы выбрать её для черновика, который уже написан. */
@@ -191,6 +193,10 @@ export function CommerceListingAgent({
   onCategory: (draftId: string, category: string, manual?: ManualFees) => Promise<boolean>
   onApprove: (draftId: string) => Promise<boolean>
   onDiscard: (draftId: string) => Promise<boolean>
+  /** Отправка на модерацию Uzum. Ручная кнопка и автономия ходят одной дорогой. */
+  onSubmit: (draftId: string) => Promise<boolean>
+  /** В автономии одобрение уже пыталось отправить — вторая кнопка была бы повтором. */
+  autoSubmit: boolean
 }) {
   const { t, lang } = useI18n()
   const [sourceText, setSourceText] = useState('')
@@ -213,6 +219,13 @@ export function CommerceListingAgent({
     if (busy) return
     setBusy(draftId)
     await (approve ? onApprove(draftId) : onDiscard(draftId))
+    setBusy(null)
+  }
+
+  const send = async (draftId: string) => {
+    if (busy) return
+    setBusy(draftId)
+    await onSubmit(draftId)
     setBusy(null)
   }
 
@@ -289,8 +302,21 @@ export function CommerceListingAgent({
                 >
                   {t('commerce.listing.copyAll')}
                 </Button>
-                {ready
-                  ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal"><Check size={13} /> {t('commerce.listing.ready')}</span>
+                {draft.status === 'submitted'
+                  ? <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-accent-indigo/10 px-3 py-1 text-xs font-medium text-accent-indigo"><Check size={13} /> {t('commerce.submit.badgeSent')}</span>
+                  : ready
+                  ? (
+                    <>
+                      <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal"><Check size={13} /> {t('commerce.listing.ready')}</span>
+                      {/* В автономии одобрение уже пыталось отправить. Вторая кнопка рядом означала бы,
+                          что первая не сработала, — и владелец жал бы её на всякий случай. */}
+                      {!autoSubmit && (
+                        <Button variant="outline" onClick={() => void send(draft.id)} disabled={busy === draft.id}>
+                          {busy === draft.id ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} {t('commerce.submit.button')}
+                        </Button>
+                      )}
+                    </>
+                  )
                   : (
                     <>
                       <Button variant="outline" onClick={() => void decide(draft.id, true)} disabled={missing.length > 0 || busy === draft.id}>

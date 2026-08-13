@@ -198,19 +198,11 @@ function buildMeetingResult(input: string, source: RunSource): WorkflowResult {
 }
 
 function loadSavedResult(): WorkflowResult | null {
-  try {
-    const v2 = localStorage.getItem(resultKey)
-    if (v2) return JSON.parse(v2) as WorkflowResult
-    const legacy = JSON.parse(localStorage.getItem('nemo-workflow-results') || '[]') as LeadResult[]
-    return legacy.length ? buildWorkflowResult(legacy, 'local') : null
-  } catch {
-    return null
-  }
-}
-
-function saveWorkflowResult(result: WorkflowResult) {
-  localStorage.setItem(resultKey, JSON.stringify(result))
-  localStorage.setItem('nemo-workflow-results', JSON.stringify(result.leads))
+  localStorage.removeItem(resultKey)
+  localStorage.removeItem('nemo-workflow-results')
+  localStorage.removeItem('nemo-workflow-input')
+  localStorage.removeItem('nemo-saved-report')
+  return null
 }
 
 export default function EducationSalesWorkflowPage() {
@@ -224,7 +216,7 @@ export default function EducationSalesWorkflowPage() {
   const [goal, setGoal] = useState(() => localStorage.getItem('nemo-team-goal') || 'Qualify student leads, write follow-up messages, prepare CRM rows, and create a daily manager report.')
   const [teamName, setTeamName] = useState(() => localStorage.getItem('nemo-team-name') || 'AI Sales Team')
   const [createdId, setCreatedId] = useState(() => localStorage.getItem('nemo-current-team-id') || '')
-  const [leads, setLeads] = useState(() => localStorage.getItem('nemo-workflow-input') || sampleLeads)
+  const [leads, setLeads] = useState(sampleLeads)
   const [runSteps, setRunSteps] = useState<RunStep[]>([])
   const [running, setRunning] = useState(false)
   const [creatingTeam, setCreatingTeam] = useState(false)
@@ -279,7 +271,7 @@ export default function EducationSalesWorkflowPage() {
     window.setTimeout(() => {
       if (workflowType === 'payment-control') setLeads(samplePayment)
       if (workflowType === 'meeting-to-tasks') setLeads(sampleMeeting)
-      if (workflowType === 'lead-qualification') setLeads(localStorage.getItem('nemo-workflow-input') || sampleLeads)
+      if (workflowType === 'lead-qualification') setLeads(sampleLeads)
     }, 0)
   }, [workflowType])
 
@@ -378,7 +370,6 @@ export default function EducationSalesWorkflowPage() {
       : type === 'meeting-to-tasks' || type === 'weekly-follow-up' || type === 'manager-report'
         ? buildMeetingResult(input, 'local')
         : buildWorkflowResult(input.split('\n').map((line) => line.trim()).filter(Boolean).map(parseLead), 'local')
-    saveWorkflowResult(result)
     setWorkflowResult(result)
     setExecutionMode('local_simulation')
     setBackendError('')
@@ -449,7 +440,6 @@ export default function EducationSalesWorkflowPage() {
         ? buildMeetingResult(leads, 'local')
         : buildWorkflowResult(leads.split('\n').map((line) => line.trim()).filter(Boolean).map(parseLead), 'local')
     const result: WorkflowResult = { ...structured, source: 'live', agentTrace: trace, dailyReport: synth.result || structured.dailyReport, savedAt: new Date().toISOString() }
-    saveWorkflowResult(result)
     setWorkflowResult(result)
     setExecutionMode('live_success')
     setBackendError('')
@@ -460,8 +450,6 @@ export default function EducationSalesWorkflowPage() {
     setRunning(true)
     setExecutionMode('not_run')
     setRunSteps(activeRunSteps)
-    localStorage.setItem('nemo-workflow-input', leads)
-
     if (!liveReady || !supabase) {
       setBackendError(backend.reason)
       runLocalSimulation()
@@ -494,7 +482,7 @@ export default function EducationSalesWorkflowPage() {
     a.click()
     URL.revokeObjectURL(url)
   }
-  const saveReport = () => { if (workflowResult) localStorage.setItem('nemo-saved-report', JSON.stringify(workflowResult)); setSavedReport(true) }
+  const saveReport = () => { if (workflowResult) setSavedReport(true) }
 
   return (
     <div className="container-page max-w-7xl py-8">

@@ -74,7 +74,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="container-page max-w-7xl py-8">
+    <div className="container-page max-w-7xl !px-3 py-6 sm:!px-8 sm:py-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="mono-label">{t('mvp.dashboard.eyebrow')}</p>
@@ -117,7 +117,7 @@ export default function DashboardPage() {
         </div>
       </section>}
 
-      <section className="card mt-8 rounded-3xl p-6">
+      <section className="card mt-8 rounded-3xl p-4 sm:p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="mono-label">{t('mvp.pilot.eyebrow')}</p>
@@ -134,8 +134,8 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <section className="card rounded-3xl p-6">
+      <div className="mt-8 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <section className="card min-w-0 rounded-3xl p-4 sm:p-6">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-xl font-bold text-text">{t('mvp.dashboard.teamsTitle')}</h2>
@@ -162,7 +162,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <section className="card rounded-3xl p-6">
+        <section className="card min-w-0 rounded-3xl p-4 sm:p-6">
           <div className="flex items-center gap-2"><Activity className="text-cyan" size={18} /><h2 className="text-xl font-bold text-text">{t('mvp.dashboard.latest')}</h2></div>
           <RecentActivity />
         </section>
@@ -172,7 +172,7 @@ export default function DashboardPage() {
 }
 
 function Metric({ icon: Icon, label, value }: { icon: typeof Zap; label: string; value: string }) {
-  return <div className="card rounded-3xl p-5"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15 text-violet"><Icon size={18} /></span><p className="mt-4 text-3xl font-extrabold text-text">{value}</p><p className="mt-1 text-sm text-muted">{label}</p></div>
+  return <div className="card rounded-3xl p-4 sm:p-5"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15 text-violet"><Icon size={18} /></span><p className="mt-4 text-3xl font-extrabold text-text">{value}</p><p className="mt-1 text-sm text-muted">{label}</p></div>
 }
 
 function Status({ label, ok, good, bad }: { label: string; ok: boolean; good: string; bad: string }) {

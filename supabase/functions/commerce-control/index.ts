@@ -15,6 +15,10 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
+import {
+  classifyProviderResponse, decideSubmit, ownerMessage,
+  type SubmitMode,
+} from '../_shared/listingSubmit.ts'
 import { generateVision, mergeVisionIntoSource } from '../_shared/listingVision.ts'
 import { parseLabels, TRANSLATE_SYSTEM_PROMPT, type CategoryLabel } from '../_shared/categoryLabels.ts'
 
@@ -146,6 +150,75 @@ async function catalogForAccount(admin: ReturnType<typeof createClient>, account
   return data
 }
 
+/**
+ * Одна дорога для «Полной автономии» и для ручной кнопки.
+ *
+ * Два разных пути к отправке разошлись бы через месяц, и ручная кнопка начала бы проверять не то,
+ * что проверяет автомат. Проверка одна, журнал один, объяснение одно.
+ *
+ * ОТПРАВКИ ПОКА НЕТ. Внешние адреса создания товара Uzum закрывает 403 для ключа продавца —
+ * проверено на боевом ключе: 200 на маршрутах чтения каталога, 403 на девяти адресах создания.
+ * Поэтому попытка честно доходит до сети, получает отказ и ложится в журнал названной причиной,
+ * а владелец читает, что и у кого просить. Заглушки, возвращающей «успех», здесь нет: она
+ * сообщала бы, что товар уехал, и продавец узнавал бы правду через сутки, не найдя его в кабинете.
+ */
+async function submitDraft(admin: ReturnType<typeof createClient>, input: {
+  draftId: string; accountId: string; userId: string; mode: SubmitMode; lang: string
+}) {
+  const { data: draft } = await admin.from('commerce_listing_drafts')
+    .select('id, status, title_ru, title_uz, uzum_category, missing')
+    .eq('id', input.draftId).eq('account_id', input.accountId).maybeSingle()
+
+  const access = await entitlementFor(admin, input.accountId)
+  // Роль уже проверена выше по списку owner-действий; здесь она передаётся честно, а не
+  // подразумевается: решение обязано быть проверяемым в отрыве от вызывающего.
+  const decision = decideSubmit({ draft, isOwner: true, entitled: access.allowed })
+
+  const record = async (row: Record<string, unknown>) => {
+    const payload = {
+      draft_id: input.draftId, account_id: input.accountId, mode: input.mode,
+      transport: 'uzum_api', attempted_by: input.userId, ...row,
+    }
+    await admin.from('commerce_listing_submissions').insert(payload)
+    return payload
+  }
+
+  if (!decision.attempt) {
+    return await record({
+      status: 'refused', reason: decision.reason,
+      owner_message: ownerMessage(decision.reason, input.lang),
+    })
+  }
+
+  const { data: keyRow } = await admin.from('provider_keys').select('api_key')
+    .eq('account_id', input.accountId).eq('provider', 'uzum').maybeSingle()
+  const token = await openSecret(keyRow?.api_key, providerSecretContext(input.accountId, 'uzum'))
+  if (!token) {
+    return await record({ status: 'refused', reason: 'no_key', owner_message: ownerMessage('no_key', input.lang) })
+  }
+
+  const response = await fetch('https://api-seller.uzum.uz/api/seller-openapi/v1/product', {
+    method: 'POST',
+    // Сырой токен без Bearer — так устроен OpenAPI Uzum; с префиксом он молча отвечает 403.
+    headers: { Authorization: token, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ draft_id: input.draftId }),
+  }).catch(() => null)
+  const httpStatus = response?.status ?? 0
+  const text = response ? (await response.text().catch(() => '')).slice(0, 4000) : ''
+  const outcome = classifyProviderResponse(httpStatus)
+
+  if (outcome.status === 'sent') {
+    await admin.from('commerce_listing_drafts')
+      .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', input.draftId).eq('account_id', input.accountId)
+  }
+  return await record({
+    status: outcome.status, reason: outcome.reason, http_status: httpStatus,
+    provider_response: text || null,
+    owner_message: outcome.status === 'sent' ? null : ownerMessage(outcome.reason, input.lang),
+  })
+}
+
 Deno.serve(async (req) => {
   const preflight = corsPreflight(req)
   if (preflight) return preflight
@@ -160,16 +233,20 @@ Deno.serve(async (req) => {
   if (!profile?.account_id) return json({ error: 'no account' }, 403)
 
   const body = await req.json().catch(() => ({}))
+  // Язык объяснений. Отказ, показанный не на языке владельца, читается как сбой.
+  const lang = typeof body?.lang === 'string' ? body.lang : 'ru'
   const action = typeof body?.action === 'string' ? body.action : ''
   const admin = createClient(URL, SERVICE)
   const ownerAction = action === 'start_pilot' || action === 'discover_uzum' || action === 'stage_import' || action === 'resolve_import_row' || action === 'confirm_import' || action === 'create_telegram_link' || action === 'autofill_economics' || action === 'update_sku_economics' || action === 'propose_fees' || action === 'propose_min_margin' || action === 'sync_now' || action === 'apply_proposal' || action === 'reject_proposal'
     || action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'
     || action === 'set_listing_category' || action === 'onboard'
+    // Отправка на площадку и переключение режима — деньги и репутация владельца, не сотрудника.
+    || action === 'submit_listing' || action === 'set_auto_submit'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
     const [{ data: pilot }, { data: catalogs, error }, { data: notificationProfile }] = await Promise.all([
-      admin.from('commerce_pilots').select('status, started_at, expires_at, read_only_at').eq('account_id', profile.account_id).maybeSingle(),
+      admin.from('commerce_pilots').select('status, started_at, expires_at, read_only_at, auto_submit_to_moderation').eq('account_id', profile.account_id).maybeSingle(),
       admin.from('commerce_catalogs').select('id, name, source, external_shop_id, status, last_synced_at, last_sync_error').eq('account_id', profile.account_id).order('created_at', { ascending: false }),
       admin.from('business_profiles').select('notify_chat_id, notify_channel_id').eq('account_id', profile.account_id).maybeSingle(),
     ])
@@ -828,7 +905,54 @@ Deno.serve(async (req) => {
       .eq('id', body.draft_id).eq('account_id', profile.account_id).eq('status', 'draft')
       .select('id, status').maybeSingle()
     if (error) return json({ error: 'could not update the draft' }, 500)
-    return updated ? json({ ok: true, draft: updated }) : json({ error: 'draft not found or already decided' }, 409)
+    if (!updated) return json({ error: 'draft not found or already decided' }, 409)
+
+    // «Полная автономия»: одобренная карточка уходит на модерацию сама, без второго нажатия.
+    // Автономия решает КОГДА отправить одобренное, а не отменяет одобрение — поэтому она висит
+    // здесь, после approve, а не вместо него.
+    if (approving) {
+      const { data: pilot } = await admin.from('commerce_pilots')
+        .select('auto_submit_to_moderation').eq('account_id', profile.account_id).maybeSingle()
+      if (pilot?.auto_submit_to_moderation !== false) {
+        const attempt = await submitDraft(admin, {
+          draftId: body.draft_id, accountId: profile.account_id, userId: user.id, mode: 'auto', lang,
+        })
+        return json({ ok: true, draft: updated, submission: attempt })
+      }
+    }
+    return json({ ok: true, draft: updated })
+  }
+
+  // Режим отправки. Один тумблер на аккаунт, и он показывается при первом запуске, а не
+  // обнаруживается потом по факту уехавшей карточки.
+  if (action === 'set_auto_submit') {
+    const enabled = body?.enabled === true
+    const { error } = await admin.from('commerce_pilots')
+      .update({ auto_submit_to_moderation: enabled }).eq('account_id', profile.account_id)
+    if (error) return json({ error: 'could not change the submit mode' }, 500)
+    return json({ ok: true, auto_submit_to_moderation: enabled })
+  }
+
+  // Ручная отправка. Та же дорога, что у автономии, — иначе два пути разошлись бы, и «Отправить»
+  // вручную начало бы проверять не то, что проверяет автомат.
+  if (action === 'submit_listing') {
+    if (typeof body?.draft_id !== 'string' || !UUID.test(body.draft_id)) return json({ error: 'invalid draft_id' }, 400)
+    const attempt = await submitDraft(admin, {
+      draftId: body.draft_id, accountId: profile.account_id, userId: user.id, mode: 'manual', lang,
+    })
+    return json({ ok: attempt.status === 'sent', submission: attempt }, attempt.status === 'sent' ? 200 : 409)
+  }
+
+  // Журнал попыток по карточке. Владелец вправе видеть, что именно ответила площадка.
+  if (action === 'list_submissions') {
+    const query = admin.from('commerce_listing_submissions')
+      .select('id, draft_id, mode, transport, status, http_status, reason, owner_message, provider_response, external_product_id, created_at')
+      .eq('account_id', profile.account_id).order('created_at', { ascending: false }).limit(50)
+    const { data, error } = typeof body?.draft_id === 'string' && UUID.test(body.draft_id)
+      ? await query.eq('draft_id', body.draft_id)
+      : await query
+    if (error) return json({ error: 'could not load submissions' }, 500)
+    return json({ ok: true, submissions: data ?? [] })
   }
 
   return json({ error: 'unknown action' }, 400)

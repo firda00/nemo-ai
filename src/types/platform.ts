@@ -20,6 +20,7 @@ export type ChannelType = 'telegram' | 'whatsapp' | 'instagram' | 'widget' | 'di
 export type AgentKind = 'chat' | 'qualifier' | 'sales' | 'support' | 'booking' | 'analyst' | 'smm' | 'marketplace' | 'coder' | 'content' | 'learning' | 'research' | 'workflow'
 export type AgentStatus = 'active' | 'paused' | 'draft'
 export type AgentSchedule = '24/7' | 'work-hours'
+export type AgentActionPolicy = 'read_only' | 'approval_required'
 // 'auto' replies in the customer's language; otherwise force a base language.
 export type AgentLang = 'auto' | Lang | 'en'
 
@@ -73,6 +74,8 @@ export interface PlatformAgent {
   niche?: string
   /** Server-enforced channel safety tier. Regulated agents cannot connect live channels. */
   riskTier?: 'standard' | 'regulated'
+  /** Server-enforced action boundary for connected tools. */
+  actionPolicy?: AgentActionPolicy
   /** Immutable catalog identity used by server-side safety classification. */
   templateKey?: string
   // voice (TTS/STT) — config only for now; synthesis activates with a provider key
@@ -85,6 +88,11 @@ export interface PlatformAgent {
   ownerName?: string
   // selectable capability bundles (e.g. 'data-analysis') — layered on top of type gating
   skills?: string[]
+  /** Immutable behavior revision; only a passing eval for this revision may publish. */
+  configRevision?: number
+  publishedRevision?: number | null
+  publishedAt?: string | null
+  latestEvalRunId?: string | null
   status: AgentStatus
   channels: ChannelType[]
   knowledge: KnowledgeDoc[]

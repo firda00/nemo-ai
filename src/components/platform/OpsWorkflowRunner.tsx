@@ -120,7 +120,7 @@ export function OpsWorkflowRunner({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { setError('Войдите в Nemo, чтобы загрузить аудиозапись.'); return }
       const path = `${user.id}/audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 40)}`
-      const up = await supabase.storage.from('media').upload(path, file, { contentType: file.type || 'audio/mpeg' })
+      const up = await supabase.storage.from('private-audio').upload(path, file, { contentType: file.type || 'audio/mpeg' })
       if (up.error && file.size > 12 * 1024 * 1024) {
         setError('Не удалось безопасно загрузить длинную запись. Попробуйте ещё раз или используйте MP3/AAC.')
         return
