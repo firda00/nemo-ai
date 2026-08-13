@@ -78,7 +78,7 @@ try {
   await page.evaluate(() => {
     localStorage.setItem('nemo.lang', 'uz') // assertions target the UZ labels; without this the i18n default is EN
     localStorage.setItem('nemo.user', JSON.stringify({
-      id: 'trace-smoke', email: 'trace@nemo.local', name: 'Trace Smoke', lang: 'uz', role: 'user', createdAt: '2026-07-10', quotaUsed: 0, quotaLimit: 100,
+      id: 'trace-smoke', email: 'trace@nemo.local', name: 'Trace Smoke', lang: 'uz', role: 'user', onboardingCompleted: true, createdAt: '2026-07-10', quotaUsed: 0, quotaLimit: 100,
     }))
   })
   await page.goto(baseUrl + '/app/dialogues', { waitUntil: 'networkidle0', timeout: 30_000 })

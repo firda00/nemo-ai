@@ -79,6 +79,29 @@ function criticalText(row: any) {
     ].filter(Boolean).join('\n')
   }
 
+  // Падение спроса — не пополнение и не застой. Со словами про закупку оно звучало бы как совет
+  // купить ещё того, что перестали брать.
+  if (row.kind === 'sales_trend') {
+    const stopped = calc.direction === 'gone'
+    const percent = calc.delta_percent == null
+      ? ''
+      : ` (${Number(calc.delta_percent) > 0 ? '+' : ''}${num(calc.delta_percent)}%)`
+    return [
+      stopped ? '⛔️ <b>Продажи остановились</b>' : '📉 <b>Продажи падают</b>',
+      '',
+      name(row),
+      // Обе недели названы штуками: процент без них скрывает масштаб — «-80%» одинаково выглядит
+      // и на двадцати продажах, и на двух.
+      `Прошлая неделя: <b>${num(calc.sold_units_prev_7d)} шт.</b> → эта: <b>${num(calc.sold_units_7d)} шт.</b>${percent}`,
+      calc.stock_total != null ? `Остаток: <b>${num(calc.stock_total)} шт.</b>` : '',
+      '',
+      stopped
+        ? '👉 Спрос пропал, а склад занят. Проверьте карточку и цену, пока товар не превратился в застой.'
+        : '👉 Спрос падает вторую неделю. Стоит посмотреть цену и конкурентов, прежде чем закупать ещё.',
+      ...footer,
+    ].filter(Boolean).join('\n')
+  }
+
   return [
     '🔴 <b>Товар заканчивается</b>',
     '',
@@ -139,6 +162,19 @@ function stockoutLine(row: any) {
   const calc = row.calculation ?? {}
   const sold = calc.sold_units_7d
   return `• ${name(row)}: остаток 0${sold ? `, продано за неделю ${num(sold)} шт.` : ''}`
+}
+
+/**
+ * Строка про падение спроса. Обе недели — в штуках.
+ *
+ * Процент сам по себе скрывает свой масштаб: «-80%» одинаково выглядит на двадцати продажах и на
+ * двух, а решения это разные.
+ */
+function trendLine(row: any) {
+  const calc = row.calculation ?? {}
+  if (calc.direction === 'gone') return `• ${name(row)}: было ${num(calc.sold_units_prev_7d)} шт. в неделю, сейчас продаж нет`
+  const percent = calc.delta_percent == null ? '' : ` (${num(calc.delta_percent)}%)`
+  return `• ${name(row)}: ${num(calc.sold_units_prev_7d)} → ${num(calc.sold_units_7d)} шт. в неделю${percent}`
 }
 
 /**
@@ -208,11 +244,14 @@ function digestText(rows: any[], stats: { skus: number; approximate: number }) {
   const urgentStockouts = stockouts.filter((row) => row.severity === 'critical')
   const quietStockouts = stockouts.length - urgentStockouts.length
   const deadstock = rows.filter((row) => row.kind === 'deadstock')
+  // Падение спроса стоит между срочным и медленным: остановившиеся продажи при полном складе — это
+  // деньги, которые перестали возвращаться, но потерять их можно ещё не сегодня.
+  const falling = rows.filter((row) => row.kind === 'sales_trend')
   const today = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'Asia/Tashkent' }).format(new Date())
 
   const blocks: string[] = [`☀️ <b>Nemo Commerce — сводка за ${today}</b>`, '']
 
-  if (!reorders.length && !priceIssues.length && !stockouts.length && !deadstock.length) {
+  if (!reorders.length && !priceIssues.length && !stockouts.length && !deadstock.length && !falling.length) {
     blocks.push(stats.skus ? `✅ Срочных рисков нет. Все ${stats.skus} товаров под наблюдением.` : '✅ Срочных рисков нет.')
   }
   if (urgentStockouts.length) {
@@ -227,6 +266,11 @@ function digestText(rows: any[], stats: { skus: number; approximate: number }) {
     blocks.push('', '💰 <b>Маржа ниже минимума</b>', priceIssues.slice(0, 5).map(priceLine).join('\n'))
     if (priceIssues.length > 5) blocks.push(`…и ещё ${priceIssues.length - 5} в Commerce.`)
   }
+  if (falling.length) {
+    blocks.push('', '📉 <b>Спрос падает</b>', falling.slice(0, 5).map(trendLine).join('\n'))
+    if (falling.length > 5) blocks.push(`…и ещё ${falling.length - 5} в Commerce.`)
+  }
+
   // Застой идёт последним намеренно: он не срочен. Деньги там теряются медленно, и поставить его
   // выше «закончился, а спрос есть» значило бы предложить владельцу заняться этим первым.
   if (deadstock.length) {

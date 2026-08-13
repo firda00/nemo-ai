@@ -206,7 +206,7 @@ assert.match(
   'Uzum-style A1 metadata must expand to the real last cell',
 )
 assert.match(runner, /use_skills: true/)
-assert.match(runner, /input_artifacts: inputArtifacts/)
+assert.match(runner, /input_artifacts: runArtifacts/)
 assert.match(runner, /marketplacePlanningWithoutData/)
 assert.doesNotMatch(
   runner,

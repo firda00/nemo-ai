@@ -49,10 +49,14 @@ assert.match(snapshot, /НЕ придумывай/, 'a failed fetch must forbid 
 assert.match(snapshot, /Ключ принят, но магазинов не вернулось/)
 assert.match(snapshot, /openSecret/, 'the token must come from encrypted storage, never plaintext')
 assert.doesNotMatch(snapshot, /console\.log\(token|result: token/, 'the token must never be logged or returned')
+assert.match(snapshot, /from\('browser_observations'\)/, 'saved Browser snapshots must be read only for their owning account')
+assert.match(snapshot, /eq\('account_id', accountId\)/, 'Browser evidence must be tenant-scoped')
+assert.match(snapshot, /не API и не разрешение на действие/, 'Browser snapshots must never be treated as authority to mutate a marketplace')
 
 // ---- the team run must actually receive it ----------------------------------------------------
 assert.match(orchestrate, /import \{ storeSnapshot/, 'orchestrate must import the store reader')
 assert.match(orchestrate, /await storeSnapshot\(admin, accountId\)/)
+assert.match(orchestrate, /store\.browserEvidence/, 'Browser evidence must satisfy the marketplace source preflight without claiming an API connection')
 assert.match(orchestrate, /STORE_GOAL_RE\.test\(goalText\)/, 'an unrelated run must not pay for a store API call')
 const evidenceCalls = [...orchestrate.matchAll(/marketplaceEvidence\(goal, artifacts, store\.block\)/g)]
 assert.equal(evidenceCalls.length, 3, 'step, review and synth must all see the same store facts')

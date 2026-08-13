@@ -7,6 +7,11 @@ import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { batchOutcome, effectiveFulfillmentTiyin, MARGIN_INPUTS, marginPercent as marginFor, minSellingPriceTiyin, netProfitTiyin } from '../_shared/unitEconomics.ts'
 import { fulfillmentTiyin } from '../_shared/uzumLogistics.ts'
 import { reservesForCatalogue } from '../_shared/returnsReserve.ts'
+import {
+  salesTrend, trendAlarm, trendSentence,
+  TREND_MIN_DELTA, TREND_MIN_PERCENT, TREND_MIN_UNITS,
+  type SalesTrend,
+} from '../_shared/salesTrend.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -52,7 +57,7 @@ function salesFor(row: UzumProductRow, sales: Any, productIdCounts: Record<strin
   return 0
 }
 
-function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null, stock: number | null, sold7d: number | null, historyReady: boolean): Any[] {
+function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null, stock: number | null, sold7d: number | null, historyReady: boolean, trend: SalesTrend | null = null): Any[] {
   const missing = [
     stock == null && 'stock_total',
     priceTiyin == null && 'price_tiyin',
@@ -97,6 +102,27 @@ function recommendation(sku: Sku, snapshotId: string, priceTiyin: number | null,
     dedupe_key: `commerce:${sku.id}:stockout`,
     calculation: { stock_total: stock, sold_units_7d: sold7d, price_tiyin: priceTiyin, history_ready: historyReady },
     suggested_action: { type: 'restock', sold_units_7d: sold7d }, last_detected_at: new Date().toISOString(),
+  })
+
+  // Спрос упал или встал. Одно окно этого не показывает: товар, всегда шедший по три штуки, и
+  // товар, шедший по тридцать и остановившийся, дают одинаковую строку «продано 3».
+  //
+  // Правило молчит, когда не уверено: обрезанная выборка, нечитаемое окно и мелкие числа дают
+  // null, а не «падение». Ложная тревога про обвал продаж дороже пропущенной — по ней владелец
+  // начинает распродажу товара, который просто медленный.
+  const alarm = trendAlarm(trend, stock)
+  if (alarm && trend) rows.push({
+    ...base, kind: 'sales_trend', severity: alarm,
+    dedupe_key: `commerce:${sku.id}:sales_trend`,
+    calculation: {
+      sold_units_7d: trend.last7, sold_units_prev_7d: trend.prev7,
+      delta_units: trend.delta, delta_percent: trend.deltaPercent, direction: trend.direction,
+      stock_total: stock, history_ready: historyReady,
+      // Порог назван прямо: иначе «почему про этот товар не написали» остаётся без ответа.
+      thresholds: { min_units: TREND_MIN_UNITS, min_delta: TREND_MIN_DELTA, min_percent: TREND_MIN_PERCENT },
+    },
+    suggested_action: { type: 'review_demand', direction: trend.direction, sentence: trendSentence(trend) },
+    last_detected_at: new Date().toISOString(),
   })
 
   if (historyReady && stock != null && sold7d != null && sku.lead_time_days != null && sku.safety_stock != null) {
@@ -214,6 +240,11 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     uzumProductRows(token, typedCatalog.external_shop_id, 200),
     uzumSalesRows(token, typedCatalog.external_shop_id, 7),
   ])
+  // Второе окно — ПОСЛЕДОВАТЕЛЬНО и с паузой. Финансовые вызовы Uzum отвечает 429 на запросы
+  // вплотную друг к другу, и параллельный второй вызов измерял бы ограничитель, а не продажи.
+  // Прошлая неделя получается вычитанием: Uzum отдаёт итог за окно, не по дням.
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  const salesTwoWeeks = await uzumSalesRows(token, typedCatalog.external_shop_id, 14, 8)
   if (!products.ok) {
     // Record the reason on the catalogue, not only on the run. Without this a shop the key
     // cannot read stays "active" with an empty error in the UI, and the owner has no way to
@@ -309,10 +340,12 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     const priceTiyin = row.price == null ? null : nonNegativeInteger(row.price * 100)
     const stock = nonNegativeInteger(row.stock)
     const sold7d = salesFor(row, sales, productIdCounts, titleCounts)
+    const sold14d = salesFor(row, salesTwoWeeks, productIdCounts, titleCounts)
+    const trend = salesTrend({ units7: sold7d, units14: sold14d, truncated7: sales.truncated, truncated14: salesTwoWeeks.truncated })
     const snapshot = {
       sku_id: sku.id, sync_run_id: run.id, observed_slot: run.scheduled_for,
       price_tiyin: priceTiyin, stock_total: stock, stock_fbo: nonNegativeInteger(row.stockFbo), stock_fbs: nonNegativeInteger(row.stockFbs), sold_units_7d: sold7d,
-      source: { provider: 'uzum', shop_id: typedCatalog.external_shop_id, product_id: row.productId || null, sales_7d_available: sales.ok, product_fields_missing: products.missing },
+      source: { provider: 'uzum', shop_id: typedCatalog.external_shop_id, product_id: row.productId || null, sales_7d_available: sales.ok, sales_14d_available: salesTwoWeeks.ok, sold_units_14d: sold14d, trend, product_fields_missing: products.missing },
     }
     const { data: inserted, error: snapshotError } = await db.from('commerce_inventory_snapshots').insert(snapshot).select('id').maybeSingle()
     if (snapshotError && snapshotError.code !== '23505') throw snapshotError
@@ -328,7 +361,7 @@ async function processRun(db: any, run: SyncRun): Promise<'completed' | 'failed'
     // а свой у него взяться неоткуда — он смотрит на историю, а не на сегодняшнее чтение.
     snapshotBySku.set(sku.id, snapshotId)
     revisionBySku.set(sku.id, sku.economics_revision)
-    const recommendations = recommendation(sku, snapshotId, priceTiyin, stock, sold7d, Boolean(historical))
+    const recommendations = recommendation(sku, snapshotId, priceTiyin, stock, sold7d, Boolean(historical), trend)
     if (recommendations.length) {
       const { error: recommendationError } = await db.from('commerce_recommendations').upsert(recommendations, { onConflict: 'dedupe_key' })
       if (recommendationError) throw recommendationError
@@ -425,6 +458,106 @@ Deno.serve(async (req) => {
   // carries a category and dimensions. Returns FIELD NAMES only — never values — so a schema
   // question can be answered without copying a seller's catalogue anywhere.
   const inspectBody = await req.json().catch(() => ({}))
+
+  // Что Uzum вообще РАЗРЕШАЕТ делать ключом. Перед тем как обещать «агент сам отправит карточку на
+  // модерацию», надо знать, есть ли у Uzum такой метод: строить отправку в API, которого нет, —
+  // значит выкатить кнопку, которая тихо ничего не делает.
+  //
+  // Возвращаются ТОЛЬКО пути и методы из описания самого Uzum. Ни одного значения из каталога
+  // продавца здесь не появляется.
+  if (inspectBody?.action === 'inspect_api') {
+    const { data: keyRow } = await db.from('provider_keys')
+      .select('api_key, account_id').eq('provider', 'uzum').eq('account_id', String(inspectBody.account_id ?? '')).maybeSingle()
+    const token = keyRow?.api_key ? await openSecret(keyRow.api_key, providerSecretContext(keyRow.account_id, 'uzum')) : null
+    if (!token) return json({ error: 'no uzum key' }, 409)
+
+    const attempts = ['/v3/api-docs', '/api/seller-openapi/v3/api-docs', '/api/seller-openapi/v1/api-docs']
+    for (const path of attempts) {
+      const response = await fetch(`https://api-seller.uzum.uz${path}`, {
+        headers: { Authorization: token, Accept: 'application/json' },
+      }).catch(() => null)
+      if (!response?.ok) continue
+      const spec = await response.json().catch(() => null)
+      const paths = spec?.paths && typeof spec.paths === 'object' ? spec.paths as Record<string, Record<string, unknown>> : null
+      if (!paths) continue
+      const routes = Object.entries(paths).map(([route, methods]) => `${Object.keys(methods).join(',').toUpperCase()} ${route}`)
+      return json({
+        ok: true, source: path, count: routes.length,
+        writes: routes.filter((route) => /^(POST|PUT|PATCH|DELETE)/.test(route)),
+        routes,
+      })
+    }
+    // Описание не отдали — пробуем узнать иначе, но ТОЛЬКО чтением.
+    //
+    // GET по адресу-кандидату отличает «маршрута нет» (404) от «маршрут есть, метод не тот» (405)
+    // и «есть, но ключу не положено» (403), ничего при этом не создавая. Пробовать POST вслепую
+    // нельзя: удачная попытка означала бы настоящий товар в чужом кабинете.
+    const candidates: string[] = [
+      // КОНТРОЛЬ. Без него 403 на всех кандидатах не значит ничего: он может быть и «маршрута нет»,
+      // и «шлюз отвечает так на всё». Эти два маршрута точно работают — по ним живёт вся синхро.
+      '/api/seller-openapi/v1/shops',
+      `/api/seller-openapi/v1/product/shop/${encodeURIComponent(String(inspectBody.shop_id ?? ''))}?size=1&page=0`,
+      '/api/seller-openapi/v1/product',
+      '/api/seller-openapi/v1/product/create',
+      '/api/seller-openapi/v1/products',
+      '/api/seller-openapi/v1/product/draft',
+      '/api/seller-openapi/v1/product/moderation',
+      '/api/seller-openapi/v1/product/import',
+      '/api/seller-openapi/v2/product',
+      '/api/seller-openapi/v1/sku',
+      '/api/seller-openapi/v1/category',
+    ]
+    const probed: Record<string, number> = {}
+    for (const path of candidates) {
+      const response = await fetch(`https://api-seller.uzum.uz${path}`, {
+        method: 'GET',
+        headers: { Authorization: token, Accept: 'application/json' },
+      }).catch(() => null)
+      probed[path] = response?.status ?? 0
+    }
+    return json({ ok: true, source: 'probe', note: 'GET only — 404 нет маршрута, 405 есть, 403 нет прав', probed })
+  }
+
+  // Работает ли вообще ширина окна.
+  //
+  // Если 7 и 14 дней возвращают одно и то же, это либо правда (магазин мало продаёт), либо
+  // параметр не применяется — и тогда «прошлая неделя» всегда нулевая, а каждый продавший товар
+  // выглядит новинкой. Отличить можно только третьим, заведомо более широким окном.
+  //
+  // Возвращается ТОЛЬКО totalElements — счётчик самого Uzum. Ни одной строки продаж.
+  if (inspectBody?.action === 'inspect_windows') {
+    const { data: catalog } = await db.from('commerce_catalogs')
+      .select('id, account_id, external_shop_id').eq('id', String(inspectBody.catalog_id ?? '')).maybeSingle()
+    if (!catalog) return json({ error: 'catalog not found' }, 404)
+    const { data: keyRow } = await db.from('provider_keys')
+      .select('api_key').eq('account_id', catalog.account_id).eq('provider', 'uzum').maybeSingle()
+    const token = keyRow?.api_key ? await openSecret(keyRow.api_key, providerSecretContext(catalog.account_id, 'uzum')) : null
+    if (!token) return json({ error: 'no uzum key' }, 409)
+
+    const to = Math.floor(Date.now() / 1000)
+    const windows: Record<string, unknown> = {}
+    for (const days of [7, 14, 60, 365]) {
+      await new Promise((resolve) => setTimeout(resolve, 1300))
+      // Запрос ровно той же формы, что в бою: size=50. Считаются ОБА числа — счётчик Uzum и
+      // сколько строк он на самом деле прислал. Расхождение между ними и есть ответ на вопрос,
+      // можно ли доверять totalElements как признаку обрезки.
+      const query = `shopIds=${encodeURIComponent(catalog.external_shop_id)}&dateFrom=${to - days * 86_400}&dateTo=${to}&page=0&size=50&group=false`
+      const response = await fetch(`https://api-seller.uzum.uz/api/seller-openapi/v1/finance/orders?${query}`, {
+        headers: { Authorization: token, Accept: 'application/json' },
+      }).catch(() => null)
+      const payload = response?.ok ? await response.json().catch(() => null) : null
+      const rows = ['orders', 'items', 'content', 'data', 'result']
+        .map((key) => payload?.[key]).find((value) => Array.isArray(value)) ?? (Array.isArray(payload) ? payload : [])
+      windows[`${days}d`] = response?.ok
+        ? { totalElements: payload?.totalElements ?? null, rows: rows.length }
+        : `HTTP ${response?.status ?? 'network error'}`
+    }
+    // ВНИМАНИЕ на totalElements: проверено на боевом магазине — за 7 дней он вернул 0, а
+    // синхронизация в тот же день разобрала из того же фида четыре проданные единицы. Считать по
+    // нему нельзя. Смысл имеет только сравнение окон между собой: растёт — ширина применяется.
+    return json({ ok: true, note: 'totalElements ненадёжен; сравнивать окна между собой', windows })
+  }
+
   if (inspectBody?.action === 'inspect_fields') {
     const { data: catalog } = await db.from('commerce_catalogs')
       .select('id, account_id, external_shop_id').eq('id', String(inspectBody.catalog_id ?? '')).maybeSingle()

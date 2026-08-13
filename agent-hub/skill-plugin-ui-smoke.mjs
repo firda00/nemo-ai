@@ -16,7 +16,7 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => {
     localStorage.setItem('nemo.lang', 'ru')
-    localStorage.setItem('nemo.user', JSON.stringify({ id: 'ui-smoke', email: 'ui@nemo.local', name: 'UI Smoke', lang: 'ru', role: 'user' }))
+    localStorage.setItem('nemo.user', JSON.stringify({ id: 'ui-smoke', email: 'ui@nemo.local', name: 'UI Smoke', lang: 'ru', role: 'user', onboardingCompleted: true }))
   })
 
   await page.goto(`${baseUrl}/app/agents/ag_autonomous_operator`, { waitUntil: 'domcontentloaded' })

@@ -264,6 +264,16 @@ export interface UzumSales {
   reported: number | null
   /** Purchase cost per unit as Uzum reports it on a completed sale. The seller's real number. */
   costBySku: Record<string, number>
+  /** Сколько строк мы действительно разобрали. Знаменатель для проверки на обрезку. */
+  items: number
+  /**
+   * Окно дочитано не до конца: страниц оказалось больше, чем мы взяли.
+   *
+   * Для одного окна это лишь недооценка. Для ДВУХ окон это ловушка: 14 дней обрезаются раньше
+   * 7 дней, разность становится отрицательной, и товар с растущими продажами выглядит умершим.
+   * Поэтому обрезка сообщается наружу, а не глотается.
+   */
+  truncated: boolean
   error?: string
 }
 
@@ -279,7 +289,7 @@ export interface UzumSales {
  */
 export async function uzumSalesRows(token: string, shopId: string, days = 7, maxPages = 5): Promise<UzumSales> {
   const id = String(shopId).trim()
-  const empty: UzumSales = { ok: false, days, orders: 0, revenue: null, unitsBySku: {}, namesBySku: {}, reported: null, costBySku: {} }
+  const empty: UzumSales = { ok: false, days, orders: 0, revenue: null, unitsBySku: {}, namesBySku: {}, reported: null, costBySku: {}, items: 0, truncated: false }
   if (!/^\d{1,18}$/.test(id)) return { ...empty, error: 'нужен числовой ID магазина' }
   // SECONDS. The first version sent Date.now() — milliseconds — which places the window somewhere
   // in the year 55000. Uzum answers 200 with an empty list for that, so every sales read since the
@@ -292,6 +302,8 @@ export async function uzumSalesRows(token: string, shopId: string, days = 7, max
   const costBySku: Record<string, number> = {}
   const orderIds = new Set<string>()
   let reported: number | null = null
+  let items = 0
+  let pagesExhausted = false
 
   for (let page = 0; page < maxPages; page++) {
     // Uzum answers back-to-back finance calls with 429. One breath between pages costs a second
@@ -304,6 +316,9 @@ export async function uzumSalesRows(token: string, shopId: string, days = 7, max
     if (total != null && reported === null) reported = total
     const batch = listOf(response.data)
     if (!batch.length) break
+    items += batch.length
+    // Последняя разрешённая страница пришла полной — значит за ней есть ещё, а мы уже не идём.
+    if (page === maxPages - 1 && batch.length === 50) pagesExhausted = true
     for (const item of batch) {
       // skuTitle FIRST. It is the variant — "AYOL88-BONI-КОРИЧН" — and it matches a stored SKU
       // exactly. productId is the product card: one id covers every colour, so keying on it made
@@ -327,7 +342,16 @@ export async function uzumSalesRows(token: string, shopId: string, days = 7, max
     }
     if (batch.length < 50) break
   }
-  return { ok: true, days, orders: orderIds.size, revenue: null, unitsBySku, namesBySku, reported, costBySku }
+  // Обрезка определяется ТОЛЬКО полной последней страницей — это прямое наблюдение: страница
+  // заполнена доверху, значит за ней есть ещё, а мы уже не идём.
+  //
+  // Напрашивавшееся `reported > items` отвергнуто проверкой на боевом магазине: за окно в 7 дней
+  // Uzum вернул totalElements = 0, и в тот же день синхронизация разобрала из этого же фида четыре
+  // проданные единицы. Что именно считает этот счётчик — неизвестно; известно, что не строки
+  // ответа. Признак обрезки, который иногда срабатывает без причины, ХУЖЕ отсутствующего: он молча
+  // выключал бы сравнение недель, и владелец видел бы «тренда нет» вместо падения продаж.
+  const truncated = pagesExhausted
+  return { ok: true, days, orders: orderIds.size, revenue: null, unitsBySku, namesBySku, reported, costBySku, items, truncated }
 }
 
 /** Read product/SKU metadata for an explicitly selected seller shop. No mutations. */

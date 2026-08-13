@@ -274,15 +274,14 @@ check(
     && /@\(200, 204, 400, 401, 403, 405\) -contains \$code/.test(deploySource),
 )
 check(
-  'catalog truthfully labels prompt guardrails and safety beta',
-  /not an enforced approval queue yet/.test(marketplaceSource)
+  'catalog truthfully labels owner approvals and safety beta',
+  /owner approval request and are never executed automatically/.test(marketplaceSource)
     && /Safety beta · Nemo only/.test(marketplaceSource),
 )
 check(
-  'failed local or demo persistence cleans up the lead agent',
-  /UUID_RE/.test(persistenceSource)
-    && /cleanupLead/.test(persistenceSource)
-    && /deleteAgent\(agentId\)/.test(persistenceSource),
+  'team persistence uses one atomic server operation',
+  /rpc\(['"]create_agent_team['"]/.test(persistenceSource)
+    && /a team requires 2 to 6 specialists/.test(persistenceSource),
 )
 check(
   'legacy custom teams are not force-marked generic',

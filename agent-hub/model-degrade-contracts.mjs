@@ -33,6 +33,10 @@ for (const code of ['429', '503', '504']) {
 }
 assert.match(llm, /attempt === 0 && isTransientModelError\(e\)/, 'one retry per model on transient failures')
 assert.match(llm, /RETRY_DELAY_MS/, 'the retry must wait, not hammer the provider')
+assert.match(llm, /const breakerUntil = new Map<string, number>\(\)/, 'circuit state must not be global across models')
+assert.match(llm, /breakerKey = `\$\{opts\.apiKey\}:\$\{opts\.model\}`/, 'circuit state must be isolated by credential and model')
+assert.match(llm, /breakerUntil\.delete\(breakerKey\)/, 'a successful model call must reset only its own circuit')
+assert.doesNotMatch(llm, /let breakerUntil = 0/, 'one failed model must not open a global circuit that blocks fallbacks')
 
 // Every model in the chain gets its own attempt; a single throw must not end the request.
 const loop = llm.match(/for \(const model of chain\)[\s\S]*?throw lastError/)

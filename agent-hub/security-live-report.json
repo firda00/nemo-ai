@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T10:33:59.666Z",
+  "generated_at": "2026-08-06T09:25:35.463Z",
   "failed": 0,
   "report": [
     {
@@ -159,6 +159,26 @@
     },
     {
       "name": "Browser role cannot execute team retrieval directly",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "RLS blocks foreign commerce rows in every table",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "The owning tenant still reads its own commerce rows",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Server-only commerce and browser tables are unreachable from the browser role",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browser role cannot forge a commerce proposal into another tenant",
       "ok": true,
       "detail": ""
     },

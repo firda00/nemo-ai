@@ -23,6 +23,8 @@ const check = (name, condition, detail = '') => {
   const hiRes = (id) => /hiResVideo:\s*true/.test(planLine(id))
   check('hiResVideo granted to pro/business/agency/enterprise/beta', ['pro', 'business', 'agency', 'enterprise', 'beta'].every(hiRes))
   check('hiResVideo denied to free/starter', ['free', 'starter'].every((id) => /hiResVideo:\s*false/.test(planLine(id))))
+  check('Starter media requires a customer provider key', /mediaIncluded:\s*false/.test(planLine('starter')) && /mediaTrialWeekly:\s*0/.test(planLine('starter')))
+  check('BYO plans without a trial fail closed with NEED_KEY', /return \{ ok: false, code: 'NEED_KEY', message: MSG_NO_NEMO_KEY \}/.test(read('supabase/functions/_shared/mediaAccess.ts')))
 
   const rv = read('supabase/functions/render-video/index.ts')
   check('render-video accepts only the quality enum', /VIDEO_QUALITIES = \['720p', '1080p', '4k'\]/.test(rv) && !/props\.width|body\?.\.width|body\.width/.test(rv))

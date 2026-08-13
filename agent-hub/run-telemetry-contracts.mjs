@@ -78,10 +78,16 @@ assert.match(orchestrate, /cost: estimateCostUsd\(model, tokens\)/, 'every orche
 assert.match(orchestrate, /run_ref: runRef/, 'usage rows must be attributable to one run')
 assert.match(orchestrate, /tokens: runTokens, cost: Number\(runCost\.toFixed\(6\)\)/, 'the run row must carry its own totals')
 assert.match(orchestrate, /\.eq\('run_ref', runRef\)/, 'run totals are summed from what actually happened')
+assert.match(orchestrate, /Math\.min\(2, Number\(s\.revisions\)/, 'persisted telemetry must retain both possible revision passes')
 
 const runner = read('src/components/platform/AutonomousRunner.tsx')
-assert.match(runner, /runRef\.current = crypto\.randomUUID\(\)/, 'each run needs one id')
+assert.match(runner, /runRef\.current = resume\?\.run_ref \|\| crypto\.randomUUID\(\)/, 'each new run needs one id and resumed runs must retain it')
 assert.match(runner, /run_ref: runRef\.current/, 'every call in the run must carry it')
+const researchPage = read('src/pages/app/ResearchPage.tsx')
+assert.match(researchPage, /s\.review\.score \?\? 0/, 'reopened team runs must expose their persisted peer-review score')
+assert.match(researchPage, /s\.review\.needs_human_review/, 'reopened team runs must preserve the human-review warning')
+assert.match(researchPage, /result\?\.status === 'needs_review'/, 'the persisted run status must drive the reopened warning')
+assert.match(researchPage, /autonomousRunner\.escalatedBanner/, 'human review must be prominent above the reopened deliverable')
 
 // No pipeline label may sit in the model column: that is what made 23% of tokens belong to
 // models that do not exist, and made estimateCostUsd price a 4o run at the cheap tier.

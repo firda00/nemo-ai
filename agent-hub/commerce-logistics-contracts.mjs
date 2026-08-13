@@ -14,6 +14,9 @@ const atomicTeamMigration = read('supabase/migrations/20260803140000_atomic_agen
 const deploy = read('deploy.ps1')
 const commerceControl = read('supabase/functions/commerce-control/index.ts')
 const commerceWorker = read('supabase/functions/commerce-worker/index.ts')
+const trendModule = read('supabase/functions/_shared/salesTrend.ts')
+const uzumModule = read('supabase/functions/_shared/uzum.ts')
+const trendMigration = read('supabase/migrations/20260813120000_commerce_sales_trend.sql')
 const commerceDigest = read('supabase/functions/commerce-digest/index.ts')
 const telegramWebhook = read('supabase/functions/telegram-webhook/index.ts')
 const commercePage = read('src/pages/app/CommercePage.tsx')
@@ -1055,6 +1058,54 @@ const checks = [
     && clickEndpoint.includes('if (providerError < 0)')
     && clickEndpoint.indexOf('providerError < 0') < clickEndpoint.indexOf("db.rpc('apply_invoice_entitlement'")
     && protocolModule.includes("error: text('error')")],
+
+  // ── Два окна продаж ────────────────────────────────────────────────────────────────────────
+  //
+  // Одно окно не отличает медленный товар от умирающего: «продано 3» одинаково выглядит у того,
+  // кто всегда шёл по три, и у того, кто шёл по тридцать и встал.
+
+  // Прошлая неделя не читается отдельно — Uzum отдаёт итог за окно, не по дням. Значит второе
+  // окно обязано быть прочитано ОТДЕЛЬНЫМ запросом и с паузой: финансовые вызовы вплотную
+  // Uzum отвечает 429, и параллельный вызов измерял бы ограничитель, а не продажи.
+  ['the previous week comes from a second window, read without tripping the limiter',
+    commerceWorker.includes("uzumSalesRows(token, typedCatalog.external_shop_id, 14, 8)")
+    && commerceWorker.includes('await new Promise((resolve) => setTimeout(resolve, 1500))')
+    && commerceWorker.indexOf('setTimeout(resolve, 1500)') < commerceWorker.indexOf('salesTwoWeeks = await')],
+
+  // Разность двух НЕПОЛНЫХ чисел выглядит как обвал продаж. Обрезка обязана быть видна наружу.
+  ['a truncated window refuses to become a trend',
+    uzumModule.includes('truncated: boolean')
+    && uzumModule.includes('if (page === maxPages - 1 && batch.length === 50) pagesExhausted = true')
+    && trendModule.includes('if (input.truncated7 || input.truncated14) return null')
+    && trendModule.includes('if (units14 < units7) return null')
+    && commerceWorker.includes('truncated7: sales.truncated, truncated14: salesTwoWeeks.truncated')],
+
+  // totalElements проверен на боевом магазине и опровергнут: за 7 дней он вернул 0, а синхронизация
+  // в тот же день разобрала из того же фида четыре проданные единицы. Признак обрезки, который
+  // срабатывает без причины, ХУЖЕ отсутствующего — он молча выключает сравнение недель.
+  ['the truncation guard rests on observation, not on a provider counter',
+    // Проверяется исполняемая форма, а не комментарий рядом с ней: отвергнутое выражение названо
+    // в тексте по имени, и поиск по нему ловил бы собственное объяснение.
+    /const truncated = pagesExhausted\r?\n/.test(uzumModule)],
+
+  // Два порога сразу: только проценты — и рост с одной штуки до двух это «+100%»; только штуки —
+  // и падение с 40 до 36 попадает в отчёт наравне с обвалом.
+  ['the trend needs both a size and a share to be worth saying',
+    trendModule.includes('volume >= TREND_MIN_UNITS')
+    && trendModule.includes('Math.abs(delta) >= TREND_MIN_DELTA')
+    && trendModule.includes('Math.abs(deltaPercent) >= TREND_MIN_PERCENT')],
+
+  // Рост учитывается скоростью расхода и без отдельного сообщения. Будит только падение.
+  ['only a fall wakes the owner, and a full shelf makes it critical',
+    trendModule.includes("if (trend.direction === 'gone') return (stock ?? 0) > 0 ? 'critical' : 'warning'")
+    && trendModule.includes("if (trend.direction === 'down') return 'warning'")
+    && commerceWorker.includes("kind: 'sales_trend'")
+    && trendMigration.includes("'sales_trend'")],
+
+  // Процент без штук скрывает масштаб: «-80%» одинаково выглядит на двадцати продажах и на двух.
+  ['the message names units, not only percent',
+    trendModule.includes('${trend.prev7} → ${trend.last7} шт')
+    && trendModule.includes("deltaPercent === null")],
 
   // ── Сертификация касс ──────────────────────────────────────────────────────────────────────
   //

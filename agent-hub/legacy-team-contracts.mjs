@@ -6,6 +6,7 @@ const legacySource = read('src/lib/legacyMarketplaceTeams.ts')
 const marketplaceSource = read('src/pages/app/MarketplacePage.tsx')
 const wizardSource = read('src/pages/app/EducationSalesWorkflowPage.tsx')
 const persistenceSource = read('src/lib/ustudyTeam.ts')
+const atomicMigration = read('supabase/migrations/20260803140000_atomic_agent_teams.sql')
 
 const expectedCounts = new Map([
   ['sales', 4],
@@ -98,20 +99,19 @@ check(
     && /setCreateTeamError\(res\.error \?\? ['"]Could not create the complete team['"]\)/.test(wizardSource),
 )
 check(
-  'dynamic persistence catches addAgent failures',
-  /try\s*\{\s*res = await addAgent\(agent\)\s*\}\s*catch/.test(persistenceSource)
-    && /if \(res\.error \|\| !res\.id\)/.test(persistenceSource),
+  'dynamic persistence rejects failed atomic creation',
+  /rpc\(['"]create_agent_team['"]/.test(persistenceSource)
+    && /error \|\| !result\?\.agent_id \|\| !result\.department_id/.test(persistenceSource),
 )
 check(
-  'partial persistence rolls back department and lead agent',
-  /from\(['"]departments['"]\)\.delete\(\)\.eq\(['"]id['"], departmentId\)/.test(persistenceSource)
-    && /await deleteAgent\(agentId\)/.test(persistenceSource)
-    && /if \(subErr\)[\s\S]*?rollback\(dep\.id\)/.test(persistenceSource),
+  'manager department and specialists share one database transaction',
+  /insert into public\.agents[\s\S]*insert into public\.departments[\s\S]*insert into public\.sub_agents/.test(atomicMigration)
+    && /security invoker/.test(atomicMigration),
 )
 check(
   'edited specialist model and status are persisted',
-  /model:\s*s\.model\?\.trim\(\) \|\| OPS_MODEL/.test(persistenceSource)
-    && /status:\s*s\.status === ['"]inactive['"] \? ['"]inactive['"] : ['"]active['"]/.test(persistenceSource),
+  /model:\s*specialist\.model\?\.trim\(\) \|\| OPS_MODEL/.test(persistenceSource)
+    && /status:\s*specialist\.status === ['"]inactive['"] \? ['"]paused['"] : ['"]active['"]/.test(persistenceSource),
 )
 
 let failed = 0
