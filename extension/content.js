@@ -79,6 +79,32 @@ function findByLabel(labels) {
   return best ? controlFor(best) : null
 }
 
+/**
+ * Поиск поля по ПЛЕЙСХОЛДЕРУ.
+ *
+ * Плейсхолдер живёт атрибутом внутри поля, а не текстом на странице: обход узлов его не встретит
+ * никогда. У поля категории подписи нет вовсе — есть только «Название категории или товара»
+ * внутри самого ввода, и без этого поиска оно молча не находилось.
+ */
+function findByPlaceholder(placeholders) {
+  const inputs = [...document.querySelectorAll('input, textarea')]
+  for (const input of inputs) {
+    const placeholder = (input.getAttribute?.('placeholder') ?? '').trim().toLowerCase()
+    if (!placeholder) continue
+    if (placeholders.some((one) => placeholder.startsWith(one.toLowerCase()))) return input
+  }
+  return null
+}
+
+/** Поле по плейсхолдеру, а если его нет — по подписи. Порядок важен: плейсхолдер точнее. */
+function findField(spec) {
+  if (spec.placeholders?.length) {
+    const byPlaceholder = findByPlaceholder(spec.placeholders)
+    if (byPlaceholder) return byPlaceholder
+  }
+  return spec.labels?.length ? findByLabel(spec.labels) : null
+}
+
 /** Кнопка по её надписи. Кнопок на странице много, и «Принять» — не то же, что «Сохранить». */
 function findButton(caption) {
   const buttons = [...document.querySelectorAll('button, [role="button"], input[type="submit"]')]
@@ -147,6 +173,7 @@ function findStopSign(stopSigns) {
 function fillFields(fields, draft) {
   const filled = []
   const notFound = []
+  const skipped = []
   const tooLong = []
 
   for (const field of fields) {
@@ -157,16 +184,20 @@ function fillFields(fields, draft) {
       tooLong.push(`${field.key}: ${text.length} из ${field.limit}`)
       continue
     }
-    const control = findByLabel(field.labels)
+    const control = findField(field)
     if (!control) {
+      // Обязательное ненайденное — отказ. Ожидаемое ненайденное — не отказ, но и не молчание:
+      // молча пропущенное описание и есть та ошибка, которую потом ищут сутки, глядя на карточку
+      // без текста и гадая, чей это сбой.
       if (field.required) notFound.push(field.key)
+      else if (field.expected) skipped.push(field.key)
       continue
     }
     if (field.rich || control.isContentEditable) setRichValue(control, text)
     else setNativeValue(control, text)
     filled.push(field.key)
   }
-  return { filled, notFound, tooLong }
+  return { filled, notFound, skipped, tooLong }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -202,13 +233,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // Запрос вводится, выбор остаётся человеку: полка задаёт комиссию, характеристики и судьбу
     // карточки на модерации, и ошибка здесь стоит повторной заливки.
     let categoryTyped = false
-    if (draft.category && category?.labels?.length) {
-      const control = findByLabel(category.labels)
+    if (draft.category && category) {
+      const control = findField(category)
       if (control) { setNativeValue(control, String(draft.category)); categoryTyped = true }
     }
 
     if (!advance) {
-      sendResponse({ ok: true, filled: report.filled, categoryTyped, advanced: false })
+      sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped, advanced: false })
       return
     }
 
@@ -225,7 +256,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return
     }
     button.click()
-    sendResponse({ ok: true, filled: report.filled, categoryTyped, advanced: true })
+    sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped, advanced: true })
   })()
 
   // Ответ уходит асинхронно — без этого канал закрывается раньше, чем в него что-то написали.

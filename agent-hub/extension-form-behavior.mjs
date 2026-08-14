@@ -89,7 +89,7 @@ function load(documentStub) {
   class HTMLTextAreaElement { }
   const factory = new Function(
     'chrome', 'document', 'window', 'HTMLInputElement', 'HTMLTextAreaElement',
-    `${source}\nreturn { findByLabel, findButton, fillFields, setRichValue }`,
+    `${source}\nreturn { findByLabel, findByPlaceholder, findField, findButton, fillFields, setRichValue }`,
   )
   return factory(chromeStub, documentStub, windowStub, HTMLInputElement, HTMLTextAreaElement)
 }
@@ -159,6 +159,39 @@ assert.equal(groupedApi.findByLabel(['Название товара на рус�
   'из общей обёртки выбрано ИМЕННО русское поле, а не первое подряд')
 assert.equal(groupedApi.findByLabel(['Название товара на узбекском']), uzInGroup)
 
+// --- Плейсхолдер — это не подпись ----------------------------------------------------------------
+// У поля категории подписи нет вовсе: «Название категории или товара» живёт атрибутом ВНУТРИ поля.
+// Обход текстовых узлов его не встретит никогда, и первая версия молча не находила категорию.
+
+const withPlaceholder = el('div', {
+  children: [
+    el('input', { attrs: { id: 'other', placeholder: 'Артикул продавца' } }),
+    el('input', { attrs: { id: 'cat', placeholder: 'Название категории или товара' } }),
+  ],
+})
+const placeholderApi = load(makeDocument(withPlaceholder))
+const CATEGORY_SPEC = { placeholders: ['Название категории или товара'], labels: ['Категория'] }
+assert.equal(placeholderApi.findField(CATEGORY_SPEC).attrs.id, 'cat')
+assert.equal(placeholderApi.findByLabel(['Название категории или товара']), null,
+  'по подписям это поле НЕ находится — потому и понадобился поиск по плейсхолдеру')
+// Соседний плейсхолдер не должен перехватывать: совпадение по началу, а не «где-то внутри».
+assert.equal(placeholderApi.findField({ placeholders: ['Артикул'] }).attrs.id, 'other')
+assert.equal(placeholderApi.findField({ placeholders: ['Такого нет'], labels: [] }), null)
+
+// --- Ожидаемое, но ненайденное — называется, а не молчит -------------------------------------------
+// Молча пропущенное описание и есть та ошибка, которую ищут сутки, глядя на карточку без текста.
+
+const partial = api.fillFields(
+  [
+    { key: 'titleRu', labels: ['Название товара на русском'], limit: 90, required: true },
+    { key: 'descriptionRu', labels: ['Такой подписи в форме нет'], limit: 28_000, rich: true, expected: true },
+  ],
+  { titleRu: 'Брелок', descriptionRu: 'Текст описания' },
+)
+assert.deepEqual(partial.filled, ['titleRu'])
+assert.deepEqual(partial.notFound, [], 'ожидаемое поле — не отказ')
+assert.deepEqual(partial.skipped, ['descriptionRu'], 'но и не молчание')
+
 // --- Кнопки различаются по надписи ---------------------------------------------------------------
 // «Принять» подтверждает категорию, «Сохранить и продолжить» уводит на следующий шаг. Перепутать
 // их значит уйти со страницы, не выбрав полку.
@@ -222,4 +255,4 @@ const optional = api.fillFields(
 )
 assert.deepEqual(optional.notFound, [])
 
-console.log('[OK] Extension form behaviour: 28 assertions')
+console.log('[OK] Extension form behaviour: 36 assertions')

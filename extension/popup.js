@@ -51,7 +51,14 @@ async function run(submit) {
   else if (answer.idle) result.textContent = 'Готовых карточек нет — отправлять нечего.'
   else if (!answer.ok) result.textContent = answer.detail ?? REASONS[answer.reason] ?? `Не получилось: ${answer.reason}`
   else if (answer.advanced) result.textContent = 'Шаг 1 заполнен, перешли ко второму. Доведите карточку сами: шаги 2 и 3 Nemo пока не знает.'
-  else result.textContent = answer.categoryTyped ? 'Поля заполнены, категория введена. Выберите полку из списка и нажмите «Принять».' : 'Поля заполнены. Выберите категорию и продолжите.'
+  else {
+    const base = answer.categoryTyped
+      ? 'Поля заполнены, категория введена. Выберите полку из списка и нажмите «Принять».'
+      : 'Поля заполнены. Выберите категорию и продолжите.'
+    // Пропущенные поля названы прямо в окне. Иначе владелец видит «заполнено» и узнаёт про пустое
+    // описание уже на модерации.
+    result.textContent = base + (answer.skipped?.length ? ` Не найдены: ${answer.skipped.join(', ')}.` : '')
+  }
 
   await refresh()
 }

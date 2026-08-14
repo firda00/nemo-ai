@@ -176,6 +176,26 @@ const contracts = [
     content.includes('function follows(labelNode, candidate)')
     && content.includes('candidates.find((candidate) => follows(labelNode, candidate))')],
 
+  // Плейсхолдер живёт атрибутом ВНУТРИ поля, а не текстом на странице: обход узлов его не
+  // встретит никогда. У категории подписи нет вовсе, и по подписям она не находилась молча.
+  ['a placeholder is searched as a placeholder, not as a label',
+    content.includes('function findByPlaceholder(placeholders)')
+    && content.includes("getAttribute?.('placeholder')")
+    && selectors.includes("placeholders: ['Название категории или товара']")
+    && content.includes('findField(category)')],
+
+  // Молча пропущенное описание — та ошибка, которую ищут сутки, глядя на карточку без текста.
+  ['an expected field that was not found is named, not silently skipped',
+    content.includes("else if (field.expected) skipped.push(field.key)")
+    && background.includes('response.skipped?.length')
+    && popup.includes('answer.skipped?.length')],
+
+  // Краткие описания в форме есть, но своего короткого текста у черновика нет. Обрезать полное
+  // под 390 знаков значит оборвать мысль и отдать это покупателю как аннотацию.
+  ['the short description fields are named as deliberately not filled',
+    selectors.includes('export const NOT_FILLED')
+    && selectors.includes('shortDescriptionRu')],
+
   ['the rich text editor is filled as a rich text editor',
     content.includes('function setRichValue(element, value)')
     && content.includes("document.execCommand('insertText', false, value)")

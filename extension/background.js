@@ -106,19 +106,23 @@ export async function runOnce({ submit }) {
   // Успехом это НЕ считается. Шаг 1 из трёх — половина дела: товар ещё не в каталоге и на
   // модерацию не ушёл. Записать 'sent' здесь значило бы объявить карточку отправленной и
   // потерять её из виду — она бы больше не попала в задания расширения.
+  // Пропущенные поля называются в журнале, а не теряются. Карточка без описания и запись
+  // «заполнено» рядом — это два дня поисков виноватого.
+  const missed = response.skipped?.length ? ` Не найдены и остались пустыми: ${response.skipped.join(', ')}.` : ''
   await reportResult({
     draftId: task.task.id,
     status: 'refused',
     reason: 'human_needed',
-    message: response.advanced
+    message: (response.advanced
       ? 'Шаг 1 заполнен, перешли ко второму. Шаги 2 и 3 Nemo ещё не знает — доведите карточку сами.'
       : response.categoryTyped
         ? 'Поля заполнены, категория введена. Выберите полку из списка, нажмите «Принять» и продолжите сами.'
-        : 'Поля заполнены. Выберите категорию и продолжите сами.',
+        : 'Поля заполнены. Выберите категорию и продолжите сами.') + missed,
   })
   return {
     ok: true, advanced: Boolean(response.advanced),
-    categoryTyped: Boolean(response.categoryTyped), filled: response.filled,
+    categoryTyped: Boolean(response.categoryTyped),
+    filled: response.filled, skipped: response.skipped ?? [],
   }
 }
 
