@@ -1,40 +1,39 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr2wae/FdxQuuaVwwPTcCv/wlgCChbTdKwh81Zy5Kxks4kYdnkm3j+J5XDDQS35jf1+mq2egikt7UaNU7FWaC0EeszenrOdZYgervwMbKmbFUg3ClatDxnXOSjntTnOV+FE2zlcorM5VFokLtmXpnFR5Q72/UTTdNFHyj22doPB7yUt9pHxNSKqhzxlP008gAWDL5bN4GAciGPQPY5Svwc0qdsm2YxQGwO/xzbifmRWTDSHc7A1bldUxNVUwX4NMu7iWG9jn9n9uyQdY+CvwLRA4PFI+y1BeORw6nJCIRdhThJ0OF7apiBrf5QRtgxqQcHIKEvJHyayMN4EZd7PfZawIDAQAB",
   "name": "Nemo — загрузчик товаров в Uzum",
   "version": "0.1.0",
   "description": "Переносит готовый черновик карточки из Nemo в кабинет Uzum Seller и отправляет его на модерацию.",
   "minimum_chrome_version": "116",
-
   "host_permissions": [
     "https://seller.uzum.uz/*"
   ],
-
   "permissions": [
     "storage",
     "scripting",
     "activeTab"
   ],
-
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
-      "matches": ["https://seller.uzum.uz/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://seller.uzum.uz/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-
   "externally_connectable": {
     "matches": [
       "https://nemo.185.8.213.144.sslip.io/*",
       "http://nemo.185.8.213.144.sslip.io/*"
     ]
   },
-
   "action": {
     "default_popup": "popup.html",
     "default_title": "Nemo — загрузчик товаров"

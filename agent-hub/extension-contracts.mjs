@@ -3,6 +3,7 @@
 // Расширение работает в чужом кабинете вашей сессией. Всё, что здесь проверяется, — это обещания
 // из README, которые иначе остались бы обещаниями: их легко нарушить одной строкой и не заметить.
 
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -103,6 +104,25 @@ const contracts = [
   // Зашитое намертво значение молча перестало бы находиться.
   ['the extension id is configurable, not welded in',
     link.includes('import.meta.env.VITE_NEMO_EXTENSION_ID')],
+
+  // Без `key` идентификатор выводится из пути к папке, и связь рвётся при первом же переносе.
+  // Мы это прошли дважды: сначала ID оказался чужим, потом сменился после перезагрузки папки.
+  // Открытый ключ в манифесте закрепляет его навсегда; закрытый в репозиторий не попадает.
+  ['the extension id is pinned by a manifest key',
+    typeof manifest.key === 'string'
+    && manifest.key.length > 300
+    && !read('.gitignore').split(/\r?\n/).every((line) => line.trim() !== '*.local')],
+
+  // Идентификатор в сборке обязан совпадать с тем, что даёт ключ: расхождение здесь — это ровно
+  // тот отказ, который мы ловили руками два раза подряд.
+  ['the built id matches the one derived from the key',
+    (() => {
+      const spki = Buffer.from(manifest.key, 'base64')
+      const digest = createHash('sha256').update(spki).digest().subarray(0, 16)
+      const derived = [...digest].flatMap((b) => [b >> 4, b & 15])
+        .map((n) => String.fromCharCode(97 + n)).join('')
+      return link.includes(`?? '${derived}'`) && read('.env.example').includes(derived)
+    })()],
 
   // Флаг в базе показывал бы «связано» и после того, как расширение снесли.
   ['the site asks the extension itself, not the database',
