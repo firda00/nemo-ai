@@ -15,6 +15,7 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
+import { PLAN_SYSTEM_PROMPT, checkPlan, planNote, planUserPrompt } from '../_shared/agentPlan.ts'
 import {
   classifyProviderResponse, decideSubmit, ownerMessage,
   type SubmitMode,
@@ -242,7 +243,7 @@ Deno.serve(async (req) => {
     || action === 'set_listing_category' || action === 'onboard'
     // Отправка на площадку и переключение режима — деньги и репутация владельца, не сотрудника.
     || action === 'submit_listing' || action === 'set_auto_submit'
-    || action === 'next_extension_task' || action === 'report_extension_result'
+    || action === 'next_extension_task' || action === 'report_extension_result' || action === 'agent_plan'
   if (ownerAction && profile.role !== 'owner') return json({ error: 'owner role required' }, 403)
 
   if (action === 'status') {
@@ -938,6 +939,71 @@ Deno.serve(async (req) => {
       .update({ [column]: enabled }).eq('account_id', profile.account_id)
     if (error) return json({ error: 'could not change the submit mode' }, 500)
     return json({ ok: true, [column]: enabled })
+  }
+
+  // План действий для браузерного агента.
+  //
+  // Расширение присылает снимок страницы и поручение, получает список действий. Ни одного решения
+  // о том, что нажать, расширение не принимает само — и ни одному ответу модели не верит на слово:
+  // checkPlan сверяет каждый номер со снимком, который сам же и прислал.
+  if (action === 'agent_plan') {
+    const access = await entitlementFor(admin, profile.account_id)
+    if (!access.allowed) return json({ error: 'subscription_required', reason: access.reason, message: lockMessage(access) }, 402)
+
+    const items = Array.isArray(body?.page?.items) ? body.page.items.slice(0, 150) : []
+    if (!items.length) return json({ error: 'empty_page' }, 400)
+    const instruction = typeof body?.instruction === 'string' ? body.instruction.trim().slice(0, 500) : ''
+    if (!instruction) return json({ error: 'no_instruction' }, 400)
+
+    // Данные для подстановки берутся НА СЕРВЕРЕ, а не из поручения: иначе достаточно попросить
+    // «впиши сюда чужой артикул», и расширение впишет что угодно, что уместилось в текст.
+    const { data: draft } = await admin.from('commerce_listing_drafts')
+      .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, min_selling_price_tiyin')
+      .eq('account_id', profile.account_id).eq('status', 'ready')
+      .order('approved_at', { ascending: true }).limit(1).maybeSingle()
+
+    const apiKey = await resolveOpenRouterKey(admin, profile.account_id)
+    if (!apiKey) return json({ error: 'llm_not_configured' }, 409)
+
+    const answer = await callOpenRouter({
+      apiKey,
+      model: PRIMARY_MODEL,
+      temperature: 0,
+      maxTokens: 2000,
+      responseFormat: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: PLAN_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: planUserPrompt({
+            instruction,
+            page: { url: body?.page?.url, title: body?.page?.title, items },
+            data: draft
+              ? {
+                title_ru: draft.title_ru, title_uz: draft.title_uz,
+                description_ru: draft.description_ru, description_uz: draft.description_uz,
+                category: draft.uzum_category,
+                price_uzs: draft.min_selling_price_tiyin == null ? null : Math.ceil(draft.min_selling_price_tiyin / 100),
+              }
+              : null,
+          }),
+        },
+      ],
+    }).catch(() => null)
+    if (!answer) return json({ error: 'llm_unavailable' }, 502)
+
+    let parsed: unknown = null
+    try { parsed = JSON.parse(stripJsonFence(answer.content)) } catch { parsed = null }
+    const checked = checkPlan(parsed, items)
+
+    return json({
+      ok: true,
+      actions: checked.actions,
+      // Отброшенное называется, а не исчезает: молчаливая фильтрация превращает разбор в гадание.
+      rejected: checked.rejected,
+      note: planNote(parsed),
+      draft_id: draft?.id ?? null,
+    })
   }
 
   // Следующая карточка для расширения. Пусто — это не ошибка, а «работы нет».

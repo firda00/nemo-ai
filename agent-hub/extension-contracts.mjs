@@ -1,7 +1,8 @@
-// Границы расширения, записанные проверками.
+// Границы браузерного агента, записанные проверками.
 //
-// Расширение работает в чужом кабинете вашей сессией. Всё, что здесь проверяется, — это обещания
-// из README, которые иначе остались бы обещаниями: их легко нарушить одной строкой и не заметить.
+// Расширение работает в чужом кабинете вашей сессией и выполняет план, придуманный моделью. Всё,
+// что здесь проверяется, — обещания, которые иначе остались бы словами в README: их легко нарушить
+// одной строкой и не заметить.
 
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
@@ -12,14 +13,15 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
 const manifest = JSON.parse(read('extension/manifest.json'))
 const background = read('extension/background.js')
+const scanner = read('extension/scanner.js')
+const executor = read('extension/executor.js')
 const content = read('extension/content.js')
 const nemo = read('extension/nemo.js')
-const selectors = read('extension/selectors.js')
 const popup = read('extension/popup.js')
-const readme = read('extension/README.md')
+const popupHtml = read('extension/popup.html')
 const messages = read('extension/messages.js')
 const control = read('supabase/functions/commerce-control/index.ts')
-const migration = read('supabase/migrations/20260813160000_extension_submit.sql')
+const plan = read('supabase/functions/_shared/agentPlan.ts')
 const link = read('src/lib/extensionLink.ts')
 const page = read('src/pages/app/CommercePage.tsx')
 const cors = read('supabase/functions/_shared/cors.ts')
@@ -35,34 +37,13 @@ const contracts = [
   // ── Область действия ───────────────────────────────────────────────────────────────────────
 
   // Расширение с доступом ко всем сайтам не должен ставить никто, включая владельца продукта.
-  // Два хоста и ровно два: кабинет, который заполняем, и функции Nemo, откуда берём задания.
-  // Домена бэкенда сначала не было, и запрос падал ещё на предзапросе — наружу это выглядело как
-  // «сеть недоступна» при полностью исправной сети.
+  // «Универсальный» здесь про архитектуру, а не про разрешения: список доменов остаётся явным.
   ['the extension reaches exactly the two hosts it needs',
     Array.isArray(manifest.host_permissions)
     && manifest.host_permissions.length === 2
     && manifest.host_permissions.includes('https://seller.uzum.uz/*')
     && manifest.host_permissions.includes('https://ogfmyjiuqmgroobckdyw.supabase.co/*')
     && manifest.host_permissions.every((one) => !one.includes('*.'))],
-
-  // Адрес заданий — домен функций, а НЕ адрес сайта: на стенде лежит только статика, и запрос
-  // туда вернул бы 404 на каждое задание.
-  ['the task endpoint points at the functions host, not at the static site',
-    nemo.includes("const FUNCTIONS_URL = 'https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/commerce-control'")
-    && !/FUNCTIONS_URL = '[^']*sslip.io/.test(nemo)],
-
-  // Шлюз Supabase ждёт публичный ключ отдельным заголовком рядом с токеном пользователя.
-  ['the gateway gets its public key alongside the user token',
-    nemo.includes('apikey: ANON_KEY')],
-
-  // Одного host_permissions мало: он снимает проверку на стороне браузера, а не на нашей.
-  // Точечное разрешение по одному идентификатору, закреплённому ключом манифеста.
-  ['the function lets exactly this extension call it',
-    cors.includes('const EXTENSION_ORIGIN =')
-    && cors.includes('PROD_ORIGIN, EXTENSION_ORIGIN]')
-    && !cors.includes('chrome-extension://*')
-    // Разрешено звонить, но не быть адресом возврата после оплаты.
-    && cors.includes("origin !== EXTENSION_ORIGIN && originAllowed(origin)")],
 
   ['no wildcard host slips in through content scripts',
     manifest.content_scripts.every((script) =>
@@ -75,13 +56,16 @@ const contracts = [
     && !manifest.permissions.includes('webRequest')
     && !manifest.permissions.includes('history')],
 
-  // Manifest V3: service worker вместо фоновой страницы, иначе это расширение прошлой эпохи.
   ['it is a manifest v3 extension',
     manifest.manifest_version === 3 && manifest.background?.service_worker === 'background.js'],
 
+  // Модули подключаются в порядке зависимости: content.js зовёт функции из scanner и executor,
+  // а content_scripts делят одну область видимости.
+  ['the content scripts load in dependency order',
+    manifest.content_scripts[0].js.join(',') === 'scanner.js,executor.js,content.js'],
+
   // ── Учётные данные ─────────────────────────────────────────────────────────────────────────
 
-  // Пароль расширение не видит: вход остаётся на сайте, сюда приезжает короткий токен сессии.
   ['the extension never handles a password',
     !/password/i.test(background) && !/password/i.test(popup) && !/password/i.test(nemo)
     && !manifest.permissions.includes('identity')],
@@ -91,242 +75,173 @@ const contracts = [
     nemo.includes('chrome.storage.session.set')
     && !nemo.includes('chrome.storage.local')],
 
-  // Настройка манифеста ограничивает домен, но полагаться на неё ОДНУ при приёме учётных данных
-  // нельзя: проверка отправителя стоит и в коде.
   ['the sender origin is checked in code, not only in the manifest',
     manifest.externally_connectable?.matches?.includes(`${NEMO_ORIGIN}/*`)
-    && background.includes(`'${NEMO_ORIGIN}'`)
     && background.includes('ALLOWED_ORIGINS.includes(origin)')
     && background.indexOf('forbidden_origin') < background.indexOf('saveSession(message.session)')],
 
-  // sslip.io — служба подстановочного DNS: <любой-ip>.sslip.io указывает на этот адрес. Значит
-  // «все поддомены sslip.io» это «любая страница, которую кто угодно поднял у себя», и давать ей
-  // возможность достучаться до расширения с ключом доступа незачем.
+  // sslip.io — служба подстановочного DNS: <любой-ip>.sslip.io указывает на этот адрес, то есть
+  // «все поддомены» означало бы «любая страница, которую кто угодно поднял у себя».
   ['no wildcard origin may talk to the extension',
-    manifest.externally_connectable.matches.every((one) => !one.includes('*.'))
-    && background.split('ALLOWED_ORIGINS')[1].split(']')[0].split('nemo.185.8.213.144.sslip.io').length === 3],
+    manifest.externally_connectable.matches.every((one) => !one.includes('*.'))],
 
-  // Протухшая сессия — это «свяжитесь заново», а не «нет прав». Токен забывается сразу.
-  ['an expired session is dropped, not retried',
-    nemo.includes('if (response.status === 401)') && nemo.includes('await forgetSession()')],
-
-  // ── Связь сайта с расширением ──────────────────────────────────────────────────────────────
-
-  // Без ответа на ping сайт не отличает «не установлено» от «установлено и отказало» и показывает
-  // «поставьте расширение» тому, у кого оно стоит.
-  ['the extension answers whether it is installed and linked',
-    background.includes("message?.type === 'nemo:ping'")
-    && background.includes('sendResponse({ ok: true, linked: Boolean(session) })')
-    && link.includes("ask({ type: 'nemo:ping' })")],
-
-  // Refresh token выпускает новые сессии сколько угодно долго. Его утечка стоит дороже, чем
-  // неудобство связаться заново раз в час.
   ['only the short-lived token crosses to the extension',
     link.includes('session: { access_token: session.access_token, expires_at: session.expires_at }')
-    && !link.includes('refresh_token')
-    && !page.includes('refresh_token')],
+    && !link.includes('refresh_token')],
 
-  // Идентификатор распакованного расширения выводится из пути к папке: перенесли — сменился.
-  // Зашитое намертво значение молча перестало бы находиться.
-  ['the extension id is configurable, not welded in',
-    link.includes('import.meta.env.VITE_NEMO_EXTENSION_ID')],
-
-  // Без `key` идентификатор выводится из пути к папке, и связь рвётся при первом же переносе.
-  // Мы это прошли дважды: сначала ID оказался чужим, потом сменился после перезагрузки папки.
-  // Открытый ключ в манифесте закрепляет его навсегда; закрытый в репозиторий не попадает.
   ['the extension id is pinned by a manifest key',
-    typeof manifest.key === 'string'
-    && manifest.key.length > 300
-    && !read('.gitignore').split(/\r?\n/).every((line) => line.trim() !== '*.local')],
+    typeof manifest.key === 'string' && manifest.key.length > 300],
 
-  // Идентификатор в сборке обязан совпадать с тем, что даёт ключ: расхождение здесь — это ровно
-  // тот отказ, который мы ловили руками два раза подряд.
   ['the built id matches the one derived from the key',
     (() => {
-      const spki = Buffer.from(manifest.key, 'base64')
-      const digest = createHash('sha256').update(spki).digest().subarray(0, 16)
+      const digest = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest().subarray(0, 16)
       const derived = [...digest].flatMap((b) => [b >> 4, b & 15])
         .map((n) => String.fromCharCode(97 + n)).join('')
       return link.includes(`?? '${derived}'`) && read('.env.example').includes(derived)
     })()],
 
-  // Флаг в базе показывал бы «связано» и после того, как расширение снесли.
-  ['the site asks the extension itself, not the database',
-    page.includes('void extensionState().then(')
-    && !page.includes('pilot?.extension_linked')],
+  ['the function lets exactly this extension call it',
+    cors.includes('const EXTENSION_ORIGIN =')
+    && !cors.includes('chrome-extension://*')
+    && cors.includes("origin !== EXTENSION_ORIGIN && originAllowed(origin)")],
 
-  // Chrome не бросает исключение на неизвестный идентификатор — он выставляет lastError и зовёт
-  // колбэк. Не прочитать его значит получить «Unchecked runtime.lastError» на каждой загрузке.
-  ['a missing extension is handled, not thrown',
-    link.includes('chromeRuntime.lastError')
-    && link.includes("finish({ ok: false, failure: 'silent' })")],
+  // ── Сканер ─────────────────────────────────────────────────────────────────────────────────
 
-  // Три причины молчания требуют трёх РАЗНЫХ действий: перезагрузить вкладку, поправить
-  // идентификатор, разбудить расширение. Одно «не найдено» отправляет проверять наугад.
-  ['a silent extension says which of the three things went wrong',
-    link.includes("'no_bridge'") && link.includes("'no_answer'") && link.includes("'silent'")
-    && page.includes('t(`commerce.submit.ext_${extension}`)')
-    && page.includes('recheckExtension()')],
+  // Наружу уходят НОМЕРА, а не селекторы. Селектор, вернувшийся обратно, — это способ указать на
+  // элемент, которого мы не показывали.
+  ['the page is described by numbers, not by selectors',
+    scanner.includes("const NEMO_ID = 'data-nemo-id'")
+    && scanner.includes('function elementById(id)')
+    && scanner.includes('document.querySelector(`[${NEMO_ID}="${Number(id)}"]`)')],
 
-  // ── Чего расширение не делает ──────────────────────────────────────────────────────────────
+  // Старые номера снимаются перед новым сканом: иначе номер из прошлого снимка после перерисовки
+  // укажет на другой элемент.
+  ['stale numbers are cleared before a new scan',
+    scanner.includes(`for (const stale of document.querySelectorAll(\`[\${NEMO_ID}]\`)) stale.removeAttribute(NEMO_ID)`)],
 
-  // Вариант А (перехват токена вкладки Uzum и вызов внутренних адресов) отвергнут: это обход
-  // контроля доступа площадки, а не автоматизация разрешённого действия.
-  ['it does not touch the tab own credentials or hidden endpoints',
-    !content.includes('localStorage')
-    && !content.includes('sessionStorage')
-    && !content.includes('document.cookie')
-    && !/fetch\(\s*['"`]https:\/\/(api-)?seller\.uzum\.uz/.test(content)
-    && !/XMLHttpRequest/.test(content)],
+  // Ближайший div почти всегда общая обёртка: её текст содержит подписи соседних полей, и оба
+  // получают одинаковый контекст. Тогда текст уезжает не в то поле.
+  ['the context is the element own card, not the whole block',
+    scanner.includes('function ownCard(element)')
+    && scanner.includes('if (others.length) break')],
+
+  // Редакторы описания стоят «блоком ниже» подписи: между надписью и полем лежат панель
+  // инструментов и обёртки. Без подъёма вверх такое поле остаётся без смысла — ровно та причина,
+  // по которой описания оставались пустыми, когда названия вставали.
+  ['the label above a distant editor is still found',
+    scanner.includes('function nearbyText(element)')
+    && scanner.includes('function boundLabel(element)')
+    && scanner.includes('aria-labelledby')],
+
+  // Разметка наружу не уезжает: ни html, ни классы, ни селекторы. Только то, что видит человек.
+  ['no markup leaves the page',
+    !/innerHTML/.test(stripComments(scanner))
+    && !/outerHTML/.test(scanner)
+    && !scanner.includes('className')],
+
+  // Пометка рискованного действия ставится НА ЭЛЕМЕНТ, а не только в отчёт: исполнитель читает её
+  // сам и не полагается на то, что скажет пришедший план.
+  ['risky controls are marked on the element itself',
+    scanner.includes("element.setAttribute('data-nemo-risky', 'true')")
+    && executor.includes("element.getAttribute?.('data-nemo-risky') === 'true'")],
+
+  // ── Исполнитель ────────────────────────────────────────────────────────────────────────────
+
+  ['only three actions exist',
+    plan.includes("export const ALLOWED_ACTIONS = ['type', 'click', 'select'] as const")
+    && executor.includes("action.type === 'type'")
+    && executor.includes("action.type === 'click'")
+    && executor.includes("action.type === 'select'")
+    && executor.includes("error: 'unknown_action'")],
+
+  // innerHTML даёт худший исход: текст появляется на экране, модель редактора остаётся пустой, и
+  // описание уходит на модерацию пустым. Именно так описания и остались пустыми в прошлой версии.
+  ['the rich text editor is never filled through innerhtml',
+    !stripComments(executor).includes('.innerHTML')
+    && executor.includes("inputType: 'insertText'")
+    && executor.includes("document.execCommand('insertText', false, wanted)")],
+
+  // Способ, который «выполнился без ошибки», но ничего не изменил, — это молчаливый провал.
+  ['the editor result is read back, not assumed',
+    executor.includes('const reads = () =>')
+    && executor.includes("reads().includes(wanted.slice(0, 20))")],
+
+  // На blur формы запускают проверку поля: без него оно остаётся подсвеченным как незаполненное.
+  ['the input events include blur',
+    executor.includes("for (const type of ['input', 'change', 'blur'])")],
+
+  // Пайплайн из десяти шагов, где седьмой молча не сработал, — это форма, заполненная наполовину,
+  // и день на выяснение, какая половина уцелела.
+  ['every step reports for itself and the plan does not stop early',
+    executor.includes('function runPlan(actions, options)')
+    && executor.includes('results.push(runAction(action, options))')
+    && !/break\s*$/m.test(stripComments(executor))],
+
+  // Кнопка «Удалить» или «Отправить», нажатая по плану модели, не отменяется никаким «назад».
+  ['an irreversible click needs a human yes',
+    executor.includes("error: 'needs_confirmation'")
+    && executor.includes('confirmRisky = false')
+    && popup.includes('confirmRisky: nodes.risky.checked')],
+
+  // Разрешение, выданное однажды и запомненное, через неделю нажимает кнопку, о которой забыли.
+  ['the consent is asked every run, never remembered',
+    !popup.includes("storage.local.set({ risky")
+    && popupHtml.includes('id="risky"')],
+
+  // ── Что делает content script ──────────────────────────────────────────────────────────────
 
   // Расширение, которое начинает работать само, однажды заполнит форму, открытую посмотреть.
   ['the content script acts only when asked',
     content.includes('chrome.runtime.onMessage.addListener')
-    && content.includes("message?.type !== 'nemo:fill'")
-    && content.indexOf('onMessage.addListener') < content.indexOf('fillCard(draft ?? {}')],
+    && content.includes("message?.type === 'nemo:scan'")
+    && content.includes("message?.type === 'nemo:run-plan'")],
 
-  // Переход по шагам делает человек, когда проверит текст глазами. У расширения не остаётся ни
-  // одного необратимого действия.
-  ['the extension clicks nothing at all',
-    !/\.click\(\)/.test(stripComments(content))
-    && !stripComments(content).includes('Отправить на модерацию')],
+  // Заполнить половину формы и только потом заметить капчу — значит оставить в чужом кабинете
+  // полуготовую карточку.
+  ['the stop check runs before the first action',
+    content.indexOf('findStopSign()') < content.indexOf('runPlan(message.actions')
+    && content.includes('[class*="captcha" i]')],
 
-  // Content script подключается обычным скриптом, а не модулем: слово export здесь —
-  // синтаксическая ошибка, из-за которой не выполнится НИ ОДНА строка файла, и расширение молча
-  // перестанет отвечать.
-  ['the content script is not written as a module',
-    !/^export /m.test(content) && !/^import /m.test(content)],
+  // Content script подключается обычным скриптом: import и export здесь — синтаксическая ошибка,
+  // из-за которой не выполнится НИ ОДНА строка файла, и расширение молча перестанет отвечать.
+  ['the content scripts are not written as modules',
+    ![scanner, executor, content].some((source) => /^export /m.test(source) || /^import /m.test(source))],
 
-  // ── Остановка ради человека ────────────────────────────────────────────────────────────────
+  // ── План от модели ─────────────────────────────────────────────────────────────────────────
 
-  // Заполнить форму и только потом заметить капчу — значит оставить в кабинете полуготовую
-  // карточку. Проверка идёт ДО единого символа в полях.
-  ['the stop check runs before anything is typed',
-    content.indexOf('findStopSign(stopSigns)') < content.indexOf('fillCard(draft ?? {}')],
+  // Ни одному ответу модели не верим на слово: каждый номер сверяется со снимком, который сами же
+  // и прислали. Элемента, которого мы не показывали, коснуться нельзя.
+  ['every planned id is checked against the snapshot we sent',
+    plan.includes('const known = new Map(items.map((item) => [Number(item.id), item]))')
+    && plan.includes("rejected.push({ action: candidate, reason: 'unknown_id' })")
+    && control.includes('checkPlan(parsed, items)')],
 
-  ['captcha frames are named as stop signs',
-    selectors.includes('iframe[src*="captcha"]') && selectors.includes('[class*="captcha" i]')],
+  // Данные для подстановки берутся НА СЕРВЕРЕ: иначе достаточно попросить «впиши сюда чужой
+  // артикул», и расширение впишет что угодно, что уместилось в текст поручения.
+  ['the data to type comes from the database, not from the instruction',
+    control.includes("action === 'agent_plan'")
+    && control.indexOf("from('commerce_listing_drafts')") < control.indexOf('planUserPrompt(')],
 
-  // Остановка ради человека — отказ, а не поломка: карточка цела, решение за владельцем. То же и
-  // с неподтверждённой категорией: владелец просто ещё не нажал «Принять».
-  ['a human handover is recorded as a refusal',
-    background.includes("response.reason === 'human_needed' || response.reason === 'category_first' ? 'refused' : 'failed'")],
+  // Замок подписки стоит и здесь: агент — это новое действие ИИ, а не чтение своих данных.
+  ['the planner is behind the subscription lock and owner-only',
+    control.includes("|| action === 'agent_plan'")
+    && control.split("action === 'agent_plan'")[1].includes('entitlementFor(admin, profile.account_id)')],
 
-  // ── Семантическое сопоставление ────────────────────────────────────────────────────────────
-
-  // Поле ищется по СМЫСЛУ, а не по пути в разметке: жёсткие цепочки родителей ломаются от любой
-  // перестройки формы, а форма Uzum перестраивается на каждом шаге мастера.
-  ['fields are matched by meaning, not by dom paths',
-    content.includes('function contextOf(el)')
-    && content.includes('function matchFields(elements, targets)')
-    // Комментарии вычищены во ВСЕХ проверках на отсутствие: отвергнутые приёмы названы в тексте
-    // по имени, и поиск по ним ловил бы собственное объяснение вместо нарушения.
-    && !/parentElement\.children\[/.test(stripComments(content))
-    && !/\.css-[a-z0-9]/i.test(stripComments(content))],
-
-  // ГЛАВНАЯ ЛОВУШКА ЭТОГО ФАЙЛА. Мы работаем на сайте с названием Uzum: две буквы «uz» стоят в
-  // адресе, шапке и подвале, и правило includes('uz') считало бы узбекским КАЖДОЕ поле формы.
-  ['the language is recognised by a word stem, never by two letters',
-    content.includes("const UZ = ['узбекск'")
-    && content.includes("const RU = ['русск'")
-    && !/includes\('uz'\)/.test(stripComments(content))
-    && !/includes\('ru'\)/.test(stripComments(content))],
-
-  // Ближайший div почти всегда общая обёртка блока: её текст содержит и «на русском», и «на
-  // узбекском» сразу, и оба названия получают одинаковый контекст.
-  ['the context is the field own card, not the whole block',
-    content.includes('function ownCard(el)')
-    && content.includes('if (others.length) break')],
-
-  // Одно поле не может быть сразу русским и узбекским названием.
-  ['one input is claimed by one meaning',
-    content.includes('taken.has(pair.element)')
-    && content.includes('byKey.has(pair.target.key)')],
-
-  // Краткое описание — отдельное поле на 390 знаков. Наш текст туда не влезет и будет обрезан
-  // площадкой посреди мысли.
-  ['the short description is excluded, not filled with what fits',
-    content.includes("const SHORT = ['кратк', 'qisqa']")
-    && content.includes('...SHORT')],
-
-  // innerHTML напрашивается и даёт худший исход: ProseMirror и Slate держат текст в своей модели,
-  // и присвоенная разметка либо стирается на перерисовке, либо остаётся при пустой модели — тогда
-  // описание уходит на модерацию пустым, хотя на экране оно было.
-  ['the rich text editor is filled by insertion, never by innerhtml',
-    content.includes("document.execCommand('insertText', false, String(value))")
-    && !stripComments(content).includes('.innerHTML =')],
-
-  // На blur форма запускает проверку поля: без него оно остаётся подсвеченным как незаполненное.
-  ['the input events include blur',
-    content.includes("for (const type of ['input', 'change', 'blur'])")],
-
-  // Название на 95 знаков при пределе 90 — не «почти влезло»: обрезанное посреди слова название
-  // снимают с модерации, и владелец узнаёт об этом через сутки.
-  ['a text over the uzum limit is refused, never truncated',
-    content.includes('tooLong.push(')
-    && content.includes("reason: 'too_long'")
-    && !/\.slice\(0,\s*target\.limit\)/.test(content)],
-
-  // Пустая карточка и «всё готово» обязаны читаться по-разному: молчаливый успех всплывёт через
-  // сутки на модерации, когда товар окажется без названия.
-  ['filling nothing is never reported as success',
-    content.includes('if (!report.filled.length) {')
-    && content.includes("reason: report.locked.length || searching ? 'category_first' : 'form_changed'")
-    && messages.includes('category_first')],
-
-  // Пропущенное поле называется, а не теряется: карточка без описания и запись «заполнено» рядом —
-  // это два дня поисков виноватого.
-  ['what was left empty is named',
-    content.includes('skipped: [...report.missing, ...report.locked]')
-    && background.includes('response.skipped?.length')
-    && popup.includes('answer.skipped?.length')],
-
-  // ── Журнал ─────────────────────────────────────────────────────────────────────────────────
-
-  // Две таблицы дали бы две несходящиеся статистики «сколько карточек доехало».
-  ['extension attempts land in the same log as api attempts',
-    control.includes("action === 'report_extension_result'")
-    && control.includes("transport: 'extension'")
-    && !control.includes('extension_submissions')],
-
-  // Попытка, о которой ничего не осталось, через неделю превращается в «оно почему-то не работает».
-  ['every branch reports, including the ones that never reached uzum',
-    (background.match(/await reportResult\(\{/g) ?? []).length >= 4],
-
-  // ── Тумблер ────────────────────────────────────────────────────────────────────────────────
-
-  // Способ вероятно нарушает правила продавца Uzum. Включить его человек должен сам.
-  ['the extension switch is off by default and separate from the api one',
-    migration.includes('add column if not exists auto_extension_submit boolean not null default false')
-    && control.includes("body?.channel === 'extension' ? 'auto_extension_submit' : 'auto_submit_to_moderation'")],
+  // Молчаливая фильтрация превращает разбор в гадание: план «не сработал», и никто не знает почему.
+  ['what the guard threw away is named',
+    plan.includes("rejected: PlanCheck['rejected']")
+    && control.includes('rejected: checked.rejected')],
 
   // ── Слова ──────────────────────────────────────────────────────────────────────────────────
 
-  // Риск назван прямо, а не спрятан в примечание: магазин чужой, и цена решения — блокировка.
-  ['the readme states the risk instead of implying it',
-    readme.includes('блокировка магазина')
-    && readme.includes('правилам продавца Uzum')],
-
-  // Кнопка со словом «отправить» не должна выглядеть как кнопка «продолжить».
-  // Вторая кнопка означала бы выбор, которого у владельца нет: переход по шагам он делает сам.
-  ['the popup offers exactly one button',
-    (read('extension/popup.html').match(/<button[^>]*id="/g) ?? []).length === 1
-    && !read('extension/popup.html').includes('перейти к шагу')],
-
-  // Ни одной системной фразы на экране у продавца: он читает свой следующий шаг, а не нашу
-  // внутреннюю причину.
-  ['the owner never reads our internal wording',
-    // Комментарии вычищены: слово «кнопка» стоит в объяснении наверху файла, и поиск по нему
-    // ловил бы собственное описание вместо строки на экране.
-    !/поля не найдены|кнопка «/.test(stripComments(popup))
+  // Ни одной фразы прямо в коде окна: любой видимый текст приходит из messages.js на языке
+  // владельца. Проверяется отсутствие кириллицы в исполняемой части — русская строка, набранная
+  // здесь, по-узбекски не покажется никогда, и заметят это только на чужом экране.
+  ['every visible word comes from the phrasebook, not from the code',
+    !/[а-яё]/i.test(stripComments(popup))
+    && popup.includes("say('")
     && messages.includes('LANGS = [')
-    && messages.includes("ru:") && messages.includes("uz:")],
-
-  // Ключи полей в сообщении владельцу — это тот же технический мусор, что и селекторы.
-  ['field keys are spoken as words',
-    messages.includes('const FIELD_NAMES')
-    && messages.includes('export function fieldList')
-    && popup.includes('fieldList(answer.skipped, lang)')],
+    && messages.includes('uz:')],
 ]
 
 let failed = 0

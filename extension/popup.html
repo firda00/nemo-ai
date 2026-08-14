@@ -6,7 +6,7 @@
   <style>
     :root { color-scheme: dark; }
     body {
-      margin: 0; width: 320px; padding: 16px;
+      margin: 0; width: 340px; padding: 16px;
       background: #0A0D1C; color: #E8ECF8;
       font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     }
@@ -16,21 +16,28 @@
     .state { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(232,236,248,.1); margin-bottom: 12px; }
     .bad { border-color: rgba(248,113,113,.35); color: #FCA5A5; }
     .ok { border-color: rgba(45,212,191,.3); color: #5EEAD4; }
-    /* Одна кнопка и ничего рядом: вторая кнопка на этом экране означала выбор, которого у
-       владельца нет — переход по шагам он всё равно делает сам, глазами. */
-    #fill {
-      width: 100%; padding: 12px; border: 0; border-radius: 10px; cursor: pointer;
+    textarea {
+      width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical;
+      border-radius: 10px; border: 1px solid rgba(232,236,248,.12);
+      background: rgba(10,13,28,.6); color: #E8ECF8; padding: 10px; font: inherit;
+    }
+    textarea:focus { outline: none; border-color: rgba(139,124,248,.6); }
+    #run {
+      width: 100%; margin-top: 8px; padding: 12px; border: 0; border-radius: 10px; cursor: pointer;
       background: linear-gradient(135deg, #8B7CF8, #6366F1);
       color: #fff; font: inherit; font-size: 14px; font-weight: 600;
     }
-    #fill:disabled { opacity: .45; cursor: default; }
-    #result { margin: 12px 0 0; }
+    #run:disabled { opacity: .45; cursor: default; }
+    /* Согласие на необратимое — отдельной галочкой и по умолчанию снято. Кнопка «Отправить» или
+       «Удалить», нажатая по плану модели, не отменяется никаким «назад». */
+    .risky { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 11px; color: #8B93AD; }
     .lang { display: flex; gap: 4px; }
     .lang button {
       border: 0; background: transparent; color: #8B93AD; cursor: pointer;
       font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 6px;
     }
     .lang button[aria-pressed="true"] { color: #E8ECF8; background: rgba(232,236,248,.1); }
+    #result { margin: 12px 0 0; white-space: pre-line; }
   </style>
 </head>
 <body>
@@ -45,7 +52,12 @@
 
   <div class="state" id="state"></div>
 
-  <button id="fill" type="button"></button>
+  <textarea id="instruction" rows="3"></textarea>
+  <label class="risky">
+    <input type="checkbox" id="risky" />
+    <span id="riskyLabel"></span>
+  </label>
+  <button id="run" type="button"></button>
 
   <p id="result"></p>
 

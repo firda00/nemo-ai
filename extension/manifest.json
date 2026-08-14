@@ -24,6 +24,8 @@
         "https://seller.uzum.uz/*"
       ],
       "js": [
+        "scanner.js",
+        "executor.js",
         "content.js"
       ],
       "run_at": "document_idle"

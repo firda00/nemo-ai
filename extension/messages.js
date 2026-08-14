@@ -8,20 +8,50 @@ export const LANGS = ['ru', 'uz']
 
 const DICT = {
   title: {
-    ru: 'Загрузчик карточек Uzum',
-    uz: 'Uzum kartochkalari yuklovchisi',
+    ru: 'Nemo — помощник на странице',
+    uz: 'Nemo — sahifadagi yordamchi',
   },
   intro: {
-    ru: 'Переносит готовую карточку из Nemo в форму создания товара. Проверяете и продолжаете сами.',
-    uz: 'Nemo’dagi tayyor kartochkani tovar yaratish shakliga ko‘chiradi. Tekshirish va davom ettirish — sizdan.',
+    ru: 'Напишите, что сделать на открытой странице. Nemo посмотрит её и предложит действия.',
+    uz: 'Ochiq sahifada nima qilishni yozing. Nemo uni ko‘rib, amallarni taklif qiladi.',
   },
-  fill: { ru: 'Заполнить карточку', uz: 'Kartochkani to‘ldirish' },
-  working: { ru: 'Заполняю…', uz: 'To‘ldirilmoqda…' },
-  checking: { ru: 'Проверяю связь…', uz: 'Aloqa tekshirilmoqda…' },
+  working: { ru: 'Смотрю страницу…', uz: 'Sahifani ko‘ryapman…' },
 
+  run: {
+    ru: "Выполнить",
+    uz: "Bajarish",
+  },
+  placeholder: {
+    ru: "Например: заполни карточку товара",
+    uz: "Masalan: tovar kartochkasini to‘ldir",
+  },
+  no_tab: {
+    ru: "Откройте страницу, с которой нужно работать, и повторите.",
+    uz: "Ishlamoqchi bo‘lgan sahifani oching va qayta urinib ko‘ring.",
+  },
+  no_plan: {
+    ru: "Nemo не нашёл на этой странице, что заполнить. Уточните поручение.",
+    uz: "Nemo bu sahifada nimani to‘ldirishni topmadi. Topshiriqni aniqlashtiring.",
+  },
+  needs_confirmation: {
+    ru: "В плане есть необратимое действие — нажатие кнопки отправки или удаления. Разрешите его галочкой и повторите.",
+    uz: "Rejada qaytarib bo‘lmaydiganamal bor — yuborish yoki o‘chirish tugmasi. Belgilab, qayta urinib ko‘ring.",
+  },
+  allowRisky: {
+    ru: "Разрешить нажимать кнопки отправки и удаления",
+    uz: "Yuborish va o‘chirish tugmalarini bosishga ruxsat",
+  },
+  filledCount: {
+    ru: "Готово. Заполнено полей:",
+    uz: "Tayyor. To‘ldirilgan maydonlar:",
+  },
+  failedCount: {
+    ru: "Не удалось:",
+    uz: "Bajarilmadi:",
+  },
   ready: {
-    ru: 'Всё готово. Откройте страницу создания товара в кабинете Uzum и нажмите кнопку ниже.',
-    uz: 'Hammasi tayyor. Uzum kabinetida tovar yaratish sahifasini oching va quyidagi tugmani bosing.',
+    ru: 'Связь с Nemo есть. Откройте нужную страницу и напишите поручение.',
+    uz: 'Nemo bilan aloqa bor. Kerakli sahifani oching va topshiriqni yozing.',
   },
 
   // --- Почему нельзя работать ---------------------------------------------------------------

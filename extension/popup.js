@@ -1,15 +1,18 @@
-// Окно расширения. Одна кнопка и одна фраза о том, что происходит.
+// Окно расширения — командная строка.
 //
-// Всё, что владелец здесь читает, приходит из messages.js на его языке. Ни одного технического
-// слова: расширение говорит, какой у него следующий шаг, а не какая у нас внутренняя причина.
+// Владелец пишет поручение своими словами, Nemo смотрит страницу и предлагает действия. Всё, что
+// здесь читается, приходит из messages.js на его языке: ни одного технического слова.
 
-import { fieldList, pickLang, say } from './messages.js'
+import { pickLang, say } from './messages.js'
 
 const nodes = {
   title: document.getElementById('title'),
   intro: document.getElementById('intro'),
   state: document.getElementById('state'),
-  fill: document.getElementById('fill'),
+  instruction: document.getElementById('instruction'),
+  risky: document.getElementById('risky'),
+  riskyLabel: document.getElementById('riskyLabel'),
+  run: document.getElementById('run'),
   result: document.getElementById('result'),
 }
 
@@ -23,69 +26,70 @@ async function loadLang() {
   }
 }
 
-function show(node, text, kind) {
-  node.textContent = text
-  if (node === nodes.state) node.className = kind ? `state ${kind}` : 'state'
-}
-
-/** Статические подписи. Перерисовываются при смене языка вместе со всем остальным. */
 function paintChrome() {
   nodes.title.textContent = say('title', lang)
   nodes.intro.textContent = say('intro', lang)
-  nodes.fill.textContent = say('fill', lang)
+  nodes.run.textContent = say('run', lang)
+  nodes.riskyLabel.textContent = say('allowRisky', lang)
+  nodes.instruction.placeholder = say('placeholder', lang)
 }
 
 async function refresh() {
   paintChrome()
   const info = await chrome.runtime.sendMessage({ type: 'nemo:state' }).catch(() => null)
-  if (!info) { show(nodes.state, say('no_response', lang), 'bad'); nodes.fill.disabled = true; return }
-
-  if (!info.linked) { show(nodes.state, say('not_linked', lang), 'bad'); nodes.fill.disabled = true; return }
-  nodes.fill.disabled = false
-  show(nodes.state, say('ready', lang), 'ok')
+  const linked = Boolean(info?.linked)
+  nodes.run.disabled = !linked
+  nodes.state.className = linked ? 'state ok' : 'state bad'
+  nodes.state.textContent = say(linked ? 'ready' : 'not_linked', lang)
 }
 
 /**
- * Исход одного заполнения — одной фразой.
+ * Исход одного поручения — человеческим языком.
  *
- * Ключи полей превращаются в слова: «описание на русском», а не «descriptionRu». Список того, что
- * осталось дописать руками, важнее самого факта успеха — по нему видно, доделана карточка или нет.
+ * Число заполненных полей называется всегда, даже когда всё получилось. «Готово» без числа не
+ * позволяет отличить заполненную форму от формы, где сработал один шаг из пяти.
  */
 function describe(answer) {
   if (!answer) return say('no_response', lang)
-  if (answer.idle) return say('idle', lang)
-
   if (!answer.ok) {
-    if (answer.reason === 'too_long') {
-      // Числа оставляем как есть: «95 из 90» понятно без перевода и говорит, насколько сокращать.
-      const list = (answer.tooLong ?? []).map((one) => {
-        const [key, numbers] = String(one).split(':')
-        return `${fieldList([key.trim()], lang)} — ${(numbers ?? '').trim()}`
-      }).join('; ')
-      return `${say('tooLong', lang)} ${list}`
-    }
-    return say(answer.reason, lang) || say('form_changed', lang)
+    if (answer.needsConfirmation) return say('needs_confirmation', lang)
+    const known = say(answer.reason, lang)
+    if (known) return known
+    if (answer.reason === 'no_plan') return `${say('no_plan', lang)}${answer.note ? `\n${answer.note}` : ''}`
+    return say('no_plan', lang)
   }
-
-  if (answer.skipped?.length) return `${say('doneSkipped', lang)} ${fieldList(answer.skipped, lang)}`
-  return say('done', lang)
+  const lines = [`${say('filledCount', lang)} ${answer.done}`]
+  if (answer.failed) lines.push(`${say('failedCount', lang)} ${answer.failed}`)
+  if (answer.needsConfirmation) lines.push(say('needs_confirmation', lang))
+  if (answer.note) lines.push(answer.note)
+  return lines.join('\n')
 }
 
 async function run() {
-  nodes.fill.disabled = true
-  show(nodes.result, say('working', lang))
-  const answer = await chrome.runtime.sendMessage({ type: 'nemo:run' }).catch(() => null)
-  show(nodes.result, describe(answer))
+  const instruction = nodes.instruction.value.trim()
+  if (!instruction) { nodes.instruction.focus(); return }
+  nodes.run.disabled = true
+  nodes.result.textContent = say('working', lang)
+  const answer = await chrome.runtime.sendMessage({
+    type: 'nemo:instruct',
+    instruction,
+    // Согласие передаётся ЯВНО и каждый раз: галочка не запоминается между запусками, потому что
+    // разрешение, выданное однажды, через неделю нажимает кнопку, о которой уже забыли.
+    confirmRisky: nodes.risky.checked,
+  }).catch(() => null)
+  nodes.result.textContent = describe(answer)
   await refresh()
 }
 
-nodes.fill.addEventListener('click', () => void run())
+nodes.run.addEventListener('click', () => void run())
+nodes.instruction.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void run()
+})
 
 for (const button of document.querySelectorAll('.lang button')) {
   button.addEventListener('click', async () => {
     lang = button.dataset.lang
-    // Язык — настройка вида, а не секрет: ему место в local, где он переживёт закрытие браузера.
-    // Токен доступа по-прежнему живёт только в session.
+    // Язык — настройка вида, а не секрет: ему место в local. Токен доступа по-прежнему в session.
     await chrome.storage.local.set({ lang })
     await loadLang()
     nodes.result.textContent = ''
