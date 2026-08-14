@@ -8,7 +8,28 @@
 // компьютер следующим.
 
 const NEMO_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
+
+/**
+ * Куда расширение ходит за заданиями.
+ *
+ * ЭТО НЕ АДРЕС САЙТА. На nemo.185.8.213.144.sslip.io лежит только собранный фронтенд — статика;
+ * commerce-control это Edge Function, и живёт она на домене Supabase. Указать сюда адрес стенда
+ * значит стучаться в статику и получать 404 на каждое задание.
+ *
+ * Именно этот домен обязан быть в host_permissions манифеста: без него запрос расширения идёт
+ * как обычный браузерный, упирается в проверку origin на стороне функции и падает ещё на
+ * предзапросе — наружу это выглядит как «сеть недоступна», хотя сеть в порядке.
+ */
 const FUNCTIONS_URL = 'https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/commerce-control'
+
+/**
+ * Публичный ключ проекта. Не секрет: он и так лежит в каждом браузере, открывшем сайт.
+ *
+ * Шлюз Supabase ждёт его отдельным заголовком рядом с токеном пользователя. Без него запрос
+ * отвергается ещё до функции, и отказ выглядит как проблема доступа, а не как отсутствующий
+ * заголовок.
+ */
+const ANON_KEY = "sb_publishable_QvdG3S1oMAgXWv53R2_hpQ_osQd_s8_"
 
 /** Пять минут запаса: токен, истёкший в середине заполнения формы, бросает карточку недоделанной. */
 const EXPIRY_MARGIN_MS = 5 * 60 * 1000
@@ -52,6 +73,7 @@ export async function callNemo(action, body = {}) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${session.accessToken}`,
+        apikey: ANON_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ action, ...body }),

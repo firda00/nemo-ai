@@ -6,7 +6,8 @@
   "description": "Переносит готовый черновик карточки из Nemo в кабинет Uzum Seller и отправляет его на модерацию.",
   "minimum_chrome_version": "116",
   "host_permissions": [
-    "https://seller.uzum.uz/*"
+    "https://seller.uzum.uz/*",
+    "https://ogfmyjiuqmgroobckdyw.supabase.co/*"
   ],
   "permissions": [
     "storage",

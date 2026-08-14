@@ -21,6 +21,7 @@ const control = read('supabase/functions/commerce-control/index.ts')
 const migration = read('supabase/migrations/20260813160000_extension_submit.sql')
 const link = read('src/lib/extensionLink.ts')
 const page = read('src/pages/app/CommercePage.tsx')
+const cors = read('supabase/functions/_shared/cors.ts')
 
 /** Код без комментариев. Проверять надо исполняемое, а не объяснение рядом с ним. */
 const stripComments = (source) => source
@@ -33,10 +34,34 @@ const contracts = [
   // ── Область действия ───────────────────────────────────────────────────────────────────────
 
   // Расширение с доступом ко всем сайтам не должен ставить никто, включая владельца продукта.
-  ['the extension reaches exactly one host',
+  // Два хоста и ровно два: кабинет, который заполняем, и функции Nemo, откуда берём задания.
+  // Домена бэкенда сначала не было, и запрос падал ещё на предзапросе — наружу это выглядело как
+  // «сеть недоступна» при полностью исправной сети.
+  ['the extension reaches exactly the two hosts it needs',
     Array.isArray(manifest.host_permissions)
-    && manifest.host_permissions.length === 1
-    && manifest.host_permissions[0] === 'https://seller.uzum.uz/*'],
+    && manifest.host_permissions.length === 2
+    && manifest.host_permissions.includes('https://seller.uzum.uz/*')
+    && manifest.host_permissions.includes('https://ogfmyjiuqmgroobckdyw.supabase.co/*')
+    && manifest.host_permissions.every((one) => !one.includes('*.'))],
+
+  // Адрес заданий — домен функций, а НЕ адрес сайта: на стенде лежит только статика, и запрос
+  // туда вернул бы 404 на каждое задание.
+  ['the task endpoint points at the functions host, not at the static site',
+    nemo.includes("const FUNCTIONS_URL = 'https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/commerce-control'")
+    && !/FUNCTIONS_URL = '[^']*sslip.io/.test(nemo)],
+
+  // Шлюз Supabase ждёт публичный ключ отдельным заголовком рядом с токеном пользователя.
+  ['the gateway gets its public key alongside the user token',
+    nemo.includes('apikey: ANON_KEY')],
+
+  // Одного host_permissions мало: он снимает проверку на стороне браузера, а не на нашей.
+  // Точечное разрешение по одному идентификатору, закреплённому ключом манифеста.
+  ['the function lets exactly this extension call it',
+    cors.includes('const EXTENSION_ORIGIN =')
+    && cors.includes('PROD_ORIGIN, EXTENSION_ORIGIN]')
+    && !cors.includes('chrome-extension://*')
+    // Разрешено звонить, но не быть адресом возврата после оплаты.
+    && cors.includes("origin !== EXTENSION_ORIGIN && originAllowed(origin)")],
 
   ['no wildcard host slips in through content scripts',
     manifest.content_scripts.every((script) =>
