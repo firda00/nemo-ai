@@ -71,6 +71,7 @@
     "test:sales-trend": "node --experimental-strip-types agent-hub/sales-trend-behavior.mjs",
     "test:listing-submit": "node --experimental-strip-types agent-hub/listing-submit-behavior.mjs",
     "test:extension": "node agent-hub/extension-contracts.mjs",
+    "test:extension-form": "node agent-hub/extension-form-behavior.mjs",
     "test:billing-live": "node agent-hub/billing-entitlement-live.mjs",
     "test:listing-upload": "node --experimental-strip-types agent-hub/listing-upload-behavior.mjs",
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",

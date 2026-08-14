@@ -4,7 +4,7 @@
 // у него нет ни доступа к Nemo, ни права решить, что карточку пора отправлять.
 
 import { callNemo, forgetSession, nextTask, readSession, reportResult, saveSession } from './nemo.js'
-import { CREATE_PAGE, SELECTORS, STOP_SIGNS, missingSelectors, selectorsReady } from './selectors.js'
+import { CATEGORY, CREATE_PAGE, FIELDS, STEP_BUTTON, STOP_SIGNS, missingSelectors, selectorsReady } from './selectors.js'
 
 /**
  * Сессия приезжает из ОТКРЫТОЙ ВКЛАДКИ NEMO, а не из формы входа в расширении.
@@ -75,9 +75,13 @@ export async function runOnce({ submit }) {
   const response = await chrome.tabs.sendMessage(tab.id, {
     type: 'nemo:fill',
     draft: task.task,
-    selectors: SELECTORS,
+    fields: FIELDS,
+    category: CATEGORY,
+    stepButton: STEP_BUTTON,
     stopSigns: STOP_SIGNS,
-    submit,
+    // На шаге 1 нет кнопки «Отправить на модерацию» — там «Сохранить и продолжить», и за ней ещё
+    // два шага, которых мы не видели. Поэтому здесь ПЕРЕХОД к следующему шагу, а не отправка.
+    advance: submit,
   }).catch(() => null)
 
   if (!response) {
@@ -99,15 +103,23 @@ export async function runOnce({ submit }) {
     return { ok: false, reason: response.reason, detail: response.detail }
   }
 
+  // Успехом это НЕ считается. Шаг 1 из трёх — половина дела: товар ещё не в каталоге и на
+  // модерацию не ушёл. Записать 'sent' здесь значило бы объявить карточку отправленной и
+  // потерять её из виду — она бы больше не попала в задания расширения.
   await reportResult({
     draftId: task.task.id,
-    status: response.submitted ? 'sent' : 'refused',
-    reason: response.submitted ? undefined : 'human_needed',
-    message: response.submitted
-      ? undefined
-      : 'Поля заполнены. Проверьте карточку и нажмите «Отправить на модерацию» сами.',
+    status: 'refused',
+    reason: 'human_needed',
+    message: response.advanced
+      ? 'Шаг 1 заполнен, перешли ко второму. Шаги 2 и 3 Nemo ещё не знает — доведите карточку сами.'
+      : response.categoryTyped
+        ? 'Поля заполнены, категория введена. Выберите полку из списка, нажмите «Принять» и продолжите сами.'
+        : 'Поля заполнены. Выберите категорию и продолжите сами.',
   })
-  return { ok: true, submitted: Boolean(response.submitted), filled: response.filled }
+  return {
+    ok: true, advanced: Boolean(response.advanced),
+    categoryTyped: Boolean(response.categoryTyped), filled: response.filled,
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

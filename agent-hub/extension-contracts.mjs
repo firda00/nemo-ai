@@ -21,6 +21,11 @@ const migration = read('supabase/migrations/20260813160000_extension_submit.sql'
 const link = read('src/lib/extensionLink.ts')
 const page = read('src/pages/app/CommercePage.tsx')
 
+/** Код без комментариев. Проверять надо исполняемое, а не объяснение рядом с ним. */
+const stripComments = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '')
+
 const NEMO_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
 
 const contracts = [
@@ -120,14 +125,14 @@ const contracts = [
     && content.includes("message?.type !== 'nemo:fill'")
     // Ни одного вызова заполнения или клика вне обработчика сообщения. Сверяется именно ВЫЗОВ
     // с аргументами обработчика: объявление функции начинается теми же буквами и стоит выше.
-    && content.indexOf('onMessage.addListener') < content.indexOf('fillFields(selectors ?? {}')],
+    && content.indexOf('onMessage.addListener') < content.indexOf('fillFields(fields ?? []')],
 
   // ── Остановка ради человека ────────────────────────────────────────────────────────────────
 
   // Заполнить форму и только потом заметить капчу — значит оставить в кабинете полуготовую
   // карточку. Проверка идёт ДО единого символа в полях.
   ['the stop check runs before anything is typed',
-    content.indexOf('findStopSign(stopSigns ?? [])') < content.indexOf('fillFields(selectors ?? {}')],
+    content.indexOf('findStopSign(stopSigns ?? [])') < content.indexOf('fillFields(fields ?? []')],
 
   // Между заполнением и кликом появляется подтверждение, которого никто не ждал.
   ['the stop check runs again right before the irreversible click',
@@ -141,19 +146,75 @@ const contracts = [
   ['a human handover is recorded as a refusal',
     background.includes("response.reason === 'human_needed' ? 'refused' : 'failed'")],
 
-  // ── Угадывание полей ───────────────────────────────────────────────────────────────────────
+  // ── Разметка формы ─────────────────────────────────────────────────────────────────────────
 
-  // Форма, заполненная неверно и отправленная на модерацию, — это товар с чужим описанием в
-  // магазине и разбирательство в чужом интерфейсе. Пустая карта означает отказ, а не попытку.
-  ['empty selectors refuse instead of guessing',
-    selectors.includes("titleRu: ''")
-    && selectors.includes('export function selectorsReady()')
+  // Пустая карта означает отказ, а не попытку заполнить наугад.
+  ['an empty field map refuses instead of guessing',
+    selectors.includes('export function selectorsReady()')
     && background.includes('if (!selectorsReady()) {')
     && background.indexOf('selectorsReady()') < background.indexOf('const task = await nextTask()')],
 
   ['the missing fields are named, not merely counted',
     selectors.includes('export function missingSelectors()')
     && background.includes('missingSelectors().join')],
+
+  // Классы вида `.css-1x2y3z` Uzum меняет при каждом релизе, и селектор на класс ломается молча,
+  // в тот день, когда никто не смотрит. Подпись держится за смысл поля.
+  ['fields are found by their labels, not by generated classes',
+    selectors.includes("labels: ['Название товара на русском']")
+    && content.includes('function findByLabel(labels)')
+    // Комментарии вычищены: объяснение про `.css-1x2y3z` названо в тексте по имени, и поиск по
+    // нему ловил бы собственное обоснование вместо нарушения.
+    && !/\.css-[a-z0-9]/i.test(stripComments(selectors))],
+
+  // Редактор форматированного текста — не <input>: у него нет value, и присваивание туда не делает
+  // ничего. Перепутать значит получить пустое описание при заполненном на вид поле.
+  // В вёрстке «подпись, поле, подпись, поле» обе подписи лежат в одной обёртке, и первый ввод
+  // контейнера принадлежит СОСЕДНЕЙ подписи. Так русское название уезжало в узбекское поле —
+  // карточка с перепутанными языками, а причину искали бы в переводчике.
+  ['the control is the one after its label, not the first in the box',
+    content.includes('function follows(labelNode, candidate)')
+    && content.includes('candidates.find((candidate) => follows(labelNode, candidate))')],
+
+  ['the rich text editor is filled as a rich text editor',
+    content.includes('function setRichValue(element, value)')
+    && content.includes("document.execCommand('insertText', false, value)")
+    && content.includes('field.rich || control.isContentEditable')],
+
+  // Название на 95 знаков при пределе 90 — это не «почти влезло»: обрезанное посреди слова
+  // название снимают с модерации, и владелец узнаёт об этом через сутки.
+  ['a text over the uzum limit is refused, never truncated',
+    selectors.includes('title: 90')
+    && content.includes('tooLong.push(')
+    && content.includes("reason: 'too_long'")
+    && !/\.slice\(0,\s*field\.limit\)/.test(content)],
+
+  // ── Мастер в три шага ──────────────────────────────────────────────────────────────────────
+
+  // На шаге 1 кнопки «Отправить на модерацию» не существует — там «Сохранить и продолжить», и за
+  // ней ещё два шага, которых мы не видели.
+  ['the wizard step button is not mistaken for moderation submit',
+    selectors.includes("export const STEP_BUTTON = 'Сохранить и продолжить'")
+    && !content.includes('Отправить на модерацию')],
+
+  // Шаг 1 из трёх — половина дела: товар ещё не в каталоге. Записать 'sent' здесь значило бы
+  // объявить карточку отправленной и потерять её из виду.
+  ['finishing step one is never recorded as sent',
+    background.includes("status: 'refused'")
+    && !/status:\s*'sent'/.test(background)],
+
+  // Полка задаёт комиссию, характеристики и судьбу карточки на модерации. Список предложений мы
+  // не видели ни разу, поэтому выбор остаётся человеку.
+  ['the category is typed but never confirmed for the owner',
+    selectors.includes("confirmButton: 'Принять'")
+    && content.includes('categoryTyped = true')
+    && !content.includes('category.confirmButton')],
+
+  // Адрес сузился до настоящего: широкий шаблон означал бы попытку заполнить страницу
+  // редактирования уже существующего товара.
+  ['the create page pattern matches the real url',
+    /products\\\/new/.test(String(selectors.match(/export const CREATE_PAGE = .*/)?.[0] ?? ''))
+    && !selectors.includes('create)')],
 
   // ── Журнал ─────────────────────────────────────────────────────────────────────────────────
 
@@ -183,7 +244,7 @@ const contracts = [
 
   // Кнопка со словом «отправить» не должна выглядеть как кнопка «продолжить».
   ['the irreversible button says what it does',
-    popup.includes('«Отправить на модерацию»') || read('extension/popup.html').includes('Заполнить и отправить на модерацию')],
+    read('extension/popup.html').includes('Заполнить и перейти к шагу 2')],
 ]
 
 let failed = 0
