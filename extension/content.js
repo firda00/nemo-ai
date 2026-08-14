@@ -96,13 +96,72 @@ function findByPlaceholder(placeholders) {
   return null
 }
 
-/** Поле по плейсхолдеру, а если его нет — по подписи. Порядок важен: плейсхолдер точнее. */
-function findField(spec) {
-  if (spec.placeholders?.length) {
-    const byPlaceholder = findByPlaceholder(spec.placeholders)
-    if (byPlaceholder) return byPlaceholder
+/**
+ * Поле по плейсхолдеру, различённое по СОСЕДНЕМУ ТЕКСТУ.
+ *
+ * У обоих названий на шаге 1 плейсхолдер одинаковый — «Точное название товара». Одного его мало:
+ * взяв первый попавшийся ввод, мы положили бы русское название в узбекское поле, и карточка ушла
+ * бы с перепутанными языками. Поэтому среди подходящих по плейсхолдеру ищется тот, рядом с
+ * которым написано «на русском» или «на узбекском».
+ */
+function findByPlaceholderNear(placeholders, near) {
+  const inputs = [...document.querySelectorAll('input, textarea')].filter((input) => {
+    const placeholder = (input.getAttribute?.('placeholder') ?? '').trim().toLowerCase()
+    return placeholder && placeholders.some((one) => placeholder.startsWith(one.toLowerCase()))
+  })
+  if (!inputs.length) return null
+  if (!near) return inputs.length === 1 ? inputs[0] : null
+
+  const needle = near.toLowerCase()
+  for (const input of inputs) {
+    let node = input.parentElement
+    for (let depth = 0; depth < MAX_LABEL_DEPTH && node; depth++) {
+      // Подъём прекращается на ОБЩЕМ предке. Иначе контейнер, где лежат оба названия, содержит и
+      // «на узбекском», и «на русском» — и по нему подходит любое поле: русский текст уехал бы в
+      // узбекское, потому что оно просто стоит первым.
+      const candidatesInside = [...(node.querySelectorAll?.('input, textarea') ?? [])]
+        .filter((one) => inputs.includes(one)).length
+      if (candidatesInside > 1) break
+      if (labelText(node).toLowerCase().includes(needle)) return input
+      node = node.parentElement
+    }
   }
-  return spec.labels?.length ? findByLabel(spec.labels) : null
+  // Ни у одного из полей соседнего указания на язык нет. Гадать нельзя: пустое поле правится за
+  // минуту, а название не на том языке снимают с модерации.
+  return null
+}
+
+/**
+ * Поле по подписи, а если её нет — по плейсхолдеру рядом с нужным словом.
+ *
+ * Подпись первой: она называет поле однозначно. Плейсхолдер — запасной путь для формы, где
+ * подписи нет вовсе или она устроена не так, как мы ожидали.
+ */
+function findField(spec) {
+  if (spec.labels?.length) {
+    const byLabel = findByLabel(spec.labels)
+    if (byLabel) return byLabel
+  }
+  if (spec.placeholders?.length) {
+    const byNear = findByPlaceholderNear(spec.placeholders, spec.near)
+    if (byNear) return byNear
+    if (!spec.near) return findByPlaceholder(spec.placeholders)
+  }
+  return null
+}
+
+/**
+ * Категория уже выбрана и подтверждена.
+ *
+ * После нажатия «Принять» поле поиска категории ИСЧЕЗАЕТ, а на его месте появляется путь
+ * («Автотовары > Автозапчасти > …») и кнопка «Изменить». Проверка «есть ли поле поиска» на этом
+ * шаге давала ложный вывод «страница незнакомая» именно тогда, когда всё как раз готово.
+ *
+ * Кнопка только ИЩЕТСЯ. Расширение её не нажимает — как и любую другую.
+ */
+function categoryConfirmed() {
+  const controls = [...document.querySelectorAll('button, [role="button"]')]
+  return controls.some((control) => labelText(control).toLowerCase().startsWith('изменить'))
 }
 
 /**
@@ -221,12 +280,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // ПОРЯДОК В UZUM: сначала категория, потом всё остальное. Пока она не подтверждена кнопкой
     // «Принять», полей названий и описания на странице нет или они заблокированы.
     //
-    // Различить «категория не выбрана» и «форма изменилась» можно по самому полю категории: если
-    // оно на месте, а названий нет — дело в порядке действий, и владельцу надо сказать одну
-    // короткую фразу, а не отправлять его искать поломку.
+    // Готовность определяется ДВУМЯ признаками с разных сторон, и любого достаточно:
+    //   • видно любое из обязательных полей — значит форма уже открыта;
+    //   • в блоке категории есть кнопка «Изменить» — значит категория подтверждена.
+    //
+    // ЧЕСТНО ПРО ВТОРОЙ ПРИЗНАК: проверено мутацией — его снятие тесты не роняет. В настоящем
+    // Uzum поле поиска категории после «Принять» ИСЧЕЗАЕТ, поэтому ветка «поля не нашли» и так
+    // приходит к ответу «форма изменилась». Признак оставлен на случай вёрстки, где поиск и
+    // «Изменить» видны одновременно: тогда без него совет звучал бы как «нажмите Принять»
+    // человеку, который её уже нажал.
+    //
+    // Настоящей причиной отказа было другое — названия не находились по подписям. Их лечит поиск
+    // по общему плейсхолдеру «Точное название товара», различённый соседним словом о языке.
     const required = (fields ?? []).filter((field) => field.required)
     const anyRequiredReady = required.some((field) => fieldReady(findField(field)))
-    if (required.length && !anyRequiredReady) {
+    if (required.length && !anyRequiredReady && !categoryConfirmed()) {
+      // Категория ещё не выбрана — поле поиска на месте. Это очередь действий, а не поломка.
       const categoryField = category ? findField(category) : null
       sendResponse({ ok: false, reason: categoryField ? 'category_first' : 'form_changed' })
       return

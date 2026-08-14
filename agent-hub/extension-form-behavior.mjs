@@ -87,15 +87,21 @@ function makeDocument(root_) {
 const field = (label, control) => el('div', { children: [el('label', { text: label }), control] })
 
 function load(documentStub) {
-  const chromeStub = { runtime: { onMessage: { addListener() {} } } }
+  // Обработчик сообщений ЛОВИТСЯ, а не выбрасывается: решение «форма готова / сначала категория /
+  // страница незнакомая» живёт именно в нём, и проверять его снаружи по кусочкам бессмысленно.
+  let handler = null
+  const chromeStub = { runtime: { onMessage: { addListener(fn) { handler = fn } } } }
   const windowStub = { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) }
   class HTMLInputElement { }
   class HTMLTextAreaElement { }
   const factory = new Function(
     'chrome', 'document', 'window', 'HTMLInputElement', 'HTMLTextAreaElement',
-    `${source}\nreturn { findByLabel, findByPlaceholder, findField, fieldReady, fillFields, setRichValue }`,
+    `${source}\nreturn { findByLabel, findByPlaceholder, findField, fieldReady, categoryConfirmed, fillFields, setRichValue }`,
   )
-  return factory(chromeStub, documentStub, windowStub, HTMLInputElement, HTMLTextAreaElement)
+  const api = factory(chromeStub, documentStub, windowStub, HTMLInputElement, HTMLTextAreaElement)
+  /** Один прогон обработчика — так же, как его зовёт service worker. */
+  api.fill = (message) => new Promise((resolve) => handler(message, null, resolve))
+  return api
 }
 
 /* ─────────────────────────────────  Форма как её описали  ───────────────────────────────── */
@@ -162,6 +168,53 @@ const groupedApi = load(makeDocument(grouped))
 assert.equal(groupedApi.findByLabel(['Название товара на русском']), ruInGroup,
   'из общей обёртки выбрано ИМЕННО русское поле, а не первое подряд')
 assert.equal(groupedApi.findByLabel(['Название товара на узбекском']), uzInGroup)
+
+// --- Категория подтверждена: поле поиска исчезло, форма открыта -----------------------------------
+// Живое поведение Uzum: после «Принять» поле поиска категории ИСЧЕЗАЕТ, на его месте появляются
+// путь и кнопка «Изменить», а поля названий открываются. Проверка «есть ли поле поиска» на этом
+// шаге объявляла страницу незнакомой ровно тогда, когда всё как раз готово.
+//
+// Плейсхолдер у обоих названий ОДИН И ТОТ ЖЕ, поэтому различает их соседнее слово.
+
+const confirmedUz = el('input', { attrs: { id: 'c-uz', placeholder: 'Точное название товара' } })
+const confirmedRu = el('input', { attrs: { id: 'c-ru', placeholder: 'Точное название товара' } })
+const confirmed = el('div', {
+  children: [
+    el('div', { children: [text('Автотовары > Автозапчасти > Брелоки'), el('button', { text: 'Изменить' })] }),
+    el('div', { children: [text('Название товара на узбекском *'), confirmedUz] }),
+    el('div', { children: [text('Название товара на русском *'), confirmedRu] }),
+  ],
+})
+const confirmedApi = load(makeDocument(confirmed))
+
+assert.equal(confirmedApi.categoryConfirmed(), true, 'кнопка «Изменить» — признак подтверждённой полки')
+assert.equal(api.categoryConfirmed(), false, 'на форме до подтверждения такой кнопки нет')
+
+// Подписи здесь текстовые узлы рядом с полем — тот же путь, что и раньше.
+assert.equal(confirmedApi.findField({ labels: ['Название товара на русском'], placeholders: ['Точное название товара'], near: 'на русском' }), confirmedRu)
+assert.equal(confirmedApi.findField({ labels: ['Название товара на узбекском'], placeholders: ['Точное название товара'], near: 'на узбекском' }), confirmedUz)
+
+// А теперь ГЛАВНОЕ: подписей нет вовсе, остались только одинаковые плейсхолдеры и слово рядом.
+const bareUz = el('input', { attrs: { id: 'b-uz', placeholder: 'Точное название товара' } })
+const bareRu = el('input', { attrs: { id: 'b-ru', placeholder: 'Точное название товара' } })
+const bare = el('div', {
+  children: [
+    el('div', { children: [text('Заполните на узбекском'), bareUz] }),
+    el('div', { children: [text('Заполните на русском'), bareRu] }),
+  ],
+})
+const bareApi = load(makeDocument(bare))
+assert.equal(bareApi.findField({ placeholders: ['Точное название товара'], near: 'на русском' }), bareRu,
+  'из двух одинаковых плейсхолдеров выбран русский по соседнему слову')
+assert.equal(bareApi.findField({ placeholders: ['Точное название товара'], near: 'на узбекском' }), bareUz)
+
+// И если языка рядом нет — НЕ ГАДАЕМ. Пустое поле правится за минуту, название не на том языке
+// снимают с модерации.
+const twinsA = el('input', { attrs: { id: 't-a', placeholder: 'Точное название товара' } })
+const twinsB = el('input', { attrs: { id: 't-b', placeholder: 'Точное название товара' } })
+const twinsApi = load(makeDocument(el('div', { children: [twinsA, twinsB] })))
+assert.equal(twinsApi.findField({ placeholders: ['Точное название товара'], near: 'на русском' }), null,
+  'два одинаковых поля без указания языка — это отказ, а не первое попавшееся')
 
 // --- Плейсхолдер — это не подпись ----------------------------------------------------------------
 // У поля категории подписи нет вовсе: «Название категории или товара» живёт атрибутом ВНУТРИ поля.
@@ -251,11 +304,11 @@ assert.deepEqual(exact.filled, ['titleRu'])
 
 // --- Пропавшее поле называется по имени ------------------------------------------------------------
 
-const renamed = api.fillFields(
+const renamedLabel = api.fillFields(
   [{ key: 'titleRu', labels: ['Наименование товара'], limit: 90, required: true }],
   { titleRu: 'Брелок' },
 )
-assert.deepEqual(renamed.notFound, ['titleRu'], '«не сработало» без имени поля не чинится')
+assert.deepEqual(renamedLabel.notFound, ['titleRu'], '«не сработало» без имени поля не чинится')
 
 // Необязательное пропавшее поле молчит: не всякая форма несёт все поля сразу.
 const optional = api.fillFields(
@@ -264,4 +317,59 @@ const optional = api.fillFields(
 )
 assert.deepEqual(optional.notFound, [])
 
-console.log('[OK] Extension form behaviour: 38 assertions')
+// --- Решение «готова ли форма» — через сам обработчик ---------------------------------------------
+// Это та самая ветка, где расширение объявляло страницу незнакомой ровно тогда, когда всё готово.
+// Проверять её по кусочкам бесполезно: ошибка была в сочетании условий, а не в отдельной функции.
+
+const TITLES = [
+  { key: 'titleUz', labels: ['Название товара на узбекском'], placeholders: ['Точное название товара'], near: 'на узбекском', limit: 90, required: true },
+  { key: 'titleRu', labels: ['Название товара на русском'], placeholders: ['Точное название товара'], near: 'на русском', limit: 90, required: true },
+]
+const CATEGORY_SPEC_FULL = { placeholders: ['Название категории или товара'], labels: ['Категория'] }
+const DRAFT = { titleRu: 'Антистресс-брелок', titleUz: 'Antistress brelok', category: 'Брелоки' }
+
+// Категория подтверждена: поля названий открыты, поля поиска больше нет.
+const afterConfirm = await confirmedApi.fill({
+  type: 'nemo:fill', draft: DRAFT, fields: TITLES, category: CATEGORY_SPEC_FULL, stopSigns: [],
+})
+assert.equal(afterConfirm.ok, true, 'подтверждённая категория — это ГОТОВАЯ форма, а не незнакомая страница')
+assert.deepEqual(afterConfirm.filled.sort(), ['titleRu', 'titleUz'])
+assert.equal(confirmedRu.value, 'Антистресс-брелок')
+assert.equal(confirmedUz.value, 'Antistress brelok')
+assert.equal(afterConfirm.categoryTyped, false, 'подтверждённую полку не переписываем')
+
+// Категория ещё не выбрана: поле поиска на месте, названий нет. Это очередь действий.
+const beforeConfirmApi = load(makeDocument(el('div', {
+  children: [field('Категория', el('input', { attrs: { placeholder: 'Название категории или товара' } }))],
+})))
+const beforeConfirm = await beforeConfirmApi.fill({
+  type: 'nemo:fill', draft: DRAFT, fields: TITLES, category: CATEGORY_SPEC_FULL, stopSigns: [],
+})
+assert.equal(beforeConfirm.ok, false)
+assert.equal(beforeConfirm.reason, 'category_first', 'человеку говорят про «Принять», а не про поломку')
+
+// Категория ПОДТВЕРЖДЕНА, но полей мы не нашли — например, Uzum переименовал подписи.
+//
+// Здесь и работает признак «Изменить». Без него совет был бы «нажмите Принять» человеку, который
+// её уже нажал: он ходил бы по кругу и винил себя. С ним ответ честный — форму мы не узнали.
+const renamedApi = load(makeDocument(el('div', {
+  children: [
+    el('div', { children: [text('Автотовары > Брелоки'), el('button', { text: 'Изменить' })] }),
+    el('div', { children: [text('Наименование по-русски'), el('input', { attrs: { placeholder: 'Введите' } })] }),
+  ],
+})))
+const renamed = await renamedApi.fill({
+  type: 'nemo:fill', draft: DRAFT, fields: TITLES, category: CATEGORY_SPEC_FULL, stopSigns: [],
+})
+assert.equal(renamed.ok, false)
+assert.equal(renamed.reason, 'form_changed', 'подтверждённую категорию не предлагают подтвердить ещё раз')
+assert.deepEqual(renamed.notFound.sort(), ['titleRu', 'titleUz'])
+
+// Ни полей, ни поиска категории, ни «Изменить» — вот это действительно незнакомая страница.
+const strangerApi = load(makeDocument(el('div', { children: [text('Совсем другая страница')] })))
+const stranger = await strangerApi.fill({
+  type: 'nemo:fill', draft: DRAFT, fields: TITLES, category: CATEGORY_SPEC_FULL, stopSigns: [],
+})
+assert.equal(stranger.reason, 'form_changed')
+
+console.log('[OK] Extension form behaviour: 55 assertions')

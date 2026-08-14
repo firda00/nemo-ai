@@ -200,7 +200,17 @@ const contracts = [
   ['an unconfirmed category is explained, not reported as a broken form',
     content.includes('function fieldReady(control)')
     && content.includes("reason: categoryField ? 'category_first' : 'form_changed'")
+    && content.includes('function categoryConfirmed()')
     && messages.includes('category_first')],
+
+  // После «Принять» поле поиска категории исчезает, а названия открываются с ОДНИМ И ТЕМ ЖЕ
+  // плейсхолдером на оба языка. Различает их соседнее слово; подъём прекращается на общем предке,
+  // иначе контейнер с обоими полями подходит любому, и русский текст уезжает в узбекское поле.
+  ['twin placeholders are told apart by the language beside them',
+    content.includes('function findByPlaceholderNear(placeholders, near)')
+    && content.includes('if (candidatesInside > 1) break')
+    && selectors.includes("near: 'на русском'")
+    && selectors.includes("near: 'на узбекском'")],
 
   ['captcha frames are named as stop signs',
     selectors.includes('iframe[src*="captcha"]') && selectors.includes('[class*="captcha" i]')],
