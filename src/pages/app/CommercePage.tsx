@@ -10,6 +10,7 @@ import { payloadOf, paywallFrom, type Paywall } from '../../lib/paywall'
 import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
+import { extensionState, linkExtension, unlinkExtension, type ExtensionState } from '../../lib/extensionLink'
 import { useI18n } from '../../i18n'
 
 type Catalog = { id: string; name: string; source: string; external_shop_id: string | null; status: string; last_synced_at: string | null; last_sync_error: string | null }
@@ -61,6 +62,9 @@ export default function CommercePage() {
   // Режим отправки. Значение приходит с сервера вместе со статусом — тумблер не должен показывать
   // «включено» просто потому, что так задумано: в базе может быть иначе.
   const [autoSubmit, setAutoSubmitState] = useState(true)
+  // Расширение: стоит ли и жива ли связь. Спрашивается у него самого — по одному лишь флагу в базе
+  // сайт показывал бы «связано» после того, как расширение снесли.
+  const [extension, setExtension] = useState<ExtensionState>('absent')
   const [catalogs, setCatalogs] = useState<Catalog[]>([])
   const [catalogId, setCatalogId] = useState('')
   const [batches, setBatches] = useState<Batch[]>([])
@@ -78,7 +82,7 @@ export default function CommercePage() {
   const [categoryLabels, setCategoryLabels] = useState<Record<string, CategoryLabel>>({})
   const [paywall, setPaywall] = useState<Paywall | null>(null)
   const [marginInput, setMarginInput] = useState('20')
-  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'discover' | 'stage' | 'autofill' | 'connect' | 'fees' | 'margin' | 'sync' | 'proposal' | 'onboard' | 'extension' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   // Одиннадцать карточек подряд — это не страница, а лента. Разложены по четырём вкладкам, но с
   // одним правилом: вкладка ПРЯЧЕТ, а тревожное прятать нельзя. Поэтому выводы и сбои синка
@@ -165,6 +169,14 @@ export default function CommercePage() {
     const timer = window.setTimeout(() => { void load() }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  // Спрашиваем само расширение, а не базу: флаг в базе показывал бы «связано» и после того, как
+  // расширение снесли. Отсутствие ответа — это «не установлено», и строка про него не покажется.
+  useEffect(() => {
+    let alive = true
+    void extensionState().then((state) => { if (alive) setExtension(state) })
+    return () => { alive = false }
+  }, [])
 
   const onboard = async () => {
     if (!supabase || busy) return
@@ -278,6 +290,31 @@ export default function CommercePage() {
     else setMessage({ ok: false, text: t('commerce.submit.failed') })
     await loadDrafts()
     return Boolean(result?.ok)
+  }
+
+  /**
+   * Связать расширение с этой сессией или отвязать.
+   *
+   * Расширению уезжает только access_token и его срок. Refresh token не передаётся: им выпускают
+   * новые сессии сколько угодно долго, и его утечка стоит дороже, чем неудобство связаться заново.
+   */
+  const toggleExtensionLink = async () => {
+    if (!supabase || busy === 'extension') return
+    setBusy('extension'); setMessage(null)
+    try {
+      if (extension === 'linked') {
+        const done = await unlinkExtension()
+        setExtension(done ? 'unlinked' : extension)
+        if (done) setMessage({ ok: true, text: t('commerce.submit.extUnlinked') })
+        return
+      }
+      const { data } = await supabase.auth.getSession()
+      const session = data.session
+      if (!session?.access_token || !session.expires_at) { setMessage({ ok: false, text: t('commerce.submit.extFailed') }); return }
+      const linked = await linkExtension({ access_token: session.access_token, expires_at: session.expires_at })
+      setExtension(linked ? 'linked' : 'unlinked')
+      setMessage({ ok: linked, text: linked ? t('commerce.submit.extDone') : t('commerce.submit.extFailed') })
+    } finally { setBusy(null) }
   }
 
   const setAutoSubmit = async (enabled: boolean) => {
@@ -668,6 +705,28 @@ export default function CommercePage() {
             <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${autoSubmit ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
           </button>
         </div>
+
+        {/* Связь с расширением. Показывается только когда расширение вообще стоит: строка
+            «установите расширение» тем, кто о нём не просил, — это реклама, а не интерфейс. */}
+        {extension !== 'absent' && (
+          <div className="mt-2 flex flex-col gap-2 rounded-xl border border-ice/10 bg-panel/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-text">{t('commerce.submit.extTitle')}</p>
+              <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
+                {extension === 'linked' ? t('commerce.submit.extLinked') : t('commerce.submit.extHint')}
+              </p>
+            </div>
+            <Button
+              variant={extension === 'linked' ? 'ghost' : 'outline'}
+              onClick={() => void toggleExtensionLink()}
+              disabled={busy === 'extension'}
+            >
+              {busy === 'extension'
+                ? t('commerce.submit.extWorking')
+                : extension === 'linked' ? t('commerce.submit.extUnlink') : t('commerce.submit.extLink')}
+            </Button>
+          </div>
+        )}
 
         <div className="mt-4">
           <CommerceListingAgent

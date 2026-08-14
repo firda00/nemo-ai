@@ -20,6 +20,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     sendResponse({ ok: false, error: 'forbidden_origin' })
     return false
   }
+  // Сайт спрашивает, стоит ли расширение и жива ли связь. Отвечаем ДО проверки типа остальных
+  // сообщений: без этого сайт не отличает «не установлено» от «установлено и отказало», и
+  // показывает «установите расширение» тому, у кого оно стоит.
+  if (message?.type === 'nemo:ping') {
+    readSession().then((session) => sendResponse({ ok: true, linked: Boolean(session) }))
+    return true
+  }
   if (message?.type === 'nemo:unlink') {
     forgetSession().then(() => sendResponse({ ok: true }))
     return true

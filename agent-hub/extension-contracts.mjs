@@ -18,6 +18,8 @@ const popup = read('extension/popup.js')
 const readme = read('extension/README.md')
 const control = read('supabase/functions/commerce-control/index.ts')
 const migration = read('supabase/migrations/20260813160000_extension_submit.sql')
+const link = read('src/lib/extensionLink.ts')
+const page = read('src/pages/app/CommercePage.tsx')
 
 const NEMO_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
 
@@ -68,6 +70,38 @@ const contracts = [
   // Протухшая сессия — это «свяжитесь заново», а не «нет прав». Токен забывается сразу.
   ['an expired session is dropped, not retried',
     nemo.includes('if (response.status === 401)') && nemo.includes('await forgetSession()')],
+
+  // ── Связь сайта с расширением ──────────────────────────────────────────────────────────────
+
+  // Без ответа на ping сайт не отличает «не установлено» от «установлено и отказало» и показывает
+  // «поставьте расширение» тому, у кого оно стоит.
+  ['the extension answers whether it is installed and linked',
+    background.includes("message?.type === 'nemo:ping'")
+    && background.includes('sendResponse({ ok: true, linked: Boolean(session) })')
+    && link.includes("ask({ type: 'nemo:ping' })")],
+
+  // Refresh token выпускает новые сессии сколько угодно долго. Его утечка стоит дороже, чем
+  // неудобство связаться заново раз в час.
+  ['only the short-lived token crosses to the extension',
+    link.includes('session: { access_token: session.access_token, expires_at: session.expires_at }')
+    && !link.includes('refresh_token')
+    && !page.includes('refresh_token')],
+
+  // Идентификатор распакованного расширения выводится из пути к папке: перенесли — сменился.
+  // Зашитое намертво значение молча перестало бы находиться.
+  ['the extension id is configurable, not welded in',
+    link.includes('import.meta.env.VITE_NEMO_EXTENSION_ID')],
+
+  // Флаг в базе показывал бы «связано» и после того, как расширение снесли.
+  ['the site asks the extension itself, not the database',
+    page.includes('void extensionState().then(')
+    && !page.includes('pilot?.extension_linked')],
+
+  // Chrome не бросает исключение на неизвестный идентификатор — он выставляет lastError и зовёт
+  // колбэк. Не прочитать его значит получить «Unchecked runtime.lastError» на каждой загрузке.
+  ['a missing extension is handled, not thrown',
+    link.includes('chromeRuntime.lastError')
+    && link.includes('window.setTimeout(() => finish(null), 3000)')],
 
   // ── Чего расширение не делает ──────────────────────────────────────────────────────────────
 
