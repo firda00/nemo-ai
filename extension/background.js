@@ -4,7 +4,7 @@
 // у него нет ни доступа к Nemo, ни права решить, что карточку пора отправлять.
 
 import { callNemo, forgetSession, nextTask, readSession, reportResult, saveSession } from './nemo.js'
-import { CATEGORY, CREATE_PAGE, FIELDS, STEP_BUTTON, STOP_SIGNS, missingSelectors, selectorsReady } from './selectors.js'
+import { CATEGORY, CREATE_PAGE, FIELDS, STOP_SIGNS, missingSelectors, selectorsReady } from './selectors.js'
 
 /**
  * Сессия приезжает из ОТКРЫТОЙ ВКЛАДКИ NEMO, а не из формы входа в расширении.
@@ -68,7 +68,7 @@ async function findCreateTab() {
  * Каждая ветка заканчивается записью в журнал — включая те, где до Uzum дело не дошло. Попытка,
  * о которой ничего не осталось, через неделю превращается в «оно почему-то не работает».
  */
-export async function runOnce({ submit }) {
+export async function runOnce() {
   if (!await readSession()) return { ok: false, reason: 'not_linked' }
 
   // Разметка формы пуста — заполнять нечего и угадывать нельзя.
@@ -94,11 +94,7 @@ export async function runOnce({ submit }) {
     draft: task.task,
     fields: FIELDS,
     category: CATEGORY,
-    stepButton: STEP_BUTTON,
     stopSigns: STOP_SIGNS,
-    // На шаге 1 нет кнопки «Отправить на модерацию» — там «Сохранить и продолжить», и за ней ещё
-    // два шага, которых мы не видели. Поэтому здесь ПЕРЕХОД к следующему шагу, а не отправка.
-    advance: submit,
   }).catch(() => null)
 
   if (!response) {
@@ -110,34 +106,37 @@ export async function runOnce({ submit }) {
   }
 
   if (!response.ok) {
+    // Журнал ведётся по-русски и подробно — его читают при разборе. Владельцу окно расширения
+    // покажет то же самое, но короткой фразой на его языке: это разные читатели.
+    const detail = response.detail
+      ?? (response.tooLong?.length ? `не влезает в лимиты Uzum — ${response.tooLong.join('; ')}` : null)
+      ?? (response.notFound?.length ? `поля не найдены: ${response.notFound.join(', ')}` : null)
+      ?? (response.reason === 'category_first' ? 'категория ещё не подтверждена — поля формы заблокированы' : null)
     await reportResult({
       draftId: task.task.id,
       // Остановка ради человека — это отказ, а не поломка: карточка цела, решение за вами.
-      status: response.reason === 'human_needed' ? 'refused' : 'failed',
+      status: response.reason === 'human_needed' || response.reason === 'category_first' ? 'refused' : 'failed',
       reason: response.reason,
-      message: response.detail,
+      message: detail,
     })
-    return { ok: false, reason: response.reason, detail: response.detail }
+    return { ok: false, reason: response.reason, tooLong: response.tooLong, notFound: response.notFound }
   }
 
-  // Успехом это НЕ считается. Шаг 1 из трёх — половина дела: товар ещё не в каталоге и на
-  // модерацию не ушёл. Записать 'sent' здесь значило бы объявить карточку отправленной и
+  // Успехом это НЕ считается. Заполненный шаг 1 из трёх — половина дела: товар ещё не в каталоге
+  // и на модерацию не ушёл. Записать 'sent' здесь значило бы объявить карточку отправленной и
   // потерять её из виду — она бы больше не попала в задания расширения.
-  // Пропущенные поля называются в журнале, а не теряются. Карточка без описания и запись
+  //
+  // Пропущенные поля называются в журнале, а не теряются: карточка без описания и запись
   // «заполнено» рядом — это два дня поисков виноватого.
-  const missed = response.skipped?.length ? ` Не найдены и остались пустыми: ${response.skipped.join(', ')}.` : ''
+  const missed = response.skipped?.length ? ` Остались пустыми: ${response.skipped.join(', ')}.` : ''
   await reportResult({
     draftId: task.task.id,
     status: 'refused',
     reason: 'human_needed',
-    message: (response.advanced
-      ? 'Шаг 1 заполнен, перешли ко второму. Шаги 2 и 3 Nemo ещё не знает — доведите карточку сами.'
-      : response.categoryTyped
-        ? 'Поля заполнены, категория введена. Выберите полку из списка, нажмите «Принять» и продолжите сами.'
-        : 'Поля заполнены. Выберите категорию и продолжите сами.') + missed,
+    message: 'Карточка заполнена расширением. Проверьте текст и продолжайте на Uzum сами.' + missed,
   })
   return {
-    ok: true, advanced: Boolean(response.advanced),
+    ok: true,
     categoryTyped: Boolean(response.categoryTyped),
     filled: response.filled, skipped: response.skipped ?? [],
   }
@@ -145,7 +144,7 @@ export async function runOnce({ submit }) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'nemo:run') {
-    runOnce({ submit: Boolean(message.submit) }).then(sendResponse)
+    runOnce().then(sendResponse)
     return true
   }
   if (message?.type === 'nemo:state') {

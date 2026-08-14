@@ -1,68 +1,97 @@
-// Окно расширения. Показывает состояние и запускает один перенос.
+// Окно расширения. Одна кнопка и одна фраза о том, что происходит.
 //
-// Кнопки две, и это не украшение. «Заполнить» ничего не отправляет — им пользуются, пока доверие
-// к переносу не набрано. «Заполнить и отправить» делает необратимое, и потому названа полностью:
-// кнопка со словом «отправить» не должна выглядеть как кнопка «продолжить».
+// Всё, что владелец здесь читает, приходит из messages.js на его языке. Ни одного технического
+// слова: расширение говорит, какой у него следующий шаг, а не какая у нас внутренняя причина.
 
-const state = document.getElementById('state')
-const result = document.getElementById('result')
-const fill = document.getElementById('fill')
-const send = document.getElementById('send')
+import { fieldList, pickLang, say } from './messages.js'
 
-const REASONS = {
-  not_linked: 'Нет связи с Nemo. Откройте Nemo, войдите как владелец и нажмите «Связать с расширением».',
-  selectors_missing: 'Разметка формы кабинета не заполнена — расширение не станет угадывать поля.',
-  no_create_tab: 'Откройте в кабинете Uzum страницу создания товара: расширение работает на ней.',
-  no_response: 'Страница кабинета не ответила. Обновите её и попробуйте снова.',
-  human_needed: 'Нужен человек: на странице появился экран, который расширение не трогает.',
-  too_long: 'Текст не влезает в лимиты Uzum. Сократите его в Nemo — обрезать посреди слова расширение не станет.',
-  form_changed: 'Форма кабинета изменилась — разметку надо обновить.',
-  network: 'Nemo сейчас недоступен.',
+const nodes = {
+  title: document.getElementById('title'),
+  intro: document.getElementById('intro'),
+  state: document.getElementById('state'),
+  fill: document.getElementById('fill'),
+  result: document.getElementById('result'),
+}
+
+let lang = pickLang()
+
+async function loadLang() {
+  const stored = await chrome.storage.local.get('lang')
+  lang = pickLang(stored?.lang)
+  for (const button of document.querySelectorAll('.lang button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.lang === lang))
+  }
 }
 
 function show(node, text, kind) {
   node.textContent = text
-  node.className = kind ? `state ${kind}` : 'state'
+  if (node === nodes.state) node.className = kind ? `state ${kind}` : 'state'
+}
+
+/** Статические подписи. Перерисовываются при смене языка вместе со всем остальным. */
+function paintChrome() {
+  nodes.title.textContent = say('title', lang)
+  nodes.intro.textContent = say('intro', lang)
+  nodes.fill.textContent = say('fill', lang)
 }
 
 async function refresh() {
+  paintChrome()
   const info = await chrome.runtime.sendMessage({ type: 'nemo:state' }).catch(() => null)
-  if (!info) { show(state, 'Расширение не отвечает.', 'bad'); return }
+  if (!info) { show(nodes.state, say('no_response', lang), 'bad'); nodes.fill.disabled = true; return }
 
-  const blocked = !info.linked || !info.selectorsReady
-  fill.disabled = blocked
-  send.disabled = blocked
-
-  if (!info.linked) { show(state, REASONS.not_linked, 'bad'); return }
-  if (!info.selectorsReady) {
-    show(state, `${REASONS.selectors_missing} Не размечены: ${info.missingSelectors.join(', ')}.`, 'bad')
-    return
-  }
-  show(state, 'Связь с Nemo есть. Откройте страницу создания товара в кабинете Uzum.', 'ok')
+  if (!info.linked) { show(nodes.state, say('not_linked', lang), 'bad'); nodes.fill.disabled = true; return }
+  if (!info.selectorsReady) { show(nodes.state, say('selectors_missing', lang), 'bad'); nodes.fill.disabled = true; return }
+  nodes.fill.disabled = false
+  show(nodes.state, say('ready', lang), 'ok')
 }
 
-async function run(submit) {
-  fill.disabled = true
-  send.disabled = true
-  result.textContent = 'Работаю…'
-  const answer = await chrome.runtime.sendMessage({ type: 'nemo:run', submit }).catch(() => null)
+/**
+ * Исход одного заполнения — одной фразой.
+ *
+ * Ключи полей превращаются в слова: «описание на русском», а не «descriptionRu». Список того, что
+ * осталось дописать руками, важнее самого факта успеха — по нему видно, доделана карточка или нет.
+ */
+function describe(answer) {
+  if (!answer) return say('no_response', lang)
+  if (answer.idle) return say('idle', lang)
 
-  if (!answer) result.textContent = 'Расширение не ответило.'
-  else if (answer.idle) result.textContent = 'Готовых карточек нет — отправлять нечего.'
-  else if (!answer.ok) result.textContent = answer.detail ?? REASONS[answer.reason] ?? `Не получилось: ${answer.reason}`
-  else if (answer.advanced) result.textContent = 'Шаг 1 заполнен, перешли ко второму. Доведите карточку сами: шаги 2 и 3 Nemo пока не знает.'
-  else {
-    const base = answer.categoryTyped
-      ? 'Поля заполнены, категория введена. Выберите полку из списка и нажмите «Принять».'
-      : 'Поля заполнены. Выберите категорию и продолжите.'
-    // Пропущенные поля названы прямо в окне. Иначе владелец видит «заполнено» и узнаёт про пустое
-    // описание уже на модерации.
-    result.textContent = base + (answer.skipped?.length ? ` Не найдены: ${answer.skipped.join(', ')}.` : '')
+  if (!answer.ok) {
+    if (answer.reason === 'too_long') {
+      // Числа оставляем как есть: «95 из 90» понятно без перевода и говорит, насколько сокращать.
+      const list = (answer.tooLong ?? []).map((one) => {
+        const [key, numbers] = String(one).split(':')
+        return `${fieldList([key.trim()], lang)} — ${(numbers ?? '').trim()}`
+      }).join('; ')
+      return `${say('tooLong', lang)} ${list}`
+    }
+    return say(answer.reason, lang) || say('form_changed', lang)
   }
 
+  if (answer.skipped?.length) return `${say('doneSkipped', lang)} ${fieldList(answer.skipped, lang)}`
+  return say('done', lang)
+}
+
+async function run() {
+  nodes.fill.disabled = true
+  show(nodes.result, say('working', lang))
+  const answer = await chrome.runtime.sendMessage({ type: 'nemo:run' }).catch(() => null)
+  show(nodes.result, describe(answer))
   await refresh()
 }
 
-fill.addEventListener('click', () => void run(false))
-send.addEventListener('click', () => void run(true))
-void refresh()
+nodes.fill.addEventListener('click', () => void run())
+
+for (const button of document.querySelectorAll('.lang button')) {
+  button.addEventListener('click', async () => {
+    lang = button.dataset.lang
+    // Язык — настройка вида, а не секрет: ему место в local, где он переживёт закрытие браузера.
+    // Токен доступа по-прежнему живёт только в session.
+    await chrome.storage.local.set({ lang })
+    await loadLang()
+    nodes.result.textContent = ''
+    await refresh()
+  })
+}
+
+void loadLang().then(refresh)

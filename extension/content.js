@@ -105,12 +105,17 @@ function findField(spec) {
   return spec.labels?.length ? findByLabel(spec.labels) : null
 }
 
-/** Кнопка по её надписи. Кнопок на странице много, и «Принять» — не то же, что «Сохранить». */
-function findButton(caption) {
-  const buttons = [...document.querySelectorAll('button, [role="button"], input[type="submit"]')]
-  return buttons.find((button) => labelText(button).toLowerCase() === caption.toLowerCase())
-    ?? buttons.find((button) => labelText(button).toLowerCase().startsWith(caption.toLowerCase()))
-    ?? null
+/**
+ * Готово ли поле принимать текст.
+ *
+ * В Uzum поля названий и описания ОЖИВАЮТ только после того, как категория выбрана и подтверждена
+ * кнопкой «Принять». До этого их либо нет вовсе, либо они заблокированы. Писать в заблокированное
+ * поле — это молча ничего не сделать и доложить об успехе.
+ */
+function fieldReady(control) {
+  if (!control) return false
+  if (control.disabled || control.readOnly) return false
+  return control.getAttribute?.('aria-disabled') !== 'true'
 }
 
 /**
@@ -203,7 +208,7 @@ function fillFields(fields, draft) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'nemo:fill') return undefined
 
-  const { draft, fields, category, stepButton, stopSigns, advance } = message
+  const { draft, fields, category, stopSigns } = message
   ;(async () => {
     // Проверка на «здесь нельзя» идёт ПЕРВОЙ, до единого символа в полях. Заполнить форму и
     // только потом заметить капчу — значит оставить в кабинете полуготовую карточку.
@@ -213,19 +218,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return
     }
 
+    // ПОРЯДОК В UZUM: сначала категория, потом всё остальное. Пока она не подтверждена кнопкой
+    // «Принять», полей названий и описания на странице нет или они заблокированы.
+    //
+    // Различить «категория не выбрана» и «форма изменилась» можно по самому полю категории: если
+    // оно на месте, а названий нет — дело в порядке действий, и владельцу надо сказать одну
+    // короткую фразу, а не отправлять его искать поломку.
+    const required = (fields ?? []).filter((field) => field.required)
+    const anyRequiredReady = required.some((field) => fieldReady(findField(field)))
+    if (required.length && !anyRequiredReady) {
+      const categoryField = category ? findField(category) : null
+      sendResponse({ ok: false, reason: categoryField ? 'category_first' : 'form_changed' })
+      return
+    }
+
     const report = fillFields(fields ?? [], draft ?? {})
     if (report.tooLong.length) {
-      sendResponse({
-        ok: false, reason: 'too_long', filled: report.filled,
-        detail: `не влезает в лимиты Uzum — ${report.tooLong.join('; ')}. Сократите текст в Nemo.`,
-      })
+      // Наружу уходят КЛЮЧИ полей и числа, а слова подбирает окно расширения: сообщение владельцу
+      // должно быть на его языке, а не на языке нашей структуры данных.
+      sendResponse({ ok: false, reason: 'too_long', filled: report.filled, tooLong: report.tooLong })
       return
     }
     if (report.notFound.length) {
-      sendResponse({
-        ok: false, reason: 'form_changed', filled: report.filled,
-        detail: `поля не найдены по подписям: ${report.notFound.join(', ')}`,
-      })
+      sendResponse({ ok: false, reason: 'form_changed', filled: report.filled, notFound: report.notFound })
       return
     }
 
@@ -238,25 +253,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (control) { setNativeValue(control, String(draft.category)); categoryTyped = true }
     }
 
-    if (!advance) {
-      sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped, advanced: false })
-      return
-    }
-
-    // Экран мог смениться, пока заполнялись поля. Проверка повторяется вплотную к нажатию:
-    // именно между заполнением и кликом появляется подтверждение, которого никто не ждал.
-    const lateStop = findStopSign(stopSigns ?? [])
-    if (lateStop) {
-      sendResponse({ ok: false, reason: 'human_needed', filled: report.filled, detail: `экран сменился перед переходом: ${lateStop}` })
-      return
-    }
-    const button = stepButton ? findButton(stepButton) : null
-    if (!button) {
-      sendResponse({ ok: false, reason: 'form_changed', filled: report.filled, detail: `кнопка «${stepButton}» не найдена` })
-      return
-    }
-    button.click()
-    sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped, advanced: true })
+    // РАСШИРЕНИЕ НЕ НАЖИМАЕТ НИЧЕГО. Оно заполняет поля и останавливается.
+    //
+    // Кнопка «Заполнить и перейти к шагу 2» убрана намеренно: переход делает человек, когда
+    // проверит текст глазами. Так у расширения не остаётся ни одного необратимого действия —
+    // худшее, что оно может сделать, это вписать текст не в то поле, и это видно сразу.
+    sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped })
   })()
 
   // Ответ уходит асинхронно — без этого канал закрывается раньше, чем в него что-то написали.

@@ -31,6 +31,10 @@ class Node {
     return this.ownText + this.children.map((child) => child.textContent).join('')
   }
   get isContentEditable() { return this.attrs.contenteditable === 'true' }
+  // В настоящем DOM свойства disabled и readOnly отражают одноимённые атрибуты. Макет обязан
+  // делать то же самое, иначе проверка готовности поля тестируется мимо.
+  get disabled() { return Boolean(this.attrs.disabled) }
+  get readOnly() { return Boolean(this.attrs.readonly) }
   getAttribute(name) { return this.attrs[name] ?? null }
   descendants() { return this.children.flatMap((child) => [child, ...child.descendants()]) }
   matches(selector) {
@@ -89,7 +93,7 @@ function load(documentStub) {
   class HTMLTextAreaElement { }
   const factory = new Function(
     'chrome', 'document', 'window', 'HTMLInputElement', 'HTMLTextAreaElement',
-    `${source}\nreturn { findByLabel, findByPlaceholder, findField, findButton, fillFields, setRichValue }`,
+    `${source}\nreturn { findByLabel, findByPlaceholder, findField, fieldReady, fillFields, setRichValue }`,
   )
   return factory(chromeStub, documentStub, windowStub, HTMLInputElement, HTMLTextAreaElement)
 }
@@ -192,13 +196,18 @@ assert.deepEqual(partial.filled, ['titleRu'])
 assert.deepEqual(partial.notFound, [], 'ожидаемое поле — не отказ')
 assert.deepEqual(partial.skipped, ['descriptionRu'], 'но и не молчание')
 
-// --- Кнопки различаются по надписи ---------------------------------------------------------------
-// «Принять» подтверждает категорию, «Сохранить и продолжить» уводит на следующий шаг. Перепутать
-// их значит уйти со страницы, не выбрав полку.
+// --- Поле готово принимать текст только после подтверждения категории ------------------------
+// В Uzum названия и описания оживают лишь после выбора полки и кнопки «Принять». До этого они
+// заблокированы, и запись в них — это молча ничего не сделать и доложить об успехе.
 
-assert.equal(api.findButton('Сохранить и продолжить').textContent, 'Сохранить и продолжить')
-assert.equal(api.findButton('Принять').textContent, 'Принять')
-assert.equal(api.findButton('Отправить на модерацию'), null, 'на шаге 1 такой кнопки нет')
+const locked = el('input', { attrs: { id: 'locked', disabled: true } })
+const readonly = el('input', { attrs: { id: 'ro', readonly: true } })
+const ariaLocked = el('input', { attrs: { id: 'aria', 'aria-disabled': 'true' } })
+assert.equal(api.fieldReady(titleRu), true)
+assert.equal(api.fieldReady(locked), false, 'disabled — не готово')
+assert.equal(api.fieldReady(readonly), false, 'readOnly — не готово')
+assert.equal(api.fieldReady(ariaLocked), false, 'aria-disabled — не готово')
+assert.equal(api.fieldReady(null), false, 'поля нет — тем более не готово')
 
 // --- Заполнение ---------------------------------------------------------------------------------
 
@@ -255,4 +264,4 @@ const optional = api.fillFields(
 )
 assert.deepEqual(optional.notFound, [])
 
-console.log('[OK] Extension form behaviour: 36 assertions')
+console.log('[OK] Extension form behaviour: 38 assertions')

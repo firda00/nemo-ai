@@ -17,6 +17,7 @@ const nemo = read('extension/nemo.js')
 const selectors = read('extension/selectors.js')
 const popup = read('extension/popup.js')
 const readme = read('extension/README.md')
+const messages = read('extension/messages.js')
 const control = read('supabase/functions/commerce-control/index.ts')
 const migration = read('supabase/migrations/20260813160000_extension_submit.sql')
 const link = read('src/lib/extensionLink.ts')
@@ -193,17 +194,21 @@ const contracts = [
   ['the stop check runs before anything is typed',
     content.indexOf('findStopSign(stopSigns ?? [])') < content.indexOf('fillFields(fields ?? []')],
 
-  // Между заполнением и кликом появляется подтверждение, которого никто не ждал.
-  ['the stop check runs again right before the irreversible click',
-    (content.match(/findStopSign\(stopSigns \?\? \[\]\)/g) ?? []).length >= 2
-    && content.indexOf('lateStop') < content.indexOf('button.click()')],
+  // Порядок в Uzum: пока категория не подтверждена кнопкой «Принять», полей названий и описания
+  // на странице нет или они заблокированы. Это не поломка формы, а очередь действий, и сказать об
+  // этом надо одной фразой, а не отправлять владельца искать сломанное поле.
+  ['an unconfirmed category is explained, not reported as a broken form',
+    content.includes('function fieldReady(control)')
+    && content.includes("reason: categoryField ? 'category_first' : 'form_changed'")
+    && messages.includes('category_first')],
 
   ['captcha frames are named as stop signs',
     selectors.includes('iframe[src*="captcha"]') && selectors.includes('[class*="captcha" i]')],
 
-  // Остановка ради человека — отказ, а не поломка: карточка цела, решение за владельцем.
+  // Остановка ради человека — отказ, а не поломка: карточка цела, решение за владельцем. То же и
+  // с неподтверждённой категорией: владелец просто ещё не нажал «Принять».
   ['a human handover is recorded as a refusal',
-    background.includes("response.reason === 'human_needed' ? 'refused' : 'failed'")],
+    background.includes("response.reason === 'human_needed' || response.reason === 'category_first' ? 'refused' : 'failed'")],
 
   // ── Разметка формы ─────────────────────────────────────────────────────────────────────────
 
@@ -272,8 +277,10 @@ const contracts = [
 
   // На шаге 1 кнопки «Отправить на модерацию» не существует — там «Сохранить и продолжить», и за
   // ней ещё два шага, которых мы не видели.
-  ['the wizard step button is not mistaken for moderation submit',
-    selectors.includes("export const STEP_BUTTON = 'Сохранить и продолжить'")
+  ['the extension clicks nothing at all',
+    !/.click()/.test(content)
+    && !content.includes('findButton')
+    && !selectors.includes('STEP_BUTTON')
     && !content.includes('Отправить на модерацию')],
 
   // Шаг 1 из трёх — половина дела: товар ещё не в каталоге. Записать 'sent' здесь значило бы
@@ -322,8 +329,25 @@ const contracts = [
     && readme.includes('правилам продавца Uzum')],
 
   // Кнопка со словом «отправить» не должна выглядеть как кнопка «продолжить».
-  ['the irreversible button says what it does',
-    read('extension/popup.html').includes('Заполнить и перейти к шагу 2')],
+  // Вторая кнопка означала бы выбор, которого у владельца нет: переход по шагам он делает сам.
+  ['the popup offers exactly one button',
+    (read('extension/popup.html').match(/<button[^>]*id="/g) ?? []).length === 1
+    && !read('extension/popup.html').includes('перейти к шагу')],
+
+  // Ни одной системной фразы на экране у продавца: он читает свой следующий шаг, а не нашу
+  // внутреннюю причину.
+  ['the owner never reads our internal wording',
+    // Комментарии вычищены: слово «кнопка» стоит в объяснении наверху файла, и поиск по нему
+    // ловил бы собственное описание вместо строки на экране.
+    !/поля не найдены|кнопка «/.test(stripComments(popup))
+    && messages.includes('LANGS = [')
+    && messages.includes("ru:") && messages.includes("uz:")],
+
+  // Ключи полей в сообщении владельцу — это тот же технический мусор, что и селекторы.
+  ['field keys are spoken as words',
+    messages.includes('const FIELD_NAMES')
+    && messages.includes('export function fieldList')
+    && popup.includes('fieldList(answer.skipped, lang)')],
 ]
 
 let failed = 0
