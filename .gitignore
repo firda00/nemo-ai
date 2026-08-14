@@ -43,3 +43,9 @@ agent-hub/artifacts/
 # gstack worktrees — a nested checkout, never part of the repo
 .claude/worktrees/
 agent-hub/artifacts/
+
+# Доступы к серверу. Файл лежит в отслеживаемой папке docs/, и от публикации его спасало
+# только то, что никто не сделал `git add docs/`. Одной невнимательной команды достаточно,
+# чтобы логин и пароль от боевого сервера оказались в открытом репозитории навсегда —
+# история git не забывает, и удалить это потом можно только переписыванием всей ветки.
+docs/SERVER_SSH_ACCESS_RU.md
