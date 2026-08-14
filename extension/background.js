@@ -4,7 +4,7 @@
 // у него нет ни доступа к Nemo, ни права решить, что карточку пора отправлять.
 
 import { callNemo, forgetSession, nextTask, readSession, reportResult, saveSession } from './nemo.js'
-import { CATEGORY, CREATE_PAGE, FIELDS, STOP_SIGNS, missingSelectors, selectorsReady } from './selectors.js'
+import { CATEGORY_HINT, CREATE_PAGE, STOP_SIGNS } from './selectors.js'
 
 /**
  * Сессия приезжает из ОТКРЫТОЙ ВКЛАДКИ NEMO, а не из формы входа в расширении.
@@ -71,11 +71,6 @@ async function findCreateTab() {
 export async function runOnce() {
   if (!await readSession()) return { ok: false, reason: 'not_linked' }
 
-  // Разметка формы пуста — заполнять нечего и угадывать нельзя.
-  if (!selectorsReady()) {
-    return { ok: false, reason: 'selectors_missing', detail: `не размечены поля: ${missingSelectors().join(', ')}` }
-  }
-
   const task = await nextTask()
   if (!task.ok) return { ok: false, reason: task.error }
   if (!task.task) return { ok: true, idle: true }
@@ -92,9 +87,8 @@ export async function runOnce() {
   const response = await chrome.tabs.sendMessage(tab.id, {
     type: 'nemo:fill',
     draft: task.task,
-    fields: FIELDS,
-    category: CATEGORY,
     stopSigns: STOP_SIGNS,
+    categoryHint: CATEGORY_HINT,
   }).catch(() => null)
 
   if (!response) {
@@ -154,8 +148,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({
         linked: Boolean(session),
         autoExtensionSubmit: settings.ok ? settings.data?.pilot?.auto_extension_submit === true : null,
-        selectorsReady: selectorsReady(),
-        missingSelectors: missingSelectors(),
       })
     })()
     return true

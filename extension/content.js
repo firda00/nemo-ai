@@ -1,333 +1,274 @@
-// Заполнение формы в кабинете Uzum.
+// Заполнение формы Uzum по СМЫСЛУ поля, а не по пути к нему в разметке.
 //
 // Скрипт НИЧЕГО не делает при загрузке страницы. Он ждёт сообщения от service worker — то есть
-// вашего нажатия или включённого вами тумблера. Расширение, которое начинает работать само,
-// стоит открыть кабинет, однажды заполнит форму, которую вы открыли посмотреть.
+// вашего нажатия. Расширение, которое начинает работать само, однажды заполнит форму, открытую
+// посмотреть.
 //
-// Поля ищутся ПО ПОДПИСЯМ, а не по классам: `.css-1x2y3z` меняется при каждом релизе Uzum и
-// ломается молча, а «Название товара на русском» держится за смысл поля.
+// КАК ЭТО УСТРОЕНО. Мы не ищем поле по подписи над ним и не ходим по родителям к кнопкам. Мы
+// собираем все доступные поля ввода, читаем вокруг каждого его собственный контекст — плейсхолдер,
+// aria-label, имя, текст его карточки — и сопоставляем со смыслом: «название» + «русский» это
+// title_ru, «описание» + «узбекский» это description_uz. Вёрстка может меняться как угодно, пока
+// у полей остаются человеческие слова рядом.
+//
+// ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Ни одного `parentElement.children[2]`, ни одной проверки «а на месте ли
+// поле категории». Форма Uzum трёхшаговая и перестраивается на ходу: поле поиска категории после
+// «Принять» исчезает, поля названий появляются. Правило, завязанное на присутствие конкретного
+// узла, ломается от каждой такой перестройки.
 
-const MAX_LABEL_DEPTH = 4
-
-/** Текст узла без внутренних переносов: подпись «Название\n товара» — это та же подпись. */
-function labelText(node) {
-  return (node.textContent ?? '').replace(/\s+/g, ' ').trim()
-}
+/* ─────────────────────────────  Контекст поля  ───────────────────────────── */
 
 /**
- * Ввод, связанный с подписью.
+ * Собственная карточка поля — наименьший предок, внутри которого НЕТ других полей ввода.
  *
- * Сначала честный путь: <label for="…">. Если разметка его не даёт — поднимаемся от подписи вверх
- * и ищем ввод рядом. Глубина ограничена: с четвёртого предка «рядом» превращается в «где-то на
- * странице», и можно принести поле соседнего блока.
+ * Это единственное отличие от наивного `el.closest('div')`, и оно решающее. В сборке Uzum
+ * ближайший div почти всегда общая обёртка блока: её текст содержит и «на русском», и «на
+ * узбекском» сразу. Взяв его, мы получили бы одинаковый контекст у обоих названий и залили бы
+ * русский текст в узбекское поле — просто потому, что оно идёт первым.
  */
-const CONTROLS = 'input, textarea, [contenteditable="true"]'
-
-/** Идёт ли узел ПОСЛЕ подписи в порядке документа. 4 — DOCUMENT_POSITION_FOLLOWING. */
-function follows(labelNode, candidate) {
-  return (labelNode.compareDocumentPosition(candidate) & 4) !== 0
-}
-
-function controlFor(labelNode) {
-  const forId = labelNode.getAttribute?.('for')
-  if (forId) {
-    const byId = document.getElementById(forId)
-    if (byId) return byId
-  }
-  let node = labelNode
-  for (let depth = 0; depth < MAX_LABEL_DEPTH && node; depth++) {
-    const candidates = [...(node.querySelectorAll?.(CONTROLS) ?? [])]
-    if (candidates.length) {
-      // Берём ПЕРВЫЙ ввод ПОСЛЕ подписи, а не первый в контейнере.
-      //
-      // Это не придирка к порядку. В вёрстке «подпись, поле, подпись, поле» обе подписи лежат в
-      // одной обёртке, и первый ввод контейнера принадлежит СОСЕДНЕЙ подписи. Так русское
-      // название уезжало в узбекское поле — карточка с перепутанными языками, которую снимают
-      // с модерации, а причину ищут в переводчике.
-      const after = candidates.find((candidate) => follows(labelNode, candidate))
-      // Ничего после подписи нет — значит поле стоит перед ней; такая вёрстка тоже встречается.
-      return after ?? candidates[0]
-    }
+function ownCard(el) {
+  let node = el.parentElement
+  let best = null
+  for (let depth = 0; depth < 6 && node; depth++) {
+    const others = [...node.querySelectorAll(INPUT_SELECTOR)].filter((one) => one !== el)
+    if (others.length) break
+    best = node
     node = node.parentElement
   }
-  return null
+  return best
+}
+
+const INPUT_SELECTOR = 'input:not([type="hidden"]), textarea, [contenteditable="true"]'
+
+/** Всё, что человек видит рядом с полем, одной строкой в нижнем регистре. */
+function contextOf(el) {
+  const card = ownCard(el)
+  const parts = [
+    el.getAttribute?.('placeholder') ?? '',
+    el.getAttribute?.('aria-label') ?? '',
+    el.getAttribute?.('name') ?? '',
+    el.getAttribute?.('id') ?? '',
+    card ? (card.innerText ?? card.textContent ?? '') : '',
+  ]
+  return parts.join(' ').replace(/\s+/g, ' ').toLowerCase()
+}
+
+/* ─────────────────────────────  Смыслы  ───────────────────────────── */
+
+/**
+ * Признаки полей. Каждый — набор слов, которые ОБЯЗАНЫ встретиться, и набор, которого быть не
+ * должно.
+ *
+ * ЯЗЫК УЗНАЁТСЯ ПО КОРНЮ СЛОВА, А НЕ ПО ДВУМ БУКВАМ. Напрашивалось `ctx.includes('uz')` —
+ * и это была бы худшая ошибка во всём файле: мы работаем на сайте с названием Uzum, где «uz»
+ * встречается в адресе, шапке, подвале и половине надписей. Такое правило считало бы узбекским
+ * КАЖДОЕ поле формы. По той же причине нет и голого 'ru': он сидит внутри «структура», «группа»,
+ * «рублей».
+ */
+const RU = ['русск', 'по-русски', 'rus tilida']
+const UZ = ['узбекск', 'o‘zbek', "o'zbek", 'uzbek', 'oʻzbek', 'o`zbek']
+const NAME = ['название', 'наименование', 'точное название', 'nomi', 'nomlanishi']
+const DESC = ['описание', 'tavsif', 'ta’rif', "ta'rif"]
+// Краткое описание — отдельное поле на 390 знаков. Наше описание туда не влезет и будет обрезано
+// площадкой посреди мысли, поэтому такие поля исключаются, а не заполняются «чем есть».
+const SHORT = ['кратк', 'qisqa']
+
+const TARGETS = [
+  { key: 'titleRu', any: NAME, and: RU, not: [...UZ, ...DESC], limit: 90 },
+  { key: 'titleUz', any: NAME, and: UZ, not: [...RU, ...DESC], limit: 90 },
+  { key: 'descriptionRu', any: DESC, and: RU, not: [...UZ, ...SHORT], limit: 28_000, rich: true },
+  { key: 'descriptionUz', any: DESC, and: UZ, not: [...RU, ...SHORT], limit: 28_000, rich: true },
+]
+
+const hits = (context, words) => words.filter((word) => context.includes(word)).length
+
+/**
+ * Насколько поле похоже на искомое. 0 — не оно.
+ *
+ * Считается счёт, а не первое совпадение: на странице бывает несколько подходящих полей, и
+ * выиграть должно самое похожее, а не то, что попалось раньше.
+ */
+function score(context, target) {
+  if (!context) return 0
+  if (hits(context, target.not)) return 0
+  const named = hits(context, target.any)
+  const qualified = hits(context, target.and)
+  if (!named || !qualified) return 0
+  return named + qualified
 }
 
 /**
- * Поиск поля по началу подписи.
+ * Кому какое поле досталось.
  *
- * Совпадение по НАЧАЛУ строки: у обязательных полей рисуют звёздочку, где-то ставят двоеточие,
- * где-то дописывают счётчик символов. Точное равенство ломалось бы на этих хвостах.
- *
- * Побеждает самый КОРОТКИЙ подходящий узел: подпись — наименьший узел, содержащий эти слова, а её
- * предки содержат их вместе с соседними полями. Это сужает область поиска и делает подъём вверх
- * коротким и предсказуемым.
- *
- * От чужого поля защищает не это, а порядок документа в controlFor: проверено мутацией — снятие
- * правила про короткий узел тесты не роняет, снятие правила про порядок роняет сразу.
+ * Пары «поле ↔ смысл» разбираются по убыванию счёта, и занятое поле второй раз не выдаётся: одно
+ * поле не может быть сразу русским и узбекским названием. Жадный разбор по счёту даёт то же, что
+ * сделал бы человек: сначала очевидные совпадения, потом остальные.
  */
-function findByLabel(labels) {
-  const nodes = [...document.querySelectorAll('label, span, div, p')]
-  let best = null
-  for (const node of nodes) {
-    const text = labelText(node)
-    if (!text || text.length > 200) continue
-    const matches = labels.some((label) => text.toLowerCase().startsWith(label.toLowerCase()))
-    if (!matches) continue
-    if (!best || text.length < labelText(best).length) best = node
-  }
-  return best ? controlFor(best) : null
-}
-
-/**
- * Поиск поля по ПЛЕЙСХОЛДЕРУ.
- *
- * Плейсхолдер живёт атрибутом внутри поля, а не текстом на странице: обход узлов его не встретит
- * никогда. У поля категории подписи нет вовсе — есть только «Название категории или товара»
- * внутри самого ввода, и без этого поиска оно молча не находилось.
- */
-function findByPlaceholder(placeholders) {
-  const inputs = [...document.querySelectorAll('input, textarea')]
-  for (const input of inputs) {
-    const placeholder = (input.getAttribute?.('placeholder') ?? '').trim().toLowerCase()
-    if (!placeholder) continue
-    if (placeholders.some((one) => placeholder.startsWith(one.toLowerCase()))) return input
-  }
-  return null
-}
-
-/**
- * Поле по плейсхолдеру, различённое по СОСЕДНЕМУ ТЕКСТУ.
- *
- * У обоих названий на шаге 1 плейсхолдер одинаковый — «Точное название товара». Одного его мало:
- * взяв первый попавшийся ввод, мы положили бы русское название в узбекское поле, и карточка ушла
- * бы с перепутанными языками. Поэтому среди подходящих по плейсхолдеру ищется тот, рядом с
- * которым написано «на русском» или «на узбекском».
- */
-function findByPlaceholderNear(placeholders, near) {
-  const inputs = [...document.querySelectorAll('input, textarea')].filter((input) => {
-    const placeholder = (input.getAttribute?.('placeholder') ?? '').trim().toLowerCase()
-    return placeholder && placeholders.some((one) => placeholder.startsWith(one.toLowerCase()))
-  })
-  if (!inputs.length) return null
-  if (!near) return inputs.length === 1 ? inputs[0] : null
-
-  const needle = near.toLowerCase()
-  for (const input of inputs) {
-    let node = input.parentElement
-    for (let depth = 0; depth < MAX_LABEL_DEPTH && node; depth++) {
-      // Подъём прекращается на ОБЩЕМ предке. Иначе контейнер, где лежат оба названия, содержит и
-      // «на узбекском», и «на русском» — и по нему подходит любое поле: русский текст уехал бы в
-      // узбекское, потому что оно просто стоит первым.
-      const candidatesInside = [...(node.querySelectorAll?.('input, textarea') ?? [])]
-        .filter((one) => inputs.includes(one)).length
-      if (candidatesInside > 1) break
-      if (labelText(node).toLowerCase().includes(needle)) return input
-      node = node.parentElement
+function matchFields(elements, targets) {
+  const pairs = []
+  for (const element of elements) {
+    const context = contextOf(element)
+    for (const target of targets) {
+      const value = score(context, target)
+      if (value > 0) pairs.push({ element, target, value })
     }
   }
-  // Ни у одного из полей соседнего указания на язык нет. Гадать нельзя: пустое поле правится за
-  // минуту, а название не на том языке снимают с модерации.
-  return null
-}
+  pairs.sort((a, b) => b.value - a.value)
 
-/**
- * Поле по подписи, а если её нет — по плейсхолдеру рядом с нужным словом.
- *
- * Подпись первой: она называет поле однозначно. Плейсхолдер — запасной путь для формы, где
- * подписи нет вовсе или она устроена не так, как мы ожидали.
- */
-function findField(spec) {
-  if (spec.labels?.length) {
-    const byLabel = findByLabel(spec.labels)
-    if (byLabel) return byLabel
+  const byKey = new Map()
+  const taken = new Set()
+  for (const pair of pairs) {
+    if (byKey.has(pair.target.key) || taken.has(pair.element)) continue
+    byKey.set(pair.target.key, pair.element)
+    taken.add(pair.element)
   }
-  if (spec.placeholders?.length) {
-    const byNear = findByPlaceholderNear(spec.placeholders, spec.near)
-    if (byNear) return byNear
-    if (!spec.near) return findByPlaceholder(spec.placeholders)
-  }
-  return null
+  return byKey
 }
 
-/**
- * Категория уже выбрана и подтверждена.
- *
- * После нажатия «Принять» поле поиска категории ИСЧЕЗАЕТ, а на его месте появляется путь
- * («Автотовары > Автозапчасти > …») и кнопка «Изменить». Проверка «есть ли поле поиска» на этом
- * шаге давала ложный вывод «страница незнакомая» именно тогда, когда всё как раз готово.
- *
- * Кнопка только ИЩЕТСЯ. Расширение её не нажимает — как и любую другую.
- */
-function categoryConfirmed() {
-  const controls = [...document.querySelectorAll('button, [role="button"]')]
-  return controls.some((control) => labelText(control).toLowerCase().startsWith('изменить'))
-}
-
-/**
- * Готово ли поле принимать текст.
- *
- * В Uzum поля названий и описания ОЖИВАЮТ только после того, как категория выбрана и подтверждена
- * кнопкой «Принять». До этого их либо нет вовсе, либо они заблокированы. Писать в заблокированное
- * поле — это молча ничего не сделать и доложить об успехе.
- */
-function fieldReady(control) {
-  if (!control) return false
-  if (control.disabled || control.readOnly) return false
-  return control.getAttribute?.('aria-disabled') !== 'true'
-}
+/* ─────────────────────────────  Ввод  ───────────────────────────── */
 
 /**
  * Ввод, который замечает React.
  *
  * Присваивание `element.value` меняет DOM, но не состояние компонента: поле выглядит заполненным,
- * а при отправке уходит пустым. Значение ставится через нативный сеттер, после чего вручную
- * посылается событие, которое React слушает.
+ * а при отправке уходит пустым. Значение ставится нативным сеттером, затем вручную посылаются
+ * события, которые слушает React. blur добавлен намеренно: на нём многие формы запускают проверку
+ * поля, и без него поле остаётся подсвеченным как незаполненное.
  */
-function setNativeValue(element, value) {
+function setInputValue(element, value) {
+  if (!element || value == null) return false
+  element.focus?.()
   const prototype = element instanceof HTMLTextAreaElement
     ? HTMLTextAreaElement.prototype
     : HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
-  if (setter) setter.call(element, value)
-  else element.value = value
-  element.dispatchEvent(new Event('input', { bubbles: true }))
-  element.dispatchEvent(new Event('change', { bubbles: true }))
+  if (setter) setter.call(element, String(value))
+  else element.value = String(value)
+  for (const type of ['input', 'change', 'blur']) {
+    element.dispatchEvent(new Event(type, { bubbles: true }))
+  }
+  return true
 }
 
 /**
  * Ввод в редактор форматированного текста.
  *
- * Это не <input>: у него нет `value`, и присваивание туда не делает ничего. Текст кладётся через
- * insertText — редактор сам построит свою разметку, и структура описания (крючок, абзацы, список)
- * останется той, что видел владелец. Присваивание innerHTML напрямую даёт заполненный на вид
- * редактор с пустым состоянием внутри.
+ * НЕ innerHTML. Напрашивается именно он, и именно он даёт худший из возможных исходов: редакторы
+ * вроде ProseMirror и Slate держат текст в своей модели, а не в DOM. Присвоенный innerHTML они
+ * либо стирают на следующей перерисовке, либо оставляют на экране при пустой модели — и описание
+ * уходит на модерацию пустым, хотя на экране оно было.
+ *
+ * insertText через execCommand порождает те же события, что живая клавиатура, поэтому редактор
+ * принимает текст своим и сохраняет абзацы, которые видел владелец.
  */
 function setRichValue(element, value) {
-  element.focus()
-  const selection = window.getSelection()
-  const range = document.createRange()
-  range.selectNodeContents(element)
-  selection.removeAllRanges()
-  selection.addRange(range)
-  // insertText кладётся именно через execCommand: он единственный порождает те же события ввода,
-  // что и живая клавиатура, и редакторы на его основе видят текст своим.
-  document.execCommand('insertText', false, value)
+  if (!element || value == null) return false
+  element.focus?.()
+  const selection = window.getSelection?.()
+  if (selection && document.createRange) {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+  document.execCommand('insertText', false, String(value))
   element.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
 }
 
+/* ─────────────────────────────  Остановка ради человека  ───────────────────────────── */
+
+/**
+ * Капча и незнакомые окна. Единственная оставшаяся проверка страницы — и она не про структуру
+ * формы, а про то, где нажимать вслепую нельзя.
+ */
 function findStopSign(stopSigns) {
-  for (const selector of stopSigns) {
-    const found = document.querySelector(selector)
-    if (found) return selector
+  for (const selector of stopSigns ?? []) {
+    if (document.querySelector(selector)) return selector
   }
   return null
 }
 
-/**
- * Заполнение полей шага 1.
- *
- * Возвращает отчёт, а не бросает исключение: половина заполненной формы — это состояние, о
- * котором надо рассказать, а не потерять в стеке.
- *
- * ЛИМИТЫ НЕ ОБРЕЗАЮТСЯ. Название на 95 знаков при пределе 90 — это не «почти влезло»: обрезанное
- * посреди слова название снимают с модерации, и владелец узнает об этом через сутки. Поле
- * пропускается, а превышение называется числом.
- */
-function fillFields(fields, draft) {
-  const filled = []
-  const notFound = []
-  const skipped = []
-  const tooLong = []
+/** Готово ли поле принимать текст: до подтверждения категории Uzum держит их заблокированными. */
+function fieldReady(element) {
+  if (!element) return false
+  if (element.disabled || element.readOnly) return false
+  return element.getAttribute?.('aria-disabled') !== 'true'
+}
 
-  for (const field of fields) {
-    const value = draft[field.key]
-    if (!value) continue
-    const text = String(value)
-    if (field.limit && text.length > field.limit) {
-      tooLong.push(`${field.key}: ${text.length} из ${field.limit}`)
+/* ─────────────────────────────  Заполнение  ───────────────────────────── */
+
+/**
+ * Заполняет то, что нашлось, и рассказывает, чего не нашлось.
+ *
+ * Блокирующих проверок структуры здесь нет: нажали кнопку — ищем поля и заливаем. Но «ничего не
+ * нашли» и «всё заполнено» остаются РАЗНЫМИ ответами. Молчаливый успех при пустой карточке — это
+ * не простота, а ложь, которая всплывёт через сутки на модерации.
+ */
+function fillCard(draft, targets) {
+  const elements = [...document.querySelectorAll(INPUT_SELECTOR)]
+  const matched = matchFields(elements, targets)
+
+  const filled = []
+  const missing = []
+  const tooLong = []
+  const locked = []
+
+  for (const target of targets) {
+    const value = draft?.[target.key]
+    if (value == null || value === '') continue
+    const element = matched.get(target.key)
+    if (!element) { missing.push(target.key); continue }
+    // Лимит Uzum не обрезается: название на 95 знаков при пределе 90 снимут с модерации, и
+    // владелец узнает об этом через сутки. Сократить — его решение.
+    if (target.limit && String(value).length > target.limit) {
+      tooLong.push(`${target.key}: ${String(value).length} из ${target.limit}`)
       continue
     }
-    const control = findField(field)
-    if (!control) {
-      // Обязательное ненайденное — отказ. Ожидаемое ненайденное — не отказ, но и не молчание:
-      // молча пропущенное описание и есть та ошибка, которую потом ищут сутки, глядя на карточку
-      // без текста и гадая, чей это сбой.
-      if (field.required) notFound.push(field.key)
-      else if (field.expected) skipped.push(field.key)
-      continue
-    }
-    if (field.rich || control.isContentEditable) setRichValue(control, text)
-    else setNativeValue(control, text)
-    filled.push(field.key)
+    if (!fieldReady(element)) { locked.push(target.key); continue }
+    const ok = target.rich || element.isContentEditable
+      ? setRichValue(element, value)
+      : setInputValue(element, value)
+    if (ok) filled.push(target.key)
+    else missing.push(target.key)
   }
-  return { filled, notFound, skipped, tooLong }
+  return { filled, missing, tooLong, locked, seen: elements.length }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'nemo:fill') return undefined
 
-  const { draft, fields, category, stopSigns } = message
+  const { draft, stopSigns, categoryHint } = message
   ;(async () => {
-    // Проверка на «здесь нельзя» идёт ПЕРВОЙ, до единого символа в полях. Заполнить форму и
-    // только потом заметить капчу — значит оставить в кабинете полуготовую карточку.
-    const stop = findStopSign(stopSigns ?? [])
+    const stop = findStopSign(stopSigns)
     if (stop) {
       sendResponse({ ok: false, reason: 'human_needed', detail: `остановился на экране: ${stop}` })
       return
     }
 
-    // ПОРЯДОК В UZUM: сначала категория, потом всё остальное. Пока она не подтверждена кнопкой
-    // «Принять», полей названий и описания на странице нет или они заблокированы.
-    //
-    // Готовность определяется ДВУМЯ признаками с разных сторон, и любого достаточно:
-    //   • видно любое из обязательных полей — значит форма уже открыта;
-    //   • в блоке категории есть кнопка «Изменить» — значит категория подтверждена.
-    //
-    // ЧЕСТНО ПРО ВТОРОЙ ПРИЗНАК: проверено мутацией — его снятие тесты не роняет. В настоящем
-    // Uzum поле поиска категории после «Принять» ИСЧЕЗАЕТ, поэтому ветка «поля не нашли» и так
-    // приходит к ответу «форма изменилась». Признак оставлен на случай вёрстки, где поиск и
-    // «Изменить» видны одновременно: тогда без него совет звучал бы как «нажмите Принять»
-    // человеку, который её уже нажал.
-    //
-    // Настоящей причиной отказа было другое — названия не находились по подписям. Их лечит поиск
-    // по общему плейсхолдеру «Точное название товара», различённый соседним словом о языке.
-    const required = (fields ?? []).filter((field) => field.required)
-    const anyRequiredReady = required.some((field) => fieldReady(findField(field)))
-    if (required.length && !anyRequiredReady && !categoryConfirmed()) {
-      // Категория ещё не выбрана — поле поиска на месте. Это очередь действий, а не поломка.
-      const categoryField = category ? findField(category) : null
-      sendResponse({ ok: false, reason: categoryField ? 'category_first' : 'form_changed' })
-      return
-    }
+    const report = fillCard(draft ?? {}, TARGETS)
 
-    const report = fillFields(fields ?? [], draft ?? {})
     if (report.tooLong.length) {
-      // Наружу уходят КЛЮЧИ полей и числа, а слова подбирает окно расширения: сообщение владельцу
-      // должно быть на его языке, а не на языке нашей структуры данных.
       sendResponse({ ok: false, reason: 'too_long', filled: report.filled, tooLong: report.tooLong })
       return
     }
-    if (report.notFound.length) {
-      sendResponse({ ok: false, reason: 'form_changed', filled: report.filled, notFound: report.notFound })
+
+    // Ни одного поля не заполнено — надо сказать, почему, и причина у этого ровно одна известная:
+    // категория ещё не подтверждена, и Uzum держит форму закрытой. Это не блокирующая проверка
+    // структуры, а вывод ИЗ РЕЗУЛЬТАТА: мы попробовали и не нашли, куда писать.
+    if (!report.filled.length) {
+      const searching = [...document.querySelectorAll(INPUT_SELECTOR)]
+        .some((element) => contextOf(element).includes(String(categoryHint ?? 'категор').toLowerCase()))
+      sendResponse({
+        ok: false,
+        reason: report.locked.length || searching ? 'category_first' : 'form_changed',
+        missing: report.missing,
+      })
       return
     }
 
-    // Категория — поле поиска с подтверждением, и список предложений мы не видели ни разу.
-    // Запрос вводится, выбор остаётся человеку: полка задаёт комиссию, характеристики и судьбу
-    // карточки на модерации, и ошибка здесь стоит повторной заливки.
-    let categoryTyped = false
-    if (draft.category && category) {
-      const control = findField(category)
-      if (control) { setNativeValue(control, String(draft.category)); categoryTyped = true }
-    }
-
-    // РАСШИРЕНИЕ НЕ НАЖИМАЕТ НИЧЕГО. Оно заполняет поля и останавливается.
-    //
-    // Кнопка «Заполнить и перейти к шагу 2» убрана намеренно: переход делает человек, когда
-    // проверит текст глазами. Так у расширения не остаётся ни одного необратимого действия —
-    // худшее, что оно может сделать, это вписать текст не в то поле, и это видно сразу.
-    sendResponse({ ok: true, filled: report.filled, skipped: report.skipped, categoryTyped })
+    // РАСШИРЕНИЕ НЕ НАЖИМАЕТ НИЧЕГО. Заполнило поля и остановилось: переход по шагам делает
+    // человек, когда проверит текст глазами.
+    sendResponse({ ok: true, filled: report.filled, skipped: [...report.missing, ...report.locked] })
   })()
 
   // Ответ уходит асинхронно — без этого канал закрывается раньше, чем в него что-то написали.

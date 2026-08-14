@@ -41,7 +41,6 @@ async function refresh() {
   if (!info) { show(nodes.state, say('no_response', lang), 'bad'); nodes.fill.disabled = true; return }
 
   if (!info.linked) { show(nodes.state, say('not_linked', lang), 'bad'); nodes.fill.disabled = true; return }
-  if (!info.selectorsReady) { show(nodes.state, say('selectors_missing', lang), 'bad'); nodes.fill.disabled = true; return }
   nodes.fill.disabled = false
   show(nodes.state, say('ready', lang), 'ok')
 }

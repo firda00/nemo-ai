@@ -181,36 +181,28 @@ const contracts = [
 
   // Расширение, которое начинает работать само, однажды заполнит форму, открытую посмотреть.
   ['the content script acts only when asked',
-    content.includes("chrome.runtime.onMessage.addListener")
+    content.includes('chrome.runtime.onMessage.addListener')
     && content.includes("message?.type !== 'nemo:fill'")
-    // Ни одного вызова заполнения или клика вне обработчика сообщения. Сверяется именно ВЫЗОВ
-    // с аргументами обработчика: объявление функции начинается теми же буквами и стоит выше.
-    && content.indexOf('onMessage.addListener') < content.indexOf('fillFields(fields ?? []')],
+    && content.indexOf('onMessage.addListener') < content.indexOf('fillCard(draft ?? {}')],
+
+  // Переход по шагам делает человек, когда проверит текст глазами. У расширения не остаётся ни
+  // одного необратимого действия.
+  ['the extension clicks nothing at all',
+    !/\.click\(\)/.test(stripComments(content))
+    && !stripComments(content).includes('Отправить на модерацию')],
+
+  // Content script подключается обычным скриптом, а не модулем: слово export здесь —
+  // синтаксическая ошибка, из-за которой не выполнится НИ ОДНА строка файла, и расширение молча
+  // перестанет отвечать.
+  ['the content script is not written as a module',
+    !/^export /m.test(content) && !/^import /m.test(content)],
 
   // ── Остановка ради человека ────────────────────────────────────────────────────────────────
 
   // Заполнить форму и только потом заметить капчу — значит оставить в кабинете полуготовую
   // карточку. Проверка идёт ДО единого символа в полях.
   ['the stop check runs before anything is typed',
-    content.indexOf('findStopSign(stopSigns ?? [])') < content.indexOf('fillFields(fields ?? []')],
-
-  // Порядок в Uzum: пока категория не подтверждена кнопкой «Принять», полей названий и описания
-  // на странице нет или они заблокированы. Это не поломка формы, а очередь действий, и сказать об
-  // этом надо одной фразой, а не отправлять владельца искать сломанное поле.
-  ['an unconfirmed category is explained, not reported as a broken form',
-    content.includes('function fieldReady(control)')
-    && content.includes("reason: categoryField ? 'category_first' : 'form_changed'")
-    && content.includes('function categoryConfirmed()')
-    && messages.includes('category_first')],
-
-  // После «Принять» поле поиска категории исчезает, а названия открываются с ОДНИМ И ТЕМ ЖЕ
-  // плейсхолдером на оба языка. Различает их соседнее слово; подъём прекращается на общем предке,
-  // иначе контейнер с обоими полями подходит любому, и русский текст уезжает в узбекское поле.
-  ['twin placeholders are told apart by the language beside them',
-    content.includes('function findByPlaceholderNear(placeholders, near)')
-    && content.includes('if (candidatesInside > 1) break')
-    && selectors.includes("near: 'на русском'")
-    && selectors.includes("near: 'на узбекском'")],
+    content.indexOf('findStopSign(stopSigns)') < content.indexOf('fillCard(draft ?? {}')],
 
   ['captcha frames are named as stop signs',
     selectors.includes('iframe[src*="captcha"]') && selectors.includes('[class*="captcha" i]')],
@@ -220,97 +212,74 @@ const contracts = [
   ['a human handover is recorded as a refusal',
     background.includes("response.reason === 'human_needed' || response.reason === 'category_first' ? 'refused' : 'failed'")],
 
-  // ── Разметка формы ─────────────────────────────────────────────────────────────────────────
+  // ── Семантическое сопоставление ────────────────────────────────────────────────────────────
 
-  // Пустая карта означает отказ, а не попытку заполнить наугад.
-  ['an empty field map refuses instead of guessing',
-    selectors.includes('export function selectorsReady()')
-    && background.includes('if (!selectorsReady()) {')
-    && background.indexOf('selectorsReady()') < background.indexOf('const task = await nextTask()')],
+  // Поле ищется по СМЫСЛУ, а не по пути в разметке: жёсткие цепочки родителей ломаются от любой
+  // перестройки формы, а форма Uzum перестраивается на каждом шаге мастера.
+  ['fields are matched by meaning, not by dom paths',
+    content.includes('function contextOf(el)')
+    && content.includes('function matchFields(elements, targets)')
+    // Комментарии вычищены во ВСЕХ проверках на отсутствие: отвергнутые приёмы названы в тексте
+    // по имени, и поиск по ним ловил бы собственное объяснение вместо нарушения.
+    && !/parentElement\.children\[/.test(stripComments(content))
+    && !/\.css-[a-z0-9]/i.test(stripComments(content))],
 
-  ['the missing fields are named, not merely counted',
-    selectors.includes('export function missingSelectors()')
-    && background.includes('missingSelectors().join')],
+  // ГЛАВНАЯ ЛОВУШКА ЭТОГО ФАЙЛА. Мы работаем на сайте с названием Uzum: две буквы «uz» стоят в
+  // адресе, шапке и подвале, и правило includes('uz') считало бы узбекским КАЖДОЕ поле формы.
+  ['the language is recognised by a word stem, never by two letters',
+    content.includes("const UZ = ['узбекск'")
+    && content.includes("const RU = ['русск'")
+    && !/includes\('uz'\)/.test(stripComments(content))
+    && !/includes\('ru'\)/.test(stripComments(content))],
 
-  // Классы вида `.css-1x2y3z` Uzum меняет при каждом релизе, и селектор на класс ломается молча,
-  // в тот день, когда никто не смотрит. Подпись держится за смысл поля.
-  ['fields are found by their labels, not by generated classes',
-    selectors.includes("labels: ['Название товара на русском']")
-    && content.includes('function findByLabel(labels)')
-    // Комментарии вычищены: объяснение про `.css-1x2y3z` названо в тексте по имени, и поиск по
-    // нему ловил бы собственное обоснование вместо нарушения.
-    && !/\.css-[a-z0-9]/i.test(stripComments(selectors))],
+  // Ближайший div почти всегда общая обёртка блока: её текст содержит и «на русском», и «на
+  // узбекском» сразу, и оба названия получают одинаковый контекст.
+  ['the context is the field own card, not the whole block',
+    content.includes('function ownCard(el)')
+    && content.includes('if (others.length) break')],
 
-  // Редактор форматированного текста — не <input>: у него нет value, и присваивание туда не делает
-  // ничего. Перепутать значит получить пустое описание при заполненном на вид поле.
-  // В вёрстке «подпись, поле, подпись, поле» обе подписи лежат в одной обёртке, и первый ввод
-  // контейнера принадлежит СОСЕДНЕЙ подписи. Так русское название уезжало в узбекское поле —
-  // карточка с перепутанными языками, а причину искали бы в переводчике.
-  ['the control is the one after its label, not the first in the box',
-    content.includes('function follows(labelNode, candidate)')
-    && content.includes('candidates.find((candidate) => follows(labelNode, candidate))')],
+  // Одно поле не может быть сразу русским и узбекским названием.
+  ['one input is claimed by one meaning',
+    content.includes('taken.has(pair.element)')
+    && content.includes('byKey.has(pair.target.key)')],
 
-  // Плейсхолдер живёт атрибутом ВНУТРИ поля, а не текстом на странице: обход узлов его не
-  // встретит никогда. У категории подписи нет вовсе, и по подписям она не находилась молча.
-  ['a placeholder is searched as a placeholder, not as a label',
-    content.includes('function findByPlaceholder(placeholders)')
-    && content.includes("getAttribute?.('placeholder')")
-    && selectors.includes("placeholders: ['Название категории или товара']")
-    && content.includes('findField(category)')],
+  // Краткое описание — отдельное поле на 390 знаков. Наш текст туда не влезет и будет обрезан
+  // площадкой посреди мысли.
+  ['the short description is excluded, not filled with what fits',
+    content.includes("const SHORT = ['кратк', 'qisqa']")
+    && content.includes('...SHORT')],
 
-  // Молча пропущенное описание — та ошибка, которую ищут сутки, глядя на карточку без текста.
-  ['an expected field that was not found is named, not silently skipped',
-    content.includes("else if (field.expected) skipped.push(field.key)")
+  // innerHTML напрашивается и даёт худший исход: ProseMirror и Slate держат текст в своей модели,
+  // и присвоенная разметка либо стирается на перерисовке, либо остаётся при пустой модели — тогда
+  // описание уходит на модерацию пустым, хотя на экране оно было.
+  ['the rich text editor is filled by insertion, never by innerhtml',
+    content.includes("document.execCommand('insertText', false, String(value))")
+    && !stripComments(content).includes('.innerHTML =')],
+
+  // На blur форма запускает проверку поля: без него оно остаётся подсвеченным как незаполненное.
+  ['the input events include blur',
+    content.includes("for (const type of ['input', 'change', 'blur'])")],
+
+  // Название на 95 знаков при пределе 90 — не «почти влезло»: обрезанное посреди слова название
+  // снимают с модерации, и владелец узнаёт об этом через сутки.
+  ['a text over the uzum limit is refused, never truncated',
+    content.includes('tooLong.push(')
+    && content.includes("reason: 'too_long'")
+    && !/\.slice\(0,\s*target\.limit\)/.test(content)],
+
+  // Пустая карточка и «всё готово» обязаны читаться по-разному: молчаливый успех всплывёт через
+  // сутки на модерации, когда товар окажется без названия.
+  ['filling nothing is never reported as success',
+    content.includes('if (!report.filled.length) {')
+    && content.includes("reason: report.locked.length || searching ? 'category_first' : 'form_changed'")
+    && messages.includes('category_first')],
+
+  // Пропущенное поле называется, а не теряется: карточка без описания и запись «заполнено» рядом —
+  // это два дня поисков виноватого.
+  ['what was left empty is named',
+    content.includes('skipped: [...report.missing, ...report.locked]')
     && background.includes('response.skipped?.length')
     && popup.includes('answer.skipped?.length')],
-
-  // Краткие описания в форме есть, но своего короткого текста у черновика нет. Обрезать полное
-  // под 390 знаков значит оборвать мысль и отдать это покупателю как аннотацию.
-  ['the short description fields are named as deliberately not filled',
-    selectors.includes('export const NOT_FILLED')
-    && selectors.includes('shortDescriptionRu')],
-
-  ['the rich text editor is filled as a rich text editor',
-    content.includes('function setRichValue(element, value)')
-    && content.includes("document.execCommand('insertText', false, value)")
-    && content.includes('field.rich || control.isContentEditable')],
-
-  // Название на 95 знаков при пределе 90 — это не «почти влезло»: обрезанное посреди слова
-  // название снимают с модерации, и владелец узнаёт об этом через сутки.
-  ['a text over the uzum limit is refused, never truncated',
-    selectors.includes('title: 90')
-    && content.includes('tooLong.push(')
-    && content.includes("reason: 'too_long'")
-    && !/\.slice\(0,\s*field\.limit\)/.test(content)],
-
-  // ── Мастер в три шага ──────────────────────────────────────────────────────────────────────
-
-  // На шаге 1 кнопки «Отправить на модерацию» не существует — там «Сохранить и продолжить», и за
-  // ней ещё два шага, которых мы не видели.
-  ['the extension clicks nothing at all',
-    !/.click()/.test(content)
-    && !content.includes('findButton')
-    && !selectors.includes('STEP_BUTTON')
-    && !content.includes('Отправить на модерацию')],
-
-  // Шаг 1 из трёх — половина дела: товар ещё не в каталоге. Записать 'sent' здесь значило бы
-  // объявить карточку отправленной и потерять её из виду.
-  ['finishing step one is never recorded as sent',
-    background.includes("status: 'refused'")
-    && !/status:\s*'sent'/.test(background)],
-
-  // Полка задаёт комиссию, характеристики и судьбу карточки на модерации. Список предложений мы
-  // не видели ни разу, поэтому выбор остаётся человеку.
-  ['the category is typed but never confirmed for the owner',
-    selectors.includes("confirmButton: 'Принять'")
-    && content.includes('categoryTyped = true')
-    && !content.includes('category.confirmButton')],
-
-  // Адрес сузился до настоящего: широкий шаблон означал бы попытку заполнить страницу
-  // редактирования уже существующего товара.
-  ['the create page pattern matches the real url',
-    /products\\\/new/.test(String(selectors.match(/export const CREATE_PAGE = .*/)?.[0] ?? ''))
-    && !selectors.includes('create)')],
 
   // ── Журнал ─────────────────────────────────────────────────────────────────────────────────
 
