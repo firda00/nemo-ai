@@ -14,9 +14,26 @@ import { CATEGORY, CREATE_PAGE, FIELDS, STEP_BUTTON, STOP_SIGNS, missingSelector
  * ограничивает домен, но полагаться на одну лишь настройку манифеста для приёма учётных данных
  * нельзя.
  */
+/**
+ * Кто вправе говорить с расширением.
+ *
+ * Список точный, и это не перестраховка. Просили добавить `*.sslip.io` — нельзя: sslip.io это
+ * служба подстановочного DNS, где `<любой-ip>.sslip.io` указывает на этот самый адрес. То есть
+ * «все поддомены sslip.io» означает «любая страница, которую кто угодно поднял у себя». Проверка
+ * origin ниже такую страницу отвергнет, но давать ей возможность вообще достучаться до
+ * расширения, хранящего ключ доступа, незачем.
+ *
+ * http оставлен рядом с https: стенд отвечает на http редиректом, и лишняя строка стоит дешевле,
+ * чем полчаса на выяснение, не в схеме ли дело.
+ */
+const ALLOWED_ORIGINS = [
+  'https://nemo.185.8.213.144.sslip.io',
+  'http://nemo.185.8.213.144.sslip.io',
+]
+
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   const origin = sender?.origin ?? (sender?.url ? new URL(sender.url).origin : '')
-  if (origin !== 'https://nemo.185.8.213.144.sslip.io') {
+  if (!ALLOWED_ORIGINS.includes(origin)) {
     sendResponse({ ok: false, error: 'forbidden_origin' })
     return false
   }

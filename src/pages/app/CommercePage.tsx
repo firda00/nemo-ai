@@ -10,7 +10,7 @@ import { payloadOf, paywallFrom, type Paywall } from '../../lib/paywall'
 import { CommerceFindings, type Finding } from '../../components/platform/CommerceFindings'
 import { extractText } from '../../lib/extractText'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
-import { extensionState, linkExtension, unlinkExtension, type ExtensionState } from '../../lib/extensionLink'
+import { extensionReachable, extensionState, linkExtension, unlinkExtension, type ExtensionState } from '../../lib/extensionLink'
 import { useI18n } from '../../i18n'
 
 type Catalog = { id: string; name: string; source: string; external_shop_id: string | null; status: string; last_synced_at: string | null; last_sync_error: string | null }
@@ -64,7 +64,7 @@ export default function CommercePage() {
   const [autoSubmit, setAutoSubmitState] = useState(true)
   // Расширение: стоит ли и жива ли связь. Спрашивается у него самого — по одному лишь флагу в базе
   // сайт показывал бы «связано» после того, как расширение снесли.
-  const [extension, setExtension] = useState<ExtensionState>('absent')
+  const [extension, setExtension] = useState<ExtensionState>('no_bridge')
   const [catalogs, setCatalogs] = useState<Catalog[]>([])
   const [catalogId, setCatalogId] = useState('')
   const [batches, setBatches] = useState<Batch[]>([])
@@ -298,6 +298,12 @@ export default function CommercePage() {
    * Расширению уезжает только access_token и его срок. Refresh token не передаётся: им выпускают
    * новые сессии сколько угодно долго, и его утечка стоит дороже, чем неудобство связаться заново.
    */
+  /** Спросить расширение заново, не перезагружая страницу. */
+  const recheckExtension = async () => {
+    setBusy('extension'); setMessage(null)
+    try { setExtension(await extensionState()) } finally { setBusy(null) }
+  }
+
   const toggleExtensionLink = async () => {
     if (!supabase || busy === 'extension') return
     setBusy('extension'); setMessage(null)
@@ -706,27 +712,36 @@ export default function CommercePage() {
           </button>
         </div>
 
-        {/* Связь с расширением. Показывается только когда расширение вообще стоит: строка
-            «установите расширение» тем, кто о нём не просил, — это реклама, а не интерфейс. */}
-        {extension !== 'absent' && (
-          <div className="mt-2 flex flex-col gap-2 rounded-xl border border-ice/10 bg-panel/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium text-text">{t('commerce.submit.extTitle')}</p>
-              <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
-                {extension === 'linked' ? t('commerce.submit.extLinked') : t('commerce.submit.extHint')}
-              </p>
-            </div>
+        {/* Строка про расширение видна ВСЕГДА, даже когда оно не отвечает.
+            Раньше она пряталась, и молчащее расширение выглядело как отсутствующая функция: кнопки
+            нет, причины нет, проверить нечего. Скрытый отказ дороже лишней строки — теперь здесь
+            написано, что именно не сложилось и что с этим делать. */}
+        <div className="mt-2 flex flex-col gap-2 rounded-xl border border-ice/10 bg-panel/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-text">{t('commerce.submit.extTitle')}</p>
+            <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted">
+              {extension === 'linked' ? t('commerce.submit.extLinked')
+                : extension === 'unlinked' ? t('commerce.submit.extHint')
+                : t(`commerce.submit.ext_${extension}`)}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Повторная проверка без перезагрузки страницы: service worker засыпает, и первый
+                пинг после простоя нередко не доходит. */}
+            <Button variant="ghost" onClick={() => void recheckExtension()} disabled={busy === 'extension'}>
+              {t('commerce.submit.extRecheck')}
+            </Button>
             <Button
               variant={extension === 'linked' ? 'ghost' : 'outline'}
               onClick={() => void toggleExtensionLink()}
-              disabled={busy === 'extension'}
+              disabled={busy === 'extension' || !extensionReachable(extension)}
             >
               {busy === 'extension'
                 ? t('commerce.submit.extWorking')
                 : extension === 'linked' ? t('commerce.submit.extUnlink') : t('commerce.submit.extLink')}
             </Button>
           </div>
-        )}
+        </div>
 
         <div className="mt-4">
           <CommerceListingAgent

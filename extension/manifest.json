@@ -29,7 +29,10 @@
   ],
 
   "externally_connectable": {
-    "matches": ["https://nemo.185.8.213.144.sslip.io/*"]
+    "matches": [
+      "https://nemo.185.8.213.144.sslip.io/*",
+      "http://nemo.185.8.213.144.sslip.io/*"
+    ]
   },
 
   "action": {

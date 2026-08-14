@@ -67,10 +67,17 @@ const contracts = [
   // Настройка манифеста ограничивает домен, но полагаться на неё ОДНУ при приёме учётных данных
   // нельзя: проверка отправителя стоит и в коде.
   ['the sender origin is checked in code, not only in the manifest',
-    manifest.externally_connectable?.matches?.length === 1
-    && manifest.externally_connectable.matches[0] === `${NEMO_ORIGIN}/*`
-    && background.includes(`origin !== '${NEMO_ORIGIN}'`)
+    manifest.externally_connectable?.matches?.includes(`${NEMO_ORIGIN}/*`)
+    && background.includes(`'${NEMO_ORIGIN}'`)
+    && background.includes('ALLOWED_ORIGINS.includes(origin)')
     && background.indexOf('forbidden_origin') < background.indexOf('saveSession(message.session)')],
+
+  // sslip.io — служба подстановочного DNS: <любой-ip>.sslip.io указывает на этот адрес. Значит
+  // «все поддомены sslip.io» это «любая страница, которую кто угодно поднял у себя», и давать ей
+  // возможность достучаться до расширения с ключом доступа незачем.
+  ['no wildcard origin may talk to the extension',
+    manifest.externally_connectable.matches.every((one) => !one.includes('*.'))
+    && background.split('ALLOWED_ORIGINS')[1].split(']')[0].split('nemo.185.8.213.144.sslip.io').length === 3],
 
   // Протухшая сессия — это «свяжитесь заново», а не «нет прав». Токен забывается сразу.
   ['an expired session is dropped, not retried',
@@ -106,7 +113,14 @@ const contracts = [
   // колбэк. Не прочитать его значит получить «Unchecked runtime.lastError» на каждой загрузке.
   ['a missing extension is handled, not thrown',
     link.includes('chromeRuntime.lastError')
-    && link.includes('window.setTimeout(() => finish(null), 3000)')],
+    && link.includes("finish({ ok: false, failure: 'silent' })")],
+
+  // Три причины молчания требуют трёх РАЗНЫХ действий: перезагрузить вкладку, поправить
+  // идентификатор, разбудить расширение. Одно «не найдено» отправляет проверять наугад.
+  ['a silent extension says which of the three things went wrong',
+    link.includes("'no_bridge'") && link.includes("'no_answer'") && link.includes("'silent'")
+    && page.includes('t(`commerce.submit.ext_${extension}`)')
+    && page.includes('recheckExtension()')],
 
   // ── Чего расширение не делает ──────────────────────────────────────────────────────────────
 

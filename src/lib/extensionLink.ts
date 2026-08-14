@@ -35,41 +35,56 @@ function runtime(): ChromeRuntime | null {
 }
 
 /**
- * Один запрос к расширению.
+ * Почему расширение не ответило. Это не украшение отчёта.
  *
- * Отсутствие расширения и его отказ — РАЗНЫЕ ответы. Свести их в один null значило бы показывать
- * «установите расширение» человеку, у которого оно установлено и просто ответило отказом.
+ * Три причины требуют трёх РАЗНЫХ действий: перезагрузить вкладку, поправить идентификатор,
+ * перезапустить расширение. Свести их в одно «не найдено» значит отправить человека проверять
+ * наугад — что мы и делали, пока кнопка просто не появлялась.
  */
-function ask(message: unknown): Promise<ExtensionReply | null> {
+export type ProbeFailure =
+  | 'no_bridge'   // на странице нет chrome.runtime: расширение её не видит
+  | 'no_answer'   // мост есть, ответа нет: чужой идентификатор или расширение выключено
+  | 'silent'      // расширение молчит дольше отведённого: service worker не проснулся
+
+type Probe = { ok: true; reply: ExtensionReply } | { ok: false; failure: ProbeFailure }
+
+function ask(message: unknown): Promise<Probe> {
   const chromeRuntime = runtime()
   const send = chromeRuntime?.sendMessage
-  if (!chromeRuntime || !send) return Promise.resolve(null)
+  // chrome.runtime появляется на странице ТОЛЬКО если расширение объявило её домен в
+  // externally_connectable, и появляется он при загрузке. Расширение, установленное при открытой
+  // вкладке, этой вкладке невидимо до перезагрузки — самая частая причина «ничего не работает».
+  if (!chromeRuntime || !send) return Promise.resolve({ ok: false, failure: 'no_bridge' })
   return new Promise((resolve) => {
-    // Если расширения с таким идентификатором нет, Chrome не бросает исключение, а выставляет
-    // lastError и зовёт колбэк с undefined. Не прочитать lastError — значит получить в консоли
-    // «Unchecked runtime.lastError» на каждой загрузке страницы.
     let settled = false
-    const finish = (value: ExtensionReply | null) => { if (!settled) { settled = true; resolve(value) } }
-    // Расширение может быть установлено, но не отвечать — например, service worker упал. Ждать
+    const finish = (value: Probe) => { if (!settled) { settled = true; resolve(value) } }
+    // Расширение может быть установлено и не отвечать — например, service worker уснул. Ждать
     // вечно нельзя: кнопка останется в состоянии «связываю…» навсегда.
-    window.setTimeout(() => finish(null), 3000)
+    window.setTimeout(() => finish({ ok: false, failure: 'silent' }), 3000)
     try {
       send.call(chromeRuntime, EXTENSION_ID, message, (response) => {
-        if (chromeRuntime.lastError) { finish(null); return }
-        finish(response ?? null)
+        // Если расширения с таким идентификатором нет, Chrome не бросает исключение, а выставляет
+        // lastError и зовёт колбэк с undefined. Не прочитать lastError — значит получить в консоли
+        // «Unchecked runtime.lastError» на каждой загрузке страницы.
+        if (chromeRuntime.lastError || !response) { finish({ ok: false, failure: 'no_answer' }); return }
+        finish({ ok: true, reply: response })
       })
-    } catch { finish(null) }
+    } catch { finish({ ok: false, failure: 'no_answer' }) }
   })
 }
 
-export type ExtensionState = 'absent' | 'linked' | 'unlinked'
+export type ExtensionState = 'linked' | 'unlinked' | ProbeFailure
 
-/** Стоит ли расширение и есть ли у него живая сессия. */
+/** Стоит ли расширение, отвечает ли и есть ли у него живая сессия. */
 export async function extensionState(): Promise<ExtensionState> {
-  const reply = await ask({ type: 'nemo:ping' })
-  if (!reply?.ok) return 'absent'
-  return reply.linked ? 'linked' : 'unlinked'
+  const probe = await ask({ type: 'nemo:ping' })
+  if (!probe.ok) return probe.failure
+  if (!probe.reply.ok) return 'no_answer'
+  return probe.reply.linked ? 'linked' : 'unlinked'
 }
+
+/** Отвечает ли расширение вообще. По этому признаку решается, что показывать владельцу. */
+export const extensionReachable = (state: ExtensionState) => state === 'linked' || state === 'unlinked'
 
 /**
  * Передать расширению текущую сессию.
@@ -80,15 +95,15 @@ export async function extensionState(): Promise<ExtensionState> {
  */
 export async function linkExtension(session: { access_token: string; expires_at?: number }): Promise<boolean> {
   if (!session?.access_token || !session.expires_at) return false
-  const reply = await ask({
+  const probe = await ask({
     type: 'nemo:link',
     session: { access_token: session.access_token, expires_at: session.expires_at },
   })
-  return Boolean(reply?.ok)
+  return probe.ok && Boolean(probe.reply.ok)
 }
 
 /** Забрать сессию обратно. Нужна на общем компьютере и при передаче магазина другому человеку. */
 export async function unlinkExtension(): Promise<boolean> {
-  const reply = await ask({ type: 'nemo:unlink' })
-  return Boolean(reply?.ok)
+  const probe = await ask({ type: 'nemo:unlink' })
+  return probe.ok && Boolean(probe.reply.ok)
 }
