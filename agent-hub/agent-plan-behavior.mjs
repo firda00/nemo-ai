@@ -10,6 +10,7 @@ import {
   MAX_VALUE_LENGTH,
   PLAN_SYSTEM_PROMPT,
   checkPlan,
+  detectCategoryMismatch,
   planNote,
   planUserPrompt,
   unaddressedFields,
@@ -140,6 +141,53 @@ assert.deepEqual(mixed.rejected.map((one) => one.reason).sort(), ['unknown_actio
   assert.deepEqual(untouched.map((one) => one.id), [1, 2, 4])
 }
 
+// --- Категория страницы против категории черновика ------------------------------------------------
+// Живой случай: страница стояла на «Книги › Комиксы», черновик был про женский хиджаб — план
+// заполнил 7 полей чужими данными, не заметив разрыва. .category-wrapper как селектор намеренно не
+// используется — сканер не знает CSS-классов конкретного сайта; сигнал ищется в тех же
+// label/context/text, по которым сканер и так узнаёт любое поле.
+
+const CATEGORY_PAGE_MATCH = [
+  { id: 1, kind: 'button', text: 'Изменить', context: 'Категория товара: Одежда и обувь › Женская одежда' },
+]
+const CATEGORY_PAGE_MISMATCH = [
+  { id: 1, kind: 'button', text: 'Изменить', context: 'Категория товара: Книги › Комиксы' },
+]
+// Без слова «категория» рядом вообще — ровно как выглядит УЖЕ ПОДТВЕРЖДЁННАЯ категория на живой
+// странице: поле поиска скрыто, остался только путь и кнопка «Изменить».
+const CATEGORY_PAGE_FALLBACK_ONLY = [
+  { id: 1, kind: 'button', text: 'Изменить', context: 'Книги › Комиксы' },
+]
+const CATEGORY_PAGE_NO_SIGNAL = [
+  { id: 1, kind: 'input', label: 'Название товара на русском' },
+]
+
+assert.deepEqual(detectCategoryMismatch(CATEGORY_PAGE_MISMATCH, null), { mismatch: false, pageCategory: null },
+  'без категории черновика сравнивать не с чем — молчание, а не отказ')
+assert.deepEqual(detectCategoryMismatch(CATEGORY_PAGE_MISMATCH, '   '), { mismatch: false, pageCategory: null })
+assert.deepEqual(detectCategoryMismatch(CATEGORY_PAGE_NO_SIGNAL, 'Женская одежда'), { mismatch: false, pageCategory: null },
+  'на странице нет вообще никакого сигнала о категории — молчание не повод отказывать')
+
+{
+  const result = detectCategoryMismatch(CATEGORY_PAGE_MATCH, 'Женская одежда')
+  assert.equal(result.mismatch, false, 'общие слова «женская»/«одежда» есть — формулировки разные, категория одна')
+  assert.ok(result.pageCategory?.includes('Женская одежда'))
+}
+
+{
+  const result = detectCategoryMismatch(CATEGORY_PAGE_MISMATCH, 'Женский хиджаб-бини')
+  assert.equal(result.mismatch, true, 'ни одного общего слова — книги и хиджаб не смежные категории')
+  assert.ok(result.pageCategory?.includes('Книги'))
+}
+
+{
+  // Запасной сигнал (кнопка «Изменить» + путь, без слова «категория») тоже ловит расхождение —
+  // это единственный сигнал, который вообще есть на живой странице с подтверждённой категорией.
+  const result = detectCategoryMismatch(CATEGORY_PAGE_FALLBACK_ONLY, 'Женский хиджаб-бини')
+  assert.equal(result.mismatch, true)
+  assert.ok(result.pageCategory?.includes('Книги'))
+}
+
 // --- Промпт и заметка ----------------------------------------------------------------------------------
 
 assert.ok(PLAN_SYSTEM_PROMPT.includes('ТОЛЬКО номера из снимка'))
@@ -184,4 +232,4 @@ assert.ok(prompt.includes('Название товара на русском'))
 assert.ok(prompt.includes('Брелок'))
 assert.equal(/<div|class=|querySelector/.test(prompt), false, 'разметка наружу не уезжает')
 
-console.log('[OK] Agent plan behaviour: 65 assertions')
+console.log('[OK] Agent plan behaviour: 76 assertions')

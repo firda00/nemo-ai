@@ -57,6 +57,17 @@ function describe(answer) {
   if (!answer) return say('no_response', lang)
   if (!answer.ok) {
     if (answer.needsConfirmation) return say('needs_confirmation', lang)
+    // Категория страницы не совпадает с черновиком: заполненные ПРАВИЛЬНЫМИ по формату значениями
+    // поля — не в ту карточку — это не мелкая неточность, а гарантированный отказ модерации.
+    // Составное сообщение, а не статичная фраза из словаря: обе категории называются прямо.
+    if (answer.reason === 'category_mismatch') {
+      return [
+        say('categoryMismatch', lang),
+        `${say('onPage', lang)}: ${answer.pageCategory || '—'}`,
+        `${say('inDraft', lang)}: ${answer.draftCategory || '—'}`,
+        say('categoryMismatchConfirm', lang),
+      ].join('\n')
+    }
     const known = say(answer.reason, lang)
     if (known && answer.reason !== 'no_plan') return known
 
@@ -77,18 +88,28 @@ function describe(answer) {
   return lines.join('\n')
 }
 
+// Согласие продолжить, несмотря на расхождение категорий, — как и confirmRisky, спрашивается
+// заново на каждом запуске и не переживает попытку. Отдельного чекбокса для него нет: он нужен
+// только сразу ПОСЛЕ предупреждения, и постоянная галочка «игнорировать несовпадение категории»
+// в интерфейсе — это ровно то самое молчаливое согласие, которого confirmRisky и избегает.
+let pendingCategoryConfirm = false
+
 async function run() {
   const instruction = nodes.instruction.value.trim()
   if (!instruction) { nodes.instruction.focus(); return }
   nodes.run.disabled = true
   nodes.result.textContent = say('working', lang)
+  const confirmCategoryMismatch = pendingCategoryConfirm
+  pendingCategoryConfirm = false
   const answer = await chrome.runtime.sendMessage({
     type: 'nemo:instruct',
     instruction,
     // Согласие передаётся ЯВНО и каждый раз: галочка не запоминается между запусками, потому что
     // разрешение, выданное однажды, через неделю нажимает кнопку, о которой уже забыли.
     confirmRisky: nodes.risky.checked,
+    confirmCategoryMismatch,
   }).catch(() => null)
+  if (answer && !answer.ok && answer.reason === 'category_mismatch') pendingCategoryConfirm = true
   nodes.result.textContent = describe(answer)
   await refresh()
 }

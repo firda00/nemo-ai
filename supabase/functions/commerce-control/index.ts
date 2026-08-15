@@ -15,7 +15,7 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
-import { PLAN_SYSTEM_PROMPT, checkPlan, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
+import { PLAN_SYSTEM_PROMPT, checkPlan, detectCategoryMismatch, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
 import {
   classifyProviderResponse, decideSubmit, ownerMessage,
   type SubmitMode,
@@ -966,6 +966,24 @@ Deno.serve(async (req) => {
       .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')
       .eq('account_id', profile.account_id).eq('status', 'ready')
       .order('approved_at', { ascending: true }).limit(1).maybeSingle()
+
+    // Категория страницы против категории черновика — ДО модели и ДО единого действия. Живой
+    // случай: страница стояла на «Книги › Комиксы», план заполнил 7 полей данными черновика про
+    // женский хиджаб, не заметив разрыва. Останавливаемся здесь, а не после ответа модели: план,
+    // построенный поверх чужой категории, не спасти проверкой отдельных действий — заполнены будут
+    // ПРАВИЛЬНЫЕ номера ПРАВИЛЬНЫМИ по формату значениями, просто не в ту карточку.
+    //
+    // confirmCategoryMismatch — согласие владельца продолжить всё равно, тем же путём, что и
+    // confirmRisky: спрашивается заново на каждом запуске, никогда не запоминается.
+    const categorySignal = detectCategoryMismatch(items, draft?.uzum_category ?? null)
+    if (categorySignal.mismatch && !body?.confirmCategoryMismatch) {
+      return json({
+        ok: true,
+        category_mismatch: true,
+        page_category: categorySignal.pageCategory,
+        draft_category: draft?.uzum_category ?? null,
+      })
+    }
 
     // Без третьего аргумента resolveOpenRouterKey отдаёт undefined всем, у кого нет своего ключа
     // OpenRouter в настройках, — а это почти все: план всегда работает на общем платформенном

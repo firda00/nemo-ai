@@ -66,7 +66,7 @@ const toTab = (tabId, message) => chrome.tabs.sendMessage(tabId, message).catch(
  * происходит: расширение не придумывает действия само, потому что придуманное действие в чужом
  * кабинете стоит дороже несделанного.
  */
-export async function runInstruction({ instruction, confirmRisky = false }) {
+export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false }) {
   if (!await readSession()) return { ok: false, reason: 'not_linked' }
 
   const tab = await activeTab()
@@ -76,8 +76,21 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
   if (!scan) return { ok: false, reason: 'no_response' }
   if (!scan.ok) return { ok: false, reason: scan.reason ?? 'no_response' }
 
-  const planned = await callNemo('agent_plan', { instruction, page: scan.page })
+  const planned = await callNemo('agent_plan', { instruction, page: scan.page, confirmCategoryMismatch })
   if (!planned.ok) return { ok: false, reason: planned.error }
+
+  // Категория страницы не совпадает с категорией черновика — сервер остановился ДО модели и ДО
+  // единого действия. Заполненные ПРАВИЛЬНЫМИ по формату значениями поля — не в ту карточку — это
+  // не ошибка формы, а гарантированный отказ модерации, и владелец должен решить сам, продолжать
+  // ли, а не узнать об этом постфактум.
+  if (planned.data?.category_mismatch) {
+    return {
+      ok: false,
+      reason: 'category_mismatch',
+      pageCategory: planned.data.page_category ?? null,
+      draftCategory: planned.data.draft_category ?? null,
+    }
+  }
 
   // Что вернула модель и что от этого осталось после проверки — в консоль service worker
   // (chrome://extensions → «Обслуживающий процесс»). Пустой план и план, целиком отвергнутый
@@ -208,6 +221,12 @@ export async function collectDiagnostics() {
     const planned = await callNemo('agent_plan', { instruction: 'заполни карточку товара', page: scan.page })
     if (!planned.ok) {
       lines.push(`план: отказ — ${planned.error}`)
+    } else if (planned.data?.category_mismatch) {
+      lines.push(
+        'план: категория страницы не совпадает с черновиком — заполнение остановлено до модели',
+        `  на странице: ${planned.data.page_category ?? '—'}`,
+        `  в черновике: ${planned.data.draft_category ?? '—'}`,
+      )
     } else {
       const rejected = planned.data?.rejected ?? []
       const unaddressed = planned.data?.unaddressed ?? []
@@ -235,6 +254,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     runInstruction({
       instruction: String(message.instruction ?? '').slice(0, 500),
       confirmRisky: Boolean(message.confirmRisky),
+      confirmCategoryMismatch: Boolean(message.confirmCategoryMismatch),
     }).then(sendResponse)
     return true
   }

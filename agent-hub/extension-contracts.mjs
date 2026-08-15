@@ -348,6 +348,31 @@ const contracts = [
       ".select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')",
     ) && AGENT_PLAN_BODY.includes('attributes: draft.attributes')],
 
+  // Живой случай: страница на «Книги › Комиксы», план всё равно заполнил 7 полей данными
+  // черновика про женский хиджаб. Никакая проверка ОТДЕЛЬНЫХ действий это не ловит — номера верные,
+  // значения нужного формата, просто не в ту карточку. Останов ДО модели, а не после ответа.
+  // Селектор вроде .category-wrapper НЕ используется — это разметка одного сайта, а сканер
+  // намеренно её не знает; сигнал ищется в тех же label/context/text, что уже собраны для любого
+  // поля.
+  ['a category mismatch stops the plan before the model ever runs',
+    plan.includes('export function detectCategoryMismatch(items: PageItem[], draftCategory: string | null | undefined)')
+    && !scanner.includes('category-wrapper')
+    && AGENT_PLAN_BODY.indexOf('detectCategoryMismatch(items, draft?.uzum_category')
+      < AGENT_PLAN_BODY.indexOf('callOpenRouter({')
+    && AGENT_PLAN_BODY.includes('categorySignal.mismatch && !body?.confirmCategoryMismatch')],
+
+  // Согласие продолжить вопреки несовпадению — тем же путём, что confirmRisky: спрашивается на
+  // каждом запуске заново, и постоянного чекбокса в интерфейсе для него нет.
+  ['the category override is asked every run, never remembered',
+    background.includes('confirmCategoryMismatch = false')
+    && background.includes("callNemo('agent_plan', { instruction, page: scan.page, confirmCategoryMismatch })")
+    && background.includes("reason: 'category_mismatch'")
+    && popup.includes("answer.reason === 'category_mismatch'")
+    && popup.includes('let pendingCategoryConfirm = false')
+    && !popup.includes("nodes.categoryMismatch") // нет постоянного чекбокса в разметке
+    && messages.includes('categoryMismatch:')
+    && messages.includes('categoryMismatchConfirm:')],
+
   // ── Прозрачность ───────────────────────────────────────────────────────────────────────────
 
   // Пустой снимок и снимок без полей формы снаружи выглядят одинаково. Разбивка по видам — то, по

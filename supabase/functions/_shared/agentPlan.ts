@@ -208,6 +208,82 @@ export function unaddressedFields(items: PageItem[], checked: PlanCheck): PageIt
   return items.filter((item) => fillable.has(item.kind) && !item.disabled && !touched.has(item.id))
 }
 
+const CATEGORY_STOPWORDS = new Set(['для', 'или', 'при', 'что', 'это', 'the', 'and', 'for', 'with'])
+
+/** Значимые слова текста: без коротышей и служебных слов, без учёта регистра. */
+function significantWords(text: string | null | undefined): Set<string> {
+  return new Set(
+    (text ?? '')
+      .toLowerCase()
+      .replace(/[^a-zа-яёʻʼ0-9\s]/gi, ' ')
+      .split(/\s+/)
+      .filter((word) => word.length >= 3 && !CATEGORY_STOPWORDS.has(word)),
+  )
+}
+
+/**
+ * Элемент снимка, который, похоже, называет ТЕКУЩУЮ категорию страницы.
+ *
+ * Селектор вроде `.category-wrapper` сюда намеренно не идёт: это ровно то, чего сканер избегает
+ * с первого дня — разметка одного сайта, которая ломается при любом редизайне и не переносится
+ * ни на один другой. Вместо этого используются уже собранные label/context/text — те же поля,
+ * по которым сканер и так узнаёт любое поле формы.
+ *
+ * Два независимых сигнала:
+ *   1. рядом сказано «категория» — самый прямой случай;
+ *   2. кнопка «Изменить» рядом с текстом-путём («Раздел › Подраздел») — так Uzum показывает уже
+ *      подтверждённую категорию, когда поле поиска скрыто и слова «категория» рядом может не быть
+ *      вовсе (ровно то, что случилось на живой странице).
+ */
+function findCategorySignal(items: PageItem[]): PageItem | null {
+  const byWord = items.find((item) => /категор/i.test(`${item.label ?? ''} ${item.context ?? ''}`))
+  if (byWord) return byWord
+  return items.find((item) =>
+    item.kind === 'button'
+    && /измен/i.test(item.text ?? '')
+    && /[>›]/.test(item.context ?? '')) ?? null
+}
+
+export interface CategorySignal {
+  mismatch: boolean
+  /** Текст, по которому распознана категория страницы. null — сигнала не нашлось вообще. */
+  pageCategory: string | null
+}
+
+/**
+ * Похоже ли, что план собирается заполнить не ту карточку.
+ *
+ * Живой случай: страница стояла на «Книги › Комиксы», черновик был про женский хиджаб — agent_plan
+ * заполнил 7 полей данными черновика, не заметив разрыва. Заполнять содержимое одного товара в
+ * карточку другой категории — почти гарантированный отказ модерации, а не мелкая неточность.
+ *
+ * Порог нарочно высокий: совпадением считается ЛЮБОЕ общее значимое слово между категорией
+ * страницы и категорией черновика. Наши и Uzum-овские названия категорий формулируются не всегда
+ * дословно одинаково («Одежда и обувь» vs «Женская одежда»), и точное совпадение ловило бы кучу
+ * ложных тревог на правильных карточках. Мимо — только когда общих слов нет ВООБЩЕ, как в «Книги
+ * › Комиксы» и «Женский хиджаб-бини»: тут спутать нельзя, это не смежные категории.
+ *
+ * Если сигнал не найден вовсе (pageCategory: null) — mismatch всегда false: молчание страницы не
+ * повод отказывать, отказывает только ЯВНОЕ расхождение.
+ */
+export function detectCategoryMismatch(items: PageItem[], draftCategory: string | null | undefined): CategorySignal {
+  if (!draftCategory?.trim()) return { mismatch: false, pageCategory: null }
+
+  const candidate = findCategorySignal(items)
+  if (!candidate) return { mismatch: false, pageCategory: null }
+
+  const pageCategoryText = [candidate.context, candidate.label, candidate.text]
+    .filter(Boolean).join(' ').trim().slice(0, 200)
+  if (!pageCategoryText) return { mismatch: false, pageCategory: null }
+
+  const pageWords = significantWords(pageCategoryText)
+  const draftWords = significantWords(draftCategory)
+  if (!pageWords.size || !draftWords.size) return { mismatch: false, pageCategory: pageCategoryText }
+
+  const overlaps = [...draftWords].some((word) => pageWords.has(word))
+  return { mismatch: !overlaps, pageCategory: pageCategoryText }
+}
+
 /** Одна фраза о результате. null — если модель ничего внятного не сказала. */
 export function planNote(raw: unknown): string | null {
   const note = (raw as { note?: unknown })?.note

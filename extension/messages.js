@@ -57,6 +57,16 @@ const DICT = {
     ru: "Часть полей план не тронул — проверьте карточку глазами. Не тронуто:",
     uz: "Reja ba'zi maydonlarga tegmadi — kartochkani ko‘z bilan tekshiring. Tegilmagan:",
   },
+  categoryMismatch: {
+    ru: "Категория страницы не совпадает с карточкой — заполнять её сюда рискованно, модерация отклонит товар.",
+    uz: "Sahifa turkumi kartochka bilan mos kelmayapti — bu yerga to‘ldirish xavfli, moderatsiya tovarni rad etadi.",
+  },
+  onPage: { ru: "На странице", uz: "Sahifada" },
+  inDraft: { ru: "В карточке", uz: "Kartochkada" },
+  categoryMismatchConfirm: {
+    ru: "Если категория верна для этого товара — нажмите «Выполнить» ещё раз.",
+    uz: "Agar bu tovar uchun turkum to‘g‘ri bo‘lsa — «Bajarish» tugmasini yana bosing.",
+  },
   expired: {
     ru: "Срок связи истёк — ключ доступа живёт около часа. Откройте Nemo и нажмите «Связать с Nemo» ещё раз.",
     uz: "Aloqa muddati tugadi — kirish kaliti taxminan bir soat yashaydi. Nemo’ni oching va «Nemo bilan bog‘lash» tugmasini yana bosing.",
