@@ -76,9 +76,30 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
 
   const planned = await callNemo('agent_plan', { instruction, page: scan.page })
   if (!planned.ok) return { ok: false, reason: planned.error }
+
+  // Что вернула модель и что от этого осталось после проверки — в консоль service worker
+  // (chrome://extensions → «Обслуживающий процесс»). Пустой план и план, целиком отвергнутый
+  // проверкой, снаружи выглядят ОДИНАКОВО, а чинить их надо по-разному: первое — промпт, второе —
+  // несоответствие снимка и ответа.
+  console.log('[Nemo] план от Nemo:', {
+    поручение: instruction,
+    элементовВСнимке: scan.page.items.length,
+    поВидам: scan.page.byKind,
+    действий: planned.data?.actions?.length ?? 0,
+    отброшено: planned.data?.rejected ?? [],
+    заметка: planned.data?.note ?? null,
+  })
+
   const actions = planned.data?.actions ?? []
   if (!actions.length) {
-    return { ok: false, reason: 'no_plan', note: planned.data?.note ?? null }
+    return {
+      ok: false,
+      reason: 'no_plan',
+      note: planned.data?.note ?? null,
+      // Отброшенное доезжает до владельца, а не остаётся в консоли: «уточните поручение» человеку,
+      // у которого план отвергла наша же проверка, — это совет чинить не то.
+      rejected: planned.data?.rejected ?? [],
+    }
   }
 
   const executed = await toTab(tab.id, { type: 'nemo:run-plan', actions, confirmRisky })

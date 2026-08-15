@@ -230,7 +230,32 @@ const contracts = [
   // Молчаливая фильтрация превращает разбор в гадание: план «не сработал», и никто не знает почему.
   ['what the guard threw away is named',
     plan.includes("rejected: PlanCheck['rejected']")
-    && control.includes('rejected: checked.rejected')],
+    && control.includes('rejected: checked.rejected')
+    // Отброшенное доезжает до владельца, а не остаётся в консоли: «уточните поручение» человеку,
+    // у которого план отвергла наша же проверка, — это совет чинить не то.
+    && background.includes('rejected: planned.data?.rejected ?? []')
+    && popup.includes('answer.rejected?.length')],
+
+  // ── Прозрачность ───────────────────────────────────────────────────────────────────────────
+
+  // Пустой снимок и снимок без полей формы снаружи выглядят одинаково. Разбивка по видам — то, по
+  // чему сразу видно, дошли ли поля до дерева вообще.
+  ['the snapshot reports what it collected, by kind',
+    scanner.includes('const byKind = {}')
+    && scanner.includes('truncated: found.length > limit')
+    && content.includes("console.log('[Nemo] снимок страницы:'")
+    && background.includes("console.log('[Nemo] план от Nemo:'")],
+
+  // В значениях полей лежит содержимое чужого кабинета, а консоль читают через плечо и копируют
+  // в переписку. В журнал идут номера, виды и подписи — не то, что там написано.
+  ['the log never prints what is written in the fields',
+    !/console.log[sS]{0,400}item.value/.test(content)],
+
+  // Поля формы лежат ниже навигации, а ссылок в кабинете десятки. При отборе «первые N в порядке
+  // документа» меню съедало весь снимок, и модель получала страницу без единого поля ввода.
+  ['form fields outrank navigation links in the snapshot',
+    scanner.includes('const RANK =')
+    && scanner.includes('.sort((a, b) => (a.rank - b.rank) || (a.index - b.index))')],
 
   // ── Слова ──────────────────────────────────────────────────────────────────────────────────
 

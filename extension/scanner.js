@@ -153,7 +153,20 @@ function scanPage(limit = 120) {
   // случайно указать на другой элемент после перерисовки страницы.
   for (const stale of document.querySelectorAll(`[${NEMO_ID}]`)) stale.removeAttribute(NEMO_ID)
 
-  const elements = [...document.querySelectorAll(INTERACTIVE)].filter(visible)
+  const found = [...document.querySelectorAll(INTERACTIVE)].filter(visible)
+
+  // ПОРЯДОК ВАЖНЕЕ ЛИМИТА. В кабинете продавца ссылок в меню и боковой панели — десятки, и при
+  // отборе «первые 120 в порядке документа» они съедали весь снимок: поля формы лежат ниже
+  // навигации и в дерево не попадали вовсе. Модель получала страницу без единого поля ввода и
+  // честно отвечала, что заполнять нечего.
+  //
+  // Поэтому сначала то, во что можно писать, затем кнопки, и только потом ссылки.
+  const RANK = { input: 0, textarea: 0, richtext: 0, select: 0, checkbox: 1, radio: 1, file: 1, button: 2, link: 3 }
+  const elements = found
+    .map((element, index) => ({ element, index, rank: RANK[kindOf(element)] ?? 3 }))
+    .sort((a, b) => (a.rank - b.rank) || (a.index - b.index))
+    .map((one) => one.element)
+
   const items = []
   for (const element of elements.slice(0, limit)) {
     const id = items.length + 1
@@ -183,7 +196,19 @@ function scanPage(limit = 120) {
         : {}),
     })
   }
-  return { url: location.href, title: document.title, count: elements.length, items }
+  // Счётчик по видам — то, по чему сразу видно, дошли ли поля формы до снимка вообще. «Собрано 120
+  // элементов» без разбивки не отличает страницу с формой от страницы с одним меню.
+  const byKind = {}
+  for (const item of items) byKind[item.kind] = (byKind[item.kind] ?? 0) + 1
+
+  return {
+    url: location.href,
+    title: document.title,
+    count: found.length,
+    truncated: found.length > limit,
+    byKind,
+    items,
+  }
 }
 
 /** Элемент по выданному номеру. Ничего, кроме номера, снаружи не принимается. */

@@ -54,9 +54,14 @@ function describe(answer) {
   if (!answer.ok) {
     if (answer.needsConfirmation) return say('needs_confirmation', lang)
     const known = say(answer.reason, lang)
-    if (known) return known
-    if (answer.reason === 'no_plan') return `${say('no_plan', lang)}${answer.note ? `\n${answer.note}` : ''}`
-    return say('no_plan', lang)
+    if (known && answer.reason !== 'no_plan') return known
+
+    // «Модель ничего не предложила» и «наша проверка всё отвергла» — разные беды, и вторую
+    // владелец починить не может вовсе. Совет «уточните поручение» там вреден: он посылает не туда.
+    const lines = [say('no_plan', lang)]
+    if (answer.note) lines.push(answer.note)
+    if (answer.rejected?.length) lines.push(`${say('rejected', lang)} ${answer.rejected.length}`)
+    return lines.join('\n')
   }
   const lines = [`${say('filledCount', lang)} ${answer.done}`]
   if (answer.failed) lines.push(`${say('failedCount', lang)} ${answer.failed}`)

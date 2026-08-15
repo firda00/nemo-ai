@@ -34,7 +34,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'nemo:scan') {
     const stop = findStopSign()
     if (stop) { sendResponse({ ok: false, reason: 'human_needed', detail: stop }); return true }
-    sendResponse({ ok: true, page: scanPage(message.limit ?? 120) })
+    const page = scanPage(message.limit ?? 120)
+    // В консоль страницы — что именно собрано. Без этого «ничего не нашлось» невозможно отличить
+    // от «нашлось, но не то»: снимок живёт внутри расширения и наружу не показывается.
+    //
+    // ЗНАЧЕНИЯ ПОЛЕЙ НЕ ПЕЧАТАЮТСЯ. В них лежит содержимое чужого кабинета, а консоль читают через
+    // плечо, копируют в переписку и прикладывают к обращениям в поддержку.
+    console.log('[Nemo] снимок страницы:', {
+      всего: page.count,
+      вСнимке: page.items.length,
+      обрезан: page.truncated,
+      поВидам: page.byKind,
+      поля: page.items
+        .filter((item) => ['input', 'textarea', 'richtext', 'select'].includes(item.kind))
+        .map((item) => ({ id: item.id, kind: item.kind, label: item.label, placeholder: item.placeholder })),
+    })
+    sendResponse({ ok: true, page })
     return true
   }
 
@@ -48,6 +63,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       elementById,
       confirmRisky: Boolean(message.confirmRisky),
     })
+    // Способ, которым сработал каждый шаг, — самое ценное в отчёте. Именно по нему видно, что
+    // редактор описания принял текст через beforeinput, а не «execCommand вернул true и ничего».
+    console.log('[Nemo] выполнено:', report.results)
     sendResponse({ ok: report.done > 0, ...report })
     return true
   }

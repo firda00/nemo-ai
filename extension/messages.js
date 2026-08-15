@@ -49,6 +49,10 @@ const DICT = {
     ru: "Не удалось:",
     uz: "Bajarilmadi:",
   },
+  rejected: {
+    ru: "Часть предложенных действий не прошла проверку безопасности. Отброшено:",
+    uz: "Taklif qilingan amallarning bir qismi xavfsizlik tekshiruvidan o‘tmadi. Rad etildi:",
+  },
   ready: {
     ru: 'Связь с Nemo есть. Откройте нужную страницу и напишите поручение.',
     uz: 'Nemo bilan aloqa bor. Kerakli sahifani oching va topshiriqni yozing.',

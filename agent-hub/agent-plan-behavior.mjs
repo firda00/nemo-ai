@@ -116,6 +116,18 @@ assert.deepEqual(mixed.rejected.map((one) => one.reason).sort(), ['unknown_actio
 
 assert.ok(PLAN_SYSTEM_PROMPT.includes('ТОЛЬКО номера из снимка'))
 assert.ok(PLAN_SYSTEM_PROMPT.includes('Uzum'), 'ловушка про язык названа прямо в промпте')
+
+// Общее поручение — норма, а не повод отказать. Модель, ждущая указания на каждое поле, вернёт
+// пустой план на «заполни карточку товара» и будет формально права.
+assert.ok(PLAN_SYSTEM_PROMPT.includes('ОБЩИЕ ПОРУЧЕНИЯ — ЭТО НОРМА'))
+assert.ok(PLAN_SYSTEM_PROMPT.includes('Заполни карточку товара'))
+for (const key of ['title_ru', 'title_uz', 'description_ru', 'description_uz', 'category', 'price_uzs']) {
+  assert.ok(PLAN_SYSTEM_PROMPT.includes(key), `ключ данных ${key} назван в промпте`)
+}
+// Пустой ответ разрешён только как крайний случай, а не как осторожная привычка.
+assert.ok(PLAN_SYSTEM_PROMPT.includes('нет ВООБЩЕ'))
+// Краткое и полное описания путать нельзя: в короткое поле длинный текст не влезет.
+assert.ok(PLAN_SYSTEM_PROMPT.includes('краткое описание с полным'))
 assert.equal(planNote({ note: '  Заполнил два поля  ' }), 'Заполнил два поля')
 assert.equal(planNote({ note: '' }), null)
 assert.equal(planNote({}), null)
@@ -131,4 +143,4 @@ assert.ok(prompt.includes('Название товара на русском'))
 assert.ok(prompt.includes('Брелок'))
 assert.equal(/<div|class=|querySelector/.test(prompt), false, 'разметка наружу не уезжает')
 
-console.log('[OK] Agent plan behaviour: 46 assertions')
+console.log('[OK] Agent plan behaviour: 56 assertions')
