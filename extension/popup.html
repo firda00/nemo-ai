@@ -28,6 +28,11 @@
       color: #fff; font: inherit; font-size: 14px; font-weight: 600;
     }
     #run:disabled { opacity: .45; cursor: default; }
+    .quiet {
+      width: 100%; margin-top: 8px; padding: 9px; cursor: pointer;
+      border: 1px solid rgba(232,236,248,.15); border-radius: 10px;
+      background: transparent; color: #8B93AD; font: inherit; font-size: 12px;
+    }
     /* Согласие на необратимое — отдельной галочкой и по умолчанию снято. Кнопка «Отправить» или
        «Удалить», нажатая по плану модели, не отменяется никаким «назад». */
     .risky { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 11px; color: #8B93AD; }
@@ -58,6 +63,9 @@
     <span id="riskyLabel"></span>
   </label>
   <button id="run" type="button"></button>
+  <!-- Диагностика отдельной неяркой кнопкой: она нужна, когда что-то не работает, и не должна
+       спорить за внимание с основным действием. -->
+  <button id="diagnose" type="button" class="quiet"></button>
 
   <p id="result"></p>
 

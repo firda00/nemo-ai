@@ -43,10 +43,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // Печатается СТРОКОЙ, а не объектом. Объект консоль сворачивает в «Object», и человек,
     // копирующий лог в переписку, присылает это слово вместо данных — что и случилось.
     const kinds = Object.entries(page.byKind).map(([kind, n]) => `${kind}=${n}`).join(' ') || 'пусто'
+    const dropped = Object.entries(page.dropped).filter(([, n]) => n > 0).map(([why, n]) => `${why}=${n}`).join(' ') || 'нет'
     const fields = page.items.filter((item) => ['input', 'textarea', 'richtext', 'select'].includes(item.kind))
     console.log(
-      `[Nemo] снимок: всего=${page.count} в снимке=${page.items.length} обрезан=${page.truncated}`
-      + ` | ${kinds}\n[Nemo] адрес: ${page.url}`,
+      `[Nemo] снимок: в DOM=${page.raw} прошло фильтр=${page.count} в снимке=${page.items.length}`
+      + ` | отсеяно: ${dropped}`
+      + `\n[Nemo] виды: ${kinds}`
+      // Кадр важен: форма во фрейме и форма в главном документе выглядят в отчёте одинаково,
+      // а чинятся по-разному — вторая требует all_frames в манифесте.
+      + `\n[Nemo] адрес: ${page.url} | кадр: ${page.frame}`,
     )
     // Таблицей: её видно целиком без разворачивания и она копируется как текст.
     if (fields.length) console.table(fields.map((item) => ({ id: item.id, вид: item.kind, подпись: item.label, плейсхолдер: item.placeholder })))

@@ -43,25 +43,25 @@ const MIN_SIZE = 8
  * Уход за экран ВЛЕВО или ВВЕРХ — другое дело: так прячут по-настоящему, и вернуть туда прокруткой
  * нельзя.
  */
-function visible(element) {
+function visibility(element) {
   const style = window.getComputedStyle?.(element)
   if (style) {
-    if (style.display === 'none' || style.visibility === 'hidden') return false
-    if (Number(style.opacity) === 0) return false
+    if (style.display === 'none' || style.visibility === 'hidden') return 'hidden'
+    if (Number(style.opacity) === 0) return 'hidden'
     // clip и clip-path — классический способ спрятать поле, оставив его в разметке.
-    if (style.clipPath === 'inset(100%)' || style.clip === 'rect(0px, 0px, 0px, 0px)') return false
+    if (style.clipPath === 'inset(100%)' || style.clip === 'rect(0px, 0px, 0px, 0px)') return 'hidden'
   }
   // offsetParent === null означает display:none у себя или у предка. Но у элементов с
   // position: fixed он null ВСЕГДА — плавающая панель формы вполне видима, и отбрасывать её нельзя.
-  if (element.offsetParent === null && style?.position !== 'fixed') return false
-  if (element.getAttribute?.('aria-hidden') === 'true') return false
+  if (element.offsetParent === null && style?.position !== 'fixed') return 'hidden'
+  if (element.getAttribute?.('aria-hidden') === 'true') return 'hidden'
 
   const box = element.getBoundingClientRect?.()
-  if (!box) return true
-  if (box.width < MIN_SIZE || box.height < MIN_SIZE) return false
+  if (!box) return 'ok'
+  if (box.width < MIN_SIZE || box.height < MIN_SIZE) return 'tiny'
   // Правый край левее нуля или нижний край выше нуля — элемент уведён за экран, а не прокручен.
-  if (box.right <= 0 || box.bottom <= 0) return false
-  return true
+  if (box.right <= 0 || box.bottom <= 0) return 'offscreen'
+  return 'ok'
 }
 
 /**
@@ -183,7 +183,17 @@ function scanPage(limit = 120) {
   // случайно указать на другой элемент после перерисовки страницы.
   for (const stale of document.querySelectorAll(`[${NEMO_ID}]`)) stale.removeAttribute(NEMO_ID)
 
-  const found = [...document.querySelectorAll(INTERACTIVE)].filter(visible)
+  // СЫРОЕ число — до единого фильтра. Прошлый лог печатал 'всего=0', и это было число ПОСЛЕ
+  // отбора по видимости: по нему нельзя отличить «на странице нет полей» от «мой фильтр съел все».
+  // Разница решающая, а подпись врала.
+  const raw = [...document.querySelectorAll(INTERACTIVE)]
+  const dropped = { hidden: 0, tiny: 0, offscreen: 0 }
+  const found = raw.filter((element) => {
+    const verdict = visibility(element)
+    if (verdict === 'ok') return true
+    dropped[verdict] += 1
+    return false
+  })
 
   // ПОРЯДОК ВАЖНЕЕ ЛИМИТА. В кабинете продавца ссылок в меню и боковой панели — десятки, и при
   // отборе «первые 120 в порядке документа» они съедали весь снимок: поля формы лежат ниже
@@ -233,8 +243,13 @@ function scanPage(limit = 120) {
 
   return {
     url: location.href,
+    // В каком кадре сняли. Форма во фрейме и форма в главном документе выглядят одинаково в
+    // отчёте, но чинятся по-разному.
+    frame: window.top === window.self ? 'главный' : 'вложенный',
     title: document.title,
     count: found.length,
+    raw: raw.length,
+    dropped,
     truncated: found.length > limit,
     byKind,
     items,

@@ -13,6 +13,7 @@ const nodes = {
   risky: document.getElementById('risky'),
   riskyLabel: document.getElementById('riskyLabel'),
   run: document.getElementById('run'),
+  diagnose: document.getElementById('diagnose'),
   result: document.getElementById('result'),
 }
 
@@ -31,6 +32,7 @@ function paintChrome() {
   nodes.intro.textContent = say('intro', lang)
   nodes.run.textContent = say('run', lang)
   nodes.riskyLabel.textContent = say('allowRisky', lang)
+  nodes.diagnose.textContent = say('diagnose', lang)
   nodes.instruction.placeholder = say('placeholder', lang)
 }
 
@@ -88,6 +90,30 @@ async function run() {
   await refresh()
 }
 
+/**
+ * Отчёт о проблеме одним нажатием.
+ *
+ * Работает ДАЖЕ БЕЗ СВЯЗИ с Nemo: именно тогда он и нужен. Кнопка, отключённая вместе с основной,
+ * оставила бы человека без единственного способа рассказать, что у него не так.
+ */
+async function diagnose() {
+  nodes.diagnose.disabled = true
+  nodes.result.textContent = say('working', lang)
+  const answer = await chrome.runtime.sendMessage({ type: 'nemo:diagnose' }).catch(() => null)
+  const text = answer?.text ?? ''
+  if (!text) { nodes.result.textContent = say('no_response', lang); nodes.diagnose.disabled = false; return }
+  try {
+    await navigator.clipboard.writeText(text)
+    nodes.result.textContent = `${say('diagnoseDone', lang)}\n\n${text}`
+  } catch {
+    // Буфер может быть недоступен. Текст всё равно показывается — иначе отчёт, который нельзя
+    // скопировать автоматически, пропал бы совсем.
+    nodes.result.textContent = `${say('diagnoseFail', lang)}\n\n${text}`
+  }
+  nodes.diagnose.disabled = false
+}
+
+nodes.diagnose.addEventListener('click', () => void diagnose())
 nodes.run.addEventListener('click', () => void run())
 nodes.instruction.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void run()

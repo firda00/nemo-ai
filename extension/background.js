@@ -137,7 +137,73 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
   }
 }
 
+/**
+ * Диагностика одним прогоном.
+ *
+ * Собрана потому, что пять подходов подряд уходили на выяснение ОДНОГО факта за раз: сначала
+ * связь, потом кадр, потом число полей, потом ответ модели. Каждый круг стоил перезагрузки
+ * расширения, вашего времени и ещё одного сообщения. Здесь всё собирается разом и отдаётся готовым
+ * текстом — его можно скопировать целиком, не разбираясь, что из этого важно.
+ *
+ * СЕКРЕТОВ ЗДЕСЬ НЕТ: ни токена, ни значений полей. Только числа, подписи, адреса и причины
+ * отсева. Отчёт, который страшно переслать, диагностикой не работает.
+ */
+export async function collectDiagnostics() {
+  const { session, expired } = await sessionState()
+  const tab = await activeTab()
+  const lines = [
+    `расширение: ${chrome.runtime.id}`,
+    `связь: ${session ? 'есть' : expired ? 'истекла' : 'нет'}`,
+    `вкладка: ${tab?.url ?? '—'}`,
+  ]
+  if (!tab?.id) return { text: lines.join('\n') }
+
+  const scan = await toTab(tab.id, { type: 'nemo:scan' })
+  if (!scan) {
+    lines.push('снимок: страница не ответила — обновите её (Ctrl+F5) и повторите')
+  } else if (!scan.ok) {
+    lines.push(`снимок: отказ — ${scan.reason}`)
+  } else {
+    const page = scan.page
+    const kinds = Object.entries(page.byKind).map(([kind, n]) => `${kind}=${n}`).join(' ') || 'пусто'
+    const dropped = Object.entries(page.dropped).filter(([, n]) => n > 0)
+      .map(([why, n]) => `${why}=${n}`).join(' ') || 'нет'
+    lines.push(
+      `кадр: ${page.frame}`,
+      `в DOM: ${page.raw} | прошло фильтр: ${page.count} | в снимке: ${page.items.length}`,
+      `отсеяно: ${dropped}`,
+      `виды: ${kinds}`,
+    )
+    const fields = page.items.filter((one) => ['input', 'textarea', 'richtext', 'select'].includes(one.kind))
+    lines.push(`поля (${fields.length}):`)
+    for (const one of fields.slice(0, 15)) {
+      lines.push(`  #${one.id} ${one.kind} | подпись: ${one.label || '—'} | плейсхолдер: ${one.placeholder || '—'}`)
+    }
+  }
+
+  // Пробный план запрашивается ТОЛЬКО при живой связи и НИЧЕГО НЕ ВЫПОЛНЯЕТ: это чтение.
+  // Диагностика, которая заодно что-то нажимает, — уже не диагностика.
+  if (session && scan?.ok) {
+    const planned = await callNemo('agent_plan', { instruction: 'заполни карточку товара', page: scan.page })
+    if (!planned.ok) {
+      lines.push(`план: отказ — ${planned.error}`)
+    } else {
+      const rejected = planned.data?.rejected ?? []
+      lines.push(
+        `план: действий ${planned.data?.actions?.length ?? 0}, отброшено ${rejected.length}`,
+        `заметка модели: ${planned.data?.note ?? '—'}`,
+      )
+      for (const one of rejected) lines.push(`  отброшено: ${one.reason}`)
+    }
+  }
+  return { text: lines.join('\n') }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'nemo:diagnose') {
+    collectDiagnostics().then(sendResponse)
+    return true
+  }
   if (message?.type === 'nemo:instruct') {
     runInstruction({
       instruction: String(message.instruction ?? '').slice(0, 500),

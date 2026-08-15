@@ -57,6 +57,18 @@ const DICT = {
     ru: "Срок связи истёк — ключ доступа живёт около часа. Откройте Nemo и нажмите «Связать с Nemo» ещё раз.",
     uz: "Aloqa muddati tugadi — kirish kaliti taxminan bir soat yashaydi. Nemo’ni oching va «Nemo bilan bog‘lash» tugmasini yana bosing.",
   },
+  diagnose: {
+    ru: "Собрать отчёт о проблеме",
+    uz: "Muammo haqida hisobot yig‘ish",
+  },
+  diagnoseDone: {
+    ru: "Отчёт скопирован в буфер обмена — пришлите его целиком.",
+    uz: "Hisobot buferga nusxalandi — uni to‘liq yuboring.",
+  },
+  diagnoseFail: {
+    ru: "Не удалось скопировать. Выделите текст ниже и скопируйте вручную.",
+    uz: "Nusxalab bo‘lmadi. Quyidagi matnni belgilab, qo‘lda nusxalang.",
+  },
   ready: {
     ru: 'Связь с Nemo есть. Откройте нужную страницу и напишите поручение.',
     uz: 'Nemo bilan aloqa bor. Kerakli sahifani oching va topshiriqni yozing.',

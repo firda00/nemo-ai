@@ -38,6 +38,33 @@ const contracts = [
 
   // Расширение с доступом ко всем сайтам не должен ставить никто, включая владельца продукта.
   // «Универсальный» здесь про архитектуру, а не про разрешения: список доменов остаётся явным.
+  // Пять подходов подряд ушли на выяснение ОДНОГО факта за раз. Отчёт собирается разом и
+  // работает БЕЗ СВЯЗИ — именно тогда он и нужен. Кнопка, отключённая вместе с основной,
+  // оставила бы человека без единственного способа рассказать, что у него не так.
+  ['the problem report works even when nothing else does',
+    background.includes('export async function collectDiagnostics()')
+    && popup.includes("chrome.runtime.sendMessage({ type: 'nemo:diagnose' })")
+    && !popup.includes('nodes.diagnose.disabled = !linked')],
+
+  // Отчёт, который страшно переслать, диагностикой не работает: ни токена, ни значений полей.
+  ['the report carries no secrets and no field values',
+    !background.split('collectDiagnostics')[1].includes('accessToken')
+    && !background.split('collectDiagnostics')[1].includes('one.value')],
+
+  // 'всего=0' раньше означало число ПОСЛЕ фильтра видимости: по нему нельзя было отличить
+  // «полей нет» от «мой фильтр съел все». Разница решающая, а подпись врала.
+  ['the raw dom count is reported before any filter',
+    scanner.includes('const raw = [...document.querySelectorAll(INTERACTIVE)]')
+    && scanner.includes('raw: raw.length')
+    && scanner.includes('dropped')
+    && content.includes('в DOM=')],
+
+  // Форма во фрейме и форма в главном документе выглядят в отчёте одинаково, а чинятся
+  // по-разному: вторая требует all_frames.
+  ['frames are scanned and named',
+    manifest.content_scripts[0].all_frames === true
+    && scanner.includes('frame: window.top === window.self')],
+
   ['the extension reaches exactly the two hosts it needs',
     Array.isArray(manifest.host_permissions)
     && manifest.host_permissions.length === 2
@@ -254,7 +281,7 @@ const contracts = [
     && scanner.includes('truncated: found.length > limit')
     // Печатается СТРОКОЙ, а не объектом: консоль сворачивает объект в «Object», и человек,
     // копирующий лог в переписку, присылает это слово вместо данных. Так и случилось.
-    && content.includes('[Nemo] снимок: всего=')
+    && content.includes('[Nemo] снимок: в DOM=')
     && background.includes('[Nemo] план: поручение=')
     && !content.includes("console.log('[Nemo] снимок страницы:', {")],
 
@@ -267,8 +294,8 @@ const contracts = [
   // наравне с настоящими полями. Проверка «ширина и высота больше нуля» такое пропускает.
   ['hidden and off-screen elements never enter the snapshot',
     scanner.includes('const MIN_SIZE = 8')
-    && scanner.includes('if (box.width < MIN_SIZE || box.height < MIN_SIZE) return false')
-    && scanner.includes('if (box.right <= 0 || box.bottom <= 0) return false')
+    && scanner.includes("if (box.width < MIN_SIZE || box.height < MIN_SIZE) return 'tiny'")
+    && scanner.includes("if (box.right <= 0 || box.bottom <= 0) return 'offscreen'")
     && scanner.includes("element.getAttribute?.('aria-hidden') === 'true'")],
 
   // Проверка «попадает ли элемент в текущий экран» напрашивается и ломает всё: на длинной форме

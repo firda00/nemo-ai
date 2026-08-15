@@ -27,11 +27,13 @@ function load() {
     innerHeight: 800,
     getComputedStyle: (element) => element.__style,
   }
-  const factory = new Function('window', 'document', 'location', `${source}\nreturn { visible, kindOf }`)
+  const factory = new Function('window', 'document', 'location', `${source}\nreturn { visibility, kindOf }`)
   return factory(windowStub, { querySelectorAll: () => [], title: '' }, { href: '' })
 }
 
-const { visible } = load()
+const api = load()
+/** Тест спрашивает «видно ли», а функция теперь называет ПРИЧИНУ отсева — она нужна в отчёте. */
+const visible = (element) => api.visibility(element) === 'ok'
 
 // --- Нормальное поле проходит -------------------------------------------------------------------
 
