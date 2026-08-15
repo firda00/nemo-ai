@@ -85,14 +85,23 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
   // несоответствие снимка и ответа.
   // Строкой, а не объектом: свёрнутый «Object» в консоли невозможно ни прочитать, ни прислать.
   const rejected = planned.data?.rejected ?? []
+  // Поля, которых план вообще не коснулся, — третья причина пустого поля, помимо «отброшено» и
+  // «не сработало». Без неё «richtext остался пустым» одинаково похоже и на промпт, который не
+  // предложил действие, и на проверку, которая его отвергла, и на исполнителя, который не смог
+  // ввести текст, — а чинятся эти три беды по-разному.
+  const unaddressed = planned.data?.unaddressed ?? []
   console.log(
     `[Nemo] план: поручение="${instruction}" элементов=${scan.page.items.length}`
     + ` действий=${planned.data?.actions?.length ?? 0} отброшено=${rejected.length}`
+    + ` не предложено=${unaddressed.length}`
     + `
 [Nemo] заметка модели: ${planned.data?.note ?? '—'}`,
   )
   if (rejected.length) {
     console.log('[Nemo] отброшено проверкой:', rejected.map((one) => one.reason).join(', '))
+  }
+  if (unaddressed.length) {
+    console.log('[Nemo] план не тронул:', unaddressed.map((one) => `#${one.id} ${one.kind}`).join(', '))
   }
 
   const actions = planned.data?.actions ?? []
@@ -104,6 +113,7 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
       // Отброшенное доезжает до владельца, а не остаётся в консоли: «уточните поручение» человеку,
       // у которого план отвергла наша же проверка, — это совет чинить не то.
       rejected: planned.data?.rejected ?? [],
+      unaddressed,
     }
   }
 
@@ -134,6 +144,7 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
     results: executed.results,
     needsConfirmation,
     note: planned.data?.note ?? null,
+    unaddressed,
   }
 }
 
@@ -181,7 +192,13 @@ export async function collectDiagnostics() {
     const fields = page.items.filter((one) => ['input', 'textarea', 'richtext', 'select'].includes(one.kind))
     lines.push(`поля (${fields.length}):`)
     for (const one of fields.slice(0, 15)) {
-      lines.push(`  #${one.id} ${one.kind} | подпись: ${one.label || '—'} | плейсхолдер: ${one.placeholder || '—'}`)
+      // context — то немногое, по чему модель вообще узнаёт поле без подписи и плейсхолдера
+      // (richtext-редакторы почти всегда без них). Раньше в отчёте его не было — и «модель не
+      // заполнила richtext» нельзя было отличить от «сканер не нашёл для него никакого текста».
+      lines.push(
+        `  #${one.id} ${one.kind} | подпись: ${one.label || '—'} | плейсхолдер: ${one.placeholder || '—'}`
+        + ` | контекст: ${(one.context || '—').slice(0, 80)}`,
+      )
     }
   }
 
@@ -193,11 +210,17 @@ export async function collectDiagnostics() {
       lines.push(`план: отказ — ${planned.error}`)
     } else {
       const rejected = planned.data?.rejected ?? []
+      const unaddressed = planned.data?.unaddressed ?? []
       lines.push(
-        `план: действий ${planned.data?.actions?.length ?? 0}, отброшено ${rejected.length}`,
+        `план: действий ${planned.data?.actions?.length ?? 0}, отброшено ${rejected.length}, не предложено ${unaddressed.length}`,
         `заметка модели: ${planned.data?.note ?? '—'}`,
       )
       for (const one of rejected) lines.push(`  отброшено: ${one.reason}`)
+      // «Не предложено» — модель даже не пыталась: не увидела поле или не нашла для него данных.
+      // Отличается и от «отброшено» (модель предложила, проверка отказала), и от «не сработало»
+      // (проверка приняла, но executor не смог ввести значение) — три разные причины, три разных
+      // починки.
+      for (const one of unaddressed) lines.push(`  не предложено: #${one.id} ${one.kind} | подпись: ${one.label || '—'}`)
     }
   }
   return { text: lines.join('\n') }

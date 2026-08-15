@@ -12,6 +12,7 @@ import {
   checkPlan,
   planNote,
   planUserPrompt,
+  unaddressedFields,
 } from '../supabase/functions/_shared/agentPlan.ts'
 
 const PAGE = [
@@ -112,6 +113,33 @@ assert.equal(mixed.actions.length, 1)
 assert.equal(mixed.rejected.length, 2)
 assert.deepEqual(mixed.rejected.map((one) => one.reason).sort(), ['unknown_action', 'unknown_id'])
 
+// --- Поля, которых план вообще не коснулся ------------------------------------------------------
+// «Модель не заметила поле» и «предложила, но проверка отклонила» — разные беды. Отклонённое по
+// РЕАЛЬНОЙ причине (проверка честно разобрала кандидата) всё равно СЧИТАЕТСЯ попыткой; отклонённое
+// как unknown_action/unknown_id/too_many_actions — нет, там даже нет надёжного id, за который можно
+// зацепиться.
+
+{
+  const checked = checkPlan({
+    actions: [
+      { type: 'type', id: 1, value: 'Брелок' },  // id1: принято
+      { type: 'select', id: 2, value: 'кг' },    // id2: отклонено по not_a_select — но это попытка
+      { type: 'drag', id: 4 },                   // id4: отклонено по unknown_action — не попытка
+    ],
+  }, PAGE)
+  const untouched = unaddressedFields(PAGE, checked)
+  assert.deepEqual(untouched.map((one) => one.id), [4],
+    'id1 принят и id2 отклонён по реальной причине — оба не в списке; id4 остаётся, т.к. ' +
+    'unknown_action не защитывается попыткой; id3 — кнопка (не поле), id5 — заблокировано')
+}
+
+{
+  // Совсем пустой план — план не тронул НИЧЕГО из заполняемого. Кнопка (id3, не поле для ввода) и
+  // заблокированное поле (id5) не в счёт: их план и не должен трогать.
+  const untouched = unaddressedFields(PAGE, checkPlan({ actions: [] }, PAGE))
+  assert.deepEqual(untouched.map((one) => one.id), [1, 2, 4])
+}
+
 // --- Промпт и заметка ----------------------------------------------------------------------------------
 
 assert.ok(PLAN_SYSTEM_PROMPT.includes('ТОЛЬКО номера из снимка'))
@@ -121,13 +149,26 @@ assert.ok(PLAN_SYSTEM_PROMPT.includes('Uzum'), 'ловушка про язык �
 // пустой план на «заполни карточку товара» и будет формально права.
 assert.ok(PLAN_SYSTEM_PROMPT.includes('ОБЩИЕ ПОРУЧЕНИЯ — ЭТО НОРМА'))
 assert.ok(PLAN_SYSTEM_PROMPT.includes('Заполни карточку товара'))
-for (const key of ['title_ru', 'title_uz', 'description_ru', 'description_uz', 'category', 'price_uzs']) {
+for (const key of ['title_ru', 'title_uz', 'description_ru', 'description_uz', 'category', 'price_uzs', 'attributes']) {
   assert.ok(PLAN_SYSTEM_PROMPT.includes(key), `ключ данных ${key} назван в промпте`)
 }
 // Пустой ответ разрешён только как крайний случай, а не как осторожная привычка.
 assert.ok(PLAN_SYSTEM_PROMPT.includes('нет ВООБЩЕ'))
-// Краткое и полное описания путать нельзя: в короткое поле длинный текст не влезет.
-assert.ok(PLAN_SYSTEM_PROMPT.includes('краткое описание с полным'))
+
+// Два поля описания (textarea-тизер + richtext-полное) — норма, а не повод спутать их или один
+// оставить пустым. Живой отчёт показал именно это: richtext без подписи и плейсхолдера модель
+// сочла слишком неопределённым и молча пропустила, хотя description_ru был непустой.
+assert.ok(PLAN_SYSTEM_PROMPT.includes('Два поля описания на одном языке — НОРМА'))
+assert.ok(PLAN_SYSTEM_PROMPT.includes('Различай их по kind'), 'различение по kind, не по словам в подписи — подписи может не быть')
+assert.ok(PLAN_SYSTEM_PROMPT.includes('Заполняй ОБА'))
+assert.ok(PLAN_SYSTEM_PROMPT.includes('Пустой richtext при непустом description_ru/description_uz'))
+
+// attributes — свободные характеристики от владельца, а не гарантированный бренд/страна. Модель
+// не должна гадать по select без уверенного совпадения — и должна сказать об этом в note, а не
+// промолчать.
+assert.ok(PLAN_SYSTEM_PROMPT.includes('значение в select, ТОЛЬКО если'))
+assert.ok(PLAN_SYSTEM_PROMPT.includes('бренд/страна — заполните вручную'))
+
 assert.equal(planNote({ note: '  Заполнил два поля  ' }), 'Заполнил два поля')
 assert.equal(planNote({ note: '' }), null)
 assert.equal(planNote({}), null)
@@ -143,4 +184,4 @@ assert.ok(prompt.includes('Название товара на русском'))
 assert.ok(prompt.includes('Брелок'))
 assert.equal(/<div|class=|querySelector/.test(prompt), false, 'разметка наружу не уезжает')
 
-console.log('[OK] Agent plan behaviour: 56 assertions')
+console.log('[OK] Agent plan behaviour: 65 assertions')

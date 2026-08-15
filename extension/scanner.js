@@ -25,6 +25,26 @@ const INTERACTIVE = [
   'a[href]',
 ].join(', ')
 
+/**
+ * Подмножество INTERACTIVE без кнопок и ссылок — то, что считается «другим полем» при поиске
+ * собственной карточки элемента.
+ *
+ * Панель инструментов редактора форматированного текста (жирный, курсив, ссылка) состоит из
+ * КНОПОК, и раньше они считались «другим интерактивным элементом» наравне с соседним полем формы.
+ * ownCard видел кнопку панели инструментов сразу за своим первым предком и останавливал подъём —
+ * и текст ярлыка поля, лежащий ЕЩЁ выше над всей панелью, никогда не попадал в контекст. Так
+ * richtext-поле оставалось без подписи и без плейсхолдера одновременно — модель не могла понять,
+ * что это вообще поле описания, и осторожно пропускала его.
+ */
+const FIELD_LIKE = [
+  'input:not([type="hidden"])',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '[role="combobox"]',
+  '[role="textbox"]',
+].join(', ')
+
 /** Меньше этого по любой стороне — не элемент управления, а способ спрятать его от глаз. */
 const MIN_SIZE = 8
 
@@ -104,19 +124,22 @@ function visibility(element) {
 }
 
 /**
- * Собственная карточка элемента — наименьший предок, внутри которого нет ДРУГИХ интерактивных
- * элементов.
+ * Собственная карточка элемента — наименьший предок, внутри которого нет ДРУГИХ полей.
  *
  * Это ключевая мера предосторожности всего сканера. Наивный `closest('div')` почти всегда даёт
  * общую обёртку блока, и тогда контекст у соседних полей получается одинаковым: у обоих названий
  * оказалось бы написано и «на русском», и «на узбекском». Дальше любое сопоставление по смыслу
  * выбирает первое попавшееся — и текст уезжает не в то поле.
+ *
+ * «Другое» — это FIELD_LIKE, не весь INTERACTIVE. Кнопки панели инструментов редактора — часть
+ * ЭТОГО ЖЕ поля, а не другого; считать их «другим полем» останавливало подъём на первом же
+ * предке, и подпись, стоящая выше над всей панелью, никогда не находилась.
  */
 function ownCard(element) {
   let node = element.parentElement
   let best = null
   for (let depth = 0; depth < 8 && node; depth++) {
-    const others = queryAllDeep(node, INTERACTIVE).filter((one) => one !== element)
+    const others = queryAllDeep(node, FIELD_LIKE).filter((one) => one !== element)
     if (others.length) break
     best = node
     node = node.parentElement
@@ -164,10 +187,11 @@ function nearbyText(element) {
   for (let depth = 0; depth < 4 && node; depth++) {
     const text = (node.innerText ?? node.textContent ?? '').replace(/\s+/g, ' ').trim()
     if (text && text.length < 400) seen.push(text)
-    // Поднимаемся, пока предок не начал включать другие поля: их подписи — не наши.
+    // Поднимаемся, пока предок не начал включать другие ПОЛЯ (не кнопки панели инструментов
+    // этого же редактора): их подписи — не наши.
     const parent = node.parentElement
     if (!parent) break
-    const others = queryAllDeep(parent, INTERACTIVE).filter((one) => one !== element)
+    const others = queryAllDeep(parent, FIELD_LIKE).filter((one) => one !== element)
     if (others.length > 0 && seen.length) break
     node = parent
   }

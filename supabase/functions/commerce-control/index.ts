@@ -15,7 +15,7 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
-import { PLAN_SYSTEM_PROMPT, checkPlan, planNote, planUserPrompt } from '../_shared/agentPlan.ts'
+import { PLAN_SYSTEM_PROMPT, checkPlan, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
 import {
   classifyProviderResponse, decideSubmit, ownerMessage,
   type SubmitMode,
@@ -957,8 +957,13 @@ Deno.serve(async (req) => {
 
     // Данные для подстановки берутся НА СЕРВЕРЕ, а не из поручения: иначе достаточно попросить
     // «впиши сюда чужой артикул», и расширение впишет что угодно, что уместилось в текст.
+    //
+    // attributes — то же поле, что next_extension_task уже отдаёт ниже (характеристики, которые
+    // модель извлекла из текста владельца: бренд, страна происхождения, материал — что угодно, что
+    // он сам назвал). Здесь его не было вовсе, и планировщик не мог сопоставить select «Бренд» или
+    // «Страна производства» ни с чем — не потому что таких данных нет, а потому что их не спросили.
     const { data: draft } = await admin.from('commerce_listing_drafts')
-      .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, min_selling_price_tiyin')
+      .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')
       .eq('account_id', profile.account_id).eq('status', 'ready')
       .order('approved_at', { ascending: true }).limit(1).maybeSingle()
 
@@ -988,6 +993,7 @@ Deno.serve(async (req) => {
                 description_ru: draft.description_ru, description_uz: draft.description_uz,
                 category: draft.uzum_category,
                 price_uzs: draft.min_selling_price_tiyin == null ? null : Math.ceil(draft.min_selling_price_tiyin / 100),
+                attributes: draft.attributes ?? [],
               }
               : null,
           }),
@@ -1005,6 +1011,9 @@ Deno.serve(async (req) => {
       actions: checked.actions,
       // Отброшенное называется, а не исчезает: молчаливая фильтрация превращает разбор в гадание.
       rejected: checked.rejected,
+      // Поля, которых план вообще не коснулся — ни принял, ни отбросил. Без этого списка «модель
+      // не заметила поле» и «предложила, но не прошло проверку» снаружи выглядят одинаково.
+      unaddressed: unaddressedFields(items, checked).map((item) => ({ id: item.id, kind: item.kind, label: item.label ?? null })),
       note: planNote(parsed),
       draft_id: draft?.id ?? null,
     })

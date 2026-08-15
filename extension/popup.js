@@ -70,6 +70,9 @@ function describe(answer) {
   const lines = [`${say('filledCount', lang)} ${answer.done}`]
   if (answer.failed) lines.push(`${say('failedCount', lang)} ${answer.failed}`)
   if (answer.needsConfirmation) lines.push(say('needs_confirmation', lang))
+  // «Готово, заполнено 4» молчит про остальные 5 полей формы. Владелец должен узнать, что часть
+  // карточки план вообще не тронул, — иначе решит, что заполнено ВСЁ, и отправит её такой.
+  if (answer.unaddressed?.length) lines.push(`${say('notAddressed', lang)} ${answer.unaddressed.length}`)
   if (answer.note) lines.push(answer.note)
   return lines.join('\n')
 }

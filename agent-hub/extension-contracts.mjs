@@ -33,6 +33,14 @@ const stripComments = (source) => source
 
 const NEMO_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
 
+// Только тело обработчика agent_plan, а не «всё после первого упоминания строки». Голая строка
+// `action === 'agent_plan'` встречается ещё раз в общем списке разрешённых действий (строка ~246,
+// задолго до самого обработчика) — split по ней брал промежуток МЕЖДУ этим упоминанием и настоящим
+// `if`, а не сам обработчик. Проверки, полагавшиеся на это, могли зеленеть по случайному совпадению
+// в чужом коде, а не потому что проверяли то, что заявляли.
+const AGENT_PLAN_BODY = control.split("if (action === 'agent_plan') {")[1]
+  .split("if (action === 'next_extension_task') {")[0]
+
 const contracts = [
   // ── Область действия ───────────────────────────────────────────────────────────────────────
 
@@ -65,8 +73,9 @@ const contracts = [
   ['the scanner walks into open shadow roots',
     scanner.includes('function queryAllDeep(root, selector)')
     && scanner.includes('if (node.shadowRoot) found.push(...queryAllDeep(node.shadowRoot, selector))')
-    && scanner.includes('queryAllDeep(node, INTERACTIVE)') // ownCard
-    && scanner.includes('queryAllDeep(parent, INTERACTIVE)')], // nearbyText
+    && scanner.includes('const raw = queryAllDeep(document, INTERACTIVE)')
+    && scanner.includes('queryAllDeep(node, FIELD_LIKE)') // ownCard — тоже сквозь shadow root
+    && scanner.includes('queryAllDeep(parent, FIELD_LIKE)')], // nearbyText
 
   // Число одно на двоих: «узлов мало вообще» — страница ещё не отрисовалась; «узлов много, root-ов
   // тоже» — форма спрятана в веб-компонентах. Без обоих чисел «в DOM: 1» можно было только гадать.
@@ -196,6 +205,20 @@ const contracts = [
     && scanner.includes('function boundLabel(element)')
     && scanner.includes('aria-labelledby')],
 
+  // Панель инструментов richtext-редактора — это КНОПКИ, а не другое поле. Считать их «другим
+  // интерактивным элементом» останавливало подъём на первом же предке, и подпись, стоящая выше
+  // всей панели, никогда не находилась — richtext оставался без подписи, без плейсхолдера и без
+  // контекста разом, и модель осторожно пропускала поле целиком.
+  ['toolbar buttons do not stop the climb to a field label',
+    (() => {
+      const body = scanner.split('const FIELD_LIKE = [')[1]?.split('].join')[0] ?? ''
+      return body.length > 0
+        && !body.includes("'button'") && !body.includes('role="button"') && !body.includes('a[href]')
+        && scanner.includes('queryAllDeep(node, FIELD_LIKE)') // ownCard
+        && scanner.includes('queryAllDeep(parent, FIELD_LIKE)') // nearbyText
+        && !scanner.split('function ownCard')[1].split('function boundLabel')[0].includes('queryAllDeep(node, INTERACTIVE)')
+    })()],
+
   // Разметка наружу не уезжает: ни html, ни классы, ни селекторы. Только то, что видит человек.
   ['no markup leaves the page',
     !/innerHTML/.test(stripComments(scanner))
@@ -283,20 +306,19 @@ const contracts = [
   // артикул», и расширение впишет что угодно, что уместилось в текст поручения.
   ['the data to type comes from the database, not from the instruction',
     control.includes("action === 'agent_plan'")
-    && control.indexOf("from('commerce_listing_drafts')") < control.indexOf('planUserPrompt(')],
+    && AGENT_PLAN_BODY.indexOf("from('commerce_listing_drafts')") < AGENT_PLAN_BODY.indexOf('planUserPrompt(')],
 
   // Замок подписки стоит и здесь: агент — это новое действие ИИ, а не чтение своих данных.
   ['the planner is behind the subscription lock and owner-only',
     control.includes("|| action === 'agent_plan'")
-    && control.split("action === 'agent_plan'")[1].includes('entitlementFor(admin, profile.account_id)')],
+    && AGENT_PLAN_BODY.includes('entitlementFor(admin, profile.account_id)')],
 
   // Без третьего аргумента resolveOpenRouterKey отдаёт undefined всем, у кого нет СВОЕГО ключа
   // OpenRouter в настройках, — а план всегда работает на общем платформенном ключе, если владелец
   // не подключил свой. Так и получилось «llm_not_configured» на живом аккаунте, у которого ключ на
   // сервере был, просто не долетал: одному-единственному вызову из тридцати не хватало аргумента.
   ['the planner falls back to the platform key, not to undefined',
-    control.split("action === 'agent_plan'")[1].split('llm_not_configured')[0]
-      .includes("resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY')")],
+    AGENT_PLAN_BODY.includes("resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY')")],
 
   // Молчаливая фильтрация превращает разбор в гадание: план «не сработал», и никто не знает почему.
   ['what the guard threw away is named',
@@ -306,6 +328,25 @@ const contracts = [
     // у которого план отвергла наша же проверка, — это совет чинить не то.
     && background.includes('rejected: planned.data?.rejected ?? []')
     && popup.includes('answer.rejected?.length')],
+
+  // «Модель не заметила поле» и «предложила, но проверка отклонила» снаружи выглядели одинаково —
+  // «поле осталось пустым». unaddressedFields называет первое отдельно, и оно доезжает до отчёта
+  // диагностики, до консоли service worker и до самого владельца в попапе, а не гаснет внутри
+  // одного из трёх слоёв.
+  ['fields the plan never even tried are named, not just the rejected ones',
+    plan.includes('export function unaddressedFields(items: PageItem[], checked: PlanCheck)')
+    && control.includes('unaddressed: unaddressedFields(items, checked)')
+    && background.includes('planned.data?.unaddressed ?? []')
+    && popup.includes('answer.unaddressed?.length')],
+
+  // Бренд, страна происхождения и прочие характеристики, которые владелец сам назвал, живут в
+  // commerce_listing_drafts.attributes — next_extension_task их уже отдавал, а agent_plan эту
+  // колонку не запрашивал вовсе. Планировщик не мог сопоставить select с данными, которых ему не
+  // показали, — это выглядело как отказ модели гадать, а было недостающим полем в SELECT.
+  ['attributes reach the planner, not just the legacy task feed',
+    AGENT_PLAN_BODY.includes(
+      ".select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')",
+    ) && AGENT_PLAN_BODY.includes('attributes: draft.attributes')],
 
   // ── Прозрачность ───────────────────────────────────────────────────────────────────────────
 
