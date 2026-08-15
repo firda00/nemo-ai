@@ -72,6 +72,8 @@
     "test:listing-submit": "node --experimental-strip-types agent-hub/listing-submit-behavior.mjs",
     "test:extension": "node agent-hub/extension-contracts.mjs",
     "test:agent-plan": "node --experimental-strip-types agent-hub/agent-plan-behavior.mjs",
+    "test:scanner": "node agent-hub/scanner-visibility-behavior.mjs",
+    "test:leadgen": "node --experimental-strip-types agent-hub/leadgen-sanitizer-behavior.mjs",
     "test:billing-live": "node agent-hub/billing-entitlement-live.mjs",
     "test:listing-upload": "node --experimental-strip-types agent-hub/listing-upload-behavior.mjs",
     "test:listing-telegram": "node --experimental-strip-types agent-hub/listing-telegram-behavior.mjs",

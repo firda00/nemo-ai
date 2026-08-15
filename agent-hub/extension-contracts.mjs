@@ -251,6 +251,25 @@ const contracts = [
   ['the log never prints what is written in the fields',
     !/console.log[sS]{0,400}item.value/.test(content)],
 
+  // Служебная кнопка 1×1 за экраном получала первый номер в снимке и участвовала в разборе
+  // наравне с настоящими полями. Проверка «ширина и высота больше нуля» такое пропускает.
+  ['hidden and off-screen elements never enter the snapshot',
+    scanner.includes('const MIN_SIZE = 8')
+    && scanner.includes('if (box.width < MIN_SIZE || box.height < MIN_SIZE) return false')
+    && scanner.includes('if (box.right <= 0 || box.bottom <= 0) return false')
+    && scanner.includes("element.getAttribute?.('aria-hidden') === 'true'")],
+
+  // Проверка «попадает ли элемент в текущий экран» напрашивается и ломает всё: на длинной форме
+  // почти все поля лежат ниже сгиба, и снимок потерял бы то, ради чего затевался. Прокрутка — не
+  // способ спрятать элемент.
+  ['fields below the fold stay in the snapshot',
+    !stripComments(scanner).includes('window.innerHeight')],
+
+  // У элементов с position: fixed offsetParent равен null всегда: плавающая панель формы видима,
+  // и отбрасывать её нельзя.
+  ['a fixed element is not mistaken for a hidden one',
+    scanner.includes("element.offsetParent === null && style?.position !== 'fixed'")],
+
   // Поля формы лежат ниже навигации, а ссылок в кабинете десятки. При отборе «первые N в порядке
   // документа» меню съедало весь снимок, и модель получала страницу без единого поля ввода.
   ['form fields outrank navigation links in the snapshot',

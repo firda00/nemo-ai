@@ -25,13 +25,43 @@ const INTERACTIVE = [
   'a[href]',
 ].join(', ')
 
-/** Видимо ли поле человеку. Невидимое поле — это либо мусор разметки, либо ловушка для ботов. */
+/** Меньше этого по любой стороне — не элемент управления, а способ спрятать его от глаз. */
+const MIN_SIZE = 8
+
+/**
+ * Видимо ли поле человеку.
+ *
+ * Прежняя проверка требовала лишь ширины и высоты больше нуля — и пропускала служебную кнопку
+ * размером 1×1, уведённую за экран на `left: -9999px`. Такая кнопка занимала первый номер в снимке
+ * и участвовала в разборе наравне с настоящими полями.
+ *
+ * ЧЕГО ЗДЕСЬ НАМЕРЕННО НЕТ: проверки «попадает ли элемент в текущий экран». Напрашивается
+ * `rect.top < innerHeight && rect.bottom > 0`, и она выглядит разумной ровно до первой длинной
+ * формы: поля ниже сгиба в экран не попадают, и снимок потерял бы почти всё, ради чего затевался.
+ * Прокрутка — не способ спрятать элемент, а обычное положение страницы.
+ *
+ * Уход за экран ВЛЕВО или ВВЕРХ — другое дело: так прячут по-настоящему, и вернуть туда прокруткой
+ * нельзя.
+ */
 function visible(element) {
   const style = window.getComputedStyle?.(element)
-  if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) return false
+  if (style) {
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+    if (Number(style.opacity) === 0) return false
+    // clip и clip-path — классический способ спрятать поле, оставив его в разметке.
+    if (style.clipPath === 'inset(100%)' || style.clip === 'rect(0px, 0px, 0px, 0px)') return false
+  }
+  // offsetParent === null означает display:none у себя или у предка. Но у элементов с
+  // position: fixed он null ВСЕГДА — плавающая панель формы вполне видима, и отбрасывать её нельзя.
+  if (element.offsetParent === null && style?.position !== 'fixed') return false
+  if (element.getAttribute?.('aria-hidden') === 'true') return false
+
   const box = element.getBoundingClientRect?.()
   if (!box) return true
-  return box.width > 0 && box.height > 0
+  if (box.width < MIN_SIZE || box.height < MIN_SIZE) return false
+  // Правый край левее нуля или нижний край выше нуля — элемент уведён за экран, а не прокручен.
+  if (box.right <= 0 || box.bottom <= 0) return false
+  return true
 }
 
 /**
