@@ -53,6 +53,10 @@ const DICT = {
     ru: "Часть предложенных действий не прошла проверку безопасности. Отброшено:",
     uz: "Taklif qilingan amallarning bir qismi xavfsizlik tekshiruvidan o‘tmadi. Rad etildi:",
   },
+  expired: {
+    ru: "Срок связи истёк — ключ доступа живёт около часа. Откройте Nemo и нажмите «Связать с Nemo» ещё раз.",
+    uz: "Aloqa muddati tugadi — kirish kaliti taxminan bir soat yashaydi. Nemo’ni oching va «Nemo bilan bog‘lash» tugmasini yana bosing.",
+  },
   ready: {
     ru: 'Связь с Nemo есть. Откройте нужную страницу и напишите поручение.',
     uz: 'Nemo bilan aloqa bor. Kerakli sahifani oching va topshiriqni yozing.',

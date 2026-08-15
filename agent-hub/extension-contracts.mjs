@@ -85,6 +85,15 @@ const contracts = [
   ['no wildcard origin may talk to the extension',
     manifest.externally_connectable.matches.every((one) => !one.includes('*.'))],
 
+  // Сайт показывал «Связано» из собственной памяти, пока расширение уже говорило «нет связи».
+  // Два ответа на один вопрос — худшее, что может показать интерфейс.
+  ['an expired link is named as expired, on both sides',
+    nemo.includes('export async function sessionState()')
+    && background.includes('sessionState().then(({ session, expired })')
+    && link.includes("return probe.reply.expired ? 'expired' : 'unlinked'")
+    && popup.includes("info?.expired ? 'expired' : 'not_linked'")
+    && page.includes("window.addEventListener('focus', check)")],
+
   ['only the short-lived token crosses to the extension',
     link.includes('session: { access_token: session.access_token, expires_at: session.expires_at }')
     && !link.includes('refresh_token')],

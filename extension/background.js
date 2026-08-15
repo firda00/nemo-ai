@@ -7,7 +7,7 @@
 // план действий → выполнить → отчитаться. Всё, что раньше знало про Uzum, ушло из расширения:
 // смыслы полей и правила заполнения теперь на стороне Nemo, где их можно менять без переустановки.
 
-import { callNemo, forgetSession, readSession, reportResult, saveSession } from './nemo.js'
+import { callNemo, forgetSession, readSession, reportResult, saveSession, sessionState } from './nemo.js'
 
 /**
  * Кто вправе говорить с расширением.
@@ -28,7 +28,9 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     return false
   }
   if (message?.type === 'nemo:ping') {
-    readSession().then((session) => sendResponse({ ok: true, linked: Boolean(session) }))
+    // Сайту сообщается ТО ЖЕ состояние, что видит попап. Иначе в кабинете горит «Связано», а в
+    // расширении «нет связи», и человек не понимает, кому из двух верить.
+    sessionState().then(({ session, expired }) => sendResponse({ ok: true, linked: Boolean(session), expired }))
     return true
   }
   if (message?.type === 'nemo:unlink') {
@@ -144,7 +146,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
   if (message?.type === 'nemo:state') {
-    readSession().then((session) => sendResponse({ linked: Boolean(session) }))
+    sessionState().then(({ session, expired }) => sendResponse({ linked: Boolean(session), expired }))
     return true
   }
   return undefined

@@ -22,7 +22,7 @@
 export const EXTENSION_ID =
   (import.meta.env.VITE_NEMO_EXTENSION_ID as string | undefined) ?? 'mafjjfinnlpigcbmhiabkiamnhnmgcca'
 
-type ExtensionReply = { ok?: boolean; error?: string; linked?: boolean }
+type ExtensionReply = { ok?: boolean; error?: string; linked?: boolean; expired?: boolean }
 
 type ChromeRuntime = {
   sendMessage?: (
@@ -77,18 +77,22 @@ function ask(message: unknown): Promise<Probe> {
   })
 }
 
-export type ExtensionState = 'linked' | 'unlinked' | ProbeFailure
+export type ExtensionState = 'linked' | 'unlinked' | 'expired' | ProbeFailure
 
 /** Стоит ли расширение, отвечает ли и есть ли у него живая сессия. */
 export async function extensionState(): Promise<ExtensionState> {
   const probe = await ask({ type: 'nemo:ping' })
   if (!probe.ok) return probe.failure
   if (!probe.reply.ok) return 'no_answer'
-  return probe.reply.linked ? 'linked' : 'unlinked'
+  if (probe.reply.linked) return 'linked'
+  // Просроченная связь отличается от отсутствующей: иначе в кабинете горит «Связано» из памяти
+  // страницы, а расширение говорит «нет связи», и человек не знает, кому верить.
+  return probe.reply.expired ? 'expired' : 'unlinked'
 }
 
 /** Отвечает ли расширение вообще. По этому признаку решается, что показывать владельцу. */
-export const extensionReachable = (state: ExtensionState) => state === 'linked' || state === 'unlinked'
+export const extensionReachable = (state: ExtensionState) =>
+  state === 'linked' || state === 'unlinked' || state === 'expired'
 
 /**
  * Передать расширению текущую сессию.

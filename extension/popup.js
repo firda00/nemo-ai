@@ -40,7 +40,9 @@ async function refresh() {
   const linked = Boolean(info?.linked)
   nodes.run.disabled = !linked
   nodes.state.className = linked ? 'state ok' : 'state bad'
-  nodes.state.textContent = say(linked ? 'ready' : 'not_linked', lang)
+  // «Не связывались» и «связь просрочена» — разные беды: во втором случае человек уже делал
+  // то, что ему советуют, и повторять совет дословно значит выглядеть сломанным.
+  nodes.state.textContent = say(linked ? 'ready' : info?.expired ? 'expired' : 'not_linked', lang)
 }
 
 /**

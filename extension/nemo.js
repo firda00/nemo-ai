@@ -47,11 +47,24 @@ export async function saveSession(session) {
 }
 
 export async function readSession() {
+  return (await sessionState()).session
+}
+
+/**
+ * Состояние связи ПОДРОБНО: «не связывались» и «связь просрочена» — разные беды.
+ *
+ * Токен живёт около часа. Раньше оба случая давали одно «нет связи», и владелец, который связался
+ * утром, читал днём тот же текст, что и человек, не связавшийся ни разу: «откройте Nemo и
+ * нажмите Связать» — совет, который он уже выполнял и потому ему не верит.
+ */
+export async function sessionState() {
   const stored = await chrome.storage.session.get('nemo')
   const session = stored?.nemo
-  if (!session?.accessToken) return null
-  if (session.expiresAtMs - EXPIRY_MARGIN_MS <= Date.now()) return null
-  return session
+  if (!session?.accessToken) return { session: null, expired: false }
+  if (session.expiresAtMs - EXPIRY_MARGIN_MS <= Date.now()) {
+    return { session: null, expired: true }
+  }
+  return { session, expired: false }
 }
 
 export async function forgetSession() {

@@ -174,8 +174,13 @@ export default function CommercePage() {
   // расширение снесли. Отсутствие ответа — это «не установлено», и строка про него не покажется.
   useEffect(() => {
     let alive = true
-    void extensionState().then((state) => { if (alive) setExtension(state) })
-    return () => { alive = false }
+    const check = () => { void extensionState().then((state) => { if (alive) setExtension(state) }) }
+    check()
+    // Перепроверка при ВОЗВРАТЕ на вкладку. Ключ доступа живёт около часа, и страница, пролежавшая
+    // открытой полдня, показывала «Связано» из собственной памяти, пока расширение уже говорило
+    // «нет связи». Два ответа на один вопрос — худшее, что может показать интерфейс.
+    window.addEventListener('focus', check)
+    return () => { alive = false; window.removeEventListener('focus', check) }
   }, [])
 
   const onboard = async () => {
