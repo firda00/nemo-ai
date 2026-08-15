@@ -962,7 +962,11 @@ Deno.serve(async (req) => {
       .eq('account_id', profile.account_id).eq('status', 'ready')
       .order('approved_at', { ascending: true }).limit(1).maybeSingle()
 
-    const apiKey = await resolveOpenRouterKey(admin, profile.account_id)
+    // Без третьего аргумента resolveOpenRouterKey отдаёт undefined всем, у кого нет своего ключа
+    // OpenRouter в настройках, — а это почти все: план всегда работает на общем платформенном
+    // ключе, если владелец не подключил свой. Так и получилось «llm_not_configured» на живом
+    // аккаунте: ключ на сервере есть, просто сюда он не доезжал.
+    const apiKey = await resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY') ?? '')
     if (!apiKey) return json({ error: 'llm_not_configured' }, 409)
 
     const answer = await callOpenRouter({

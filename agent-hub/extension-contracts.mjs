@@ -290,6 +290,14 @@ const contracts = [
     control.includes("|| action === 'agent_plan'")
     && control.split("action === 'agent_plan'")[1].includes('entitlementFor(admin, profile.account_id)')],
 
+  // Без третьего аргумента resolveOpenRouterKey отдаёт undefined всем, у кого нет СВОЕГО ключа
+  // OpenRouter в настройках, — а план всегда работает на общем платформенном ключе, если владелец
+  // не подключил свой. Так и получилось «llm_not_configured» на живом аккаунте, у которого ключ на
+  // сервере был, просто не долетал: одному-единственному вызову из тридцати не хватало аргумента.
+  ['the planner falls back to the platform key, not to undefined',
+    control.split("action === 'agent_plan'")[1].split('llm_not_configured')[0]
+      .includes("resolveOpenRouterKey(admin, profile.account_id, Deno.env.get('OPENROUTER_API_KEY')")],
+
   // Молчаливая фильтрация превращает разбор в гадание: план «не сработал», и никто не знает почему.
   ['what the guard threw away is named',
     plan.includes("rejected: PlanCheck['rejected']")
