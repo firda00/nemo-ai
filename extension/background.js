@@ -81,14 +81,17 @@ export async function runInstruction({ instruction, confirmRisky = false }) {
   // (chrome://extensions → «Обслуживающий процесс»). Пустой план и план, целиком отвергнутый
   // проверкой, снаружи выглядят ОДИНАКОВО, а чинить их надо по-разному: первое — промпт, второе —
   // несоответствие снимка и ответа.
-  console.log('[Nemo] план от Nemo:', {
-    поручение: instruction,
-    элементовВСнимке: scan.page.items.length,
-    поВидам: scan.page.byKind,
-    действий: planned.data?.actions?.length ?? 0,
-    отброшено: planned.data?.rejected ?? [],
-    заметка: planned.data?.note ?? null,
-  })
+  // Строкой, а не объектом: свёрнутый «Object» в консоли невозможно ни прочитать, ни прислать.
+  const rejected = planned.data?.rejected ?? []
+  console.log(
+    `[Nemo] план: поручение="${instruction}" элементов=${scan.page.items.length}`
+    + ` действий=${planned.data?.actions?.length ?? 0} отброшено=${rejected.length}`
+    + `
+[Nemo] заметка модели: ${planned.data?.note ?? '—'}`,
+  )
+  if (rejected.length) {
+    console.log('[Nemo] отброшено проверкой:', rejected.map((one) => one.reason).join(', '))
+  }
 
   const actions = planned.data?.actions ?? []
   if (!actions.length) {

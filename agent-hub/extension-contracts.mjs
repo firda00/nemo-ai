@@ -243,8 +243,11 @@ const contracts = [
   ['the snapshot reports what it collected, by kind',
     scanner.includes('const byKind = {}')
     && scanner.includes('truncated: found.length > limit')
-    && content.includes("console.log('[Nemo] снимок страницы:'")
-    && background.includes("console.log('[Nemo] план от Nemo:'")],
+    // Печатается СТРОКОЙ, а не объектом: консоль сворачивает объект в «Object», и человек,
+    // копирующий лог в переписку, присылает это слово вместо данных. Так и случилось.
+    && content.includes('[Nemo] снимок: всего=')
+    && background.includes('[Nemo] план: поручение=')
+    && !content.includes("console.log('[Nemo] снимок страницы:', {")],
 
   // В значениях полей лежит содержимое чужого кабинета, а консоль читают через плечо и копируют
   // в переписку. В журнал идут номера, виды и подписи — не то, что там написано.
