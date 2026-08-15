@@ -29,6 +29,45 @@ const INTERACTIVE = [
 const MIN_SIZE = 8
 
 /**
+ * Обход, который не останавливается на границе веб-компонента.
+ *
+ * `querySelectorAll` не заглядывает внутрь ОТКРЫТОГО `shadowRoot` — это не баг, а спецификация:
+ * содержимое веб-компонента считается его личным деревом. Для страницы, целиком собранной из таких
+ * компонентов, обычный поиск с самого верхнего документа находит только то немногое, что лежит
+ * СНАРУЖИ всех компонентов, — и именно так выглядел бы снимок из одного случайного элемента.
+ *
+ * ЗАКРЫТЫЙ (`mode: 'closed'`) shadow root эта функция не видит — `element.shadowRoot` возвращает
+ * `null` для него, и обойти это снаружи страницы нельзя в принципе: так решил сам сайт.
+ */
+function queryAllDeep(root, selector) {
+  const found = [...root.querySelectorAll(selector)]
+  for (const node of root.querySelectorAll('*')) {
+    if (node.shadowRoot) found.push(...queryAllDeep(node.shadowRoot, selector))
+  }
+  return found
+}
+
+/** Сколько открытых shadow root встретилось — по этому числу отчёт отличает «спрятано в
+ * веб-компонентах» от «страница просто ещё не отрисовалась». */
+function countShadowHosts(root) {
+  let count = 0
+  for (const node of root.querySelectorAll('*')) {
+    if (node.shadowRoot) count += 1 + countShadowHosts(node.shadowRoot)
+  }
+  return count
+}
+
+/**
+ * Снимок выглядит так, будто SPA ещё не дорисовала форму: почти пусто и в самом DOM, а не только
+ * после фильтра. Число подобрано по живому случаю — статический виджет поддержки на пустой
+ * странице даёт `raw: 1` при считаных элементах в DOM вообще; настоящая отрисованная форма кабинета
+ * — это сотни узлов, даже без единого совпадения по INTERACTIVE.
+ */
+function looksUnrendered(page) {
+  return page.raw <= 2 && page.domTotal < 50
+}
+
+/**
  * Видимо ли поле человеку.
  *
  * Прежняя проверка требовала лишь ширины и высоты больше нуля — и пропускала служебную кнопку
@@ -77,7 +116,7 @@ function ownCard(element) {
   let node = element.parentElement
   let best = null
   for (let depth = 0; depth < 8 && node; depth++) {
-    const others = [...node.querySelectorAll(INTERACTIVE)].filter((one) => one !== element)
+    const others = queryAllDeep(node, INTERACTIVE).filter((one) => one !== element)
     if (others.length) break
     best = node
     node = node.parentElement
@@ -128,7 +167,7 @@ function nearbyText(element) {
     // Поднимаемся, пока предок не начал включать другие поля: их подписи — не наши.
     const parent = node.parentElement
     if (!parent) break
-    const others = [...parent.querySelectorAll(INTERACTIVE)].filter((one) => one !== element)
+    const others = queryAllDeep(parent, INTERACTIVE).filter((one) => one !== element)
     if (others.length > 0 && seen.length) break
     node = parent
   }
@@ -180,13 +219,19 @@ function risky(label) {
  */
 function scanPage(limit = 120) {
   // Прежние номера снимаются: снимок действует до следующего скана, и старый номер не должен
-  // случайно указать на другой элемент после перерисовки страницы.
-  for (const stale of document.querySelectorAll(`[${NEMO_ID}]`)) stale.removeAttribute(NEMO_ID)
+  // случайно указать на другой элемент после перерисовки страницы. Снимаются и внутри shadow
+  // root — иначе номер, поставленный в прошлый раз внутри веб-компонента, останется на элементе
+  // навсегда: обычный querySelectorAll его для очистки не найдёт.
+  for (const stale of queryAllDeep(document, `[${NEMO_ID}]`)) stale.removeAttribute(NEMO_ID)
 
   // СЫРОЕ число — до единого фильтра. Прошлый лог печатал 'всего=0', и это было число ПОСЛЕ
   // отбора по видимости: по нему нельзя отличить «на странице нет полей» от «мой фильтр съел все».
   // Разница решающая, а подпись врала.
-  const raw = [...document.querySelectorAll(INTERACTIVE)]
+  //
+  // ОБХОД ЧЕРЕЗ SHADOW ROOT: страница, целиком собранная из веб-компонентов, обычным
+  // querySelectorAll с document почти не находит ничего — свет виден только там, где нет ни
+  // одного открытого shadowRoot между корнем и полем.
+  const raw = queryAllDeep(document, INTERACTIVE)
   const dropped = { hidden: 0, tiny: 0, offscreen: 0 }
   const found = raw.filter((element) => {
     const verdict = visibility(element)
@@ -241,6 +286,12 @@ function scanPage(limit = 120) {
   const byKind = {}
   for (const item of items) byKind[item.kind] = (byKind[item.kind] ?? 0) + 1
 
+  // Улики для отчёта, а не для самого сканирования: они отличают «страница почти пуста» (мало
+  // узлов вообще) от «страница полна, но всё за shadow root» (узлов много, root-ов тоже). Без
+  // этих двух чисел «в DOM: 1» можно было только гадать, что значит.
+  const domTotal = document.querySelectorAll('*').length
+  const shadowHosts = countShadowHosts(document)
+
   return {
     url: location.href,
     // В каком кадре сняли. Форма во фрейме и форма в главном документе выглядят одинаково в
@@ -249,6 +300,8 @@ function scanPage(limit = 120) {
     title: document.title,
     count: found.length,
     raw: raw.length,
+    domTotal,
+    shadowHosts,
     dropped,
     truncated: found.length > limit,
     byKind,
@@ -256,8 +309,9 @@ function scanPage(limit = 120) {
   }
 }
 
-/** Элемент по выданному номеру. Ничего, кроме номера, снаружи не принимается. */
+/** Элемент по выданному номеру. Ничего, кроме номера, снаружи не принимается. Ищет и в shadow
+ * root: номер, поставленный внутри веб-компонента, обычным querySelector снаружи не найти. */
 function elementById(id) {
   if (!Number.isInteger(Number(id))) return null
-  return document.querySelector(`[${NEMO_ID}="${Number(id)}"]`)
+  return queryAllDeep(document, `[${NEMO_ID}="${Number(id)}"]`)[0] ?? null
 }

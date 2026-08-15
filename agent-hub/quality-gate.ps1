@@ -29,6 +29,7 @@ $steps = @(
   @{ Name = 'Extension contracts'; Command = { npm run test:extension } },
   @{ Name = 'Agent plan behavior'; Command = { npm run test:agent-plan } },
   @{ Name = 'Scanner visibility'; Command = { npm run test:scanner } },
+  @{ Name = 'Scanner shadow DOM traversal'; Command = { npm run test:scanner-shadow } },
   @{ Name = 'Leadgen sanitizer'; Command = { npm run test:leadgen } },
   @{ Name = 'Secrets scan'; Command = { npm run test:secrets } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },

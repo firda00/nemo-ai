@@ -54,10 +54,37 @@ const contracts = [
   // 'всего=0' раньше означало число ПОСЛЕ фильтра видимости: по нему нельзя было отличить
   // «полей нет» от «мой фильтр съел все». Разница решающая, а подпись врала.
   ['the raw dom count is reported before any filter',
-    scanner.includes('const raw = [...document.querySelectorAll(INTERACTIVE)]')
+    scanner.includes('const raw = queryAllDeep(document, INTERACTIVE)')
     && scanner.includes('raw: raw.length')
     && scanner.includes('dropped')
     && content.includes('в DOM=')],
+
+  // Живой отчёт показал «в DOM: 1» на кабинете Uzum, целиком собранном из веб-компонентов:
+  // обычный querySelectorAll с document не заглядывает внутрь открытого shadowRoot, и почти вся
+  // страница остаётся невидимой для сканера. Обход находит то, что обычный запрос теряет.
+  ['the scanner walks into open shadow roots',
+    scanner.includes('function queryAllDeep(root, selector)')
+    && scanner.includes('if (node.shadowRoot) found.push(...queryAllDeep(node.shadowRoot, selector))')
+    && scanner.includes('queryAllDeep(node, INTERACTIVE)') // ownCard
+    && scanner.includes('queryAllDeep(parent, INTERACTIVE)')], // nearbyText
+
+  // Число одно на двоих: «узлов мало вообще» — страница ещё не отрисовалась; «узлов много, root-ов
+  // тоже» — форма спрятана в веб-компонентах. Без обоих чисел «в DOM: 1» можно было только гадать.
+  ['the report distinguishes an unrendered page from a shadow-hidden one',
+    scanner.includes('function countShadowHosts(root)')
+    && scanner.includes('const domTotal = document.querySelectorAll')
+    && scanner.includes('shadowHosts,')
+    && background.includes('shadow-корней: ${page.shadowHosts')],
+
+  // Скан, снятый раньше, чем SPA дорисовала форму, видит пустую обёртку — ровно то, что случилось
+  // на живой странице. Ждать после КАЖДОГО скана нельзя, поэтому решение принимается по тому,
+  // насколько пуст первый снимок, и пересканирование происходит не больше одного раза.
+  ['an empty-looking scan waits once for the page to settle, not forever',
+    scanner.includes('function looksUnrendered(page)')
+    && content.includes('function settled(')
+    && content.includes('if (looksUnrendered(page))')
+    && content.includes('await settled()')
+    && !content.includes('while (looksUnrendered(page))')],
 
   // Форма во фрейме и форма в главном документе выглядят в отчёте одинаково, а чинятся
   // по-разному: вторая требует all_frames.
@@ -148,12 +175,12 @@ const contracts = [
   ['the page is described by numbers, not by selectors',
     scanner.includes("const NEMO_ID = 'data-nemo-id'")
     && scanner.includes('function elementById(id)')
-    && scanner.includes('document.querySelector(`[${NEMO_ID}="${Number(id)}"]`)')],
+    && scanner.includes('queryAllDeep(document, `[${NEMO_ID}="${Number(id)}"]`)[0] ?? null')],
 
   // Старые номера снимаются перед новым сканом: иначе номер из прошлого снимка после перерисовки
-  // укажет на другой элемент.
+  // укажет на другой элемент. Снимаются и внутри shadow root тем же обходом, которым ставились.
   ['stale numbers are cleared before a new scan',
-    scanner.includes(`for (const stale of document.querySelectorAll(\`[\${NEMO_ID}]\`)) stale.removeAttribute(NEMO_ID)`)],
+    scanner.includes(`for (const stale of queryAllDeep(document, \`[\${NEMO_ID}]\`)) stale.removeAttribute(NEMO_ID)`)],
 
   // Ближайший div почти всегда общая обёртка: её текст содержит подписи соседних полей, и оба
   // получают одинаковый контекст. Тогда текст уезжает не в то поле.

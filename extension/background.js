@@ -171,6 +171,10 @@ export async function collectDiagnostics() {
     lines.push(
       `кадр: ${page.frame}`,
       `в DOM: ${page.raw} | прошло фильтр: ${page.count} | в снимке: ${page.items.length}`,
+      // Эти два числа вместе называют причину пустого снимка, а не просто повторяют её:
+      // узлов много, а найдено мало + есть shadow-корни — форма спрятана в веб-компонентах;
+      // узлов мало вообще — страница ещё не дорисовалась, дело не в shadow DOM.
+      `всего узлов в DOM: ${page.domTotal ?? '—'} | shadow-корней: ${page.shadowHosts ?? '—'}`,
       `отсеяно: ${dropped}`,
       `виды: ${kinds}`,
     )
