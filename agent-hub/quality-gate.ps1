@@ -30,6 +30,7 @@ $steps = @(
   @{ Name = 'Agent plan behavior'; Command = { npm run test:agent-plan } },
   @{ Name = 'Scanner visibility'; Command = { npm run test:scanner } },
   @{ Name = 'Leadgen sanitizer'; Command = { npm run test:leadgen } },
+  @{ Name = 'Secrets scan'; Command = { npm run test:secrets } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },
   @{ Name = 'Listing images behavior'; Command = { npm run test:listing-images } },
