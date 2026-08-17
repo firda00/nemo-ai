@@ -75,10 +75,25 @@ assert.equal(clean.company.website, 'https://denta.uz/', 'адрес без сх
 assert.equal(clean.company.normalized_name, 'стоматология дента')
 assert.equal(clean.company.operational, true)
 
-// Компания без телефона или без сайта — строка, по которой нельзя ни позвонить, ни написать. Её
-// присутствие в списке создаёт видимость работы.
-assert.equal(sanitizePlace({ ...good, international_phone_number: undefined }, 'Ташкент').reason, 'no_phone')
-assert.equal(sanitizePlace({ ...good, website: undefined }, 'Ташкент').reason, 'no_website')
+// ОДНОГО КАНАЛА СВЯЗИ ДОСТАТОЧНО. Отсеивается только запись, по которой нельзя ни позвонить, ни
+// написать: она и есть строка, создающая видимость работы. Раньше требовались ОБА канала, и это
+// расходилось с замыслом фильтра — на открытых данных (OSM) требование обоих выбрасывало десятки
+// компаний, которым можно звонить, а телефон для SDR обычно основной канал, а не дополнение.
+{
+  const phoneOnly = sanitizePlace({ ...good, website: undefined }, 'Ташкент')
+  assert.equal(phoneOnly.ok, true, 'есть телефон — звонить можно, значит это лид')
+  assert.equal(phoneOnly.company.website, null)
+  assert.equal(phoneOnly.company.phone, '+998712003040')
+
+  const siteOnly = sanitizePlace({ ...good, international_phone_number: undefined }, 'Ташкент')
+  assert.equal(siteOnly.ok, true, 'есть сайт — написать можно, значит это лид')
+  assert.equal(siteOnly.company.phone, null)
+  assert.equal(siteOnly.company.website, 'https://denta.uz/')
+
+  const neither = sanitizePlace({ ...good, international_phone_number: undefined, website: undefined }, 'Ташкент')
+  assert.equal(neither.ok, false, 'ни телефона, ни сайта — связаться нечем')
+  assert.equal(neither.reason, 'no_contacts')
+}
 assert.equal(sanitizePlace({ ...good, name: '  ' }, 'Ташкент').reason, 'no_name')
 
 // Закрытый бизнес хуже пустого: по нему звонят, и звонок попадает человеку, который закрылся.
@@ -87,12 +102,18 @@ assert.equal(sanitizePlace({ ...good, business_status: 'CLOSED_TEMPORARILY' }, '
 // Отсутствие статуса не равно «закрыт»: справочник его иногда не отдаёт вовсе.
 assert.equal(sanitizePlace({ ...good, business_status: undefined }, 'Ташкент').ok, true)
 
-// Профиль в чужом справочнике — не сайт компании: писать туда некуда.
-assert.equal(sanitizePlace({ ...good, website: 'https://business.site/denta' }, 'Ташкент').reason, 'no_website')
-assert.equal(sanitizePlace({ ...good, website: 'не сайт' }, 'Ташкент').reason, 'no_website')
+// Профиль в чужом справочнике — не сайт компании: писать туда некуда. Такой адрес обнуляется, и
+// запись держится на телефоне; если телефона тоже нет — отсеивается.
+assert.equal(sanitizePlace({ ...good, website: 'https://business.site/denta' }, 'Ташкент').company.website, null)
+assert.equal(sanitizePlace({ ...good, website: 'не сайт' }, 'Ташкент').company.website, null)
+assert.equal(
+  sanitizePlace({ ...good, website: 'https://business.site/denta', international_phone_number: undefined }, 'Ташкент').reason,
+  'no_contacts',
+  'заглушка справочника сайтом не считается — без телефона связаться нечем',
+)
 
 // Отказ ВСЕГДА называет причину: «нашли 12 из 50» без объяснения читается как поломка поиска.
-const rejected = sanitizePlace({ ...good, international_phone_number: '' }, 'Ташкент')
+const rejected = sanitizePlace({ ...good, international_phone_number: '', website: '' }, 'Ташкент')
 assert.equal(rejected.ok, false)
 assert.equal(rejected.place_id, 'p1', 'по отказу видно, какая именно запись отсеяна')
 
@@ -112,4 +133,4 @@ assert.equal(deduped.unique.find((one) => one.normalized_name === 'стомат�
 
 assert.deepEqual(dropDuplicates([]), { unique: [], duplicates: 0 })
 
-console.log('[OK] Leadgen sanitizer behaviour: 38 assertions')
+console.log('[OK] Leadgen sanitizer behaviour: 45 assertions')

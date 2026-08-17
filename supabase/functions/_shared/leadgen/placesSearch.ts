@@ -2,7 +2,7 @@
 //
 // Text Search сам по себе не отдаёт international_phone_number и website — только place_id,
 // name, formatted_address, rating, business_status. Без отдельного вызова Details каждая запись
-// провалила бы sanitizePlace() на no_phone: у неё физически неоткуда взяться телефону. Details —
+// провалила бы sanitizePlace() на no_contacts: у неё физически неоткуда взяться контактам. Details —
 // платный вызов на каждую запись, поэтому тянется ТОЛЬКО для того, что реально попадёт в выдачу
 // (после отсечения по limit), а не для всей страницы впустую.
 

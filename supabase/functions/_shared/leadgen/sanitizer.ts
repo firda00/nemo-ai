@@ -80,7 +80,7 @@ export function dedupeKey(name: string, city: string): string {
     .digest('hex')
 }
 
-export type RejectReason = 'no_phone' | 'no_website' | 'closed' | 'no_name'
+export type RejectReason = 'no_contacts' | 'closed' | 'no_name'
 
 export type SanitizeResult =
   | { ok: true; company: CleanCompany }
@@ -89,9 +89,17 @@ export type SanitizeResult =
 /**
  * Годится ли запись в работу.
  *
- * Фильтр качества намеренно строгий: компания без сайта и без телефона — это строка, по которой
- * невозможно ни написать, ни позвонить, и её присутствие в списке создаёт видимость работы. А
- * закрытый бизнес хуже пустого: по нему звонят, и звонок попадает человеку, который закрылся.
+ * ДОСТАТОЧНО ОДНОГО КАНАЛА СВЯЗИ — телефона ИЛИ сайта. Отсеивается только запись, по которой
+ * нельзя ни написать, ни позвонить: она и есть строка, создающая видимость работы.
+ *
+ * Раньше требовались ОБА канала, и это расходилось с собственным замыслом фильтра. С Google
+ * расхождение почти не проявлялось — у него контакты заполнены плотно. На открытых данных
+ * (OpenStreetMap) разница решающая: по замеру Ташкента из 181 точки телефон был у 48, сайт у 12, а
+ * оба сразу — только у 11. Требование обоих выбрасывало 37 компаний, которым можно ЗВОНИТЬ, — а
+ * телефон для SDR обычно и есть основной канал, а не дополнение к сайту.
+ *
+ * Компания без сайта остаётся полноценным лидом: обогащение по сайту — улучшение, а не условие
+ * (enricher честно пометит `no_website` в failed), и модель оценит её по тому, что есть.
  *
  * Отказ ВОЗВРАЩАЕТСЯ С ПРИЧИНОЙ, а не глотается. «Нашли 12 из 50» без объяснения читается как
  * поломка поиска, хотя это может быть честный отсев.
@@ -106,8 +114,9 @@ export function sanitizePlace(raw: RawPlace, city: string, defaultCountryCode = 
 
   const phone = toE164(raw.international_phone_number, defaultCountryCode)
   const website = normalizeWebsite(raw.website)
-  if (!phone) return { ok: false, reason: 'no_phone', place_id: raw.place_id }
-  if (!website) return { ok: false, reason: 'no_website', place_id: raw.place_id }
+  // Ни телефона, ни сайта — связаться нечем, и в списке такая строка только мешает. Одного канала
+  // достаточно: по телефону звонят, по сайту пишут.
+  if (!phone && !website) return { ok: false, reason: 'no_contacts', place_id: raw.place_id }
 
   const company = {
     place_id: raw.place_id,
