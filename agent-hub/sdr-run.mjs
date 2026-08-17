@@ -1,14 +1,23 @@
 // Тестовый прогон SDR-пайплайна.
 //
-//   npm run sdr:run -- --query "стоматология" --city "Ташкент" --limit 20
+//   npm run sdr:run -- --query "стоматология" --city "Ташкент" --limit 50
 //
-// Ключи читаются из окружения — тем же способом, что и при деплое (source ./.secrets.local перед
-// запуском, см. agent-hub deploy notes). Пайплайн работает и без части ключей — просто делает
-// меньше на этом шаге, а не падает:
-//   GOOGLE_PLACES_API_KEY отсутствует  → нужен SDR_PLACES_FALLBACK_FILE (путь к JSON/CSV)
-//   OPENROUTER_API_KEY отсутствует     → оценка пропускается, лиды уходят без score
+// Ключи подхватываются САМИ из .secrets.local / .env.local / .env — руками ничего экспортировать не
+// нужно. Уже заданная в окружении переменная важнее файла: `KEY=... npm run sdr:run` продолжает
+// работать. Пайплайн запускается и вообще без ключей — просто делает меньше на этом шаге, а не
+// падает:
+//   GOOGLE_PLACES_API_KEY нет           → поиск идёт через OpenStreetMap (бесплатно, без ключа)
+//   OPENROUTER_API_KEY нет              → оценка пропускается, лиды уходят без score
 //   SUPABASE_PROJECT_REF/SECRET_KEY нет → сохранение в базу пропускается
 //   SDR_TELEGRAM_BOT_TOKEN/CHAT_ID нет  → уведомления пропускаются
+
+import path from 'node:path'
+import { loadLocalEnv } from './load-local-env.mjs'
+
+// ДО импорта модулей пайплайна по смыслу, но фактически до ЧТЕНИЯ env ниже: сами модули читают
+// process.env только внутри resolve*-функций, поэтому порядок импортов здесь роли не играет.
+const repoRoot = path.resolve(import.meta.dirname, '..')
+const localEnv = loadLocalEnv(repoRoot)
 
 import { runSdrPipeline } from '../supabase/functions/_shared/leadgen/pipeline.ts'
 import { resolvePlacesSearch } from '../supabase/functions/_shared/leadgen/placesSearch.ts'
@@ -44,6 +53,14 @@ const enrich = new WebEnricher()
 const score = resolveScorer()
 const store = resolveLeadStore()
 const notify = resolveNotifier()
+
+// Что именно подхватилось из файлов — ИМЕНАМИ, без значений. Без этой строки «ключ есть, но не
+// доехал» невозможно отличить от «ключа нет вовсе», а мы этот разбор в проекте уже проходили.
+if (localEnv.loaded.length) {
+  console.log(`[SDR] ключи из ${localEnv.files.join(', ')}: ${localEnv.loaded.join(', ')}`)
+} else if (localEnv.files.length) {
+  console.log(`[SDR] ${localEnv.files.join(', ')} прочитаны, новых переменных нет — всё уже в окружении`)
+}
 
 console.log(`[SDR] источник поиска: ${search.constructor.name}`)
 console.log(`[SDR] оценка: ${score ? `включена (${process.env.SDR_SCORER_MODEL ?? 'openai/gpt-4o-mini'})` : 'пропущена — нет OPENROUTER_API_KEY'}`)

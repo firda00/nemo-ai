@@ -34,6 +34,7 @@ $steps = @(
   @{ Name = 'Leadgen sanitizer'; Command = { npm run test:leadgen } },
   @{ Name = 'SDR pipeline behavior'; Command = { npm run test:sdr } },
   @{ Name = 'SDR keyless discovery (OpenStreetMap)'; Command = { npm run test:sdr-overpass } },
+  @{ Name = 'Local env key loading'; Command = { npm run test:local-env } },
   @{ Name = 'SDR contracts'; Command = { npm run test:sdr-contracts } },
   @{ Name = 'Secrets scan'; Command = { npm run test:secrets } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
