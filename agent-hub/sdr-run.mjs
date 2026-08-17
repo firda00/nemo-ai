@@ -33,9 +33,10 @@
 
 import path from 'node:path'
 import { loadLocalEnv } from './load-local-env.mjs'
-import { renderLeadReport, formatLead, isHot } from './lead-report.mjs'
+import { isHot, phaseLine, renderLeadCards, renderLeadReport } from './lead-report.mjs'
 import { copyToClipboard, writeExport } from './lead-export.mjs'
-import { Ask, Spinner, banner, c, isInteractiveTerminal } from './tui.mjs'
+import { Ask, Spinner, c, dashboard, isInteractiveTerminal, statusMenu, stopActiveSpinner } from './tui.mjs'
+import { parseCommand, parseNaturalQuery } from './query-parse.mjs'
 
 // ДО импорта модулей пайплайна по смыслу, но фактически до ЧТЕНИЯ env ниже: сами модули читают
 // process.env только внутри resolve*-функций, поэтому порядок импортов здесь роли не играет.
@@ -60,6 +61,10 @@ const flagLimit = Number(arg('limit', process.env.SDR_LIMIT ?? '20'))
 const flagIcp = arg('icp', process.env.SDR_ICP ?? '')
 // Горячие печатаются подробно ВСЕГДА — за флагом их прятать незачем. --details добавляет остальных.
 const details = process.argv.includes('--details')
+// В интерактивном режиме служебные строки («ключи из .secrets.local: …», источник поиска, состояние
+// хранилища) прячутся за --debug: человек пришёл за лидами, а не за отчётом о конфигурации. В режиме
+// флагов они печатаются как раньше — там это лог прогона, и по нему потом разбираются.
+const debug = process.argv.includes('--debug')
 
 /** Пресеты ICP: частые формулировки под рукой, но своими словами — всегда доступно. */
 const ICP_PRESETS = [
@@ -96,6 +101,7 @@ function platformBase() {
 async function runViaPlatform({ query, city, limit, icp }, spinner) {
   const apiBase = platformBase()
   if (!apiBase) {
+    spinner?.silence()
     return { ok: false, error: 'NEMO_API_KEY задан, но неизвестен адрес: укажите NEMO_API_URL или SUPABASE_PROJECT_REF.' }
   }
 
@@ -155,11 +161,14 @@ async function runViaPlatform({ query, city, limit, icp }, spinner) {
 }
 
 /** Прогон на этой машине. Возвращает ту же форму, что и платформенный. */
-async function runLocally({ query, city, limit, icp }, spinner) {
+async function runLocally({ query, city, limit, icp }, spinner, onPhase) {
   let search
   try {
     search = resolvePlacesSearch()
   } catch (error) {
+    // Спиннер гасится ЗДЕСЬ, а не в вызывающем коде: раньше эта ветка возвращала ошибку с
+    // работающей анимацией, и та продолжала писать в строку, где readline уже ждал ввод.
+    spinner?.silence()
     return { ok: false, error: error.message }
   }
 
@@ -174,12 +183,14 @@ async function runLocally({ query, city, limit, icp }, spinner) {
       // В интерактивном режиме журнал уходит в спиннер: две системы, печатающие в одну строку
       // одновременно, дают кашу из перезаписанных строк.
       log: spinner ? () => {} : (message) => console.log(`[SDR] ${message}`),
-      onPhase: spinner
+      // onPhase снаружи важнее: интерактив формулирует этапы по-человечески («Поиск в Ташкенте через
+      // OpenStreetMap»), а не технически («overpass_search»).
+      onPhase: onPhase ?? (spinner
         ? (event) => {
           const progress = event.of ? ` ${event.done}/${event.of}` : ''
           spinner.update(`[${event.step}/${event.total}] ${event.message}${progress}`)
         }
-        : undefined,
+        : undefined),
     },
   )
   return { ok: true, leads: result.leads, result }
@@ -259,105 +270,200 @@ async function runFromFlags() {
 
 // ─────────────────────────  Интерактивный режим  ─────────────────────────
 
-async function askRequest(ask, previous) {
-  const query = await ask.text('Какую нишу ищем?', {
-    required: true, min: 2, placeholder: 'стоматология, автосервис, языковые курсы',
-    fallback: previous?.query ?? '',
-  })
-  const city = await ask.text('Город поиска?', { required: true, min: 2, fallback: previous?.city ?? 'Ташкент' })
-  const limitChoice = await ask.select('Сколько компаний искать?', LIMIT_OPTIONS, 1)
-  const icpChoice = await ask.select('Целевой профиль клиента (ICP)?', ICP_PRESETS, 0)
-  const icp = icpChoice.value ?? await ask.text('Опишите профиль своими словами', {
-    required: true, min: 10, fallback: previous?.icp ?? '',
-  })
-  return { query, city, limit: limitChoice.value, icp }
+const ICP_PRESET_ROWS = ICP_PRESETS.map((one) => ({ label: one.label, value: one.value }))
+
+/**
+ * Аккаунт и баланс для панели состояния.
+ *
+ * Тихо возвращает пустое, если ключей нет или запрос не удался: панель — это оформление экрана, и
+ * падать из-за неё, когда человек хочет местный прогон без Supabase, было бы абсурдом.
+ */
+async function accountSnapshot() {
+  const ref = process.env.SUPABASE_PROJECT_REF
+  const key = process.env.SUPABASE_SECRET_KEY
+  if (!ref || !key) return { id: null, plan: null, balance: null }
+  try {
+    const { createClient } = await import('@supabase/supabase-js')
+    const admin = createClient(`https://${ref}.supabase.co`, key)
+    const { data: token } = await admin.from('nemo_api_tokens')
+      .select('account_id').eq('is_active', true)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const accountId = token?.account_id
+    if (!accountId) return { id: null, plan: null, balance: null }
+    const [{ data: account }, { data: sub }] = await Promise.all([
+      admin.from('accounts').select('token_balance').eq('id', accountId).maybeSingle(),
+      admin.from('billing_subscriptions').select('status, plan_code').eq('account_id', accountId).maybeSingle(),
+    ])
+    return { id: accountId, plan: sub?.plan_code ?? sub?.status ?? null, balance: account?.token_balance ?? null }
+  } catch {
+    return { id: null, plan: null, balance: null }
+  }
 }
 
-/** Меню после прогона. Возвращает 'again' | 'exit'. */
+/** Панель состояния: чем этот запуск располагает и как начать. */
+async function renderDashboard() {
+  const account = await accountSnapshot()
+  const gateway = platformBase() ? 'Nemo Platform' : (resolveScorer() ? 'локальный прогон' : 'без ICP-оценки')
+  let source = 'не настроен'
+  try { source = resolvePlacesSearch().constructor.name.replace(/PlacesSearch$/, '') } catch { /* скажем при прогоне */ }
+
+  console.log(dashboard({
+    title: c.bold('Nemo SDR'),
+    left: [
+      c.magenta('NEMO ENGINE'),
+      account.id ? `Аккаунт: ${account.id.slice(0, 8)}…${account.plan ? ` (${account.plan})` : ''}` : 'Аккаунт: не подключён',
+      `Баланс:  ${account.balance == null ? '—' : `${account.balance.toLocaleString('ru-RU')} кредитов`}`,
+      `Поиск:   ${source}`,
+      `Прогон:  ${gateway}`,
+    ],
+    right: [
+      c.bold('Как начать'),
+      `Напишите: ${c.cyan('<ниша> в <город> <сколько>')}`,
+      c.dim('стоматология в Ташкенте 15'),
+      '',
+      c.dim('/help — справка   /exit — выход'),
+    ],
+  }))
+}
+
+const HELP = [
+  '',
+  `  ${c.bold('Одной строкой')} — ниша, город и сколько сразу:`,
+  `    ${c.cyan('стоматология в Ташкенте 15')}`,
+  `    ${c.cyan('кофейни в Бухаре, 10 штук')}`,
+  `    ${c.cyan('до 25 фитнес-клубов в Самарканде')}`,
+  '',
+  `  ${c.bold('Частями')} — чего не хватило, спросим отдельно:`,
+  `    ${c.cyan('автосервис')}`,
+  '',
+  `  ${c.bold('/help')}   эта справка`,
+  `  ${c.bold('/clear')}  перерисовать экран`,
+  `  ${c.bold('/exit')}   выход (или Ctrl+C)`,
+  '',
+  c.dim('  Город можно писать как в речи — «в Ташкенте», «в Бухаре»: падеж снимается сам.'),
+].join('\n')
+
+/**
+ * Собирает параметры прогона: сначала из фразы, потом добираем недостающее.
+ *
+ * Спрашивается ТОЛЬКО то, чего в строке не было. Человек, написавший всё сразу, не должен трижды
+ * жать Enter, подтверждая уже сказанное — иначе смысл разбора фразы теряется полностью.
+ */
+async function collectRequest(ask, phrase, previous) {
+  const parsed = parseNaturalQuery(phrase)
+  const query = parsed.query
+    ?? await ask.text('Ниша', { required: true, min: 2, fallback: previous?.query ?? '' })
+  const city = parsed.city
+    ?? await ask.text('Город', { required: true, min: 2, fallback: previous?.city ?? 'Ташкент' })
+  const limit = parsed.limit ?? (await ask.select('Сколько компаний', LIMIT_OPTIONS, 1)).value
+
+  const preset = await ask.select('Кого ищем (ICP)', ICP_PRESET_ROWS, 0)
+  const icp = preset.value
+    ?? await ask.text('Опишите своими словами', { required: true, min: 10, fallback: previous?.icp ?? '' })
+
+  return { query, city, limit, icp }
+}
+
+/** Меню после прогона. Возвращает 'again' либо 'exit'. */
 async function afterRun(ask, leads) {
-  const hot = (leads ?? []).filter(isHot)
+  const withPitch = (leads ?? []).filter((lead) => isHot(lead) && lead.score?.icebreaker_pitch)
   for (;;) {
-    const options = [
-      { label: '📋 Скопировать питч лида', value: 'copy' },
-      { label: '💾 Экспорт в CSV', value: 'csv' },
-      { label: '💾 Экспорт в JSON', value: 'json' },
-      { label: '🔍 Новый поиск', value: 'again' },
-      { label: '🚪 Выход', value: 'exit' },
-    ]
-    const choice = await ask.select('Что дальше?', options, 3)
+    console.log(`  ${statusMenu([
+      { key: '1', label: 'Копировать питч' },
+      { key: '2', label: 'CSV' },
+      { key: '3', label: 'Новый поиск' },
+      { key: 'q', label: 'Выход' },
+    ])}`)
+    const raw = (await ask.line(`${c.magenta('❯')} `)).trim().toLowerCase()
 
-    if (choice.value === 'exit') return 'exit'
-    if (choice.value === 'again') return 'again'
+    if (raw === 'q' || raw === 'exit' || raw === '/exit') return 'exit'
+    if (raw === '3' || raw === '' || raw === '/new') return 'again'
 
-    if (choice.value === 'csv' || choice.value === 'json') {
-      if (!leads?.length) { console.log(`   ${c.yellow('!')} выгружать нечего — лидов нет`); continue }
-      const file = writeExport(leads, choice.value)
-      console.log(`   ${c.green('✓')} ${leads.length} лидов → ${file}`)
+    if (raw === '2' || raw === 'csv' || raw === 'json') {
+      if (!leads?.length) { console.log(`  ${c.yellow('!')} выгружать нечего\n`); continue }
+      const file = writeExport(leads, raw === 'json' ? 'json' : 'csv')
+      console.log(`  ${c.green('✓')} ${leads.length} лидов → ${file}\n`)
       continue
     }
 
-    // copy
-    const withPitch = hot.filter((lead) => lead.score?.icebreaker_pitch)
-    if (!withPitch.length) {
-      console.log(`   ${c.yellow('!')} нет готовых питчей: горячих лидов ${hot.length}`)
+    if (raw === '1' || raw === 'copy') {
+      if (!withPitch.length) { console.log(`  ${c.yellow('!')} готовых питчей нет\n`); continue }
+      const pick = withPitch.length === 1
+        ? withPitch[0]
+        : (await ask.select('Чей питч', withPitch.map((lead) => ({ label: `${lead.name} (${lead.score.score}/100)`, value: lead })), 0)).value
+      const pitch = pick.score.icebreaker_pitch
+      const copied = await copyToClipboard(pitch)
+      if (copied.ok) console.log(`  ${c.green('✓')} питч «${pick.name}» в буфере\n`)
+      // Буфера может не быть вовсе (ssh без X, урезанный контейнер). Текст всё равно печатаем: иначе
+      // человек остался без того, за чем шёл, из-за отсутствия сторонней утилиты.
+      else console.log(`  ${c.yellow('!')} буфер недоступен (${copied.error}), вот текст:\n\n${pitch}\n`)
       continue
     }
-    const pick = await ask.select(
-      'Чей питч скопировать?',
-      withPitch.map((lead) => ({ label: `${lead.name} (${lead.score.score}/100)`, value: lead })),
-      0,
-    )
-    const pitch = pick.value.score.icebreaker_pitch
-    const copied = await copyToClipboard(pitch)
-    if (copied.ok) {
-      console.log(`   ${c.green('✓')} питч «${pick.value.name}» в буфере обмена`)
-    } else {
-      // Буфера может не быть (нет xclip, ssh без X). Текст всё равно надо отдать — иначе человек
-      // остался без того, за чем шёл, из-за отсутствия сторонней утилиты.
-      console.log(`   ${c.yellow('!')} буфер недоступен (${copied.error}) — текст ниже:\n`)
-      console.log(pitch)
-      console.log('')
-    }
+
+    console.log(`  ${c.dim('1, 2, 3 или q')}\n`)
   }
 }
 
 async function runInteractive() {
-  console.log(banner('Nemo SDR', 'поиск и оценка лидов'))
-  printEnvNotice()
-  if (platformBase()) console.log(`[SDR] режим платформы: ${platformBase()}`)
-  else printCapabilities()
+  // Чистый экран: панель состояния должна быть первым, что видно, а не концом чужого вывода. Служебные
+  // строки про ключи и источники прячутся за --debug — человек пришёл за лидами, а не за конфигурацией.
+  console.clear()
+  if (debug) { printEnvNotice(); printCapabilities(); console.log('') }
+  await renderDashboard()
 
   const ask = new Ask()
   let previous = null
   try {
     for (;;) {
-      const request = await askRequest(ask, previous)
+      console.log('')
+      const phrase = (await ask.line(`${c.magenta('❯')} `)).trim()
+
+      const command = parseCommand(phrase)
+      if (command) {
+        if (['exit', 'quit', 'q'].includes(command.name)) break
+        if (['help', 'h', '?'].includes(command.name)) { console.log(HELP); continue }
+        if (command.name === 'clear') { console.clear(); await renderDashboard(); continue }
+        console.log(`  ${c.dim(`нет такой команды: /${command.name} — /help покажет список`)}`)
+        continue
+      }
+      if (!phrase) { console.log(HELP); continue }
+
+      const request = await collectRequest(ask, phrase, previous)
       previous = request
 
       const spinner = new Spinner()
-      spinner.start('[1/3] Готовлюсь')
+      spinner.start(`[1/3] Поиск в ${request.city}…`)
       const outcome = platformBase()
         ? await runViaPlatform(request, spinner)
-        : await runLocally(request, spinner)
+        : await runLocally(request, spinner, (event) => spinner.update(phaseLine(event, request.city)))
 
+      // fail/succeed гасят анимацию и оставляют одну строку. Пропустить это нельзя ни в одной ветке:
+      // забытый включённым спиннер продолжает писать в ту же строку, где readline уже ждёт ввод, и
+      // набранный текст расползается по экрану. Повторный вызов молчит, так что путь через платформу,
+      // который отчитался сам, второй строки не добавит.
       if (!outcome.ok) {
-        // Неудача не выбрасывает из сеанса: человек уже ответил на четыре вопроса, и терять их
-        // из-за занятого Overpass или просроченной подписки незачем.
-        console.log(`\n   ${c.red('×')} ${outcome.error}\n`)
+        spinner.fail(c.red(outcome.error))
+        console.log('')
       } else {
-        if (outcome.result) spinner.succeed(`Готово. Горячих ${outcome.result.hot}, тёплых ${outcome.result.qualified}`)
-        process.stdout.write(renderLeadReport(outcome.leads, { details: true }))
-        if (outcome.result) printSummary(outcome.result)
+        const numbers = outcome.result
+          ? `найдено ${outcome.result.found}, горячих ${outcome.result.hot}, тёплых ${outcome.result.qualified}`
+          : `лидов ${outcome.leads?.length ?? 0}`
+        spinner.succeed(c.dim(`Готово: ${numbers}`))
+        process.stdout.write(renderLeadCards(outcome.leads))
       }
 
       if (await afterRun(ask, outcome.leads ?? []) === 'exit') break
     }
   } finally {
+    // Последняя защита: если какая-то ветка всё же оставила спиннер живым, гасим его до закрытия
+    // readline — иначе таймер допишет свою строку поверх приглашения shell после выхода.
+    stopActiveSpinner()
     ask.close()
   }
-  console.log(`\n${c.dim('До связи.')}`)
+  console.log(`\n${c.dim('До связи.')}\n`)
   process.exit(0)
 }
+
 
 // ─────────────────────────  Выбор режима  ─────────────────────────
 //

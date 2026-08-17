@@ -79,38 +79,64 @@ export function renderOption(option, index, defaultIndex) {
 
 /** Диалог с человеком. Держит один readline на всю сессию — по одному на вопрос текут дескрипторы. */
 export class Ask {
-  constructor() {
-    this.rl = readline.createInterface({ input: stdin, output: stdout })
+  // Потоки принимаются параметрами, чтобы проверять диалог БЕЗ терминала: главный баг этого файла —
+  // спиннер, не погашенный перед вопросом, — иначе воспроизводится только руками и возвращается.
+  constructor(input = stdin, output = stdout) {
+    this.output = output
+    this.rl = readline.createInterface({ input, output })
     // Ctrl+C посреди вопроса — обычный способ уйти, а не сбой. Без этого Node печатает трассировку.
-    this.rl.on('SIGINT', () => { stdout.write(`\n${c.dim('прервано')}\n`); process.exit(130) })
+    this.rl.on('SIGINT', () => { this.output.write(`\n${c.dim('прервано')}\n`); process.exit(130) })
   }
 
   close() { this.rl.close() }
 
+  /** Сырая строка от человека. Спиннер гасится ЗДЕСЬ — до того, как readline получит терминал. */
+  async line(prompt) {
+    stopActiveSpinner()
+    return await this.rl.question(prompt)
+  }
+
   async text(question, options = {}) {
     for (;;) {
       const hint = options.fallback ? c.dim(` [${options.fallback}]`) : ''
-      const placeholder = options.placeholder ? `\n   ${c.dim(`например: ${options.placeholder}`)}` : ''
-      const raw = await this.rl.question(`\n${c.cyan('?')} ${c.bold(question)}${hint}${placeholder}\n   `)
+      const raw = await this.line(`${c.cyan('?')} ${question}${hint}\n${c.magenta('❯')} `)
       const verdict = resolveInput(raw, options)
       if (verdict.ok) return verdict.value
-      stdout.write(`   ${c.red('×')} ${verdict.error}\n`)
+      this.output.write(`  ${c.red('×')} ${verdict.error}\n`)
     }
   }
 
   async select(question, options, defaultIndex = 0) {
-    stdout.write(`\n${c.cyan('?')} ${c.bold(question)}\n`)
-    for (const [index, option] of options.entries()) stdout.write(`${renderOption(option, index, defaultIndex)}\n`)
+    stopActiveSpinner()
+    this.output.write(`${c.cyan('?')} ${question}\n`)
+    for (const [index, option] of options.entries()) this.output.write(`${renderOption(option, index, defaultIndex)}\n`)
     for (;;) {
-      const raw = await this.rl.question('   ')
+      const raw = await this.line(`${c.magenta('❯')} `)
       const verdict = resolveSelect(raw, options, defaultIndex)
       if (verdict.ok) return verdict.value
-      stdout.write(`   ${c.red('×')} ${verdict.error}\n`)
+      this.output.write(`  ${c.red('×')} ${verdict.error}\n`)
     }
   }
 }
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+/**
+ * Единственный бегущий спиннер на процесс.
+ *
+ * Нужен ради ОДНОГО бага, который иначе возвращается снова и снова: спиннер, забытый включённым,
+ * продолжает писать в ту же строку, где readline ждёт ввод, и набранный текст расползается по
+ * экрану. Полагаться на то, что каждый путь выхода (включая ветки ошибок) не забудет остановить
+ * таймер, нельзя — забыли уже дважды. Поэтому останов гарантируется здесь, а не в вызывающем коде:
+ * любой вопрос человеку сначала гасит спиннер.
+ */
+let active = null
+
+export function stopActiveSpinner() {
+  if (!active) return
+  active.silence()
+  active = null
+}
 
 /**
  * Спиннер, который не портит вывод.
@@ -126,11 +152,16 @@ export class Spinner {
     this.timer = null
     this.frame = 0
     this.text = ''
+    this.settled = false
   }
 
   start(text) {
     this.text = text
+    this.settled = false
+    // Второй спиннер поверх первого — две анимации в одной строке. Гасим предыдущий.
+    stopActiveSpinner()
     if (!this.animated) { this.output.write(`… ${text}\n`); return this }
+    active = this
     this.timer = setInterval(() => {
       this.frame = (this.frame + 1) % FRAMES.length
       this.output.write(`\r${ESC}[2K${c.cyan(FRAMES[this.frame])} ${this.text}`)
@@ -140,15 +171,36 @@ export class Spinner {
     return this
   }
 
+  /**
+   * Остановить БЕЗ итоговой строки и стереть бегущую.
+   *
+   * Нужно перед вопросом человеку: строка спиннера должна исчезнуть, а не остаться «✓ Готовлюсь»
+   * над приглашением ввода. Отчёт о результате печатает succeed/fail, а это — просто тишина.
+   */
+  silence() {
+    if (this.timer) { clearInterval(this.timer); this.timer = null }
+    if (this.animated) this.output.write(`\r${ESC}[2K`)
+    if (active === this) active = null
+    return this
+  }
+
   update(text) {
     this.text = text
     if (!this.animated) this.output.write(`… ${text}\n`)
     return this
   }
 
-  /** Останавливает анимацию и оставляет ОДНУ итоговую строку вместо бегущей. */
+  /**
+   * Останавливает анимацию и оставляет ОДНУ итоговую строку вместо бегущей.
+   *
+   * Повторный вызов ничего не печатает. Иначе путь через платформу отчитывался дважды: сам прогон
+   * уже написал «✓ Готово. Найдено 14…», а вызывающий код добавлял вторую итоговую строку под ней.
+   */
   stop(mark, text) {
     if (this.timer) { clearInterval(this.timer); this.timer = null }
+    if (active === this) active = null
+    if (this.settled) return this
+    this.settled = true
     const line = `${mark} ${text ?? this.text}`
     if (this.animated) this.output.write(`\r${ESC}[2K${line}\n`)
     else this.output.write(`${line}\n`)
@@ -167,3 +219,52 @@ export function banner(title, subtitle = '') {
   out.push(c.dim(`└${line}┘`))
   return out.join('\n')
 }
+
+/**
+ * Видимая ширина строки: без escape-последовательностей цвета.
+ *
+ * Без этого рамка разъезжается ровно там, где в неё попал цвет: 'ESC[32m✓ESC[0m' занимает на
+ * экране один знак, а .length считает девять, и правая стенка уезжает на восемь позиций.
+ */
+// Регексп собирается из ESC, а не пишется литералом: литеральный управляющий байт в исходнике
+// уже один раз пропал при правке этого же файла, и цвета превратились в мусор в выводе.
+const ANSI = new RegExp(ESC + '\[[0-9;]*m', 'g')
+
+export function visibleWidth(text) {
+  return [...String(text ?? '').replace(ANSI, '')].length
+}
+
+function padVisible(text, width) {
+  const gap = Math.max(0, width - visibleWidth(text))
+  return `${text}${' '.repeat(gap)}`
+}
+
+/**
+ * Двухколоночная панель состояния в рамке.
+ *
+ * Левая колонка — про этот запуск (аккаунт, баланс, шлюз), правая — что делать дальше. Человек,
+ * открывший CLI впервые, должен увидеть и то, чем он располагает, и как начать, не читая README.
+ */
+export function dashboard({ title, left = [], right = [], leftWidth = 31, rightWidth = 45 }) {
+  const rows = Math.max(left.length, right.length)
+  const titleText = ` ${title} `
+  // Внутренняя ширина строки: пробел + левая колонка + разделитель + пробел + правая колонка.
+  // Считается ОДИН раз и используется всеми тремя видами строк — иначе верхняя граница расходится с
+  // нижней на один знак, и рамка выглядит покосившейся.
+  const inner = leftWidth + rightWidth + 3
+  const topFill = '─'.repeat(Math.max(0, inner - visibleWidth(titleText)))
+  const out = [c.dim(`┌${titleText}${topFill}┐`)]
+  for (let index = 0; index < rows; index++) {
+    const l = padVisible(left[index] ?? '', leftWidth)
+    const r = padVisible(right[index] ?? '', rightWidth)
+    out.push(`${c.dim('│')} ${l}${c.dim('│')} ${r}${c.dim('│')}`)
+  }
+  out.push(c.dim(`└${'─'.repeat(leftWidth + 1)}┴${'─'.repeat(rightWidth + 1)}┘`))
+  return out.join('\n')
+}
+
+/** Компактное меню одной строкой: клавиши слева, действия справа, разделитель — вертикальная черта. */
+export function statusMenu(items) {
+  return items.map(({ key, label }) => `${c.bold(`[${key}]`)} ${label}`).join(c.dim(' │ '))
+}
+

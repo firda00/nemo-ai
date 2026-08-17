@@ -8,7 +8,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Spinner, banner, isInteractiveTerminal, renderOption, resolveInput, resolveSelect } from './tui.mjs'
+import { PassThrough } from 'node:stream'
+import { Ask, Spinner, banner, isInteractiveTerminal, renderOption, resolveInput, resolveSelect } from './tui.mjs'
 import { clipboardCommand, csvCell, exportFileName, toCsv, toJson, writeExport } from './lead-export.mjs'
 
 // --- Живой терминал: оба конца обязательны --------------------------------------------------------
@@ -177,4 +178,99 @@ assert.deepEqual(clipboardCommand('win32'), { command: 'clip', args: [] })
 assert.deepEqual(clipboardCommand('darwin'), { command: 'pbcopy', args: [] })
 assert.equal(clipboardCommand('linux').command, 'xclip')
 
-console.log('[OK] TUI behaviour: 58 assertions')
+// --- Спиннер и вопрос не делят одну строку --------------------------------------------------------
+//
+// ЭТО ГЛАВНЫЙ БАГ ФАЙЛА, и он возвращался дважды: спиннер, оставленный включённым, каждые 80 мс
+// перезаписывает строку, в которой readline уже ждёт ввод, и набранный человеком текст расползается
+// по экрану. Проверяется на поддельном терминале — иначе баг ловится только руками.
+
+/** Поток, который выглядит терминалом и запоминает всё, что в него написали. */
+function fakeTty() {
+  const stream = new PassThrough()
+  stream.isTTY = true
+  stream.written = ''
+  stream.on('data', (chunk) => { stream.written += String(chunk) })
+  return stream
+}
+
+{
+  const out = fakeTty()
+  const spinner = new Spinner(out)
+  spinner.start('Поиск…')
+  assert.notEqual(spinner.timer, null, 'на терминале спиннер должен анимировать')
+
+  // Вопрос человеку гасит анимацию САМ, а не надеется на вызывающий код.
+  const ask = new Ask(new PassThrough(), out)
+  const answer = ask.line('❯ ')
+  assert.equal(spinner.timer, null, 'спиннер погашен ДО того, как readline получил терминал')
+
+  const before = out.written.length
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(out.written.length, before, 'после останова спиннер не должен дописывать кадры')
+
+  ask.rl.write('стоматология\n')
+  assert.equal(await answer, 'стоматология', 'ответ дошёл целиком, без вмешательства спиннера')
+  ask.close()
+}
+
+// silence() убирает бегущую строку и НЕ печатает итог: перед вопросом «✓ Готовлюсь» над приглашением
+// ввода — мусор, а не отчёт.
+{
+  const out = fakeTty()
+  const spinner = new Spinner(out).start('Готовлюсь')
+  // Ждём настоящий кадр: без него стирать нечего, и проверка «строка стёрта» проходит сама собой,
+  // ничего не проверяя.
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.ok(out.written.includes('Готовлюсь'), 'кадр действительно напечатан')
+
+  spinner.silence()
+  assert.equal(out.written.includes('✓'), false, 'итога быть не должно — отчитываются succeed/fail')
+  // Последнее, что ушло в терминал, — возврат каретки и очистка строки. Иначе текст спиннера
+  // останется висеть над приглашением ввода.
+  assert.ok(out.written.endsWith(`\r${String.fromCharCode(27)}[2K`), 'бегущая строка стёрта последним действием')
+}
+
+// Повторный итог не печатается: путь через платформу отчитывается сам, и вызывающий код добавлял
+// вторую строку под первой.
+{
+  const out = fakeTty()
+  const spinner = new Spinner(out).start('Работаю')
+  spinner.succeed('Готово: найдено 4')
+  const afterFirst = out.written
+  spinner.succeed('Готово: найдено 4')
+  assert.equal(out.written, afterFirst, 'второй succeed молчит')
+}
+
+// А ошибку после silence() напечатать МОЖНО: гашение перед вопросом не означает, что отчитываться
+// больше не о чем.
+{
+  const out = fakeTty()
+  const spinner = new Spinner(out).start('Работаю')
+  spinner.silence()
+  spinner.fail('город не найден')
+  assert.ok(out.written.includes('город не найден'))
+}
+
+// Второй спиннер гасит первый: две анимации в одной строке дают кашу из перезаписанных кадров.
+{
+  const out = fakeTty()
+  const first = new Spinner(out).start('Первый')
+  const second = new Spinner(out).start('Второй')
+  assert.equal(first.timer, null, 'первый остановлен')
+  assert.notEqual(second.timer, null, 'второй работает')
+  second.silence()
+}
+
+// В НЕ-терминале анимации нет вовсе: возврат каретки в файле журнала превращает его в кашу, а
+// именно в журнал этот вывод и попадёт из cron.
+{
+  const plain = new PassThrough()
+  plain.written = ''
+  plain.on('data', (chunk) => { plain.written += String(chunk) })
+  const spinner = new Spinner(plain).start('Поиск…')
+  assert.equal(spinner.timer, null)
+  assert.equal(plain.written.includes(String.fromCharCode(27)), false, 'никаких escape-последовательностей в журнале')
+  assert.ok(plain.written.includes('Поиск…'), 'но сам этап в журнале виден')
+}
+
+console.log('[OK] TUI behaviour: 78 assertions')

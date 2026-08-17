@@ -7,6 +7,12 @@
 // Один модуль на оба режима CLI (местный и платформенный) намеренно: раньше платформенный печатал
 // свою строку в одну строку, местный не печатал ничего, и эти два вывода разошлись бы дальше при
 // первой же правке. Форма лида в обоих режимах одна и та же.
+//
+// Здесь ДВА вида вывода, и это не дублирование. `renderLeadReport` — журнал прогона по флагам: полный,
+// с подписанными полями, его читают в логе и грепают. `renderLeadCards` — экран интерактива: плотные
+// карточки, где на лид уходит четыре строки, потому что сразу под ними будет меню действий.
+
+import { c } from './tui.mjs'
 
 /** Порог, за которым лид считается горячим. Держится в согласии с schemas.ts:HOT_SCORE. */
 export const HOT_SCORE = 70
@@ -100,4 +106,60 @@ export function renderLeadReport(leads, { details = false } = {}) {
   shown.forEach((lead, index) => { out.push(formatLead(lead, index + 1)) })
   if (!details && rest.length) out.push(`\n     Остальные ${rest.length} — покажет --details`)
   return `${out.join('\n')}\n`
+}
+
+/**
+ * Плотная карточка лида для интерактивного экрана.
+ *
+ * Порядок строк — по тому, в каком порядке это читают: кто и насколько подходит, куда писать, почему
+ * подходит, что написать. Питч последний и отделён пустой строкой: его выделяют мышью и копируют, и
+ * любая наша строка, прилипшая снизу, уедет в чужой чат вместе с текстом.
+ */
+export function leadCard(lead, index) {
+  const score = lead.score
+  const contacts = [lead.phone, lead.website].filter(Boolean).join('  ·  ')
+  const socials = [
+    lead.enrichment?.socials?.telegram,
+    lead.enrichment?.socials?.instagram,
+    (lead.enrichment?.emails ?? [])[0],
+  ].filter(Boolean).join('  ·  ')
+
+  const out = [`  ${isHot(lead) ? '🔥' : '  '} ${c.bold(`${index}. ${lead.name}`)}`
+    + `${lead.city ? c.dim(` — ${lead.city}`) : ''}  ${c.green(`${score?.score ?? '—'}/100`)}`]
+  if (contacts) out.push(`     ${contacts}`)
+  if (socials) out.push(`     ${c.dim(socials)}`)
+  if (score?.reason) out.push(`     ${c.dim(score.reason)}`)
+  if (score?.icebreaker_pitch) out.push('', `     ${score.icebreaker_pitch}`)
+  return out.join('\n')
+}
+
+/**
+ * Экран результата интерактивного прогона.
+ *
+ * Горячих нет — говорим об этом ЧИСЛОМ найденных, а не пустотой: «горячих нет» без «найдено 14»
+ * читается как «поиск ничего не дал», хотя лиды есть и их можно выгрузить тут же в CSV.
+ */
+export function renderLeadCards(leads) {
+  const all = Array.isArray(leads) ? leads : []
+  const hot = all.filter(isHot)
+  const rest = all.length - hot.length
+  if (!hot.length) {
+    return `\n  ${c.yellow('Горячих нет.')} ${c.dim(`Найдено всего: ${all.length}`)}\n`
+  }
+  const head = `\n  ${c.bold(`Горячие лиды — ${hot.length}`)}${rest ? c.dim(`  (ещё ${rest} ниже порога)`) : ''}\n`
+  return `${head}\n${hot.map((lead, index) => leadCard(lead, index + 1)).join('\n\n')}\n`
+}
+
+/**
+ * Человеческая формулировка этапа для строки спиннера.
+ *
+ * Технические имена фаз («enrich_score») в глаза человеку не показываем, но НОМЕР шага показываем
+ * всегда: без «[2/3]» долгий этап выглядит как зависание, и прогон убивают на середине.
+ */
+export function phaseLine(event, city) {
+  const step = `[${event.step}/${event.total}]`
+  if (event.phase === 'search') return `${step} Поиск${city ? ` в ${city}` : ''} через OpenStreetMap…`
+  if (event.phase === 'clean') return `${step} Очистка и дедупликация…`
+  const progress = event.of ? ` (${event.done}/${event.of})` : ''
+  return `${step} Обогащение контактов и ICP-скоринг${progress}…`
 }

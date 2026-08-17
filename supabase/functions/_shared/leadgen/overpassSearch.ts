@@ -39,7 +39,9 @@ const CATEGORY_TAGS: Array<{ words: string[]; selectors: string[] }> = [
   { words: ['стоматолог', 'dentist', 'tish', 'зубн'], selectors: ['"amenity"="dentist"', '"healthcare"="dentist"'] },
   { words: ['клиник', 'больниц', 'медцентр', 'clinic', 'hospital', 'shifoxona'], selectors: ['"amenity"="clinic"', '"amenity"="hospital"', '"amenity"="doctors"'] },
   { words: ['аптек', 'pharmacy', 'dorixona'], selectors: ['"amenity"="pharmacy"'] },
-  { words: ['ресторан', 'кафе', 'restaurant', 'cafe', 'oshxona'], selectors: ['"amenity"="restaurant"', '"amenity"="cafe"'] },
+  // «кофейн» отдельным словом: подстрока «кафе» в него не входит, и запрос «кофейни» уходил в
+  // OSM без единого тега — только поиском по названию, что даёт ноль записей.
+  { words: ['ресторан', 'кафе', 'кофейн', 'restaurant', 'cafe', 'coffee', 'oshxona'], selectors: ['"amenity"="restaurant"', '"amenity"="cafe"'] },
   { words: ['отель', 'гостиниц', 'hotel', 'mehmonxona'], selectors: ['"tourism"="hotel"', '"tourism"="guest_house"'] },
   { words: ['салон', 'парикмахер', 'beauty', 'barber', 'sartaroshxona'], selectors: ['"shop"="beauty"', '"shop"="hairdresser"'] },
   { words: ['фитнес', 'спортзал', 'gym', 'fitness'], selectors: ['"leisure"="fitness_centre"'] },
@@ -75,24 +77,74 @@ export function buildOverpassQuery(query: string, bbox: BBox, timeoutSec = 60): 
   return `[out:json][timeout:${timeoutSec}];\n(\n${parts.join('\n')}\n);\nout tags center;`
 }
 
-interface NominatimPlace { boundingbox?: [string, string, string, string] }
+interface NominatimPlace {
+  boundingbox?: [string, string, string, string]
+  addresstype?: string
+  class?: string
+  name?: string
+}
+
+/**
+ * Что считается населённым пунктом.
+ *
+ * Фильтр обязателен, и вот почему. На запрос «Ташкенте» (так пишут в живой речи: «стоматология в
+ * Ташкенте») Nominatim первым возвращает КАФЕ «Однажды в Ташкенте» — в Москве, координаты 55.71.
+ * Без проверки типа мы бы искали клиники в рамке московского кафе и честно доложили «ничего не
+ * найдено», а причину не показал бы ни один журнал.
+ */
+const SETTLEMENT_TYPES = new Set([
+  'city', 'town', 'village', 'hamlet', 'municipality', 'borough', 'suburb',
+  'state', 'county', 'region', 'province', 'administrative',
+])
+
+function isSettlement(place: NominatimPlace): boolean {
+  return SETTLEMENT_TYPES.has(String(place.addresstype ?? ''))
+    || place.class === 'boundary'
+    || place.class === 'place'
+}
+
+/**
+ * Варианты написания города — чтобы «в Ташкенте» нашёл Ташкент.
+ *
+ * Русский предложный падеж Nominatim не понимает: «Ташкент» находится, «Ташкенте» — нет. Полного
+ * разбора морфологии здесь не будет, он и не нужен: хватает четырёх правил на окончание, а
+ * страховкой от неверного попадания служит фильтр по типу выше. Не нашлось ни по одному варианту —
+ * честно возвращаем null, а не берём что попало.
+ */
+export function cityCandidates(raw: string): string[] {
+  const base = String(raw ?? '').trim().replace(/^(в|во|in)\s+/i, '')
+  const out = [base]
+  if (/[а-яё]е$/i.test(base)) {
+    out.push(base.slice(0, -1))              // Ташкенте → Ташкент, Нукусе → Нукус
+    out.push(`${base.slice(0, -1)}а`)        // Бухаре → Бухара, Москве → Москва
+  }
+  if (/[а-яё]и$/i.test(base)) out.push(`${base.slice(0, -1)}я`) // Анталии → Анталия
+  if (/[а-яё]у$/i.test(base)) out.push(base.slice(0, -1))       // Баку остаётся, но Ростову → Ростов
+  return [...new Set(out.filter(Boolean))]
+}
 
 /** Город → рамка координат. Работает и с латиницей, и с кириллицей (проверено на живой службе). */
 export async function resolveCityBBox(city: string, fetchImpl: typeof fetch = fetch): Promise<BBox | null> {
-  const url = new URL(NOMINATIM_URL)
-  url.searchParams.set('q', city)
-  url.searchParams.set('format', 'json')
-  url.searchParams.set('limit', '1')
-  const res = await fetchImpl(url, {
-    headers: { 'User-Agent': USER_AGENT },
-    signal: AbortSignal.timeout(15_000),
-  })
-  if (!res.ok) return null
-  const data = await res.json() as NominatimPlace[]
-  const box = data?.[0]?.boundingbox
-  if (!box || box.length !== 4) return null
-  const numbers = box.map(Number) as BBox
-  return numbers.every((one) => Number.isFinite(one)) ? numbers : null
+  for (const candidate of cityCandidates(city)) {
+    const url = new URL(NOMINATIM_URL)
+    url.searchParams.set('q', candidate)
+    url.searchParams.set('format', 'json')
+    // Пять, а не один: годный населённый пункт может стоять не первым, если выше него оказалась
+    // кофейня с тем же словом в названии.
+    url.searchParams.set('limit', '5')
+    const res = await fetchImpl(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) continue
+    const data = await res.json() as NominatimPlace[]
+    const place = (Array.isArray(data) ? data : []).find(isSettlement)
+    const box = place?.boundingbox
+    if (!box || box.length !== 4) continue
+    const numbers = box.map(Number) as BBox
+    if (numbers.every((one) => Number.isFinite(one))) return numbers
+  }
+  return null
 }
 
 interface OverpassElement {
