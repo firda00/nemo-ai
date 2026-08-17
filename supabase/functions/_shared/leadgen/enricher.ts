@@ -24,6 +24,24 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|ico|bmp)$/i
 const EmailSchema = z.string().email().max(200)
 
 /**
+ * HTML-сущности обратно в символы.
+ *
+ * Найдено на живой выдаче: ссылка на Instagram приехала как
+ * `...share_sheet&amp;igsh=...`. В HTML это правильная запись амперсанда, но в АДРЕСЕ она означает
+ * параметр с именем `amp;igsh` — по такой ссылке владелец попадёт не туда, а он её копирует из
+ * отчёта и отправляет клиенту. Декодируются только те пять сущностей, что реально встречаются в
+ * адресах; полноценный разбор HTML здесь не нужен и стоил бы зависимости.
+ */
+export function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&apos;/gi, "'")
+}
+
+/**
  * Адреса почты из текста страницы.
  *
  * `image@2x.png` из атрибута srcset проходит наивный email-регексп: у него есть «@» и точка перед
@@ -59,7 +77,7 @@ export function extractSocials(html: string): Socials {
     const match = clean.match(SOCIAL_PATTERNS[key])
     if (!match) continue
     // Хвостовая пунктуация, попавшая в совпадение из окружающего текста («...instagram.com/foo).»).
-    const url = match[0].replace(/[.,;)\]]+$/, '')
+    const url = decodeEntities(match[0]).replace(/[.,;)\]]+$/, '')
     out[key] = url.length <= 300 ? url : null
   }
   return out

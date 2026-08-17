@@ -32,6 +32,7 @@ const apiTokens = read('supabase/functions/_shared/apiTokens.ts')
 const sdrApi = read('supabase/functions/sdr-api/index.ts')
 const worker = read('agent-hub/sdr-worker.mjs')
 const sdrRun = read('agent-hub/sdr-run.mjs')
+const leadReport = read('agent-hub/lead-report.mjs')
 const packageJson = read('package.json')
 
 const cases = [
@@ -147,6 +148,27 @@ const cases = [
   ['an unknown business category still searches by name',
     overpass.includes('const nameSelector = `"name"~"${escapeForOverpassRegex(query)}",i`')
     && overpass.includes('[...selectors, nameSelector]')],
+
+  // ── Вывод лидов в консоль ────────────────────────────────────────────────────────────────────
+  // Прогон, который сообщает «горячих: 3» и молчит о том, кто это и что им написать, заставляет
+  // идти в SQL за данными, лежащими в двух шагах от экрана. Горячие печатаются БЕЗ флага: они и
+  // есть причина запуска, и прятать их значит просить прогнать всё заново за уже оплаченным.
+  ['hot leads with their icebreaker print without any flag',
+    leadReport.includes('const shown = details ? [...hot, ...rest] : hot')
+    && leadReport.includes('score.icebreaker_pitch')
+    && sdrRun.includes("renderLeadReport(result.leads, { details })")
+    && sdrRun.includes('renderLeadReport(payload.leads, { details })')],
+
+  // Один модуль на оба режима CLI: раньше платформенный печатал свою строку, местный не печатал
+  // ничего, и эти выводы разошлись бы при первой правке.
+  ['both CLI modes render leads through the same formatter',
+    (sdrRun.match(/renderLeadReport\(/g) ?? []).length === 2
+    && !sdrRun.includes("lead.score?.status === 'HOT' ? '🔥' : '  '")],
+
+  // Питч копируют целиком и отправляют живому человеку. Наш значок внутри строки уедет вместе с ним.
+  ['the icebreaker line carries no decoration of ours',
+    leadReport.includes('`     ${score.icebreaker_pitch}`')
+    && !leadReport.includes('🔥 первое касание')],
 
   // ── Платформенные токены ─────────────────────────────────────────────────────────────────────
   // САМОЕ ВАЖНОЕ ЗДЕСЬ. commerce-control знает около тридцати действий, включая set_auto_submit и

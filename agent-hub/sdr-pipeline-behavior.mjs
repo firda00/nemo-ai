@@ -32,6 +32,13 @@ assert.deepEqual(extractEmails('<p>без единого адреса</p>'), [])
 assert.equal(extractSocials('<p>ничего</p>').telegram, null)
 assert.equal(extractDescription('<html><body>нет meta</body></html>'), null)
 
+// HTML-сущность в адресе — не украшение: `&amp;` в ссылке означает параметр с именем `amp;igsh`, и
+// владелец, скопировавший её из отчёта, отправит клиенту нерабочую ссылку. Найдено на живой выдаче.
+assert.equal(
+  extractSocials('<a href="https://instagram.com/x?utm=share&amp;igsh=ZDNl">ig</a>').instagram,
+  'https://instagram.com/x?utm=share&igsh=ZDNl',
+)
+
 // --- CSV: запятая в кавычках не рвёт строку ------------------------------------------------------
 
 assert.deepEqual(
@@ -163,4 +170,4 @@ assert.ok(formatHotLeadMessage({
   assert.equal(result.failures[0].stage, 'search')
 }
 
-console.log('[OK] SDR pipeline behaviour: 24 assertions')
+console.log('[OK] SDR pipeline behaviour: 25 assertions')

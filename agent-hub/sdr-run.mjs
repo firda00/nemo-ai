@@ -3,6 +3,11 @@
 //   npm run sdr:run -- --query "стоматология" --city "Ташкент" --limit 50
 //     Местный прогон: всё считается здесь, ключи берутся с этой машины.
 //
+//   ... --details
+//     Показать ВСЕХ найденных, а не только горячих. Горячие с готовым первым касанием печатаются
+//     и без флага: они и есть причина запуска, и прятать их за флагом значит просить прогнать всё
+//     заново ради того, что уже посчитано и оплачено.
+//
 //   NEMO_API_KEY=nemo_live_... npm run sdr:run -- --query "..." --city "..."
 //     Через платформу: задача уходит в Nemo, считает сервер своими ключами, CLI ждёт результат.
 //
@@ -21,6 +26,7 @@
 
 import path from 'node:path'
 import { loadLocalEnv } from './load-local-env.mjs'
+import { renderLeadReport } from './lead-report.mjs'
 
 // ДО импорта модулей пайплайна по смыслу, но фактически до ЧТЕНИЯ env ниже: сами модули читают
 // process.env только внутри resolve*-функций, поэтому порядок импортов здесь роли не играет.
@@ -43,6 +49,8 @@ const query = arg('query', process.env.SDR_QUERY ?? '')
 const city = arg('city', process.env.SDR_CITY ?? '')
 const limit = Number(arg('limit', process.env.SDR_LIMIT ?? '20'))
 const icp = arg('icp', process.env.SDR_ICP ?? '')
+// Горячие печатаются подробно ВСЕГДА — за флагом их прятать незачем. --details добавляет остальных.
+const details = process.argv.includes('--details')
 
 if (!query || !city) {
   console.error('Нужны --query и --city. Пример: npm run sdr:run -- --query "стоматология" --city "Ташкент"')
@@ -112,11 +120,8 @@ if (process.env.NEMO_API_KEY) {
     }
 
     const stats = payload.job.stats ?? {}
-    console.log(`\n[SDR] Готово. Найдено ${stats.found ?? 0}, лидов ${payload.leads.length}, горячих ${stats.hot ?? 0}`)
-    for (const lead of payload.leads) {
-      const mark = lead.score?.status === 'HOT' ? '🔥' : '  '
-      console.log(`${mark} ${lead.name} — ${lead.phone ?? lead.website ?? '—'}${lead.score ? ` (${lead.score.score}/100)` : ''}`)
-    }
+    process.stdout.write(renderLeadReport(payload.leads, { details }))
+    console.log(`[SDR] Готово. Найдено ${stats.found ?? 0}, лидов ${payload.leads.length}, горячих ${stats.hot ?? 0}`)
     process.exit(0)
   }
 }
@@ -153,7 +158,11 @@ const result = await runSdrPipeline(
   { search, enrich, score, store, notify, log: (message) => console.log(`[SDR] ${message}`) },
 )
 
-console.log('\n[SDR] Итог:')
+// Сначала сами лиды, потом цифры. Горячие — то, ради чего запускали, и они не должны прокручиваться
+// вверх за сводкой отсева.
+process.stdout.write(renderLeadReport(result.leads, { details }))
+
+console.log('[SDR] Итог:')
 console.log(`  найдено сырых: ${result.found}`)
 console.log(`  отброшено на очистке: ${result.rejected.length}`)
 console.log(`  дублей: ${result.duplicates}`)
