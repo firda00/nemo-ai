@@ -33,6 +33,8 @@ const sdrApi = read('supabase/functions/sdr-api/index.ts')
 const worker = read('agent-hub/sdr-worker.mjs')
 const sdrRun = read('agent-hub/sdr-run.mjs')
 const leadReport = read('agent-hub/lead-report.mjs')
+const tui = read('agent-hub/tui.mjs')
+const leadExport = read('agent-hub/lead-export.mjs')
 const packageJson = read('package.json')
 
 const cases = [
@@ -149,6 +151,52 @@ const cases = [
     overpass.includes('const nameSelector = `"name"~"${escapeForOverpassRegex(query)}",i`')
     && overpass.includes('[...selectors, nameSelector]')],
 
+  // ── Интерактивный режим ──────────────────────────────────────────────────────────────────────
+  // ОБРАТНАЯ СОВМЕСТИМОСТЬ — главное здесь. Скрипты, cron и CI зовут этот файл с флагами, и
+  // интерактив не должен ни включаться у них, ни менять их вывод и код возврата.
+  ['flags still take the non-interactive path, unchanged',
+    sdrRun.includes('const wantsInteractive = !flagQuery && !flagCity')
+    && sdrRun.includes('await runFromFlags()')
+    && sdrRun.indexOf('if (!wantsInteractive)') < sdrRun.indexOf('isInteractiveTerminal()')],
+
+  // Скрипт без флагов в конвейере должен ЧЕСТНО УПАСТЬ с подсказкой, а не повиснуть на вопросе,
+  // которого никто не увидит: зависший пайплайн разбирают по таймауту через час.
+  ['no terminal and no flags means a clear failure, never a hidden prompt',
+    sdrRun.includes('} else if (isInteractiveTerminal()) {')
+    && sdrRun.split('Интерактивный режим (npm run sdr:cli) требует терминала')[1]?.includes('process.exit(1)')],
+
+  // Ни один вопрос не задаётся до проверки терминала.
+  ['the interactive session is only constructed behind the terminal check',
+    sdrRun.indexOf('isInteractiveTerminal()') < sdrRun.indexOf('await runInteractive()')
+    && !tui.includes('process.stdin.resume()')],
+
+  // Спиннер в НЕ-терминале печатает обычные строки: возврат каретки и escape-последовательности
+  // в файле журнала превращают его в кашу, а именно туда вывод и попадёт из cron.
+  ['the spinner degrades to plain lines when output is not a terminal',
+    tui.includes('this.animated = Boolean(output.isTTY) && !process.env.NO_COLOR')
+    && tui.includes("if (!this.animated) { this.output.write(`… ${text}\\n`); return this }")],
+
+  // Этапы приходят структурой, а не разбором русских строк журнала регулярками: такая связь рвётся
+  // от любой правки формулировки, причём молча.
+  ['phases are reported as events, not parsed out of log text',
+    pipeline.includes('onPhase?: (event: PhaseEvent) => void')
+    && pipeline.includes("phase({ phase: 'search'")
+    && sdrRun.includes('onPhase: spinner')
+    && !sdrRun.includes("message.includes('найдено сырых')")],
+
+  // Выгрузка открывается в Excel. BOM и CRLF — не украшение: без них русский текст читается как
+  // ANSI, а перевод строки внутри питча рвёт запись на две.
+  ['the CSV export survives Excel: BOM, CRLF and doubled quotes',
+    leadExport.includes("return `﻿${rows.join('\\r\\n')}\\r\\n`")
+    && leadExport.includes('text.replace(/"/g, \'""\')')
+    && leadExport.includes("['icebreaker', (lead) => lead.score?.icebreaker_pitch ?? '']")],
+
+  // Отсутствие xclip — не повод рушить сеанс: текст всё равно надо отдать человеку.
+  ['a missing clipboard tool prints the pitch instead of failing',
+    leadExport.includes('resolve({ ok: false, error:')
+    && !leadExport.includes('throw new Error')
+    && sdrRun.includes('буфер недоступен')],
+
   // ── Вывод лидов в консоль ────────────────────────────────────────────────────────────────────
   // Прогон, который сообщает «горячих: 3» и молчит о том, кто это и что им написать, заставляет
   // идти в SQL за данными, лежащими в двух шагах от экрана. Горячие печатаются БЕЗ флага: они и
@@ -156,13 +204,14 @@ const cases = [
   ['hot leads with their icebreaker print without any flag',
     leadReport.includes('const shown = details ? [...hot, ...rest] : hot')
     && leadReport.includes('score.icebreaker_pitch')
-    && sdrRun.includes("renderLeadReport(result.leads, { details })")
-    && sdrRun.includes('renderLeadReport(payload.leads, { details })')],
+    && sdrRun.includes('renderLeadReport(outcome.leads, { details })')],
 
-  // Один модуль на оба режима CLI: раньше платформенный печатал свою строку, местный не печатал
-  // ничего, и эти выводы разошлись бы при первой правке.
-  ['both CLI modes render leads through the same formatter',
-    (sdrRun.match(/renderLeadReport\(/g) ?? []).length === 2
+  // Один форматтер на ВСЕ пути вывода: по флагам через платформу, по флагам локально и в
+  // интерактиве. Раньше платформенный путь печатал свою строку, местный не печатал ничего, и эти
+  // выводы разошлись бы при первой правке. Интерактив добавил третий — он тоже идёт через него.
+  ['every CLI path renders leads through the same formatter',
+    (sdrRun.match(/renderLeadReport\(/g) ?? []).length === 3
+    && sdrRun.includes('renderLeadReport(outcome.leads, { details: true })')
     && !sdrRun.includes("lead.score?.status === 'HOT' ? '🔥' : '  '")],
 
   // Питч копируют целиком и отправляют живому человеку. Наш значок внутри строки уедет вместе с ним.
@@ -255,10 +304,17 @@ const cases = [
 
   // Тихий откат на местные ключи означал бы, что владелец думает, будто платит платформе, а на деле
   // жжёт свой ключ и пишет в свою базу.
+  // Проверяется ТЕЛО runFromFlags: платформенная ветка обязана завершить процесс сама и не
+  // провалиться в местный прогон ниже. Поиск по всему файлу здесь не годится — интерактив тоже
+  // упоминает и платформу, и местный путь, и совпадение нашлось бы всегда.
   ['platform mode never silently falls back to local execution',
-    sdrRun.includes('if (process.env.NEMO_API_KEY)')
-    && sdrRun.includes('process.exit(1)')
-    && sdrRun.indexOf('if (process.env.NEMO_API_KEY)') < sdrRun.indexOf('let search')],
+    (() => {
+      const body = sdrRun.split('async function runFromFlags() {')[1]?.split('\n}')[0] ?? ''
+      const platformBranch = body.split('if (platformBase() || process.env.NEMO_API_KEY) {')[1]?.split('  }')[0] ?? ''
+      return platformBranch.includes('process.exit(1)')
+        && platformBranch.includes('process.exit(0)')
+        && !platformBranch.includes('runLocally')
+    })()],
 
   // ── LinkUp: контракт не подтверждён — это должно быть названо, а не спрятано ──────────────────
   ['the unverified LinkUp integration is flagged honestly in code, not presented as confirmed',

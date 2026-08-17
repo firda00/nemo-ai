@@ -8,6 +8,26 @@ import { dropDuplicates, sanitizePlace } from './sanitizer.ts'
 import type { Enricher, LeadStore, Notifier, PipelineResult, PlacesSearch, Scorer } from './contracts.ts'
 import { Enrichment, LeadSearchRequest, type Lead } from './schemas.ts'
 
+/**
+ * Этапы прогона для показа снаружи.
+ *
+ * Обогащение и оценка — ОДИН этап, а не два: в цикле ниже они идут для каждой компании подряд, и
+ * рисовать их как последовательные блоки значило бы врать о том, что происходит. Отдельный этап
+ * «оценка» показывал бы 0% всё время, пока первая половина списка уже оценена.
+ */
+export type PipelinePhase = 'search' | 'clean' | 'enrich_score' | 'store' | 'notify'
+
+export interface PhaseEvent {
+  phase: PipelinePhase
+  /** Номер этапа и сколько их всего — чтобы снаружи не пересчитывать. */
+  step: number
+  total: number
+  message: string
+  /** Прогресс внутри этапа, когда он есть: обогащение идёт по одной компании. */
+  done?: number
+  of?: number
+}
+
 export interface PipelineDeps {
   search: PlacesSearch
   enrich: Enricher
@@ -16,7 +36,16 @@ export interface PipelineDeps {
   store: LeadStore | null
   notify: Notifier | null
   log?: (message: string) => void
+  /**
+   * Структурные события этапов — для спиннера и любого другого показа.
+   *
+   * Отдельно от log() намеренно: разбирать русские строки журнала регулярками, чтобы понять, где
+   * мы находимся, — это связь, которая рвётся от любой правки формулировки, причём молча.
+   */
+  onPhase?: (event: PhaseEvent) => void
 }
+
+const TOTAL_PHASES = 3
 
 const EMPTY_ENRICHMENT: Enrichment = {
   description: null, emails: [], socials: { linkedin: null, instagram: null, telegram: null, facebook: null },
@@ -32,6 +61,7 @@ export async function runSdrPipeline(
   deps: PipelineDeps,
 ): Promise<PipelineResult> {
   const log = deps.log ?? (() => {})
+  const phase = deps.onPhase ?? (() => {})
   const parsedRequest = LeadSearchRequest.parse({
     query: request.query,
     city: request.city,
@@ -42,6 +72,7 @@ export async function runSdrPipeline(
   const failures: PipelineResult['failures'] = []
 
   log(`поиск: "${parsedRequest.query}" в ${parsedRequest.city}, лимит ${parsedRequest.limit}`)
+  phase({ phase: 'search', step: 1, total: TOTAL_PHASES, message: `Поиск геоданных: ${parsedRequest.query} в ${parsedRequest.city}` })
   let places: Awaited<ReturnType<PlacesSearch['search']>>['places'] = []
   try {
     const result = await deps.search.search(parsedRequest)
@@ -51,6 +82,7 @@ export async function runSdrPipeline(
     failures.push({ stage: 'search', detail: errorMessage(error) })
   }
 
+  phase({ phase: 'clean', step: 2, total: TOTAL_PHASES, message: `Очистка и дедупликация: ${places.length} записей` })
   const rejected: PipelineResult['rejected'] = []
   const companies = []
   for (const raw of places) {
@@ -65,6 +97,16 @@ export async function runSdrPipeline(
 
   const leads: Lead[] = []
   for (const company of unique) {
+    // Прогресс объявляется ПЕРЕД работой над компанией: строка «12 из 39» должна означать «беру
+    // двенадцатую», а не «уже сделал двенадцать», иначе последняя компания никогда не показывается.
+    phase({
+      phase: 'enrich_score',
+      step: 3,
+      total: TOTAL_PHASES,
+      message: `Обогащение и оценка: ${company.name}`,
+      done: leads.length + 1,
+      of: unique.length,
+    })
     let enrichment = EMPTY_ENRICHMENT
     try {
       enrichment = await deps.enrich.enrich(company)
