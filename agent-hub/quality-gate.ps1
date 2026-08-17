@@ -32,6 +32,8 @@ $steps = @(
   @{ Name = 'Scanner shadow DOM traversal'; Command = { npm run test:scanner-shadow } },
   @{ Name = 'Scanner field context'; Command = { npm run test:scanner-context } },
   @{ Name = 'Leadgen sanitizer'; Command = { npm run test:leadgen } },
+  @{ Name = 'SDR pipeline behavior'; Command = { npm run test:sdr } },
+  @{ Name = 'SDR contracts'; Command = { npm run test:sdr-contracts } },
   @{ Name = 'Secrets scan'; Command = { npm run test:secrets } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },

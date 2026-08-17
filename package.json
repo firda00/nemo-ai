@@ -76,6 +76,9 @@
     "test:scanner-shadow": "node agent-hub/scanner-shadow-dom-behavior.mjs",
     "test:scanner-context": "node agent-hub/scanner-context-behavior.mjs",
     "test:leadgen": "node --experimental-strip-types agent-hub/leadgen-sanitizer-behavior.mjs",
+    "sdr:run": "node --experimental-strip-types agent-hub/sdr-run.mjs",
+    "test:sdr": "node --experimental-strip-types agent-hub/sdr-pipeline-behavior.mjs",
+    "test:sdr-contracts": "node agent-hub/sdr-contracts.mjs",
     "test:secrets": "node agent-hub/secrets-scan-behavior.mjs",
     "scan:secrets": "node agent-hub/scan-secrets.mjs",
     "test:billing-live": "node agent-hub/billing-entitlement-live.mjs",
@@ -106,6 +109,7 @@
     "react-router-dom": "^7.18.0",
     "reactflow": "^11.11.4",
     "read-excel-file": "^9.3.1",
+    "zod": "^3.23.8",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

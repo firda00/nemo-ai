@@ -80,6 +80,11 @@ export interface SheetSync {
   append(leads: Lead[]): Promise<{ added: number; skipped: number }>
 }
 
+/** Постоянное хранилище лидов (Postgres/Supabase) — тот же контракт идемпотентности, что у SheetSync. */
+export interface LeadStore {
+  save(leads: Lead[]): Promise<{ added: number; skipped: number }>
+}
+
 /* ─────────────────────────────  Пайплайн  ───────────────────────────── */
 
 export interface PipelineResult {
