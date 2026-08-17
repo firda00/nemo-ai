@@ -68,6 +68,40 @@ const cases = [
     !notifier.includes('callback_data')
     && notifier.includes('url: lead.website')],
 
+  // Воркер записывает лиды САМ (со своим job_id), уже после возврата пайплайна. Если пайплайну
+  // отдать notify, алерт уйдёт раньше записи, и по ссылке из Telegram владелец не найдёт ничего.
+  // В местном режиме CLI такого нет: там store внутри пайплайна и стоит перед notify.
+  ['the worker alerts only after leads are durably saved',
+    worker.includes('notify: null,')
+    && worker.indexOf('const saved = await saveLeads(job, result.leads)')
+      < worker.indexOf('const alerted = await alertHotLeads(result.leads)')
+    && worker.indexOf('const alerted = await alertHotLeads(result.leads)')
+      < worker.indexOf("admin.rpc('finish_sdr_job'")],
+
+  // Пайплайн по-прежнему пишет ДО уведомления — этот порядок нужен местному режиму CLI.
+  ['the pipeline still stores before it notifies',
+    pipeline.indexOf('if (deps.store) {') < pipeline.indexOf('if (deps.notify) {')],
+
+  // Провал Telegram не должен помешать зафиксировать задачу: незафиксированная задача будет взята
+  // снова, и кредиты спишутся второй раз. Сообщение же можно отправить повторно.
+  ['a Telegram failure can never block finish_sdr_job',
+    worker.split('async function alertHotLeads(')[1]?.split('\n}')[0]?.includes('try {')
+    && worker.includes("errors.push(`${lead.name}: ${String(error?.message ?? error)}`)")
+    && !worker.split('async function alertHotLeads(')[1]?.split('\n}')[0]?.includes('throw')],
+
+  // Telegram отвечает конвертом {"ok":boolean} и умеет прислать отказ с кодом 200 — например, на
+  // кривую разметку. Проверка только HTTP-статуса считала бы отвергнутое сообщение доставленным.
+  ['a rejection in the response body is not counted as delivered',
+    notifier.includes('if (payload && payload.ok === false)')
+    && notifier.includes('telegram_rejected')],
+
+  // MarkdownV2 требует экранировать восемнадцать символов, включая точку и дефис, — то есть почти
+  // всё, что есть в названии клиники и в питче. Один забытый даёт отказ 400, а не кривой текст.
+  ['messages use HTML mode, whose escape list is three characters and does not grow',
+    notifier.includes("parse_mode: 'HTML'")
+    && !notifier.includes('MarkdownV2')
+    && notifier.includes("replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')")],
+
   // ── Пайплайн: одна компания не роняет весь прогон ────────────────────────────────────────────
   ['one company failing enrichment does not stop the run',
     pipeline.includes('try {\n      enrichment = await deps.enrich.enrich(company)')

@@ -10,21 +10,57 @@ import type { Lead } from './schemas.ts'
 
 const TABLE = 'sdr_leads'
 
+/**
+ * Экранирование для parse_mode: 'HTML'.
+ *
+ * HTML, а НЕ MarkdownV2, выбран намеренно. В MarkdownV2 Telegram требует экранировать восемнадцать
+ * символов, включая точку, дефис, скобки и восклицательный знак, — то есть почти всё, что встречается
+ * в живом названии клиники и в питче («Дента-Люкс», «4.7», «(круглосуточно)»). Один забытый символ
+ * там даёт не кривой текст, а ОТКАЗ отправки с 400, то есть потерянный лид. В HTML экранировать надо
+ * ровно три символа, и этот список не растёт.
+ *
+ * Порядок важен: амперсанд первым, иначе он испортит уже вставленные последовательности.
+ */
 function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-/** Текст сообщения — то, что человек реально прочитает в Telegram за три секунды. */
+/** Ссылки на соцсети одной строкой — по ним и пишут первое касание, если телефон не отвечает. */
+function socialLinks(lead: Lead): string {
+  const socials = lead.enrichment?.socials ?? {}
+  const parts: string[] = []
+  if (socials.telegram) parts.push(`<a href="${escapeHtml(socials.telegram)}">Telegram</a>`)
+  if (socials.instagram) parts.push(`<a href="${escapeHtml(socials.instagram)}">Instagram</a>`)
+  const emails = lead.enrichment?.emails ?? []
+  if (emails.length) parts.push(escapeHtml(emails[0]))
+  return parts.join(' · ')
+}
+
+/**
+ * Текст сообщения — то, что человек реально прочитает в Telegram за три секунды.
+ *
+ * Питч стоит последним и в кавычках отдельным блоком: его копируют целиком и отправляют клиенту.
+ * Ничего своего внутрь этих кавычек не попадает.
+ */
 export function formatHotLeadMessage(lead: Lead): string {
-  const lines = [
-    `🔥 <b>${escapeHtml(lead.name)}</b> — ${escapeHtml(lead.city)}`,
-    lead.score ? `Оценка: <b>${lead.score.score}/100</b> — ${escapeHtml(lead.score.reason)}` : '',
-    lead.phone ? `Телефон: ${escapeHtml(lead.phone)}` : '',
-    lead.website ? `Сайт: ${escapeHtml(lead.website)}` : '',
-    lead.score?.key_decision_maker ? `ЛПР: ${escapeHtml(lead.score.key_decision_maker)}` : '',
-    lead.score?.icebreaker_pitch ? `\n💬 ${escapeHtml(lead.score.icebreaker_pitch)}` : '',
-  ].filter(Boolean)
-  return lines.join('\n')
+  const socials = socialLinks(lead)
+  // null означает «строки нет», пустая строка — «здесь пустая строка». Если фильтровать по
+  // истинности, намеренный отбив после заголовка исчезает вместе с отсутствующими полями.
+  const lines: Array<string | null> = [
+    `🔥 <b>Новый горячий лид: ${escapeHtml(lead.name)}</b> (${escapeHtml(lead.city)})`,
+    '',
+    lead.score ? `📊 Балл: <b>${lead.score.score}/100</b>` : null,
+    lead.phone ? `📞 Телефон: ${escapeHtml(lead.phone)}` : null,
+    lead.website ? `🌐 Сайт: ${escapeHtml(lead.website)}` : null,
+    socials ? `💬 ${socials}` : null,
+    lead.score?.key_decision_maker ? `👤 ЛПР: ${escapeHtml(lead.score.key_decision_maker)}` : null,
+    // Причина оценки — то, по чему видно, СТОИТ ли звонить, а не только что балл высокий.
+    lead.score?.reason ? `\n<i>${escapeHtml(lead.score.reason)}</i>` : null,
+    lead.score?.icebreaker_pitch
+      ? `\n📝 <b>Первое касание:</b>\n«${escapeHtml(lead.score.icebreaker_pitch)}»`
+      : null,
+  ]
+  return lines.filter((line) => line !== null).join('\n')
 }
 
 /**
@@ -67,6 +103,17 @@ export class TelegramNotifier implements Notifier {
         signal: AbortSignal.timeout(10_000),
       })
       if (!res.ok) return { ok: false, error: `telegram_http_${res.status}` }
+
+      // Bot API ВСЕГДА отвечает конвертом {"ok": boolean, "description"?: string}, и на часть
+      // отказов — например, на кривую разметку в parse_mode — умеет прислать его с кодом 200.
+      // Полагаться только на HTTP-статус значило бы считать доставленным то, что Telegram отверг,
+      // и горячий лид пропал бы молча.
+      const payload = await res.json().catch(() => null) as { ok?: boolean; description?: string } | null
+      if (payload && payload.ok === false) {
+        return { ok: false, error: `telegram_rejected: ${String(payload.description ?? 'без объяснения').slice(0, 200)}` }
+      }
+      // Тело не разобралось, но код 200 — считаем доставленным: сообщение почти наверняка ушло, и
+      // объявлять его потерянным из-за нашей неудачи прочитать ответ было бы хуже.
       return { ok: true }
     } catch {
       return { ok: false, error: 'telegram_unreachable' }

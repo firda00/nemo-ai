@@ -64,6 +64,35 @@ async function saveLeads(job, leads) {
   return { added: rows.length }
 }
 
+/**
+ * Алерты по горячим лидам — ПОСЛЕ того, как они записаны.
+ *
+ * Ни одна неудача Telegram не должна помешать зафиксировать задачу: сообщение можно отправить
+ * повторно, а потерянная фиксация означает, что воркер возьмёт ту же задачу снова и спишет кредиты
+ * второй раз. Поэтому здесь всё завёрнуто, и наружу уходит только счёт отправленного и списком —
+ * причины отказов, чтобы они попали в stats задачи.
+ */
+async function alertHotLeads(leads) {
+  const notifier = resolveNotifier()
+  if (!notifier) return { sent: 0, skipped: 'нет SDR_TELEGRAM_BOT_TOKEN/SDR_TELEGRAM_CHAT_ID', errors: [] }
+
+  const hot = (leads ?? []).filter((lead) => lead.score?.status === 'HOT')
+  let sent = 0
+  const errors = []
+  for (const lead of hot) {
+    try {
+      const outcome = await notifier.alertHot(lead)
+      if (outcome.ok) sent += 1
+      else errors.push(`${lead.name}: ${outcome.error ?? 'unknown'}`)
+    } catch (error) {
+      // alertHot по контракту не бросает, но полагаться на это в коде, который защищает фиксацию
+      // задачи, нельзя: одна неожиданная ошибка тут стоила бы двойного списания кредитов.
+      errors.push(`${lead.name}: ${String(error?.message ?? error)}`)
+    }
+  }
+  return { sent, skipped: null, errors }
+}
+
 async function runOne() {
   const { data: claimed, error: claimError } = await admin.rpc('claim_sdr_job', { p_lease_seconds: LEASE_SECONDS })
   if (claimError) throw new Error(`claim_sdr_job: ${claimError.message}`)
@@ -95,12 +124,17 @@ async function runOne() {
         score: resolveScorer(),
         // Запись делаем сами — с job_id, которого общий store не знает.
         store: null,
-        notify: resolveNotifier(),
+        // И уведомления тоже сами, ПОСЛЕ записи. Пайплайн шлёт их сразу после оценки, а запись у
+        // нас идёт после его возврата: алерт ушёл бы раньше, чем лид попал в базу, и по ссылке из
+        // Telegram владелец не нашёл бы ничего. В местном режиме CLI такого нет — там store внутри
+        // пайплайна и стоит перед notify.
+        notify: null,
         log: (message) => console.log(`[worker] ${message}`),
       },
     )
 
     const saved = await saveLeads(job, result.leads)
+    const alerted = await alertHotLeads(result.leads)
     const stats = {
       found: result.found,
       qualified: result.qualified,
@@ -108,6 +142,11 @@ async function runOne() {
       leads_saved: saved.added,
       duplicates: result.duplicates,
       rejected: result.rejected.length,
+      // Сколько алертов ушло и почему не ушли остальные — в те же stats. Молча пропавшее
+      // уведомление о горячем лиде выглядит как «лида не было».
+      alerts_sent: alerted.sent,
+      alerts_skipped: alerted.skipped,
+      alert_errors: alerted.errors.slice(0, 10),
       failures: result.failures.slice(0, 20),
     }
 
@@ -122,6 +161,9 @@ async function runOne() {
       p_error: searchFailed ? result.failures.find((one) => one.stage === 'search')?.detail ?? 'search_failed' : null,
     })
     if (finished === false) console.warn(`[worker] аренда ${job.id} потеряна — результат не записан`)
+    if (alerted.skipped) console.log(`[worker] Telegram: ${alerted.skipped}`)
+    else console.log(`[worker] Telegram: отправлено ${alerted.sent} из ${result.hot}${alerted.errors.length ? `, отказов ${alerted.errors.length}` : ''}`)
+    for (const one of alerted.errors) console.warn(`[worker] Telegram не доставил — ${one}`)
     console.log(`[worker] задача ${job.id}: ${searchFailed ? 'провал' : 'готово'}, лидов ${saved.added}, горячих ${result.hot}`)
     return job.id
   } catch (error) {

@@ -36,6 +36,7 @@ $steps = @(
   @{ Name = 'SDR keyless discovery (OpenStreetMap)'; Command = { npm run test:sdr-overpass } },
   @{ Name = 'Local env key loading'; Command = { npm run test:local-env } },
   @{ Name = 'Interactive TUI'; Command = { npm run test:tui } },
+  @{ Name = 'Telegram HOT-lead alerts'; Command = { npm run test:telegram-alert } },
   @{ Name = 'Lead console report'; Command = { npm run test:lead-report } },
   @{ Name = 'Platform API token security'; Command = { npm run test:api-tokens } },
   @{ Name = 'SDR contracts'; Command = { npm run test:sdr-contracts } },
