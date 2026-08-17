@@ -165,7 +165,28 @@ for (const status of ['QUALIFIED', 'LOW_PRIORITY']) {
   const { fetchImpl } = mockTelegram({ ok: false, status: 429 })
   const outcome = await new TelegramNotifier('t', 'c', fetchImpl).alertHot(baseLead)
   assert.equal(outcome.ok, false)
-  assert.equal(outcome.error, 'telegram_http_429', 'код ответа назван — 429 и 400 чинятся по-разному')
+  assert.ok(outcome.error.startsWith('telegram_http_429'), 'код ответа назван — 429 и 400 чинятся по-разному')
+}
+
+// ПРИЧИНА ОТКАЗА ИЗ ТЕЛА ОТВЕТА — она и есть инструкция к действию. Живая проверка доставки
+// вернула 400 «chat not found», то есть «получатель не нажимал Start у бота»; один код 400 об этом
+// не говорит ничего, и оператор пошёл бы искать ошибку в коде вместо того, чтобы открыть Telegram.
+{
+  const explained = async () => ({
+    ok: false, status: 400,
+    json: async () => ({ ok: false, error_code: 400, description: 'Bad Request: chat not found' }),
+  })
+  const outcome = await new TelegramNotifier('t', 'c', explained).alertHot(baseLead)
+  assert.equal(outcome.ok, false)
+  assert.ok(outcome.error.includes('chat not found'), 'объяснение Telegram доезжает до журнала')
+  assert.ok(outcome.error.includes('400'), 'код тоже сохраняется')
+}
+
+// Тело отказа нечитаемо — код всё равно назван, без «undefined» в хвосте.
+{
+  const mute = async () => ({ ok: false, status: 502, json: async () => { throw new Error('html') } })
+  const outcome = await new TelegramNotifier('t', 'c', mute).alertHot(baseLead)
+  assert.equal(outcome.error, 'telegram_http_502')
 }
 
 {
@@ -229,4 +250,4 @@ for (const status of ['QUALIFIED', 'LOW_PRIORITY']) {
   assert.deepEqual(calls[0].body.reply_markup.inline_keyboard, [])
 }
 
-console.log('[OK] Telegram alert behaviour: 53 assertions')
+console.log('[OK] Telegram alert behaviour: 57 assertions')

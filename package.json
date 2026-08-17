@@ -103,7 +103,8 @@
     "audit:render": "npm audit --prefix render-worker --omit=dev --audit-level=high",
     "sdr:cli": "node --experimental-strip-types agent-hub/sdr-run.mjs",
     "test:tui": "node agent-hub/tui-behavior.mjs",
-    "test:telegram-alert": "node --experimental-strip-types agent-hub/telegram-alert-behavior.mjs"
+    "test:telegram-alert": "node --experimental-strip-types agent-hub/telegram-alert-behavior.mjs",
+    "test:crm-sync": "node --experimental-strip-types agent-hub/crm-sync-behavior.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",

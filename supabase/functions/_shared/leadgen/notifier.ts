@@ -102,15 +102,20 @@ export class TelegramNotifier implements Notifier {
         }),
         signal: AbortSignal.timeout(10_000),
       })
-      if (!res.ok) return { ok: false, error: `telegram_http_${res.status}` }
-
-      // Bot API ВСЕГДА отвечает конвертом {"ok": boolean, "description"?: string}, и на часть
-      // отказов — например, на кривую разметку в parse_mode — умеет прислать его с кодом 200.
-      // Полагаться только на HTTP-статус значило бы считать доставленным то, что Telegram отверг,
-      // и горячий лид пропал бы молча.
+      // Bot API ВСЕГДА отвечает конвертом {"ok": boolean, "description"?: string} — и на отказе
+      // тоже. Читаем его ДО разбора статуса: именно в description лежит то, что надо сделать
+      // («chat not found» = получатель не нажимал Start у бота), а один код 400 об этом не говорит
+      // ничего. Живая проверка доставки уперлась ровно в это.
       const payload = await res.json().catch(() => null) as { ok?: boolean; description?: string } | null
+      const because = payload?.description ? `: ${String(payload.description).slice(0, 200)}` : ''
+
+      if (!res.ok) return { ok: false, error: `telegram_http_${res.status}${because}` }
+
+      // Отказ умеет приходить и с кодом 200 — например, на кривую разметку в parse_mode. Полагаться
+      // только на HTTP-статус значило бы считать доставленным то, что Telegram отверг, и горячий
+      // лид пропал бы молча.
       if (payload && payload.ok === false) {
-        return { ok: false, error: `telegram_rejected: ${String(payload.description ?? 'без объяснения').slice(0, 200)}` }
+        return { ok: false, error: `telegram_rejected${because || ': без объяснения'}` }
       }
       // Тело не разобралось, но код 200 — считаем доставленным: сообщение почти наверняка ушло, и
       // объявлять его потерянным из-за нашей неудачи прочитать ответ было бы хуже.

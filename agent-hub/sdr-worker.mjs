@@ -17,6 +17,7 @@
 import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { loadLocalEnv } from './load-local-env.mjs'
+import { syncHotLeadsToCrm } from './crm-sync.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 loadLocalEnv(repoRoot)
@@ -41,7 +42,9 @@ const admin = createClient(`https://${ref}.supabase.co`, serviceKey)
 
 /** Лиды задачи пишутся здесь, а не общим store из notifier.ts: нужна привязка job_id. */
 async function saveLeads(job, leads) {
-  if (!leads.length) return { added: 0 }
+  // Пустая карта, а не отсутствующее поле: вызывающий не должен помнить, что при нуле лидов
+  // idByKey не бывает.
+  if (!leads.length) return { added: 0, idByKey: new Map() }
   const rows = leads.map((lead) => ({
     job_id: job.id,
     place_id: lead.place_id,
@@ -59,9 +62,38 @@ async function saveLeads(job, leads) {
     score: lead.score,
     found_at: lead.found_at,
   }))
-  const { error } = await admin.from('sdr_leads').upsert(rows, { onConflict: 'dedupe_key' })
+  // .select() ради id: внешней CRM нужна ссылка НА СТРОКУ, а не только устойчивый ключ, иначе
+  // связать её запись с нашей потом нечем.
+  const { data, error } = await admin.from('sdr_leads')
+    .upsert(rows, { onConflict: 'dedupe_key' })
+    .select('id, dedupe_key')
   if (error) throw new Error(`sdr_leads upsert: ${error.message}`)
-  return { added: rows.length }
+  const idByKey = new Map((data ?? []).map((row) => [row.dedupe_key, row.id]))
+  return { added: rows.length, idByKey }
+}
+
+/**
+ * Отправка горячих лидов во внешнюю CRM — ПОСЛЕ записи, рядом с алертами Telegram.
+ *
+ * Ни один отказ приёмника не должен помешать зафиксировать задачу: незафиксированная задача будет
+ * взята повторно и спишет кредиты второй раз, а недоставленный лид лежит в базе с пустым
+ * crm_synced_at и уедет следующим прогоном.
+ */
+async function syncToCrm(leads, idByKey) {
+  try {
+    const outcome = await syncHotLeadsToCrm(leads, { idByKey })
+    if (outcome.syncedKeys.length) {
+      const { error } = await admin.from('sdr_leads')
+        .update({ crm_synced_at: new Date().toISOString() })
+        .in('dedupe_key', outcome.syncedKeys)
+      // Отметка не поставилась — лид уедет в CRM ещё раз следующим прогоном. Idempotency-Key в
+      // запросе для этого и нужен: приёмник, который его понимает, дубля не создаст.
+      if (error) outcome.errors.push(`отметка crm_synced_at: ${error.message}`)
+    }
+    return outcome
+  } catch (error) {
+    return { sent: 0, failed: 0, skipped: null, syncedKeys: [], errors: [String(error?.message ?? error)] }
+  }
 }
 
 /**
@@ -134,7 +166,10 @@ async function runOne() {
     )
 
     const saved = await saveLeads(job, result.leads)
+    // Алерты и CRM — одним блоком и оба ПОСЛЕ записи: и уведомление, и запись в CRM ссылаются на
+    // лид, которого до saveLeads в базе нет.
     const alerted = await alertHotLeads(result.leads)
+    const crm = await syncToCrm(result.leads, saved.idByKey)
     const stats = {
       found: result.found,
       qualified: result.qualified,
@@ -147,6 +182,10 @@ async function runOne() {
       alerts_sent: alerted.sent,
       alerts_skipped: alerted.skipped,
       alert_errors: alerted.errors.slice(0, 10),
+      crm_sent: crm.sent,
+      crm_failed: crm.failed,
+      crm_skipped: crm.skipped,
+      crm_errors: crm.errors.slice(0, 10),
       failures: result.failures.slice(0, 20),
     }
 
@@ -164,6 +203,9 @@ async function runOne() {
     if (alerted.skipped) console.log(`[worker] Telegram: ${alerted.skipped}`)
     else console.log(`[worker] Telegram: отправлено ${alerted.sent} из ${result.hot}${alerted.errors.length ? `, отказов ${alerted.errors.length}` : ''}`)
     for (const one of alerted.errors) console.warn(`[worker] Telegram не доставил — ${one}`)
+    if (crm.skipped) console.log(`[worker] CRM: ${crm.skipped}`)
+    else console.log(`[worker] CRM: отправлено ${crm.sent}${crm.failed ? `, отказов ${crm.failed}` : ''}`)
+    for (const one of crm.errors) console.warn(`[worker] CRM не приняла — ${one}`)
     console.log(`[worker] задача ${job.id}: ${searchFailed ? 'провал' : 'готово'}, лидов ${saved.added}, горячих ${result.hot}`)
     return job.id
   } catch (error) {

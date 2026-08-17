@@ -35,6 +35,8 @@ const sdrRun = read('agent-hub/sdr-run.mjs')
 const leadReport = read('agent-hub/lead-report.mjs')
 const tui = read('agent-hub/tui.mjs')
 const leadExport = read('agent-hub/lead-export.mjs')
+const crmSync = read('agent-hub/crm-sync.ts')
+const crmMigration = read('supabase/migrations/20260817200000_sdr_leads_crm_sync.sql')
 const packageJson = read('package.json')
 
 const cases = [
@@ -184,6 +186,52 @@ const cases = [
   ['an unknown business category still searches by name',
     overpass.includes('const nameSelector = `"name"~"${escapeForOverpassRegex(query)}",i`')
     && overpass.includes('[...selectors, nameSelector]')],
+
+  // ── Синхронизация с CRM ──────────────────────────────────────────────────────────────────────
+  // Состав полей нагрузки — это контракт с приёмником у клиента: он настроен под эти имена, и
+  // молчаливое переименование ломает его интеграцию, а узнают об этом по пустой CRM.
+  ['the CRM payload field set is pinned',
+    ['id', 'lead_id', 'name', 'city', 'phone', 'website', 'socials', 'score', 'status', 'icp_reasoning', 'icebreaker', 'created_at']
+      .every((field) => new RegExp(`^\\s+${field}:`, 'm').test(crmSync))
+    && crmSync.includes("status: 'HOT'")],
+
+  // Повторять стоит только то, что может пройти со второй попытки. Повтор 400 трижды — это шум в
+  // чужом журнале, а не надёжность.
+  ['only transient failures are retried, never our own 4xx',
+    crmSync.includes('export function isRetryable')
+    && crmSync.includes('if (status === null) return true')
+    && crmSync.includes('if (status >= 500 || status === 429) return true')
+    // Тело функции заканчивается отказом: всё, что не перечислено выше, повторять нельзя.
+    && (crmSync.split('export function isRetryable')[1]?.split('\n}')[0] ?? '').trimEnd().endsWith('return false')],
+
+  // Зависший приёмник не должен держать воркер, а повторы обязаны расходиться по времени.
+  ['the webhook call is time-boxed and backs off exponentially',
+    crmSync.includes('const TIMEOUT_MS = 5_000')
+    && crmSync.includes('signal: AbortSignal.timeout(TIMEOUT_MS)')
+    && crmSync.includes('return base * 2 ** attempt')
+    && crmSync.includes('const MAX_RETRIES = 2')],
+
+  // Повторы без ключа идемпотентности создают дубли: первая попытка могла дойти, а ответ потеряться.
+  ['retries carry an idempotency key so a lost response cannot duplicate a lead',
+    crmSync.includes("'Idempotency-Key': payload.id")],
+
+  // Ни один отказ приёмника не имеет права помешать фиксации задачи: незафиксированная задача будет
+  // взята повторно и спишет кредиты второй раз.
+  ['a CRM failure can never block finish_sdr_job',
+    crmSync.includes('export async function syncHotLeadsToCrm')
+    && !/\bthrow\b/.test(crmSync.split('export async function syncHotLeadsToCrm')[1] ?? '')
+    && worker.split('async function syncToCrm(')[1]?.split('\n}')[0]?.includes('try {')
+    && worker.indexOf('const alerted = await alertHotLeads(result.leads)')
+      < worker.indexOf('const crm = await syncToCrm(result.leads, saved.idByKey)')
+    && worker.indexOf('const crm = await syncToCrm(result.leads, saved.idByKey)')
+      < worker.indexOf("admin.rpc('finish_sdr_job'")],
+
+  // Отметка об отправке живёт в базе, а не только в журнале воркера: журнал умирает с процессом, а
+  // вопрос «этот лид уже уехал в CRM?» задают через неделю.
+  ['the sync is recorded durably, not only in the console',
+    crmMigration.includes('add column if not exists crm_synced_at timestamptz')
+    && worker.includes("update({ crm_synced_at: new Date().toISOString() })")
+    && worker.includes('.in(\'dedupe_key\', outcome.syncedKeys)')],
 
   // ── Интерактивный режим ──────────────────────────────────────────────────────────────────────
   // ОБРАТНАЯ СОВМЕСТИМОСТЬ — главное здесь. Скрипты, cron и CI зовут этот файл с флагами, и
