@@ -215,3 +215,9 @@ verify_jwt = true
 # Commerce import staging and owner confirmation (panel, authenticated).
 [functions.commerce-control]
 verify_jwt = true
+
+# Шлюз платформенных токенов: авторизация СВОЯ (nemo_live_ + HMAC), а шлюз Supabase
+# отверг бы такой заголовок как невалидный JWT ещё до функции. Проверка не отключена, а перенесена
+# внутрь: без NEMO_TOKEN_PEPPER функция отвечает 503 и не пускает никого.
+[functions.sdr-api]
+verify_jwt = false

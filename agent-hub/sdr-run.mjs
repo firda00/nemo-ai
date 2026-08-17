@@ -1,10 +1,18 @@
-// Тестовый прогон SDR-пайплайна.
+// Прогон SDR-пайплайна. Два режима, и выбор между ними ЯВНЫЙ.
 //
 //   npm run sdr:run -- --query "стоматология" --city "Ташкент" --limit 50
+//     Местный прогон: всё считается здесь, ключи берутся с этой машины.
+//
+//   NEMO_API_KEY=nemo_live_... npm run sdr:run -- --query "..." --city "..."
+//     Через платформу: задача уходит в Nemo, считает сервер своими ключами, CLI ждёт результат.
+//
+// Если NEMO_API_KEY задан, а сервер недоступен — команда ПАДАЕТ, а не досчитывает молча на местных
+// ключах. Тихий откат означал бы, что владелец думает, будто платит платформе и работает её
+// лимитами, а на деле жжёт свой ключ OpenRouter и пишет в свою базу.
 //
 // Ключи подхватываются САМИ из .secrets.local / .env.local / .env — руками ничего экспортировать не
 // нужно. Уже заданная в окружении переменная важнее файла: `KEY=... npm run sdr:run` продолжает
-// работать. Пайплайн запускается и вообще без ключей — просто делает меньше на этом шаге, а не
+// работать. Местный прогон запускается и вообще без ключей — просто делает меньше на этом шаге, а не
 // падает:
 //   GOOGLE_PLACES_API_KEY нет           → поиск идёт через OpenStreetMap (бесплатно, без ключа)
 //   OPENROUTER_API_KEY нет              → оценка пропускается, лиды уходят без score
@@ -41,6 +49,79 @@ if (!query || !city) {
   process.exit(1)
 }
 
+// ─────────────────────────  Режим платформы: считает сервер  ─────────────────────────
+if (process.env.NEMO_API_KEY) {
+  const apiBase = process.env.NEMO_API_URL
+    ?? (process.env.SUPABASE_PROJECT_REF
+      ? `https://${process.env.SUPABASE_PROJECT_REF}.supabase.co/functions/v1/sdr-api`
+      : null)
+  if (!apiBase) {
+    console.error('[SDR] NEMO_API_KEY задан, но неизвестен адрес: укажите NEMO_API_URL или SUPABASE_PROJECT_REF.')
+    process.exit(1)
+  }
+
+  const headers = {
+    Authorization: `Bearer ${process.env.NEMO_API_KEY}`,
+    'Content-Type': 'application/json',
+    // Шлюз Supabase требует публичный ключ проекта отдельным заголовком — он не секрет и лежит в
+    // каждом браузере, открывшем сайт. Без него запрос не доходит до функции вовсе.
+    ...(process.env.SUPABASE_PUBLISHABLE_KEY ? { apikey: process.env.SUPABASE_PUBLISHABLE_KEY } : {}),
+  }
+
+  console.log(`[SDR] режим платформы: ${apiBase}`)
+  const created = await fetch(`${apiBase}/jobs`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query, city, limit, icp: icp || undefined }),
+  }).catch((error) => { console.error(`[SDR] сеть: ${error.message}`); process.exit(1) })
+
+  const createdBody = await created.json().catch(() => null)
+  if (!created.ok || !createdBody?.job_id) {
+    // Причину отказа печатаем как пришла: 403 action_not_allowed и 402 insufficient_credits
+    // чинятся совершенно по-разному, и обобщать их в «не получилось» бесполезно.
+    console.error(`[SDR] задача не поставлена (HTTP ${created.status}): ${JSON.stringify(createdBody)}`)
+    process.exit(1)
+  }
+
+  const jobId = createdBody.job_id
+  console.log(`[SDR] задача ${jobId} принята, списано ${createdBody.reserved_tokens} кредитов. Ждём воркер…`)
+
+  const startedAt = Date.now()
+  const TIMEOUT_MS = 15 * 60 * 1000
+  for (;;) {
+    if (Date.now() - startedAt > TIMEOUT_MS) {
+      console.error(`[SDR] задача ${jobId} не завершилась за 15 минут. Состояние можно забрать позже:`)
+      console.error(`      GET ${apiBase}/jobs/${jobId}`)
+      process.exit(1)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+
+    const status = await fetch(`${apiBase}/jobs/${jobId}`, { headers }).catch(() => null)
+    const payload = await status?.json().catch(() => null)
+    if (!payload?.job) { console.log('[SDR] …состояние недоступно, повторяю'); continue }
+
+    if (payload.job.status === 'queued' || payload.job.status === 'running') {
+      console.log(`[SDR] …${payload.job.status}`)
+      continue
+    }
+
+    if (payload.job.status === 'failed') {
+      console.error(`[SDR] задача провалилась: ${payload.job.error ?? 'причина не указана'}`)
+      console.error('[SDR] кредиты возвращены на счёт.')
+      process.exit(1)
+    }
+
+    const stats = payload.job.stats ?? {}
+    console.log(`\n[SDR] Готово. Найдено ${stats.found ?? 0}, лидов ${payload.leads.length}, горячих ${stats.hot ?? 0}`)
+    for (const lead of payload.leads) {
+      const mark = lead.score?.status === 'HOT' ? '🔥' : '  '
+      console.log(`${mark} ${lead.name} — ${lead.phone ?? lead.website ?? '—'}${lead.score ? ` (${lead.score.score}/100)` : ''}`)
+    }
+    process.exit(0)
+  }
+}
+
+// ─────────────────────────  Местный режим: считаем здесь  ─────────────────────────
 let search
 try {
   search = resolvePlacesSearch()

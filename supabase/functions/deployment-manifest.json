@@ -20,6 +20,7 @@
     "ops-watchdog",
     "org-memory-worker",
     "payme-webhook",
+    "sdr-api",
     "setup-meta",
     "setup-telegram",
     "stripe-webhook",
