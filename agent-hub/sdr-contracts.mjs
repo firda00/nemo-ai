@@ -277,10 +277,13 @@ const cases = [
     && tui.split('  async select(question, options, defaultIndex = 0) {')[1]?.trimStart().startsWith('stopActiveSpinner()')],
 
   // Ни одна ветка выхода из прогона не оставляет анимацию живой — включая отказы до старта поиска.
+  // Якорь привязан к САМОЙ функции, а не к первому попавшемуся `} finally {`. Блоков finally в файле
+  // стало несколько (браузер закрывается своим), и проверка «в первом finally есть stopActiveSpinner»
+  // начала смотреть не туда — сломалась на верном коде.
   ['no failure path leaves the animation running',
     sdrRun.includes('spinner?.silence()')
     && sdrRun.includes('spinner.fail(c.red(outcome.error))')
-    && sdrRun.split('} finally {')[1]?.includes('stopActiveSpinner()')],
+    && sdrRun.split('async function runInteractive() {')[1]?.split('} finally {')[1]?.includes('stopActiveSpinner()')],
 
   // Повторный итог молчит: путь через платформу отчитывается сам, и вызывающий код добавлял вторую
   // строку под первой.

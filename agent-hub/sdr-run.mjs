@@ -48,6 +48,8 @@ import { resolvePlacesSearch } from '../supabase/functions/_shared/leadgen/place
 import { WebEnricher } from '../supabase/functions/_shared/leadgen/enricher.ts'
 import { resolveScorer } from '../supabase/functions/_shared/leadgen/scorer.ts'
 import { resolveLeadStore, resolveNotifier } from '../supabase/functions/_shared/leadgen/notifier.ts'
+import { createBrowserBridge } from './tools/enrich-browser.ts'
+import { resolveLeadCardConfig } from './telegram/lead-card-bridge.ts'
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`)
@@ -172,28 +174,60 @@ async function runLocally({ query, city, limit, icp }, spinner, onPhase) {
     return { ok: false, error: error.message }
   }
 
-  const result = await runSdrPipeline(
-    { query, city, limit, icp: icp || undefined },
-    {
-      search,
-      enrich: new WebEnricher(),
-      score: resolveScorer(),
-      store: resolveLeadStore(),
-      notify: resolveNotifier(),
-      // В интерактивном режиме журнал уходит в спиннер: две системы, печатающие в одну строку
-      // одновременно, дают кашу из перезаписанных строк.
-      log: spinner ? () => {} : (message) => console.log(`[SDR] ${message}`),
-      // onPhase снаружи важнее: интерактив формулирует этапы по-человечески («Поиск в Ташкенте через
-      // OpenStreetMap»), а не технически («overpass_search»).
-      onPhase: onPhase ?? (spinner
-        ? (event) => {
-          const progress = event.of ? ` ${event.done}/${event.of}` : ''
-          spinner.update(`[${event.step}/${event.total}] ${event.message}${progress}`)
-        }
-        : undefined),
-    },
-  )
-  return { ok: true, leads: result.leads, result }
+  // Браузер поднимается ОДИН на весь прогон и закрывается в finally. Незакрытый Chromium остаётся
+  // зомби-процессом в системе: через сутки такого воркера машина уходит в свап.
+  const browser = createBrowserBridge()
+  // Карточки с кнопками ЗАМЕНЯЮТ обычные уведомления, а не добавляются к ним: иначе на каждый горячий
+  // лид уходит два сообщения об одном и том же.
+  const cards = resolveLeadCardConfig()
+  try {
+    const result = await runSdrPipeline(
+      { query, city, limit, icp: icp || undefined },
+      {
+        search,
+        enrich: new WebEnricher(process.env, fetch, browser.fallback),
+        score: resolveScorer(),
+        store: resolveLeadStore(),
+        notify: cards.enabled ? null : resolveNotifier(),
+        // В интерактивном режиме журнал уходит в спиннер: две системы, печатающие в одну строку
+        // одновременно, дают кашу из перезаписанных строк.
+        log: spinner ? () => {} : (message) => console.log(`[SDR] ${message}`),
+        // onPhase снаружи важнее: интерактив формулирует этапы по-человечески («Поиск в Ташкенте через
+        // OpenStreetMap»), а не технически («overpass_search»).
+        onPhase: onPhase ?? (spinner
+          ? (event) => {
+            const progress = event.of ? ` ${event.done}/${event.of}` : ''
+            spinner.update(`[${event.step}/${event.total}] ${event.message}${progress}`)
+          }
+          : undefined),
+      },
+    )
+    // Карточки — ПОСЛЕ возврата пайплайна, то есть после сохранения в базу. Порядок тот же, что у
+    // воркера: кнопка «Отправить оффер» ссылается на лид, которого до записи в базе нет.
+    const cardReport = cards.enabled ? await deliverLeadCards(cards, result.leads) : null
+    return { ok: true, leads: result.leads, result, browserStats: browser.stats(), cardReport }
+  } finally {
+    await browser.close()
+  }
+}
+
+/**
+ * Разослать карточки горячих лидов с кнопками действий.
+ *
+ * Ни одна ошибка здесь НЕ роняет прогон: лиды уже найдены, оценены и сохранены, а недоставленная
+ * карточка — потеря одного уведомления. Отказы возвращаются списком, чтобы их можно было назвать.
+ */
+async function deliverLeadCards(config, leads) {
+  try {
+    const [{ TelegramNotificationService }, { sendLeadCards }] = await Promise.all([
+      import('./telegram/bot-service.ts'),
+      import('./telegram/lead-card-bridge.ts'),
+    ])
+    const service = new TelegramNotificationService(config.token)
+    return await sendLeadCards(service, config.chatId, leads ?? [])
+  } catch (error) {
+    return { sent: 0, skipped: 0, errors: [`карточки не отправлены: ${error.message}`] }
+  }
 }
 
 /** Сводка прогона цифрами — то же, что печаталось всегда. */
@@ -214,6 +248,18 @@ function printSummary(result) {
     console.log(`  сбоев: ${result.failures.length}`)
     for (const failure of result.failures.slice(0, 20)) console.log(`    [${failure.stage}] ${failure.detail}`)
   }
+}
+
+/**
+ * Итог рассылки карточек с кнопками.
+ *
+ * Молчание здесь недопустимо: непришедшая карточка о горячем лиде выглядит как «горячих не нашлось»,
+ * и владелец будет искать причину в поиске, а не в Telegram.
+ */
+function printCardReport(report) {
+  if (!report) return
+  console.log(`[SDR] карточки в Telegram: отправлено ${report.sent}${report.skipped ? `, пропущено ${report.skipped}` : ''}`)
+  for (const one of report.errors) console.warn(`[SDR] карточка не доставлена — ${one}`)
 }
 
 /** Что подхватилось из файлов — ИМЕНАМИ, без значений. */
@@ -262,6 +308,7 @@ async function runFromFlags() {
   // прокручиваться вверх за сводкой отсева.
   process.stdout.write(renderLeadReport(outcome.leads, { details }))
   printSummary(outcome.result)
+  printCardReport(outcome.cardReport)
 
   // Сбой на этапе поиска — единственный, что превращает прогон в неудачный: остальные этапы
   // деградируют осмысленно (без оценки, без сохранения, без уведомлений), и лиды всё равно найдены.

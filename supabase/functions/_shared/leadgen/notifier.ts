@@ -29,6 +29,9 @@ function escapeHtml(text: string): string {
 function socialLinks(lead: Lead): string {
   const socials = lead.enrichment?.socials ?? {}
   const parts: string[] = []
+  // WhatsApp ПЕРВЫМ: в регионе это основной рабочий канал малого бизнеса, и отвечают там быстрее,
+  // чем в Telegram или на почту.
+  if (socials.whatsapp) parts.push(`<a href="${escapeHtml(socials.whatsapp)}">WhatsApp</a>`)
   if (socials.telegram) parts.push(`<a href="${escapeHtml(socials.telegram)}">Telegram</a>`)
   if (socials.instagram) parts.push(`<a href="${escapeHtml(socials.instagram)}">Instagram</a>`)
   const emails = lead.enrichment?.emails ?? []

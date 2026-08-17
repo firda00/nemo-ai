@@ -18,6 +18,7 @@ import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { loadLocalEnv } from './load-local-env.mjs'
 import { syncHotLeadsToCrm } from './crm-sync.ts'
+import { createBrowserBridge } from './tools/enrich-browser.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 loadLocalEnv(repoRoot)
@@ -141,6 +142,10 @@ async function runOne() {
     }).then(({ error }) => { if (error) console.warn(`[worker] сердцебиение не прошло: ${error.message}`) })
   }, HEARTBEAT_MS)
 
+  // Браузер — ОДИН на задачу и закрывается в finally ниже. Воркер живёт часами и берёт задачу за
+  // задачей: браузер, оставленный открытым хотя бы в одной ветке, к вечеру превратится в десяток
+  // процессов Chromium, и машина уйдёт в свап на ровном месте.
+  const browser = createBrowserBridge()
   try {
     const search = resolvePlacesSearch()
     const result = await runSdrPipeline(
@@ -152,7 +157,7 @@ async function runOne() {
       },
       {
         search,
-        enrich: new WebEnricher(),
+        enrich: new WebEnricher(process.env, fetch, browser.fallback),
         score: resolveScorer(),
         // Запись делаем сами — с job_id, которого общий store не знает.
         store: null,
@@ -186,6 +191,9 @@ async function runOne() {
       crm_failed: crm.failed,
       crm_skipped: crm.skipped,
       crm_errors: crm.errors.slice(0, 10),
+      // Сколько раз понадобился браузер — цена задачи в секундах и памяти. Без этой цифры непонятно,
+      // почему одна задача считалась десять секунд, а вторая — минуту.
+      browser: browser.stats(),
       failures: result.failures.slice(0, 20),
     }
 
@@ -224,6 +232,10 @@ async function runOne() {
     return job.id
   } finally {
     clearInterval(heartbeat)
+    // Браузер закрывается ПОСЛЕ фиксации задачи и в обеих ветках. Порядок именно такой: сначала
+    // задача перестаёт считаться выполняемой, потом освобождаются ресурсы — если закрытие браузера
+    // само упадёт, задача уже зафиксирована и второй раз кредиты не спишет.
+    await browser.close()
   }
 }
 
