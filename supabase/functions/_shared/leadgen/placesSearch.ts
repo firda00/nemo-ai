@@ -9,6 +9,8 @@
 import { readFile } from 'node:fs/promises'
 import type { PlacesSearch, SearchStats } from './contracts.ts'
 import type { LeadSearchRequest, RawPlace } from './schemas.ts'
+import { OverpassPlacesSearch } from './overpassSearch.ts'
+import { toRawPlace } from './rawPlace.ts'
 
 const TEXT_SEARCH_URL = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
 const DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/json'
@@ -26,22 +28,6 @@ const MAX_PAGES = 3
 
 type PlacesResponse = { results: Array<Record<string, unknown>>; next_page_token?: string; status: string }
 type DetailsResponse = { result?: Record<string, unknown>; status: string }
-
-/** Сырая запись в форму RawPlace — источник может быть ответом Google (числа) или строкой CSV. */
-function toRawPlace(source: Record<string, unknown>): RawPlace {
-  const rating = source.rating != null && source.rating !== '' ? Number(source.rating) : undefined
-  const reviews = source.user_ratings_total != null && source.user_ratings_total !== '' ? Number(source.user_ratings_total) : undefined
-  return {
-    place_id: String(source.place_id ?? ''),
-    name: String(source.name ?? ''),
-    formatted_address: source.formatted_address ? String(source.formatted_address) : undefined,
-    international_phone_number: source.international_phone_number ? String(source.international_phone_number) : undefined,
-    website: source.website ? String(source.website) : undefined,
-    rating: Number.isFinite(rating) ? rating : undefined,
-    user_ratings_total: Number.isFinite(reviews) ? Math.trunc(reviews as number) : undefined,
-    business_status: source.business_status ? String(source.business_status) : undefined,
-  }
-}
 
 /**
  * Google Places (классический API — поля формы RawPlace взяты дословно из его ответа, а не из
@@ -152,15 +138,26 @@ export class FilePlacesSearch implements PlacesSearch {
   }
 }
 
-/** Выбирает реализацию по тому, что задано в окружении: ключ Google или файл запасного пути. */
+/**
+ * Источник поиска по тому, что задано в окружении. НЕ БРОСАЕТ ИСКЛЮЧЕНИЙ.
+ *
+ * Раньше здесь был отказ `places_search_not_configured`, и пайплайн не запускался без платного
+ * ключа или руками собранного файла — то есть «одной командой из коробки» не работал вовсе.
+ * Теперь ключ Google и файл — необязательные улучшения, а не условие запуска: без них берётся
+ * OpenStreetMap, у которого нет ни ключей, ни оплаты.
+ *
+ * Порядок именно такой: у Google полнота контактов заметно выше (см. замер в overpassSearch.ts),
+ * поэтому если за него уже заплачено — используем его; явно указанный файл важнее общего
+ * справочника, потому что его задали намеренно.
+ */
 export function resolvePlacesSearch(env: NodeJS.ProcessEnv = process.env): PlacesSearch {
   const apiKey = env.GOOGLE_PLACES_API_KEY
   if (apiKey) return new GooglePlacesSearch(apiKey)
   const fallbackFile = env.SDR_PLACES_FALLBACK_FILE
   if (fallbackFile) return new FilePlacesSearch(fallbackFile)
-  throw new Error(
-    'places_search_not_configured: задайте GOOGLE_PLACES_API_KEY или SDR_PLACES_FALLBACK_FILE (путь к JSON/CSV)',
-  )
+  return new OverpassPlacesSearch()
 }
 
-export { toRawPlace }
+// Живёт в rawPlace.ts (иначе overpassSearch ↔ placesSearch замкнулись бы в кольцо), но
+// переэкспортируется отсюда: для вызывающего это по-прежнему часть слоя источников поиска.
+export { toRawPlace } from './rawPlace.ts'

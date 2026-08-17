@@ -22,7 +22,10 @@ const scorer = read('supabase/functions/_shared/leadgen/scorer.ts')
 const notifierFull = read('supabase/functions/_shared/leadgen/notifier.ts')
 const notifier = stripComments(notifierFull)
 const pipeline = read('supabase/functions/_shared/leadgen/pipeline.ts')
-const placesSearch = read('supabase/functions/_shared/leadgen/placesSearch.ts')
+// Без комментариев: объяснение «раньше здесь был отказ places_search_not_configured» — это
+// история, а не код, и проверка на отсутствие самого отказа не должна на неё срабатывать.
+const placesSearch = stripComments(read('supabase/functions/_shared/leadgen/placesSearch.ts'))
+const overpass = read('supabase/functions/_shared/leadgen/overpassSearch.ts')
 const migration = read('supabase/migrations/20260817120000_sdr_leads.sql')
 const packageJson = read('package.json')
 
@@ -89,6 +92,56 @@ const cases = [
   ['the CLI is wired the same way every other Node-run .ts script in this repo is',
     packageJson.includes('"sdr:run": "node --experimental-strip-types agent-hub/sdr-run.mjs"')
     && packageJson.includes('"test:sdr": "node --experimental-strip-types agent-hub/sdr-pipeline-behavior.mjs"')],
+
+  // ── Запуск «из коробки» ──────────────────────────────────────────────────────────────────────
+  // Раньше без платного ключа или руками собранного JSON пайплайн не запускался вовсе —
+  // resolvePlacesSearch бросал places_search_not_configured. Ключи остаются улучшением, а не
+  // условием запуска.
+  ['the pipeline runs with no keys at all — resolvePlacesSearch never throws',
+    placesSearch.includes('return new OverpassPlacesSearch()')
+    && !placesSearch.includes('places_search_not_configured')],
+
+  ['a paid Google key still wins over the free directory when it is configured',
+    placesSearch.indexOf('if (apiKey) return new GooglePlacesSearch(apiKey)')
+      < placesSearch.indexOf('return new OverpassPlacesSearch()')],
+
+  // Общие бесплатные службы требуют опознаваемого User-Agent с контактом. Анонимный поток
+  // запросов справедливо блокируют, и виноваты в этом будем мы, а не они.
+  ['the free OSM services are called with an identifying User-Agent',
+    overpass.includes("'User-Agent': USER_AGENT")
+    && /const USER_AGENT = 'NemoAI-SDR/.test(overpass)],
+
+  // Занятость Overpass приходит как HTTP 200 с HTML-страницей об ошибке. Проверка только res.ok
+  // приняла бы это за пустую выдачу, и прогон молча вернул бы ноль лидов на работающем городе.
+  ['an overloaded Overpass response is detected by body, not just status',
+    overpass.includes('isBusyResponse(text)')
+    && overpass.includes('if (!res.ok || isBusyResponse(text))')],
+
+  // В OSM телефон часто приходит списком через «;». Наивный разбор склеивает его в 36-значное
+  // «число», toE164 возвращает null, и клиника с тремя рабочими номерами отсеивается как
+  // «без телефона».
+  ['a multi-value OSM phone is split, not concatenated into a non-number',
+    overpass.includes('export function firstPhone(')
+    && overpass.includes('raw.split(/[;,]/)[0]')],
+
+  // Контакты в OSM размечены и с префиксом contact:, и без него — оба варианта встретились в одной
+  // живой выдаче.
+  ['both bare and contact:-prefixed OSM tags are read',
+    overpass.includes('return tags[name] ?? tags[`contact:${name}`]')],
+
+  // Лимит применяется к самым полным записям, а не к первым подряд: иначе «--limit 15» на OSM
+  // давал один пригодный лид вместо одиннадцати. Ранжирование НЕ подменяет фильтр качества —
+  // оно только решает, какие записи доедут до него первыми.
+  ['the limit selects the most complete records, not the first N in response order',
+    overpass.includes('const richness = (place: RawPlace): number =>')
+    && overpass.includes('.sort((a, b) => (b.rank - a.rank) || (a.index - b.index))')
+    && overpass.includes('ranked.slice(0, request.limit)')],
+
+  // Таблица категорий неполная намеренно (платформа домен-нейтральна), поэтому поиск по названию
+  // обязан идти ВСЕГДА — иначе неизвестная категория не нашлась бы вовсе.
+  ['an unknown business category still searches by name',
+    overpass.includes('const nameSelector = `"name"~"${escapeForOverpassRegex(query)}",i`')
+    && overpass.includes('[...selectors, nameSelector]')],
 
   // ── LinkUp: контракт не подтверждён — это должно быть названо, а не спрятано ──────────────────
   ['the unverified LinkUp integration is flagged honestly in code, not presented as confirmed',

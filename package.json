@@ -78,6 +78,7 @@
     "test:leadgen": "node --experimental-strip-types agent-hub/leadgen-sanitizer-behavior.mjs",
     "sdr:run": "node --experimental-strip-types agent-hub/sdr-run.mjs",
     "test:sdr": "node --experimental-strip-types agent-hub/sdr-pipeline-behavior.mjs",
+    "test:sdr-overpass": "node --experimental-strip-types agent-hub/sdr-overpass-behavior.mjs",
     "test:sdr-contracts": "node agent-hub/sdr-contracts.mjs",
     "test:secrets": "node agent-hub/secrets-scan-behavior.mjs",
     "scan:secrets": "node agent-hub/scan-secrets.mjs",
