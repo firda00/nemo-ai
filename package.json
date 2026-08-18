@@ -113,7 +113,10 @@
     "test:infra": "node agent-hub/infra-contracts.mjs",
     "gateway": "node --experimental-strip-types agent-hub/server/main.ts",
     "test:voice": "node --experimental-strip-types agent-hub/voice-behavior.mjs",
-    "voice": "node --experimental-strip-types agent-hub/telephony/main.ts"
+    "voice": "node --experimental-strip-types agent-hub/telephony/main.ts",
+    "test:media": "node --experimental-strip-types agent-hub/media-behavior.mjs",
+    "media:render-probe": "node --experimental-strip-types agent-hub/media/real-render-probe.mjs",
+    "media": "node --experimental-strip-types agent-hub/media/main.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

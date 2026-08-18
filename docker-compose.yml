@@ -24,6 +24,7 @@ networks:
 
 volumes:
   dragonfly_data:
+  media_storage:
 
 services:
   dragonfly:
@@ -110,6 +111,28 @@ services:
       - '127.0.0.1:${VOICE_PORT:-8080}:8080'
     networks:
       - nemo_net
+  media-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.ffmpeg
+    container_name: nemo_render_worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://dragonfly:6379
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - RENDER_WORK_DIR=/tmp/renders
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    volumes:
+      # Готовые ролики переживают перезапуск контейнера: без тома они лежат в его файловой системе и
+      # исчезают вместе с ней, а вебхук к этому моменту уже сообщил путь к файлу.
+      - media_storage:/tmp/renders
+    networks:
+      - nemo_net
+    depends_on:
+      dragonfly:
+        condition: service_healthy
   sdr-worker:
     build:
       context: .

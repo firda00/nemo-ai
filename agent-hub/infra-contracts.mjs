@@ -39,6 +39,7 @@ const compose = parse(read('docker-compose.yml'))
 const dockerApi = read('infra/docker/Dockerfile.api')
 const dockerWorker = read('infra/docker/Dockerfile.worker')
 const dockerVoice = read('infra/docker/Dockerfile.voice')
+const dockerFfmpeg = read('infra/docker/Dockerfile.ffmpeg')
 const packageJson = read('package.json')
 const qualityGate = read('agent-hub/quality-gate.ps1')
 
@@ -46,6 +47,7 @@ const services = compose.services ?? {}
 const gateway = services['nemo-api-gateway'] ?? {}
 const worker = services['sdr-worker'] ?? {}
 const voice = services['voice-worker'] ?? {}
+const media = services['media-worker'] ?? {}
 const dragonfly = services.dragonfly ?? {}
 
 /** Значение переменной окружения из списка вида ['KEY=value']. */
@@ -54,8 +56,34 @@ const envOf = (service, key) => (service.environment ?? [])
 
 const cases = [
   // ── Ссылки между сервисами ────────────────────────────────────────────────────────────────────
-  ['all four services exist',
-    ['dragonfly', 'nemo-api-gateway', 'sdr-worker', 'voice-worker'].every((name) => name in services)],
+  ['all five services exist',
+    ['dragonfly', 'nemo-api-gateway', 'sdr-worker', 'voice-worker', 'media-worker'].every((name) => name in services)],
+
+  /*
+   * Готовые ролики лежат на ТОМЕ, а не в файловой системе контейнера.
+   *
+   * Вебхук сообщает путь к файлу; без тома файл исчезает вместе с контейнером при первом же
+   * перезапуске, и по сообщённому пути не оказывается ничего.
+   */
+  ['rendered videos survive a container restart',
+    (media.volumes ?? []).some((entry) => {
+      const [source, target] = String(entry).split(':')
+      return target === '/tmp/renders' && source in (compose.volumes ?? {})
+    })],
+
+  /*
+   * Образ медиа-воркера ПРОВЕРЯЕТ наличие фильтров на этапе сборки.
+   *
+   * Сборки ffmpeg разительно отличаются: та, что лежит в этом дереве внутри Remotion, не содержит ни
+   * ass, ни xfade, ни sidechaincompress, ни даже fps и setpts. Узнать об этом через минуту после
+   * выкатки — значит потерять очередь роликов.
+   */
+  ['the media image verifies its ffmpeg filters at build time',
+    dockerFfmpeg.includes('apk add --no-cache tini ffmpeg')
+    && ['ass', 'xfade', 'sidechaincompress', 'setpts'].every((f) => dockerFfmpeg.includes(f))
+    && dockerFfmpeg.includes('в ffmpeg нет фильтра')
+    // Шрифты нужны фильтру ass: без них субтитры молча подменяются на первый попавшийся шрифт.
+    && dockerFfmpeg.includes('ttf-dejavu')],
 
   /*
    * Порт голосового воркера НЕ опубликован наружу.

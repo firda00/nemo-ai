@@ -43,6 +43,7 @@ $steps = @(
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
   @{ Name = 'Voice pipeline: codec, VAD, barge-in, analytics'; Command = { npm run test:voice } },
+  @{ Name = 'Media pipeline: .ass subtitles and FFmpeg graph'; Command = { npm run test:media } },
   @{ Name = 'CRM webhook sync'; Command = { npm run test:crm-sync } },
   @{ Name = 'Telegram HOT-lead alerts'; Command = { npm run test:telegram-alert } },
   @{ Name = 'Lead console report'; Command = { npm run test:lead-report } },
