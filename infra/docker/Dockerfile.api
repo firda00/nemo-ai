@@ -1,0 +1,80 @@
+# API Gateway Nemo.
+#
+# Многоступенчатая сборка ради ОДНОГО: в итоговый образ не должны попасть ни devDependencies, ни
+# кэш npm, ни исходники того, что шлюзу не нужно. Разница не косметическая — в дереве проекта лежат
+# playwright и puppeteer, каждый со своим Chromium; попадание их в образ шлюза добавило бы к нему
+# больше полугигабайта ради кода, который здесь никогда не выполнится.
+#
+# node:22-alpine — как указано в спецификации V5 (§6). Тип-аннотации снимаются на лету флагом
+# --experimental-strip-types, доступным в Node начиная с 22.6.
+#
+# ЧТО НЕ ПРОВЕРЕНО. Сборка этого файла в среде разработки НЕ ЗАПУСКАЛАСЬ: docker в ней не установлен.
+# Код шлюза проверен на живом сокете под Node 24, но поведение флага --experimental-strip-types
+# именно в node:22-alpine я подтвердить не мог. Первый `docker compose build` стоит выполнить руками и
+# посмотреть на вывод шага «проверка запуска» ниже — он для того и добавлен.
+
+# ── Ступень 1: зависимости ────────────────────────────────────────────────────────────────────────
+FROM node:22-alpine AS deps
+
+WORKDIR /app
+
+# Только манифесты: слой с зависимостями пересобирается лишь когда меняется package-lock.json, а не
+# при каждой правке кода. Копирование всего проекта сюда сделало бы кэш бесполезным.
+COPY package.json package-lock.json ./
+
+# npm ci, а не npm install: ci ставит РОВНО то, что в package-lock, и падает при расхождении. install
+# молча обновил бы зависимость, и образ перестал бы соответствовать проверенному дереву.
+#
+# Загрузка браузеров отключена явно. Playwright и Puppeteer тянут Chromium своими postinstall-скриптами;
+# шлюзу он не нужен ни в каком виде, а весит больше самого образа.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1
+RUN npm ci --omit=dev --ignore-scripts
+
+# ── Ступень 2: выполнение ─────────────────────────────────────────────────────────────────────────
+FROM node:22-alpine AS runtime
+
+# tini как init-процесс. Node под PID 1 не получает обработку сигналов по умолчанию и НЕ реагирует на
+# `docker stop`: контейнер убивается по таймауту через десять секунд, обрывая запросы на середине.
+# Мягкая остановка в main.ts без этого бесполезна — её просто некому вызвать.
+RUN apk add --no-cache tini
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOST=0.0.0.0
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+
+# Копируются ТОЛЬКО те каталоги, которые шлюз действительно импортирует. Список явный, а не `COPY . .`:
+# так в образ не попадут ни .secrets.local, ни расширение браузера, ни история миграций.
+COPY agent-hub/server ./agent-hub/server
+COPY agent-hub/contracts ./agent-hub/contracts
+COPY supabase/functions/_shared/apiTokens.ts ./supabase/functions/_shared/apiTokens.ts
+
+# Непривилегированный пользователь. Образ node уже содержит `node` (uid 1000) — заводить своего
+# незачем. Root внутри контейнера означает, что пробитая уязвимость в зависимости получает права на
+# смонтированные тома.
+USER node
+
+# Проверка запуска НА ЭТАПЕ СБОРКИ.
+#
+# Модуль импортируется с фиктивными переменными окружения и сразу останавливается. Смысл в том, чтобы
+# несовместимость Node 22 со снятием типов обнаружилась ЗДЕСЬ, при `docker build`, а не в production
+# через минуту после выкатки. Собственно сеть при этом не поднимается: проверяется разбор и загрузка
+# модулей, а не работа сервера.
+RUN node --experimental-strip-types --input-type=module \
+    -e "import('./agent-hub/server/gateway.ts').then((m) => { if (typeof m.buildGateway !== 'function') { console.error('gateway.ts не экспортирует buildGateway'); process.exit(1) } console.log('проверка запуска: модули шлюза загружаются') })"
+
+EXPOSE 3000
+
+# Healthcheck обращается к тому же /health, что и балансировщик. Обратите внимание: 503 при недоступном
+# Postgres здесь ОЖИДАЕМ и означает «не слать трафик», а не «перезапустить» — политика перезапуска в
+# compose выбрана с учётом этого.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--experimental-strip-types", "agent-hub/server/main.ts"]

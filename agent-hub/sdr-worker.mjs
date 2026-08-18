@@ -19,6 +19,7 @@ import { createClient } from '@supabase/supabase-js'
 import { loadLocalEnv } from './load-local-env.mjs'
 import { syncHotLeadsToCrm } from './crm-sync.ts'
 import { createBrowserBridge } from './tools/enrich-browser.ts'
+import { connectConsumer, BLOCK_SECONDS } from './server/queue.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 loadLocalEnv(repoRoot)
@@ -246,7 +247,12 @@ if (!loop) {
   process.exit(0)
 }
 
-console.log('[worker] непрерывный режим; Ctrl+C для остановки')
+// ОТДЕЛЬНОЕ соединение под ожидание: BLPOP блокирует весь клиент, и публиковать что-либо по нему
+// одновременно нельзя. Воркер только слушает, поэтому одного соединения ему достаточно.
+const queue = await connectConsumer()
+console.log(`[worker] непрерывный режим; Ctrl+C для остановки; очередь: ${
+  queue.enabled ? `Dragonfly, ожидание до ${BLOCK_SECONDS} с` : `опрос раз в ${IDLE_PAUSE_MS / 1000} с`}`)
+
 let stop = false
 process.on('SIGINT', () => { console.log('\n[worker] останавливаюсь после текущей задачи'); stop = true })
 while (!stop) {
@@ -256,7 +262,23 @@ while (!stop) {
   } catch (error) {
     console.error(`[worker] ошибка обхода очереди: ${String(error?.message ?? error)}`)
   }
-  // Пауза только когда делать нечего: очередь с задачами разбирается без задержек.
-  if (!handled) await new Promise((resolve) => setTimeout(resolve, IDLE_PAUSE_MS))
+  // Делать нечего — ЖДЁМ СИГНАЛА, а не спим вслепую.
+  //
+  // Раньше здесь стояла глухая пауза на пятнадцать секунд: воркер спрашивал claim_sdr_job снова и
+  // снова, всегда, даже при пустой очереди. Четыре воркера — шестнадцать запросов в минуту
+  // круглосуточно и ни одной полезной строки в ответ. Теперь воркер висит на Dragonfly и просыпается
+  // в момент постановки задачи.
+  //
+  // Сигнал НЕ обязателен и его содержимое НЕ используется: пришёл — идём в базу за задачей, не
+  // пришёл за отведённое время — идём всё равно. Брать задачу по идентификатору из сигнала было бы
+  // ошибкой: право на неё выдаёт claim_sdr_job с арендой, и в обход него два воркера получили бы одну
+  // задачу. Dragonfly здесь будильник, а не источник правды.
+  if (!handled) {
+    if (queue.enabled) await queue.waitForJob(BLOCK_SECONDS)
+    else await new Promise((resolve) => setTimeout(resolve, IDLE_PAUSE_MS))
+  }
 }
+// Соединение с Dragonfly закрывается до выхода: незакрытый сокет держит процесс живым, и воркер,
+// остановленный по Ctrl+C, не завершается — выглядит это как зависание при остановке.
+await queue.close()
 process.exit(0)
