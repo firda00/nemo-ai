@@ -116,7 +116,10 @@
     "voice": "node --experimental-strip-types agent-hub/telephony/main.ts",
     "test:media": "node --experimental-strip-types agent-hub/media-behavior.mjs",
     "media:render-probe": "node --experimental-strip-types agent-hub/media/real-render-probe.mjs",
-    "media": "node --experimental-strip-types agent-hub/media/main.ts"
+    "media": "node --experimental-strip-types agent-hub/media/main.ts",
+    "nemo": "node --experimental-strip-types agent-hub/nemo.mjs",
+    "test:agent": "node --experimental-strip-types agent-hub/agent-behavior.mjs",
+    "test:agent-loop": "node agent-hub/agent-loop-contracts.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

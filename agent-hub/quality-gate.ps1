@@ -40,6 +40,8 @@ $steps = @(
   @{ Name = 'Agent tool registry, MCP and browser'; Command = { npm run test:tools } },
   @{ Name = 'V5 contracts and Telegram lead card'; Command = { npm run test:v5 } },
   @{ Name = 'V5 schema and agent-tool contracts'; Command = { npm run test:v5-contracts } },
+  @{ Name = 'Agent loop contracts'; Command = { npm run test:agent-loop } },
+  @{ Name = 'Agent loop behaviour'; Command = { npm run test:agent } },
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
   @{ Name = 'Voice pipeline: codec, VAD, barge-in, analytics'; Command = { npm run test:voice } },
