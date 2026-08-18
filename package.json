@@ -111,7 +111,9 @@
     "test:v5-contracts": "node agent-hub/v5-contracts.mjs",
     "test:gateway": "node --experimental-strip-types agent-hub/gateway-behavior.mjs",
     "test:infra": "node agent-hub/infra-contracts.mjs",
-    "gateway": "node --experimental-strip-types agent-hub/server/main.ts"
+    "gateway": "node --experimental-strip-types agent-hub/server/main.ts",
+    "test:voice": "node --experimental-strip-types agent-hub/voice-behavior.mjs",
+    "voice": "node --experimental-strip-types agent-hub/telephony/main.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -132,6 +134,7 @@
     "react-router-dom": "^7.18.0",
     "reactflow": "^11.11.4",
     "read-excel-file": "^9.3.1",
+    "ws": "^8.21.3",
     "zod": "^3.23.8",
     "zustand": "^5.0.14"
   },
@@ -154,5 +157,8 @@
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
     "yaml": "^2.9.0"
+  },
+  "optionalDependencies": {
+    "onnxruntime-node": "^1.27.0"
   }
 }

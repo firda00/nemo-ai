@@ -38,12 +38,14 @@ const instructions = (dockerfile) => dockerfile
 const compose = parse(read('docker-compose.yml'))
 const dockerApi = read('infra/docker/Dockerfile.api')
 const dockerWorker = read('infra/docker/Dockerfile.worker')
+const dockerVoice = read('infra/docker/Dockerfile.voice')
 const packageJson = read('package.json')
 const qualityGate = read('agent-hub/quality-gate.ps1')
 
 const services = compose.services ?? {}
 const gateway = services['nemo-api-gateway'] ?? {}
 const worker = services['sdr-worker'] ?? {}
+const voice = services['voice-worker'] ?? {}
 const dragonfly = services.dragonfly ?? {}
 
 /** Значение переменной окружения из списка вида ['KEY=value']. */
@@ -52,7 +54,29 @@ const envOf = (service, key) => (service.environment ?? [])
 
 const cases = [
   // ── Ссылки между сервисами ────────────────────────────────────────────────────────────────────
-  ['all three services exist', ['dragonfly', 'nemo-api-gateway', 'sdr-worker'].every((name) => name in services)],
+  ['all four services exist',
+    ['dragonfly', 'nemo-api-gateway', 'sdr-worker', 'voice-worker'].every((name) => name in services)],
+
+  /*
+   * Порт голосового воркера НЕ опубликован наружу.
+   *
+   * На него ходит FreeSWITCH, который ставится рядом. Открытый в интернет WebSocket без аутентификации
+   * означает, что кто угодно может подать управляющее сообщение ANSWER и заставить систему говорить
+   * от имени компании — и платить за модель.
+   */
+  ['the voice worker port is not published to every interface',
+    (voice.ports ?? []).every((entry) => String(entry).startsWith('127.0.0.1:'))],
+
+  /*
+   * Модель Silero скачивается НА ЭТАПЕ СБОРКИ и проверяется контрольной суммой.
+   *
+   * Не при первом звонке: докачивать модель, когда человек уже снял трубку, значит подарить ему
+   * секунды тишины. Сумма обязательна, потому что битая модель не падает — она молча выдаёт мусорные
+   * вероятности, и выглядит это как «VAD плохо работает».
+   */
+  ['the Silero model is fetched at build time and checksum-verified',
+    dockerVoice.includes('silero_vad.onnx') && dockerVoice.includes('sha256sum -c -')
+    && dockerVoice.includes(read('agent-hub/telephony/vad.ts').match(/SILERO_MODEL_SHA256 = '([0-9a-f]{64})'/)[1])],
 
   ['every service joins the declared bridge network',
     Object.values(services).every((service) => (service.networks ?? []).every((net) => net in (compose.networks ?? {})))

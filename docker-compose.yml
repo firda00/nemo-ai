@@ -85,6 +85,31 @@ services:
         # получает отказ соединения и уходит в режим опроса на весь свой срок жизни.
         condition: service_healthy
 
+  voice-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.voice
+    container_name: nemo_voice_worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - VOICE_PORT=8080
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # Распознавание и синтез: без этих ключей воркер поднимется, но звонки принимать не сможет —
+      # он честно напишет об этом в журнал при старте, а не будет молчать в трубку.
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
+      - SDR_TELEGRAM_BOT_TOKEN=${SDR_TELEGRAM_BOT_TOKEN:-}
+      - VOICE_MANAGER_CHAT_ID=${VOICE_MANAGER_CHAT_ID:-}
+      - CRM_WEBHOOK_URL=${CRM_WEBHOOK_URL:-}
+    ports:
+      # Порт слушает FreeSWITCH, который в этом compose НЕ поднимается: у него собственный SIP-стек и
+      # транк у оператора. Публикуется на петлю — коммутатор ставится рядом и ходит через неё.
+      - '127.0.0.1:${VOICE_PORT:-8080}:8080'
+    networks:
+      - nemo_net
   sdr-worker:
     build:
       context: .
