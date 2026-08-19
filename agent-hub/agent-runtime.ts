@@ -171,6 +171,82 @@ export class AgentSession {
   get turnCount(): number { return this.messages.filter((one) => one.role !== 'system').length }
 
   /**
+   * Заменить системный промпт НА МЕСТЕ.
+   *
+   * Именно на месте, а не добавлением второй системной реплики: две системные реплики с разными
+   * ролями противоречат друг другу, и модель следует то одной, то другой. Смена роли должна отменять
+   * прежнюю, а не спорить с ней.
+   */
+  setSystemPrompt(prompt: string): void {
+    const at = this.messages.findIndex((one) => one.role === 'system')
+    if (at === -1) this.messages.unshift({ role: 'system', content: prompt })
+    else this.messages[at] = { role: 'system', content: prompt }
+  }
+
+  /** Сменить модель: поток строится вызывающей стороной, сессия лишь принимает новый. */
+  setStream(stream: AgentDeps['stream']): void {
+    ;(this.deps as { stream: AgentDeps['stream'] }).stream = stream
+  }
+
+  /** Забыть разговор, сохранив роль. Системный промпт — это настройка, а не часть беседы. */
+  reset(): void {
+    const system = this.messages.find((one) => one.role === 'system')
+    this.messages.length = 0
+    if (system) this.messages.push(system)
+  }
+
+  /**
+   * Убрать последний ход человека ВМЕСТЕ со всем, что модель на него ответила.
+   *
+   * Границей служит последняя реплика человека, а не «две последние реплики». Ход — это не пара
+   * сообщений: между вопросом и ответом лежат реплика модели с вызовами инструментов и результаты
+   * этих вызовов. Снять «две последние» значит оставить в истории результат инструмента без реплики,
+   * которая его заказала, — а по протоколу такое сообщение отвергается вместе со всем запросом.
+   */
+  undoLastTurn(): boolean {
+    const at = this.messages.findLastIndex((one) => one.role === 'user')
+    if (at === -1) return false
+    this.messages.length = at
+    return true
+  }
+
+  /**
+   * Заменить старую часть разговора пересказом.
+   *
+   * `keepTurns` — сколько последних ходов человека оставить дословно. Граница среза ВСЕГДА совпадает
+   * с репликой человека по той же причине, что и в undoLastTurn: срез посреди группы «вызовы →
+   * результаты» оставляет результат без заказавшей его реплики, и следующий запрос отвергается
+   * целиком. Поэтому граница не «последние N сообщений», а «начало N-го с конца хода».
+   *
+   * Пересказ ложится парой «человек попросил напомнить → модель напомнила»: это единственная форма,
+   * которую принимают все провайдеры. Вторая системная реплика формально короче, но у Anthropic
+   * системная реплика одна, и лишняя молча превращается в пользовательскую — то есть в ту же пару,
+   * только неявно.
+   */
+  async compact(
+    summarize: (messages: readonly ChatMessage[]) => Promise<string>,
+    keepTurns = 2,
+  ): Promise<{ before: number; after: number; summarized: number }> {
+    const before = this.messages.length
+    const userAt = this.messages.flatMap((one, index) => (one.role === 'user' ? [index] : []))
+    // Сжимать нечего, пока ходов не больше, чем велено сохранить дословно.
+    if (userAt.length <= keepTurns) return { before, after: before, summarized: 0 }
+
+    const cut = userAt[userAt.length - keepTurns]
+    const system = this.messages.filter((one) => one.role === 'system')
+    const older = this.messages.slice(0, cut).filter((one) => one.role !== 'system')
+    const summary = await summarize(older)
+
+    const tail = this.messages.slice(cut)
+    this.messages.length = 0
+    this.messages.push(...system)
+    this.messages.push({ role: 'user', content: 'Напомни, о чём мы говорили раньше.' })
+    this.messages.push({ role: 'assistant', content: summary })
+    this.messages.push(...tail)
+    return { before, after: this.messages.length, summarized: older.length }
+  }
+
+  /**
    * Обработать реплику человека до конца — то есть до текстового ответа или до предела шагов.
    *
    * Возвращает финальный текст. События (текст по кускам, вызовы инструментов) уходят в onEvent по
@@ -316,7 +392,7 @@ export class AgentSession {
 
 // ── OpenRouter ────────────────────────────────────────────────────────────────────────────────────
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
 /**
  * Модель по умолчанию.
  *
@@ -337,14 +413,27 @@ export function createOpenRouterStream(options: {
   apiKey: string
   model?: string
   fetchImpl?: typeof fetch
+  /** Другой адрес совместимого API — например локальная Ollama. */
+  baseUrl?: string
 }): AgentDeps['stream'] {
   const model = options.model ?? DEFAULT_AGENT_MODEL
   const fetchImpl = options.fetchImpl ?? fetch
+  const baseUrl = (options.baseUrl ?? OPENROUTER_BASE).replace(/\/+$/, '')
+  /*
+   * КЛЮЧ УХОДИТ ТОЛЬКО В OPENROUTER.
+   *
+   * Смена адреса — это `/model local`, то есть запрос на localhost. Отправить туда ключ от платного
+   * счёта означает раздать его любому процессу, слушающему порт 11434: у локальной Ollama нет проверки
+   * подлинности, и любой, кто занял порт первым, получил бы ключ в заголовке.
+   */
+  const authorized = baseUrl === OPENROUTER_BASE
 
   return async function* stream(messages, tools, signal) {
-    const response = await fetchImpl(OPENROUTER_URL, {
+    const response = await fetchImpl(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
+      headers: authorized
+        ? { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' }
+        : { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         stream: true,
@@ -417,11 +506,29 @@ export function createOpenRouterStream(options: {
  *   Не звать действия без просьбы. Отправка карточки и запись в CRM касаются людей вне этого
  *   разговора; предлагать — да, делать по своей инициативе — нет.
  */
-export function buildAgentSystemPrompt(options: { toolNames: readonly string[]; hasConfirm: boolean }): string {
+/**
+ * Общая часть системного промпта.
+ *
+ * ЗДЕСЬ НЕТ УПОМИНАНИЯ B2B-ПРОДАЖ. Раньше первая строка объявляла Nemo ассистентом для продаж, и это
+ * сужало его собственными руками: на просьбу разобрать логи или собрать видео модель отвечала, что
+ * занимается лидогенерацией. Специализация задаётся ролью (`mission`), а роль по умолчанию —
+ * универсальная.
+ */
+export const UNIVERSAL_MISSION = [
+  'Ты — Nemo, автономный ассистент мультиагентной платформы Nemo AI.',
+  'Ты работаешь в терминале и умеешь пользоваться инструментами: искать компании и людей, изучать сайты',
+  'через браузер, слать сообщения, писать в CRM, собирать видео, обращаться к внешним сервисам по MCP и',
+  'сохранять файлы. Круг задач не ограничен продажами: код, данные, телефония, медиа, поиск — всё это твоё.',
+].join('\n')
+
+export function buildAgentSystemPrompt(options: {
+  toolNames: readonly string[]
+  hasConfirm: boolean
+  /** Специализация. Пусто — универсальная роль. */
+  mission?: string
+}): string {
   return [
-    'Ты — Nemo, автономный ассистент платформы Nemo AI для B2B-продаж.',
-    'Ты работаешь в терминале и умеешь пользоваться инструментами: искать компании, изучать их сайты,',
-    'отправлять карточки лидов менеджеру, выгружать данные в CRM, собирать видеоролики и сохранять отчёты.',
+    options.mission?.trim() || UNIVERSAL_MISSION,
     '',
     `ДОСТУПНЫЕ ИНСТРУМЕНТЫ: ${options.toolNames.join(', ')}.`,
     '',
@@ -443,4 +550,15 @@ export function buildAgentSystemPrompt(options: { toolNames: readonly string[]; 
         + ' Предлагай их, но помни: подтверждение спрашивает система, и человек может отказать.'
       : '— Действия, меняющие данные, в этом режиме недоступны: подтвердить их некому.',
   ].join('\n')
+}
+
+/**
+ * Сменить реестр инструментов на лету.
+ *
+ * Нужно для ролей: `/agent qa` сужает круг инструментов, `/agent general` возвращает полный. История
+ * при этом НЕ трогается — в ней уже лежат результаты вызовов инструментов, которых в новой роли нет,
+ * и это нормально: они описывают прошлое, а не будущие возможности.
+ */
+export function setSessionRegistry(session: AgentSession, registry: ToolRegistry): void {
+  ;(session as unknown as { deps: { registry: ToolRegistry } }).deps.registry = registry
 }

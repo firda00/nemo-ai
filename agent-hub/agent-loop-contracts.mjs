@@ -30,6 +30,9 @@ const platform = stripComments(read('agent-hub/tools/platform.ts'))
 const registry = stripComments(read('agent-hub/tools/registry.ts'))
 const nemo = stripComments(read('agent-hub/nemo.mjs'))
 const ui = stripComments(read('agent-hub/nemo-ui.mjs'))
+const commands = stripComments(read('agent-hub/cli/commands.ts'))
+const commandsFull = read('agent-hub/cli/commands.ts')
+const wiring = stripComments(read('agent-hub/cli/wiring.ts'))
 const pkg = JSON.parse(read('package.json'))
 
 const failures = []
@@ -170,9 +173,130 @@ must(
   'низ рамки перестал показывать причину отказа — неудачный вызов выглядит как успешный',
 )
 
+
+// ─── Слеш-команды: целостность истории ────────────────────────────────────────────────────────────
+//
+// Реплика модели с вызовами инструментов и результаты этих вызовов образуют неразрывную группу. Любая
+// операция, режущая историю посередине, оставляет результат без заказавшей его реплики, и провайдер
+// отвергает СЛЕДУЮЩИЙ запрос целиком — человек видит «модель не отвечает» через минуту после команды,
+// без видимой связи с ней.
+
+must(
+  /findLastIndex\(\(one\) => one\.role === 'user'\)/.test(runtime),
+  'отмена хода перестала искать границу по реплике человека — снимет результат инструмента без его вызова',
+)
+must(
+  /const cut = userAt\[userAt\.length - keepTurns\]/.test(runtime),
+  'сжатие режет историю по числу сообщений, а не по ходам — разорвёт группу «вызовы → результаты»',
+)
+must(
+  /const at = this\.messages\.findIndex\(\(one\) => one\.role === 'system'\)/.test(runtime),
+  'смена роли перестала заменять системный промпт на месте — две системные реплики будут спорить друг с другом',
+)
+must(
+  /if \(system\) this\.messages\.push\(system\)/.test(runtime),
+  '/clear стирает системный промпт вместе с историей — роль молча сбросится на общую',
+)
+
+// ─── Ключ не уходит на чужой адрес ────────────────────────────────────────────────────────────────
+
+must(
+  /const authorized = baseUrl === OPENROUTER_BASE/.test(runtime),
+  'ключ OpenRouter уходит по любому адресу: `/model local` раздаст его процессу, занявшему порт 11434',
+)
+must(
+  /authorized\s*\n?\s*\? \{ Authorization/.test(runtime),
+  'заголовок с ключом ставится безусловно',
+)
+
+// ─── Роли ─────────────────────────────────────────────────────────────────────────────────────────
+
+for (const role of ['general', 'sdr', 'dev', 'qa', 'media']) {
+  must(commands.includes(`\n  ${role}: {`), `исчезла роль ${role}`)
+}
+// У проверяющей и медийной ролей нет доступа к боевым данным: случайный вызов во время проверки задел
+// бы живых людей.
+for (const role of ['qa', 'media']) {
+  const block = commands.slice(commands.indexOf(`  ${role}: {`), commands.indexOf(`  ${role}: {`) + 900)
+  must(!/telegram_send_lead/.test(block), `роль ${role} получила право отправлять карточки клиентам`)
+  must(!/crm_sync_lead/.test(block), `роль ${role} получила право писать в CRM`)
+}
+must(
+  /export function restrictRegistry/.test(registry),
+  'исчезло сужение реестра по роли — роль перестанет ограничивать инструменты',
+)
+must(
+  /const narrowed = new ToolRegistry\(\)/.test(registry),
+  'сужение роли работает поверх исходного реестра — возврат к роли general потеряет инструменты навсегда',
+)
+
+// ─── Универсальный промпт ─────────────────────────────────────────────────────────────────────────
+
+must(
+  /export const UNIVERSAL_MISSION/.test(runtimeFull),
+  'исчезла универсальная роль по умолчанию',
+)
+must(
+  !/ассистент платформы Nemo AI для B2B-продаж/.test(runtime),
+  'в общий промпт вернулась привязка к B2B-продажам — агент снова откажется разбирать логи и собирать видео',
+)
+must(
+  /Круг задач не ограничен продажами/.test(runtimeFull),
+  'из промпта пропало прямое указание, что круг задач шире продаж',
+)
+
+// ─── Правда о результате команд ───────────────────────────────────────────────────────────────────
+
+must(
+  /\[Нн\]е выдумывай|Не выдумывай ничего/.test(commandsFull),
+  'из просьбы о пересказе пропал запрет выдумывать: сжатие с придуманным телефоном отравит весь остаток разговора',
+)
+must(
+  /Ничего не выдумывай/.test(commandsFull),
+  'из /scrape пропал запрет выдумывать — вернёт выдуманные контакты',
+)
+must(
+  /не удалось узнать/.test(commands),
+  'неудача запроса баланса выглядит как остаток — человек пойдёт пополнять счёт, на котором деньги есть',
+)
+must(
+  /`нет \$\{missing\.join\(', '\)\}/.test(wiring),
+  'проверка зависимостей перестала называть недостающий ключ',
+)
+
+// Выгрузка сессии не выносит аргументы вызовов: файл легко уходит в чат, а в аргументах телефоны.
+must(
+  /one\.function\.name/.test(commands) && !/one\.function\.arguments/.test(commands),
+  'выгрузка сессии выносит аргументы вызовов — телефоны найденных людей утекут вместе с файлом',
+)
+must(
+  /if \(message\.role === 'system'\) continue/.test(commands),
+  'выгрузка сессии выносит системный промпт',
+)
+
+// ─── Точка входа ──────────────────────────────────────────────────────────────────────────────────
+
+must(pkg.scripts?.['test:cli-commands'], 'проверки слеш-команд не подключены к гейту')
+must(
+  /completer/.test(nemo),
+  'исчезло автодополнение по Tab',
+)
+must(
+  /toolBadges\(/.test(nemo),
+  'вернулся список «недоступно» вместо строки состояния — старт снова читается как пять поломок',
+)
+must(
+  !/недоступно:/.test(nemo.replace(/if \(debug\)[\s\S]*?\n\}/, '')),
+  'список недоступного вернулся в обычный вывод (в режиме --debug он уместен)',
+)
+must(
+  /connectMcpServers\(/.test(nemo),
+  'MCP-серверы перестали подключаться при старте',
+)
+
 if (failures.length) {
   console.error('[FAIL] Agent loop contracts')
   for (const failure of failures) console.error(`  - ${failure}`)
   process.exit(1)
 }
-console.log('[OK] Agent loop contracts')
+console.log(`[OK] Agent loop contracts: ${failures.length === 0 ? 'все границы на месте' : ''}`)

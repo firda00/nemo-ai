@@ -81,9 +81,11 @@ export function renderOption(option, index, defaultIndex) {
 export class Ask {
   // Потоки принимаются параметрами, чтобы проверять диалог БЕЗ терминала: главный баг этого файла —
   // спиннер, не погашенный перед вопросом, — иначе воспроизводится только руками и возвращается.
-  constructor(input = stdin, output = stdout) {
+  constructor(input = stdin, output = stdout, options = {}) {
     this.output = output
-    this.rl = readline.createInterface({ input, output })
+    // completer — функция строки, возвращающая [совпадения, исходная строка]: это форма, которую ждёт
+    // readline. Передаётся снаружи, потому что список команд знает CLI, а не отрисовка.
+    this.rl = readline.createInterface({ input, output, completer: options.completer })
     // Ctrl+C посреди вопроса — обычный способ уйти, а не сбой. Без этого Node печатает трассировку.
     this.rl.on('SIGINT', () => { this.output.write(`\n${c.dim('прервано')}\n`); process.exit(130) })
   }

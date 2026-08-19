@@ -119,7 +119,8 @@
     "media": "node --experimental-strip-types agent-hub/media/main.ts",
     "nemo": "node --experimental-strip-types agent-hub/nemo.mjs",
     "test:agent": "node --experimental-strip-types agent-hub/agent-behavior.mjs",
-    "test:agent-loop": "node agent-hub/agent-loop-contracts.mjs"
+    "test:agent-loop": "node agent-hub/agent-loop-contracts.mjs",
+    "test:cli-commands": "node --experimental-strip-types agent-hub/cli-commands-behavior.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -291,3 +291,25 @@ export async function withTimeout<T>(
 export function defineTool<TSchema extends z.ZodTypeAny>(tool: ToolDefinition<TSchema>): ToolDefinition<TSchema> {
   return tool
 }
+
+/**
+ * Копия реестра с суженным набором инструментов.
+ *
+ * Нужна для ролей: роль `qa` не должна иметь возможности отправить карточку клиенту, даже если модель
+ * решит, что так полезнее. Именно КОПИЯ, а не флаг на исходном реестре: подключённые MCP-серверы и
+ * платформенные инструменты регистрируются один раз при старте, и вычёркивать их из общего реестра
+ * ради текущей роли значило бы терять их при возврате к роли `general`.
+ *
+ * Роль умеет только СУЖАТЬ. Имя, которого нет в исходном реестре, молча пропускается: включить
+ * ненастроенный инструмент нельзя, а падать из-за упоминания браузера в роли при выключенном браузере
+ * — значит запретить эту роль на машинах без Playwright.
+ */
+export function restrictRegistry(source: ToolRegistry, allowed: readonly string[] | null): ToolRegistry {
+  if (!allowed) return source
+  const narrowed = new ToolRegistry()
+  for (const name of allowed) {
+    const tool = source.get(name)
+    if (tool) narrowed.register(tool)
+  }
+  return narrowed
+}
