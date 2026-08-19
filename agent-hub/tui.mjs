@@ -277,8 +277,21 @@ const ANSI = new RegExp(
   'g',
 )
 
+/**
+ * Строка без управляющих последовательностей — то, что человек видит на экране.
+ *
+ * НУЖНА В ПЕРВУЮ ОЧЕРЕДЬ ПРОВЕРКАМ. Утверждение вида `menu.includes('[1] CSV')` на раскрашенной
+ * строке ищет подстроку, которой там нет: между «[1]» и «CSV» стоит `ESC[0m`. Такая проверка
+ * проходит в конвейере, где цвет выключен, и падает в терминале — на одном и том же коде. Это уже
+ * дважды приводило к отчёту «у тебя зелено, у меня красно», и оба раза причина была невидима в
+ * стектрейсе.
+ */
+export function stripAnsi(text) {
+  return String(text ?? '').replace(ANSI, '')
+}
+
 export function visibleWidth(text) {
-  return [...String(text ?? '').replace(ANSI, '')].length
+  return [...stripAnsi(text)].length
 }
 
 function padVisible(text, width) {

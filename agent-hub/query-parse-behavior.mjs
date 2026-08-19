@@ -6,8 +6,27 @@
 
 import assert from 'node:assert/strict'
 import { MAX_LIMIT, parseCommand, parseNaturalQuery } from './query-parse.mjs'
-import { dashboard, statusMenu, visibleWidth } from './tui.mjs'
-import { leadCard, phaseLine, renderLeadCards } from './lead-report.mjs'
+import { dashboard, statusMenu as statusMenuRaw, stripAnsi, visibleWidth } from './tui.mjs'
+import {
+  leadCard as leadCardRaw, phaseLine as phaseLineRaw, renderLeadCards as renderLeadCardsRaw,
+} from './lead-report.mjs'
+
+/*
+ * ОТРИСОВКА ПРОВЕРЯЕТСЯ ПО ВИДИМОМУ ТЕКСТУ, А НЕ ПО БАЙТАМ.
+ *
+ * Утверждение menu.includes('[1] CSV') на раскрашенной строке ищет подстроку, которой там нет: между
+ * «[1]» и «CSV» стоит ESC[0m, потому что ключ печатается жирным. В конвейере — а гейт качества это
+ * конвейер — цвет выключен, и проверка проходит. В терминале разработчика цвет включается, и та же
+ * проверка на том же коде падает.
+ *
+ * Обёртки стоят на ИМПОРТЕ, а не на каждом утверждении: так средозависимой не станет и следующая
+ * проверка, которую здесь допишут. Ширина рамки считается отдельно — visibleWidth снимает раскраску
+ * сам, поэтому dashboard оставлен как есть.
+ */
+const statusMenu = (...args) => stripAnsi(statusMenuRaw(...args))
+const leadCard = (...args) => stripAnsi(leadCardRaw(...args))
+const phaseLine = (...args) => stripAnsi(phaseLineRaw(...args))
+const renderLeadCards = (...args) => stripAnsi(renderLeadCardsRaw(...args))
 
 // Цвет собирается из кода символа, а не пишется управляющим байтом в литерале: литеральный ESC уже
 // пропадал при правке файлов этого проекта, и проверка ширины молча начинала мерить не то.

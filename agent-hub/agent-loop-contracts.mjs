@@ -32,6 +32,8 @@ const nemo = stripComments(read('agent-hub/nemo.mjs'))
 const uiFull = read('agent-hub/nemo-ui.mjs')
 const tui = stripComments(read('agent-hub/tui.mjs'))
 const tuiTests = read('agent-hub/tui-behavior.mjs')
+const ttySuites = read('agent-hub/tty-suites.mjs')
+const queryTests = read('agent-hub/query-parse-behavior.mjs')
 const ui = stripComments(uiFull)
 const bridge = stripComments(read('agent-hub/tools/enrich-browser.ts'))
 const qaRunnerFull = read('agent-hub/tools/qa-runner.ts')
@@ -405,6 +407,30 @@ must(
 must(
   !/78 assertions/.test(tuiTests),
   'в итоговой строке TUI-проверок вернулось число литералом — оно снова начнёт врать',
+)
+
+// ─── Проверки отрисовки не зависят от окружения ───────────────────────────────────────────────────
+//
+// Утверждение вида `menu.includes('[1] CSV')` на раскрашенной строке ищет подстроку, которой там нет:
+// между «[1]» и «CSV» стоит ESC[0m. В конвейере цвет выключен и проверка проходит; в терминале
+// разработчика она падает на том же коде. Это дважды уходило в основную ветку зелёным.
+
+must(
+  /export function stripAnsi/.test(tui),
+  'исчезла stripAnsi — проверкам нечем смотреть на видимый текст',
+)
+must(pkg.scripts?.['test:tty'], 'прогон наборов под терминалом не подключён к гейту')
+must(
+  /Object\.defineProperty\(process\.stdout, 'isTTY', \{ value: true/.test(ttySuites),
+  'прогон под терминалом перестал подменять isTTY — он больше ничего не проверяет',
+)
+must(
+  /наборы с отрисовкой не в списке/.test(ttySuites),
+  'снят сторож списка: новый набор с отрисовкой останется непроверенным молча',
+)
+must(
+  /stripAnsi\(statusMenuRaw/.test(queryTests),
+  'проверки меню снова смотрят на байты с раскраской, а не на видимый текст',
 )
 
 // ─── Аудит ────────────────────────────────────────────────────────────────────────────────────────
