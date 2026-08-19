@@ -10,76 +10,11 @@ import type { AgentSession, ChatMessage } from '../agent-runtime.ts'
 import { DEFAULT_AGENT_MODEL } from '../agent-runtime.ts'
 import type { ToolOutcome, ToolRegistry } from '../tools/registry.ts'
 
-// ─── Роли ─────────────────────────────────────────────────────────────────────────────────────────
+// Роли живут в roles.ts: они нужны и точке входа, и диспетчеру, и тестам, а этот файл — про разбор
+// и исполнение команд. Реэкспорт оставлен, чтобы не менять места вызова.
+export { AGENT_ROLES, DEFAULT_ROLE, type AgentRole } from './roles.ts'
+import { AGENT_ROLES } from './roles.ts'
 
-/**
- * Роль — это специализация промпта И круг инструментов.
- *
- * Ограничение инструментов не косметика: роль `qa` не должна иметь возможности отправить карточку
- * клиенту, даже если модель решит, что так будет полезнее. Роль `general` видит всё — она умолчание.
- *
- * `tools: null` означает «все зарегистрированные». Список имён означает «только эти, если они есть»:
- * роль не может ВКЛЮЧИТЬ инструмент, который не настроен, — она только сужает.
- */
-export interface AgentRole {
-  readonly name: string
-  readonly title: string
-  readonly mission: string
-  readonly tools: readonly string[] | null
-}
-
-export const AGENT_ROLES: Record<string, AgentRole> = {
-  general: {
-    name: 'general',
-    title: 'универсальный',
-    mission: '',
-    tools: null,
-  },
-  sdr: {
-    name: 'sdr',
-    title: 'поиск клиентов',
-    mission: [
-      'Ты — Nemo в режиме поиска клиентов для Ustudy IT.',
-      'Твоя работа: найти компании по нише и городу, собрать контакты, оценить соответствие профилю',
-      'клиента и передать лучших менеджеру. Оценку и причину бери из результатов инструментов, не из головы.',
-    ].join('\n'),
-    tools: ['search_leads', 'browser_navigate_and_extract', 'browser_screenshot', 'telegram_send_lead', 'crm_sync_lead', 'fs_export'],
-  },
-  dev: {
-    name: 'dev',
-    title: 'инженер',
-    mission: [
-      'Ты — Nemo в режиме инженерного помощника.',
-      'Твоя работа: разбираться в коде, данных и внешних сервисах, объяснять причины поведения и',
-      'предлагать наименьшее безопасное изменение. Прежде чем утверждать, проверь инструментом.',
-    ].join('\n'),
-    tools: null,
-  },
-  qa: {
-    name: 'qa',
-    title: 'проверка',
-    mission: [
-      'Ты — Nemo в режиме проверки.',
-      'Твоя работа: открывать страницы, сверять обещанное с фактическим и сообщать расхождения.',
-      'Ты НИЧЕГО не отправляешь наружу и не меняешь чужие данные — только смотришь и сообщаешь.',
-    ].join('\n'),
-    // Ни отправки в Telegram, ни записи в CRM: у проверяющего не должно быть возможности задеть
-    // боевые данные, даже случайно.
-    tools: ['browser_navigate_and_extract', 'browser_screenshot', 'search_leads', 'fs_export'],
-  },
-  media: {
-    name: 'media',
-    title: 'медиа',
-    mission: [
-      'Ты — Nemo в режиме сборки роликов.',
-      'Твоя работа: собирать вертикальные видео 9:16 с субтитрами под соцсети. Держи текст коротким:',
-      'длинная строка субтитра не влезает в кадр телефона.',
-    ].join('\n'),
-    tools: ['render_video_pitch', 'fs_export', 'browser_navigate_and_extract'],
-  },
-}
-
-export const DEFAULT_ROLE = 'general'
 
 // ─── Модели ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -187,8 +122,6 @@ export function completeSlash(line: string): { matches: string[]; replaced: stri
 export type CommandResult =
   | { kind: 'lines'; lines: string[] }
   | { kind: 'exit' }
-  /** Команда превратилась в обычный запрос к модели — /browse и /scrape работают так. */
-  | { kind: 'prompt'; text: string }
   | { kind: 'unknown'; name: string; suggestions: string[] }
 
 export interface CommandDeps {

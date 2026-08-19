@@ -35,6 +35,10 @@ const bridge = stripComments(read('agent-hub/tools/enrich-browser.ts'))
 const qaRunnerFull = read('agent-hub/tools/qa-runner.ts')
 const qaRunner = stripComments(qaRunnerFull)
 const commands = stripComments(read('agent-hub/cli/commands.ts'))
+const rolesFull = read('agent-hub/cli/roles.ts')
+const roles = stripComments(rolesFull)
+const gatewayEnv = stripComments(read('agent-hub/server/env.ts'))
+const gatewayMain = stripComments(read('agent-hub/server/main.ts'))
 const commandsFull = read('agent-hub/cli/commands.ts')
 const wiring = stripComments(read('agent-hub/cli/wiring.ts'))
 const pkg = JSON.parse(read('package.json'))
@@ -216,12 +220,12 @@ must(
 // ─── Роли ─────────────────────────────────────────────────────────────────────────────────────────
 
 for (const role of ['general', 'sdr', 'dev', 'qa', 'media']) {
-  must(commands.includes(`\n  ${role}: {`), `исчезла роль ${role}`)
+  must(roles.includes(`\n  ${role}: {`), `исчезла роль ${role}`)
 }
 // У проверяющей и медийной ролей нет доступа к боевым данным: случайный вызов во время проверки задел
 // бы живых людей.
 for (const role of ['qa', 'media']) {
-  const block = commands.slice(commands.indexOf(`  ${role}: {`), commands.indexOf(`  ${role}: {`) + 900)
+  const block = roles.slice(roles.indexOf(`  ${role}: {`), roles.indexOf(`  ${role}: {`) + 900)
   must(!/telegram_send_lead/.test(block), `роль ${role} получила право отправлять карточки клиентам`)
   must(!/crm_sync_lead/.test(block), `роль ${role} получила право писать в CRM`)
 }
@@ -343,9 +347,13 @@ must(
   /return ENABLING_VALUES\.has\(\(env\.SDR_BROWSER \?\? ''\)/.test(bridge),
   'браузер стал включаться при обогащении по умолчанию — прогон подорожает в шесть раз',
 )
-for (const role of ['sdr', 'qa']) {
-  const block = commands.slice(commands.indexOf(`\n  ${role}: {`), commands.indexOf(`\n  ${role}: {`) + 900)
-  must(/browser_navigate_and_extract/.test(block), `роль ${role} не видит браузер`)
+// Браузер — во всех рабочих ролях, кроме media: там он нужен разве что за референсом, а лишний
+// инструмент модель однажды вызовет «на всякий случай». Имена в roles.ts заданы через BROWSER,
+// поэтому проверяется константа, а не строка.
+must(/^const BROWSER = 'browser_navigate_and_extract'$/m.test(roles), 'имя браузерного инструмента изменилось')
+for (const role of ['sdr', 'qa', 'dev']) {
+  const block = roles.slice(roles.indexOf(`\n  ${role}: {`), roles.indexOf(`\n  ${role}: {`) + 1200)
+  must(/BROWSER/.test(block), `роль ${role} не видит браузер`)
 }
 
 // ─── Очистка строки перед рамкой ──────────────────────────────────────────────────────────────────
@@ -406,6 +414,113 @@ must(
   /loadLocalEnv\(repoRoot\)/.test(nemo),
   'автозагрузка .secrets.local при старте пропала',
 )
+
+// ─── Роли изолированы друг от друга ───────────────────────────────────────────────────────────────
+//
+// Общий текст в промпте не нейтрален: он задаёт умолчание, к которому модель возвращается, когда
+// задача неочевидна. Пока каждая роль начиналась с описания поиска компаний, роль `dev` на просьбу
+// разобрать ошибку предлагала поискать клиентов.
+
+for (const role of ['dev', 'qa', 'media']) {
+  const block = roles.slice(roles.indexOf(`\n  ${role}: {`), roles.indexOf(`\n  ${role}: {`) + 1600)
+  must(!/'search_leads'/.test(block), `роль ${role} снова умеет искать компании`)
+  must(!/telegram_send_lead|crm_sync_lead/.test(block), `роль ${role} снова умеет писать наружу`)
+}
+must(
+  /Поиском клиентов ты не занимаешься/.test(rolesFull),
+  'из промптов пропал прямой отказ от поиска клиентов — модель достроит умолчание сама',
+)
+must(
+  /mcp__\*/.test(roles) && /pattern\.endsWith\('\*'\)/.test(registry),
+  'исчез образец mcp__*: роль dev останется без всех внешних сервисов, и понять это можно будет только по молчанию',
+)
+must(
+  /!pattern\.slice\(0, -1\)\.includes\('\*'\)/.test(registry),
+  'разрешена полная маска — сужение роли обнулится незаметно',
+)
+
+// ─── Промпт не запрещает думать ───────────────────────────────────────────────────────────────────
+
+// ЧИТАЕМ ИСХОДНИК БЕЗ КОММЕНТАРИЕВ. Первая версия этой проверки срабатывала на комментарии, который
+// объясняет, почему строку удалили: он содержит её дословно. Четвёртый случай той же ошибки в этом
+// репозитории — и каждый раз она даёт красный гейт на исправном коде.
+must(
+  !/чего нет в результатах[\s\S]{0,40}инструментов, ты не знаешь/.test(runtime),
+  'вернулась строка «всё, чего нет в результатах инструментов, ты не знаешь» — модель откажется писать код',
+)
+must(
+  /инструменты для этого НЕ нужны/.test(runtime),
+  'из промпта пропало прямое разрешение работать без инструментов',
+)
+must(
+  /по СВОЕЙ роли/.test(runtime),
+  'ответ на «что ты умеешь» снова не привязан к текущей роли',
+)
+
+// ─── Слеш-строка не уходит в модель ───────────────────────────────────────────────────────────────
+
+must(
+  /if \(input\.startsWith\('\/'\)\)/.test(nemo),
+  'решение о команде принимается не по первому знаку — «/» и опечатки снова уйдут в модель',
+)
+must(
+  !/kind: 'prompt'/.test(commands),
+  'вернулся вид результата «prompt» — единственный путь, которым слеш-строка доходила до LLM',
+)
+
+// ─── Шлюз ─────────────────────────────────────────────────────────────────────────────────────────
+
+must(
+  /loadLocalEnv\(repoRoot\)/.test(gatewayMain),
+  'шлюз снова не читает .secrets.local — npm run gateway упадёт на машине, где всё настроено',
+)
+must(
+  /if \(!pepper && production\) missing\.push/.test(gatewayEnv),
+  'в боевом режиме перец подставляется сам — все ранее выданные токены обесценятся молча',
+)
+must(
+  /randomBytes\(32\)/.test(gatewayEnv),
+  'запасной перец стал постоянным: одно значение у всех, кто читал репозиторий',
+)
+
+// ─── Атрибуция источника ──────────────────────────────────────────────────────────────────────────
+//
+// ODbL требует называть источник в производных наборах. Выгруженный файл уходит в почту, в чат и в
+// CRM заказчика — то есть распространяется.
+
+must(
+  /Data © OpenStreetMap contributors \(ODbL\)/.test(platform),
+  'из выгрузки пропало указание источника данных — это нарушение условий ODbL',
+)
+must(
+  /withAttribution\(args\.content, args\.format\)/.test(platform),
+  'выгрузка снова пишет содержимое без атрибуции',
+)
+/*
+ * ПРОВЕРКА ЛИЦЕНЗИЙ ЗАВИСИМОСТЕЙ.
+ *
+ * Смысл — не пустить в закрытый продукт копилефт (GPL/AGPL), который обязал бы открыть исходники.
+ * Список разрешённых перечислен явно: «запретить GPL» пропустило бы всё, что не названо, включая
+ * лицензии, о которых никто не думал.
+ *
+ * ИСКЛЮЧЕНИЕ РОВНО ОДНО и оно точечное: duck@0.1.12 объявляет лицензию устаревшей строкой «BSD», а
+ * текст в его LICENSE — обычный BSD-2-Clause. Расширять список до «BSD*» было бы проще, но тогда
+ * незаметно прошла бы и четырёхпунктовая BSD с рекламной оговоркой. Пакет приходит транзитивно через
+ * mammoth → lop.
+ *
+ * В гейт качества проверка НЕ включена: она тянет license-checker через сеть, а гейт должен работать
+ * и без неё. Запускать перед выпуском: npm run audit:licenses
+ */
+must(pkg.scripts?.['audit:licenses'], 'исчезла проверка лицензий зависимостей')
+must(
+  /--onlyAllow/.test(pkg.scripts?.['audit:licenses'] ?? ''),
+  'проверка лицензий перешла на чёрный список — всё неназванное станет разрешённым',
+)
+must(
+  !/GPL/i.test(pkg.scripts?.['audit:licenses'] ?? ''),
+  'в список разрешённых лицензий попал копилефт',
+)
+must(pkg.private === true, 'проект перестал быть приватным — его можно случайно опубликовать в npm')
 
 if (failures.length) {
   console.error('[FAIL] Agent loop contracts')

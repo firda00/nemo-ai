@@ -307,9 +307,28 @@ export function defineTool<TSchema extends z.ZodTypeAny>(tool: ToolDefinition<TS
 export function restrictRegistry(source: ToolRegistry, allowed: readonly string[] | null): ToolRegistry {
   if (!allowed) return source
   const narrowed = new ToolRegistry()
-  for (const name of allowed) {
-    const tool = source.get(name)
-    if (tool) narrowed.register(tool)
+  for (const pattern of allowed) {
+    /*
+     * ОБРАЗЕЦ СО ЗВЁЗДОЧКОЙ НА КОНЦЕ.
+     *
+     * Нужен ровно для MCP: сервера подключаются по настройке, каждый метод регистрируется отдельным
+     * инструментом с префиксом сервера, и заранее ни числа, ни имён нет. Перечислить их в роли
+     * невозможно — а без этого роль `dev` осталась бы без всех внешних сервисов.
+     *
+     * Звёздочка допускается ТОЛЬКО в конце и только как хвост: `mcp__*` — образец, `*_lead` или
+     * `*` — нет. Полная маска превратила бы сужение роли в её отсутствие, причём незаметно.
+     */
+    if (pattern.endsWith('*') && pattern.length > 1 && !pattern.slice(0, -1).includes('*')) {
+      const prefix = pattern.slice(0, -1)
+      for (const name of source.names()) {
+        if (!name.startsWith(prefix) || narrowed.has(name)) continue
+        const tool = source.get(name)
+        if (tool) narrowed.register(tool)
+      }
+      continue
+    }
+    const tool = source.get(pattern)
+    if (tool && !narrowed.has(pattern)) narrowed.register(tool)
   }
   return narrowed
 }

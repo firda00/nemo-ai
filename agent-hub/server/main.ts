@@ -4,40 +4,47 @@
 // — подключения, переменные окружения и остановка. Смешение дало бы набор тестов, поднимающий Postgres
 // ради проверки границы прав.
 
+import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
+import { loadLocalEnv } from '../load-local-env.mjs'
+import { resolveGatewayEnv } from './env.ts'
 import { buildGateway, type SupabaseLike } from './gateway.ts'
 import { connectQueue, resolveRedisUrl } from './queue.ts'
+
+/*
+ * СЕКРЕТЫ ЧИТАЮТСЯ ДО ЛЮБЫХ ПРОВЕРОК.
+ *
+ * Раньше их здесь не читали вовсе: `npm run gateway` падал с «не заданы переменные: SUPABASE_URL…» на
+ * машине, где все эти переменные лежат в `.secrets.local` и прекрасно подхватываются агентом. Со
+ * стороны это выглядит как отсутствующая настройка, а не как забытая строка кода.
+ *
+ * В контейнере файла нет и загрузка ничего не делает — переменные приходят из окружения.
+ */
+const repoRoot = path.resolve(import.meta.dirname, '..', '..')
+const localEnv = loadLocalEnv(repoRoot)
 
 const PORT = Number(process.env.PORT ?? 3000)
 // 0.0.0.0, а не localhost: внутри контейнера сервер, слушающий петлю, недоступен снаружи вовсе, и
 // выглядит это как «порт проброшен, но соединение отвергнуто».
 const HOST = process.env.HOST ?? '0.0.0.0'
 
-/**
- * Обязательные переменные.
- *
- * Проверяются ВСЕ сразу и называются ВСЕ отсутствующие. Падать на первой значит запускать контейнер
- * трижды, чтобы узнать три недостающих имени.
- */
 function requireEnv(): { url: string; serviceKey: string; pepper: string } {
-  const url = process.env.SUPABASE_URL
-    ?? (process.env.SUPABASE_PROJECT_REF ? `https://${process.env.SUPABASE_PROJECT_REF}.supabase.co` : '')
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY ?? ''
-  const pepper = process.env.NEMO_TOKEN_PEPPER ?? ''
-
-  const missing: string[] = []
-  if (!url) missing.push('SUPABASE_URL (или SUPABASE_PROJECT_REF)')
-  if (!serviceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY (или SUPABASE_SECRET_KEY)')
-  // Без перца отпечаток токена посчитать нечем. Стартовать в таком виде нельзя: шлюз отвечал бы 503 на
-  // каждый запрос, выглядя при этом живым для балансировщика.
-  if (!pepper) missing.push('NEMO_TOKEN_PEPPER')
-
-  if (missing.length) {
-    console.error(`[gateway] не заданы переменные: ${missing.join(', ')}`)
+  const resolved = resolveGatewayEnv(process.env)
+  if (!resolved.ok) {
+    console.error(`[gateway] не заданы переменные: ${resolved.missing.join(', ')}`)
+    console.error(`[gateway] положите их в ${path.join(repoRoot, '.secrets.local')} или задайте в окружении.`)
+    if (localEnv.files.length) console.error(`[gateway] прочитано из: ${localEnv.files.join(', ')}`)
+    else console.error('[gateway] файлов .secrets.local / .env.local / .env рядом с репозиторием не найдено')
     process.exit(1)
   }
-  return { url, serviceKey, pepper }
+  if (resolved.generatedPepper) {
+    console.warn('[gateway] NEMO_TOKEN_PEPPER не задан — взят случайный на этот запуск.')
+    console.warn('[gateway] Выданные токены перестанут проверяться после перезапуска. Для постоянных'
+      + ` токенов задайте NEMO_TOKEN_PEPPER в ${path.join(repoRoot, '.secrets.local')}.`)
+  }
+  return { url: resolved.url, serviceKey: resolved.serviceKey, pepper: resolved.pepper }
 }
+
 
 const { url, serviceKey, pepper } = requireEnv()
 const admin = createClient(url, serviceKey, { auth: { persistSession: false } })

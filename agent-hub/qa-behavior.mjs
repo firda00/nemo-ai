@@ -23,6 +23,8 @@ import {
   DESKTOP_VIEWPORT, MOBILE_VIEWPORT, THRESHOLDS, auditFindings, buildQaAuditTool, parseQualityOutput,
   renderCodeReport, renderSiteReport, runCodeQa, runSiteAudit, scoreFindings, summarizeAudit,
 } from './tools/qa-runner.ts'
+import { OSM_ATTRIBUTION, buildFsExportTool, withAttribution } from './tools/platform.ts'
+import { resolveGatewayEnv } from './server/env.ts'
 
 let checks = 0
 const check = (fn) => { fn(); checks++ }
@@ -398,6 +400,97 @@ await checkAsync(async () => {
   assert.ok(JSON.stringify(result).length < 20_000, `сводка весит ${JSON.stringify(result).length} знаков`)
   assert.ok(!JSON.stringify(result).includes('x'.repeat(1_000)), 'текст страницы утёк в результат инструмента')
   assert.ok(Array.isArray(result.findings) && result.findings.length > 0)
+})
+
+// ─── Переменные шлюза ─────────────────────────────────────────────────────────────────────────────
+
+/*
+ * ЗАПАСНОЙ ПЕРЕЦ ЕСТЬ В РАЗРАБОТКЕ И НЕТ В БОЮ.
+ *
+ * Перец подмешивается в отпечаток токена. Постоянное значение по умолчанию, зашитое в репозиторий,
+ * было бы одинаковым у всех и однажды уехало бы в боевую среду — а там оно означает, что отпечатки
+ * токенов может посчитать любой, кто читал этот файл.
+ */
+check(() => {
+  const dev = resolveGatewayEnv({ SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k' })
+  assert.equal(dev.ok, true, 'шлюз не поднимается локально без перца')
+  assert.equal(dev.generatedPepper, true, 'подстановка перца не отмечена')
+  assert.ok(dev.pepper.length >= 32, `перец слишком короткий: ${dev.pepper.length}`)
+})
+check(() => {
+  for (const mode of [{ NODE_ENV: 'production' }, { NEMO_ENV: 'PRODUCTION' }]) {
+    const prod = resolveGatewayEnv({ SUPABASE_URL: 'u', SUPABASE_SERVICE_ROLE_KEY: 'k', ...mode })
+    assert.equal(prod.ok, false, `в бою (${JSON.stringify(mode)}) перец подставился сам`)
+    assert.deepEqual(prod.missing, ['NEMO_TOKEN_PEPPER'])
+  }
+})
+// Запасной перец СЛУЧАЙНЫЙ: постоянный был бы общим секретом, известным всем, кто видел репозиторий.
+check(() => {
+  const env = { SUPABASE_URL: 'u', SUPABASE_SERVICE_ROLE_KEY: 'k' }
+  assert.notEqual(resolveGatewayEnv(env).pepper, resolveGatewayEnv(env).pepper, 'перец одинаков между запусками')
+})
+// Заданный перец не подменяется: иначе перезапуск обесценил бы все выданные токены.
+check(() => {
+  const set = resolveGatewayEnv({ SUPABASE_URL: 'u', SUPABASE_SERVICE_ROLE_KEY: 'k', NEMO_TOKEN_PEPPER: 'свой' })
+  assert.equal(set.pepper, 'свой')
+  assert.equal(set.generatedPepper, false)
+})
+// Отсутствующие переменные называются ВСЕ сразу: падать на первой значит запускать шлюз трижды.
+check(() => {
+  const empty = resolveGatewayEnv({ NODE_ENV: 'production' })
+  assert.equal(empty.missing.length, 3, JSON.stringify(empty.missing))
+})
+check(() => {
+  const byRef = resolveGatewayEnv({ SUPABASE_PROJECT_REF: 'abc', SUPABASE_SECRET_KEY: 'k' })
+  assert.equal(byRef.ok, true)
+  assert.equal(byRef.url, 'https://abc.supabase.co')
+})
+
+// ─── Атрибуция источника данных ───────────────────────────────────────────────────────────────────
+
+/*
+ * ЭТО ТРЕБОВАНИЕ ЛИЦЕНЗИИ, А НЕ ВЕЖЛИВОСТЬ.
+ *
+ * Компании ищутся через OpenStreetMap, чьи данные под ODbL: производные наборы обязаны называть
+ * источник. Выгруженный файл уходит в почту, в чат и в CRM заказчика — то есть распространяется.
+ */
+check(() => assert.ok(withAttribution('имя,телефон\nА,+998', 'csv').startsWith(`# ${OSM_ATTRIBUTION}`)))
+check(() => assert.ok(withAttribution('# Отчёт', 'markdown').includes(OSM_ATTRIBUTION)))
+// В JSON комментариев нет: атрибуция становится полем, иначе файл перестанет разбираться.
+check(() => {
+  const wrapped = JSON.parse(withAttribution('[{"a":1}]', 'json'))
+  assert.equal(wrapped.attribution, OSM_ATTRIBUTION)
+  assert.deepEqual(wrapped.data, [{ a: 1 }])
+})
+check(() => {
+  const merged = JSON.parse(withAttribution('{"leads":[]}', 'json'))
+  assert.equal(merged.attribution, OSM_ATTRIBUTION)
+  assert.deepEqual(merged.leads, [])
+})
+// Негодный JSON не чиним и не портим: строка возвращается как прислали.
+check(() => assert.equal(withAttribution('{обрыв', 'json'), '{обрыв'))
+// Повторная выгрузка не удваивает строку.
+check(() => {
+  const once = withAttribution('a,b', 'csv')
+  assert.equal(withAttribution(once, 'csv'), once)
+})
+// CSV: строка СВЕРХУ. Снизу её съедают программы, читающие файл до первой пустой строки.
+check(() => {
+  const lines = withAttribution('имя\nА', 'csv').split('\n')
+  assert.ok(lines[0].includes(OSM_ATTRIBUTION))
+  assert.equal(lines[1], 'имя')
+})
+
+await checkAsync(async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nemo-attr-'))
+  try {
+    const tool = buildFsExportTool({ directory: dir })
+    const result = await tool.execute({ format: 'csv', filename: 'leads', content: 'имя,телефон\nА,+998' }, {})
+    const written = await fs.readFile(result.path, 'utf8')
+    assert.ok(written.includes(OSM_ATTRIBUTION), 'файл выгружен без указания источника данных')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
 })
 
 console.log(`[OK] QA runner: ${checks} assertions`)

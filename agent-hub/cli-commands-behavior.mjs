@@ -153,7 +153,19 @@ await checkAsync(async () => {
 
 check(() => assert.ok(AGENT_ROLES[DEFAULT_ROLE], 'роль по умолчанию должна существовать'))
 check(() => assert.equal(AGENT_ROLES.general.tools, null, 'универсальная роль видит все инструменты'))
-check(() => assert.equal(AGENT_ROLES.general.mission, '', 'у универсальной роли нет своей специализации'))
+/*
+ * У УНИВЕРСАЛЬНОЙ РОЛИ ТОЖЕ ЕСТЬ СВОЙ ПРОМПТ.
+ *
+ * Раньше он был пустым, и роль наследовала общее описание платформы — то, что начиналось с поиска
+ * компаний. Из-за этого «универсальная» роль вела себя как продажник: на просьбу написать тест
+ * предлагала поискать клиентов. Пустота — не нейтральность, а молчаливое согласие с чужим умолчанием.
+ */
+check(() => {
+  const mission = AGENT_ROLES.general.mission
+  assert.ok(mission.trim().length > 0, 'у универсальной роли снова нет своего промпта')
+  assert.ok(/любые вопросы|любых задачах/.test(mission), 'универсальная роль не объявлена универсальной')
+  assert.ok(!/^Ты — Nemo в роли/.test(mission), 'универсальная роль получила специализацию')
+})
 
 /*
  * У ПРОВЕРЯЮЩЕЙ РОЛИ НЕТ ДОСТУПА К БОЕВЫМ ДАННЫМ.
@@ -266,7 +278,10 @@ check(() => {
   const full = makeRegistry()
   const qa = restrictRegistry(full, AGENT_ROLES.qa.tools)
   assert.ok(!qa.has('telegram_send_lead'), 'сужение не отобрало отправку у роли qa')
-  assert.ok(qa.has('search_leads'))
+  // Поиск компаний у проверяющего отобран тоже: он не имеет отношения к проверке сайтов и тестов, а
+  // лишний инструмент модель однажды вызовет «на всякий случай».
+  assert.ok(!qa.has('search_leads'), 'роль qa снова умеет искать компании')
+  assert.ok(qa.has('fs_export'))
   // Исходный реестр НЕ изменён: иначе возврат к роли general терял бы инструменты навсегда.
   assert.ok(full.has('telegram_send_lead'), 'сужение испортило исходный реестр')
 })
@@ -477,7 +492,7 @@ await checkAsync(async () => {
   // Промпт заменён НА МЕСТЕ: вторая системная реплика противоречила бы первой, и модель следовала бы
   // то одной, то другой.
   assert.equal(session.messages.filter((one) => one.role === 'system').length, 1)
-  assert.ok(session.messages[0].content.includes('проверки'))
+  assert.ok(session.messages[0].content.includes('инженера по качеству'), session.messages[0].content.slice(0, 80))
   assert.deepEqual(historyFaults(session.messages), [], 'смена роли повредила историю')
 })
 
@@ -1014,6 +1029,136 @@ check(() => {
 check(() => {
   assert.ok(CLEAR_LINE.startsWith('\r'), 'нет возврата каретки')
   assert.ok(CLEAR_LINE.includes(`${String.fromCharCode(27)}[2K`), 'нет стирания строки')
+})
+
+// ─── Пять независимых ролей ───────────────────────────────────────────────────────────────────────
+
+/*
+ * У КАЖДОЙ РОЛИ СВОЙ ПРОМПТ, А НЕ ОБЩИЙ С ДОБАВКОЙ.
+ *
+ * Общий текст не нейтрален: он задаёт умолчание, к которому модель возвращается, когда задача
+ * неочевидна. Пока каждая роль начиналась с «Nemo ищет компании по нише и городу», роль `dev` на
+ * просьбу разобрать ошибку предлагала поискать компании — потому что первое, что она о себе читала,
+ * было про поиск компаний.
+ */
+check(() => {
+  const missions = Object.values(AGENT_ROLES).map((one) => one.mission)
+  assert.equal(new Set(missions).size, missions.length, 'два промпта совпали дословно')
+})
+check(() => {
+  for (const [name, role] of Object.entries(AGENT_ROLES)) {
+    if (name === 'general') continue
+    assert.ok(role.mission.length > 120, `промпт роли ${name} слишком короткий, чтобы задавать поведение`)
+  }
+})
+
+/*
+ * ПОИСК КОМПАНИЙ УПОМИНАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ОН РАБОТА.
+ *
+ * В ролях dev, qa и media его нет ни в инструментах, ни в тексте — кроме прямого «этим ты не
+ * занимаешься». Лишний инструмент модель однажды вызовет «на всякий случай», а лишняя строка в
+ * промпте становится умолчанием.
+ */
+check(() => {
+  for (const name of ['dev', 'qa', 'media']) {
+    const role = AGENT_ROLES[name]
+    assert.ok(role.tools !== null, `роль ${name} снова видит все инструменты`)
+    assert.ok(!role.tools.includes('search_leads'), `роль ${name} снова умеет искать компании`)
+    assert.ok(!role.tools.includes('telegram_send_lead'), `роль ${name} снова умеет слать карточки`)
+    assert.ok(!role.tools.includes('crm_sync_lead'), `роль ${name} снова умеет писать в CRM`)
+  }
+})
+check(() => {
+  // Каждая роль, которая не про продажи, говорит об этом прямо: без явной строки модель достраивает
+  // умолчание сама, и достраивает его из общего описания платформы.
+  for (const name of ['dev', 'qa', 'media']) {
+    assert.ok(
+      /[Пп]оиском клиентов ты не занимаешься/.test(AGENT_ROLES[name].mission),
+      `в промпте роли ${name} нет прямого отказа от поиска клиентов`,
+    )
+  }
+})
+
+check(() => assert.deepEqual(AGENT_ROLES.sdr.tools, [
+  'search_leads', 'browser_navigate_and_extract', 'browser_screenshot',
+  'telegram_send_lead', 'crm_sync_lead', 'fs_export',
+]))
+check(() => assert.deepEqual(AGENT_ROLES.media.tools, ['render_video_pitch', 'fs_export']))
+check(() => assert.deepEqual(AGENT_ROLES.dev.tools, ['fs_export', 'browser_navigate_and_extract', 'mcp__*']))
+check(() => assert.deepEqual(AGENT_ROLES.qa.tools, [
+  'browser_navigate_and_extract', 'browser_screenshot', 'run_qa_audit', 'fs_export',
+]))
+check(() => assert.equal(AGENT_ROLES.general.tools, null, 'универсальная роль перестала видеть всё'))
+
+// Роли, которым положено писать код и тексты, прямо об этом сказано: иначе модель ищет инструмент.
+check(() => {
+  for (const name of ['dev', 'qa', 'media']) {
+    assert.ok(
+      /САМ|сам,? прямо в ответ/i.test(AGENT_ROLES[name].mission),
+      `в промпте роли ${name} не сказано, что писать можно без инструментов`,
+    )
+  }
+})
+
+// ─── Образец mcp__* в сужении реестра ─────────────────────────────────────────────────────────────
+
+/*
+ * MCP-МЕТОДЫ НЕЛЬЗЯ ПЕРЕЧИСЛИТЬ ЗАРАНЕЕ.
+ *
+ * Серверы подключаются по настройке, каждый метод регистрируется отдельным инструментом с префиксом
+ * сервера. Без образца роль `dev` осталась бы без всех внешних сервисов, и понять это можно было бы
+ * только по молчанию модели.
+ */
+check(() => {
+  const full = makeRegistry()
+  for (const name of ['mcp__fs__read_file', 'mcp__fs__write_file', 'mcp__pg__query']) {
+    full.register(defineTool({
+      name, description: `метод ${name}`, permission: 'read_only',
+      parameters: z.object({}), execute: async () => ({}),
+    }))
+  }
+  const dev = restrictRegistry(full, AGENT_ROLES.dev.tools)
+  assert.deepEqual(dev.names().sort(), ['fs_export', 'mcp__fs__read_file', 'mcp__fs__write_file', 'mcp__pg__query'])
+  assert.ok(!dev.has('search_leads'), 'образец захватил лишнее')
+})
+
+// Полная маска запрещена: она превратила бы сужение роли в его отсутствие, причём незаметно.
+check(() => assert.deepEqual(restrictRegistry(makeRegistry(), ['*']).names(), []))
+check(() => assert.deepEqual(restrictRegistry(makeRegistry(), ['*_lead']).names(), []))
+// Повтор образца и имени не удваивает инструмент — реестр запрещает повторные имена и упал бы.
+check(() => {
+  const full = makeRegistry()
+  full.register(defineTool({
+    name: 'mcp__fs__read', description: 'x', permission: 'read_only',
+    parameters: z.object({}), execute: async () => ({}),
+  }))
+  const narrowed = restrictRegistry(full, ['mcp__*', 'mcp__fs__read', 'fs_export', 'fs_export'])
+  assert.deepEqual(narrowed.names().sort(), ['fs_export', 'mcp__fs__read'])
+})
+
+// ─── Слеш-строка не уходит в модель ───────────────────────────────────────────────────────────────
+
+/*
+ * НИ ОДНА КОМАНДА НЕ ПРЕВРАЩАЕТСЯ В ЗАПРОС К МОДЕЛИ.
+ *
+ * Раньше `/browse` возвращал результат вида «prompt» — текст, который точка входа отправляла модели.
+ * Это был единственный путь, которым слеш-строка могла дойти до LLM, и он же делал команду намёком
+ * вместо действия. Ветка убрана; проверяем, что вида результата больше не существует.
+ */
+await checkAsync(async () => {
+  const session = seededSession()
+  const lines = ['/help', '/tools', '/agent qa', '/agent', '/model', '/model gpt4o', '/mcp', '/health',
+    '/balance', '/undo', '/clear', '/compact', '/export md', '/qa code', '/qa', '/browse https://example.com',
+    '/scrape https://example.com', '/exit', '/agnt sdr', '/нетакой']
+  for (const line of lines) {
+    const command = parseSlash(line)
+    assert.ok(command, `«${line}» не разобралось как команда`)
+    const result = await runSlash(command, browsingDeps(session))
+    assert.ok(
+      ['lines', 'exit', 'unknown'].includes(result.kind),
+      `«${line}» вернула вид результата «${result.kind}» — он уйдёт в модель`,
+    )
+  }
 })
 
 console.log(`[OK] CLI slash commands: ${checks} assertions`)

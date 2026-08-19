@@ -122,7 +122,8 @@
     "test:agent-loop": "node agent-hub/agent-loop-contracts.mjs",
     "test:cli-commands": "node --experimental-strip-types agent-hub/cli-commands-behavior.mjs",
     "test:qa": "node --experimental-strip-types agent-hub/qa-behavior.mjs",
-    "test:qa-live": "node --experimental-strip-types agent-hub/qa-live.mjs"
+    "test:qa-live": "node --experimental-strip-types agent-hub/qa-live.mjs",
+    "audit:licenses": "npx --yes license-checker --onlyAllow \"MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;0BSD;CC0-1.0;Python-2.0;BlueOak-1.0.0\" --excludePackages \"duck@0.1.12\" --excludePrivatePackages --production"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

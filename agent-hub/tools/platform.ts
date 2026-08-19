@@ -214,6 +214,43 @@ export function safeExportName(filename: string, format: string): string {
  * каждое сохранение значит приучить человека жать «да» не глядя — и тем обесценить подтверждение там,
  * где оно действительно нужно.
  */
+/**
+ * Атрибуция источника данных.
+ *
+ * ЭТО ТРЕБОВАНИЕ ЛИЦЕНЗИИ, А НЕ ВЕЖЛИВОСТЬ. Компании ищутся через OpenStreetMap, чьи данные под ODbL:
+ * производные наборы обязаны называть источник. Выгруженный файл уходит в почту, в чат и в CRM
+ * заказчика, то есть распространяется, — и без строки об источнике это нарушение условий, по которым
+ * данные вообще разрешено использовать.
+ *
+ * Формат разный: в CSV и Markdown — комментарий, который человек прочитает; в JSON — поле, потому что
+ * комментариев в JSON нет, а сломанный разбором файл хуже отсутствующей строки.
+ */
+export const OSM_ATTRIBUTION = 'Data © OpenStreetMap contributors (ODbL)'
+
+export function withAttribution(content: string, format: string): string {
+  const text = String(content ?? '')
+  if (text.includes(OSM_ATTRIBUTION)) return text
+
+  if (format === 'json') {
+    try {
+      const parsed = JSON.parse(text)
+      // Массив нельзя дополнить полем, не сломав его форму для читателя: оборачиваем в объект.
+      if (Array.isArray(parsed)) return JSON.stringify({ attribution: OSM_ATTRIBUTION, data: parsed }, null, 2)
+      if (parsed && typeof parsed === 'object') {
+        return JSON.stringify({ attribution: OSM_ATTRIBUTION, ...parsed as Record<string, unknown> }, null, 2)
+      }
+    } catch {
+      // Негодный JSON не чиним и не портим: пишем как прислали, атрибуцию добавить некуда.
+      return text
+    }
+    return text
+  }
+
+  if (format === 'markdown') return `${text.trimEnd()}\n\n---\n\n_${OSM_ATTRIBUTION}_\n`
+  // CSV: строка комментария СВЕРХУ. Снизу её съедают программы, читающие файл до первой пустой строки.
+  return `# ${OSM_ATTRIBUTION}\n${text}`
+}
+
 export function buildFsExportTool(deps: { directory: string }): ToolDefinition {
   return defineTool({
     name: 'fs_export',
@@ -226,7 +263,7 @@ export function buildFsExportTool(deps: { directory: string }): ToolDefinition {
       const name = safeExportName(args.filename, args.format)
       const target = path.join(deps.directory, name)
       await fs.mkdir(deps.directory, { recursive: true })
-      await fs.writeFile(target, args.content, 'utf8')
+      await fs.writeFile(target, withAttribution(args.content, args.format), 'utf8')
       const stat = await fs.stat(target)
       return { path: target, bytes: stat.size, format: args.format }
     },
