@@ -18,18 +18,37 @@ export function isInteractiveTerminal(input = stdin, output = stdout) {
   return Boolean(input.isTTY && output.isTTY)
 }
 
-// NO_COLOR — договорённость, которую уважают все приличные CLI. Плюс отключаем цвет, когда вывод
-// уходит в файл или в конвейер: escape-последовательности в логе читать невозможно.
-const useColor = () => Boolean(stdout.isTTY) && !process.env.NO_COLOR
-
 // ESC через код символа, а не escape-последовательностью в литерале: литерал уже один раз пропал
 // при правке файла, и цвета молча превратились в мусор вида «[2m» прямо в выводе.
 const ESC = String.fromCharCode(27)
 const CODES = { dim: '2', bold: '1', red: '31', green: '32', yellow: '33', cyan: '36', magenta: '35' }
-function paint(name, text) {
-  return useColor() ? `${ESC}[${CODES[name]}m${text}${ESC}[0m` : String(text)
+
+/**
+ * Палитра, привязанная К СВОЕМУ ПОТОКУ ВЫВОДА.
+ *
+ * ПОЧЕМУ НЕ ОДНА ГЛОБАЛЬНАЯ. Раньше цвет решался по process.stdout независимо от того, куда на самом
+ * деле идёт запись. Спиннер, которому подсунули другой поток — файл журнала, буфер, канал, — всё
+ * равно получал цвет, если терминал под процессом оказывался живым. В логе это мусор вида
+ * «ESC[32m✓ESC[0m», а в тесте это выглядело так: проверка «в не-терминал пишем без escape» проходила
+ * в конвейере (где stdout не TTY) и падала в настоящем терминале. Один и тот же код, разный
+ * результат, и по стектрейсу причину не увидеть.
+ *
+ * Решение принимается ЛЕНИВО, при каждом вызове: NO_COLOR может появиться в окружении позже, а поток
+ * — сменить isTTY.
+ *
+ * NO_COLOR — договорённость, которую уважают все приличные CLI. Плюс цвет отключается, когда вывод
+ * уходит в файл или в конвейер: escape-последовательности в логе читать невозможно.
+ */
+export function colorsFor(output = stdout) {
+  const useColor = () => Boolean(output?.isTTY) && !process.env.NO_COLOR
+  return Object.fromEntries(Object.keys(CODES).map((name) => [
+    name,
+    (text) => (useColor() ? `${ESC}[${CODES[name]}m${text}${ESC}[0m` : String(text)),
+  ]))
 }
-export const c = Object.fromEntries(Object.keys(CODES).map((name) => [name, (text) => paint(name, text)]))
+
+/** Палитра по умолчанию — для всего, что пишет прямо в stdout. */
+export const c = colorsFor(stdout)
 
 /**
  * Что делать с ответом на текстовый вопрос.
@@ -70,11 +89,11 @@ export function resolveSelect(raw, options, defaultIndex = 0) {
 }
 
 /** Одна строка списка вариантов. Значение по умолчанию помечено, чтобы Enter был осмысленным. */
-export function renderOption(option, index, defaultIndex) {
+export function renderOption(option, index, defaultIndex, palette = c) {
   const label = String(option.label ?? option)
-  const mark = index === defaultIndex ? c.green('●') : c.dim('○')
-  const suffix = index === defaultIndex ? c.dim(' (Enter)') : ''
-  return `   ${mark} ${c.bold(String(index + 1))}) ${label}${suffix}`
+  const mark = index === defaultIndex ? palette.green('●') : palette.dim('○')
+  const suffix = index === defaultIndex ? palette.dim(' (Enter)') : ''
+  return `   ${mark} ${palette.bold(String(index + 1))}) ${label}${suffix}`
 }
 
 /** Диалог с человеком. Держит один readline на всю сессию — по одному на вопрос текут дескрипторы. */
@@ -83,6 +102,7 @@ export class Ask {
   // спиннер, не погашенный перед вопросом, — иначе воспроизводится только руками и возвращается.
   constructor(input = stdin, output = stdout, options = {}) {
     this.output = output
+    this.c = colorsFor(output)
     // completer — функция строки, возвращающая [совпадения, исходная строка]: это форма, которую ждёт
     // readline. Передаётся снаружи, потому что список команд знает CLI, а не отрисовка.
     this.rl = readline.createInterface({ input, output, completer: options.completer })
@@ -100,23 +120,23 @@ export class Ask {
 
   async text(question, options = {}) {
     for (;;) {
-      const hint = options.fallback ? c.dim(` [${options.fallback}]`) : ''
-      const raw = await this.line(`${c.cyan('?')} ${question}${hint}\n${c.magenta('❯')} `)
+      const hint = options.fallback ? this.c.dim(` [${options.fallback}]`) : ''
+      const raw = await this.line(`${this.c.cyan('?')} ${question}${hint}\n${this.c.magenta('❯')} `)
       const verdict = resolveInput(raw, options)
       if (verdict.ok) return verdict.value
-      this.output.write(`  ${c.red('×')} ${verdict.error}\n`)
+      this.output.write(`  ${this.c.red('×')} ${verdict.error}\n`)
     }
   }
 
   async select(question, options, defaultIndex = 0) {
     stopActiveSpinner()
-    this.output.write(`${c.cyan('?')} ${question}\n`)
-    for (const [index, option] of options.entries()) this.output.write(`${renderOption(option, index, defaultIndex)}\n`)
+    this.output.write(`${this.c.cyan('?')} ${question}\n`)
+    for (const [index, option] of options.entries()) this.output.write(`${renderOption(option, index, defaultIndex, this.c)}\n`)
     for (;;) {
-      const raw = await this.line(`${c.magenta('❯')} `)
+      const raw = await this.line(`${this.c.magenta('❯')} `)
       const verdict = resolveSelect(raw, options, defaultIndex)
       if (verdict.ok) return verdict.value
-      this.output.write(`  ${c.red('×')} ${verdict.error}\n`)
+      this.output.write(`  ${this.c.red('×')} ${verdict.error}\n`)
     }
   }
 }
@@ -150,6 +170,9 @@ export function stopActiveSpinner() {
 export class Spinner {
   constructor(output = stdout) {
     this.output = output
+    // Палитра СВОЯ, по своему потоку: спиннер, пишущий в файл журнала, не должен красить вывод
+    // только потому, что под процессом есть живой терминал.
+    this.c = colorsFor(output)
     this.animated = Boolean(output.isTTY) && !process.env.NO_COLOR
     this.timer = null
     this.frame = 0
@@ -209,8 +232,8 @@ export class Spinner {
     return this
   }
 
-  succeed(text) { return this.stop(c.green('✓'), text) }
-  fail(text) { return this.stop(c.red('×'), text) }
+  succeed(text) { return this.stop(this.c.green('✓'), text) }
+  fail(text) { return this.stop(this.c.red('×'), text) }
 }
 
 /** Рамка вокруг заголовка — чтобы шаги опросника не сливались с логом прогона. */
@@ -228,9 +251,31 @@ export function banner(title, subtitle = '') {
  * Без этого рамка разъезжается ровно там, где в неё попал цвет: 'ESC[32m✓ESC[0m' занимает на
  * экране один знак, а .length считает девять, и правая стенка уезжает на восемь позиций.
  */
-// Регексп собирается из ESC, а не пишется литералом: литеральный управляющий байт в исходнике
-// уже один раз пропал при правке этого же файла, и цвета превратились в мусор в выводе.
-const ANSI = new RegExp(ESC + '\[[0-9;]*m', 'g')
+/*
+ * Регексп собирается из ESC, а не пишется литералом: литеральный управляющий байт в исходнике уже
+ * один раз пропал при правке этого же файла, и цвета превратились в мусор в выводе.
+ *
+ * СНИМАЕТСЯ НЕ ТОЛЬКО ЦВЕТ. Прежняя версия ловила лишь `ESC[…m` — раскраску. Этого хватало ровно до
+ * тех пор, пока в выводе не появилась очистка строки `ESC[2K`: её эта версия считала за четыре
+ * видимых знака, и рамка, в которую такая строка попала бы, разъехалась бы на четыре позиции вправо.
+ * Здесь снимаются все последовательности CSI (`ESC[…буква`), OSC (`ESC]…BEL`) и односимвольные
+ * переключатели вида `ESC(B`.
+ *
+ * Восьмибитный вариант CSI (0x9B) учтён отдельно: его присылают некоторые терминалы вместо `ESC[`.
+ */
+const ANSI = new RegExp(
+  [
+    // OSC: ESC ] … и завершитель BEL или ESC \. Содержимое — ЛЮБОЕ: в заголовке окна бывает и
+    // кириллица, и что угодно ещё. Латинский набор знаков здесь пропускал ровно такие случаи.
+    `[${ESC}\\u009D]\\][^\\u0007${ESC}]*(?:\\u0007|${ESC}\\\\)`,
+    // CSI: ESC [ параметры финальная-буква. Сюда попадают и цвет (m), и очистка строки (K), и
+    // перемещение курсора (H).
+    `[${ESC}\\u009B][[()#;?]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]`,
+    // Односимвольные переключатели набора знаков: ESC ( B и подобные.
+    `${ESC}[()][A-Za-z\\d]`,
+  ].join('|'),
+  'g',
+)
 
 export function visibleWidth(text) {
   return [...String(text ?? '').replace(ANSI, '')].length

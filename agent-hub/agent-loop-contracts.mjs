@@ -30,6 +30,8 @@ const platform = stripComments(read('agent-hub/tools/platform.ts'))
 const registry = stripComments(read('agent-hub/tools/registry.ts'))
 const nemo = stripComments(read('agent-hub/nemo.mjs'))
 const uiFull = read('agent-hub/nemo-ui.mjs')
+const tui = stripComments(read('agent-hub/tui.mjs'))
+const tuiTests = read('agent-hub/tui-behavior.mjs')
 const ui = stripComments(uiFull)
 const bridge = stripComments(read('agent-hub/tools/enrich-browser.ts'))
 const qaRunnerFull = read('agent-hub/tools/qa-runner.ts')
@@ -369,6 +371,40 @@ must(
 must(
   /String\.fromCharCode\(27\)/.test(uiFull),
   'байт ESC записан литералом — его уже трижды теряли при правках, и строка молча переставала стирать',
+)
+
+// ─── Цвет следует за своим потоком ────────────────────────────────────────────────────────────────
+//
+// Цвет решался по process.stdout независимо от того, куда идёт запись. Спиннер, которому подсунули
+// файл журнала, красил вывод, если под процессом оказывался живой терминал. В тестах это давало
+// худший из возможных видов отказа: проверка проходила в конвейере и падала в терминале, на одном и
+// том же коде.
+
+must(
+  /export function colorsFor\(output = stdout\)/.test(tui),
+  'палитра снова одна на процесс — цвет попадёт в файл журнала',
+)
+must(
+  /Boolean\(output\?\.isTTY\)/.test(tui),
+  'решение о цвете принимается не по потоку, в который пишут',
+)
+must(
+  /this\.c = colorsFor\(output\)/.test(tui),
+  'спиннер и диалог перестали брать палитру по своему потоку',
+)
+// Очистка ширины снимает не только цвет: с Фазы 7 в выводе есть ESC[2K, и раскраска-только регексп
+// посчитал бы его за четыре видимых знака, разъехав рамку.
+must(
+  /A-PR-TZcf-ntqry/.test(tui),
+  'очистка ANSI сузилась до раскраски — ESC[2K снова будет считаться видимыми знаками',
+)
+must(
+  /u009D/.test(tui) && /u009B/.test(tui),
+  'из очистки ANSI пропали OSC или восьмибитный CSI',
+)
+must(
+  !/78 assertions/.test(tuiTests),
+  'в итоговой строке TUI-проверок вернулось число литералом — оно снова начнёт врать',
 )
 
 // ─── Аудит ────────────────────────────────────────────────────────────────────────────────────────

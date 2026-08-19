@@ -4,13 +4,33 @@
 // вынесен из самих вопросов именно для этого. Главное здесь: интерактив не должен включаться там,
 // где спрашивать некого, а спиннер не должен сыпать escape-последовательностями в файл журнала.
 
-import assert from 'node:assert/strict'
+import assertStrict from 'node:assert/strict'
+
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { Ask, Spinner, banner, isInteractiveTerminal, renderOption, resolveInput, resolveSelect } from './tui.mjs'
+import {
+  Ask, Spinner, banner, colorsFor, isInteractiveTerminal, renderOption, resolveInput, resolveSelect,
+  visibleWidth,
+} from './tui.mjs'
 import { clipboardCommand, csvCell, exportFileName, toCsv, toJson, writeExport } from './lead-export.mjs'
+
+/**
+ * Счётчик проверок.
+ *
+ * Раньше в итоговой строке стояло число литералом. Оно перестало сходиться с действительностью на
+ * первой же дописанной проверке, а строка при этом продолжала уверенно докладывать прежнее — то есть
+ * врать. Считаем вызовы, а не помним их количество.
+ */
+let checks = 0
+const assert = new Proxy(assertStrict, {
+  get: (target, key) => {
+    const value = target[key]
+    if (typeof value !== 'function') return value
+    return (...args) => { checks++; return value.apply(target, args) }
+  },
+})
 
 // --- Живой терминал: оба конца обязательны --------------------------------------------------------
 // Скрипт из cron, повисший на невидимом вопросе, выглядит как зависший пайплайн, и разбираться в
@@ -98,6 +118,136 @@ assert.equal(renderOption(LIMITS[0], 0, 1).includes('Enter'), false)
   assert.equal(all.includes(String.fromCharCode(27)), false, 'без escape-последовательностей')
   assert.ok(all.includes('этап 1') && all.includes('этап 2') && all.includes('готово'), 'но все строки на месте')
   assert.equal(spinner.timer, null, 'таймер не запускался — нечего оставлять висеть')
+}
+
+/*
+ * ЦВЕТ СЛЕДУЕТ ЗА ПОТОКОМ, В КОТОРЫЙ ПИШУТ, А НЕ ЗА ТЕРМИНАЛОМ ПОД ПРОЦЕССОМ.
+ *
+ * Проверка выше («без escape-последовательностей») зависела от того, ГДЕ её запускают: цвет решался
+ * по process.stdout, а не по потоку спиннера. В конвейере stdout не TTY, цвета нет, проверка
+ * проходит; в настоящем терминале цвет включается, попадает в подменённый поток — и та же проверка
+ * падает. Один и тот же код, разный результат, и по стектрейсу причину не увидеть.
+ *
+ * Пара ниже от окружения НЕ зависит: оба потока подменены, и решение принимается по их собственному
+ * isTTY. Именно эта пара ловит возврат к глобальному решению о цвете.
+ */
+{
+  const NO_COLOR = process.env.NO_COLOR
+  delete process.env.NO_COLOR
+  try {
+    const quiet = []
+    new Spinner({ isTTY: false, write: (text) => { quiet.push(text); return true } }).start('шаг').succeed('готово')
+    assert.equal(
+      quiet.join('').includes(String.fromCharCode(27)), false,
+      'цвет попал в не-терминальный поток: в файле журнала это мусор вида ESC[32m',
+    )
+
+    /*
+     * ИЩЕМ ИМЕННО КОД ЦВЕТА, А НЕ ЛЮБОЙ ESC.
+     *
+     * В терминальном режиме спиннер и без всякого цвета пишет очистку строки — а это тоже ESC. Первая
+     * версия проверки искала любой управляющий байт и потому проходила даже с полностью отключённой
+     * раскраской: мутационный прогон это и показал.
+     */
+    const painted = []
+    new Spinner({ isTTY: true, write: (text) => { painted.push(text); return true } }).succeed('готово')
+    assert.ok(
+      painted.join('').includes(`${String.fromCharCode(27)}[32m`),
+      'в терминальный поток не попал код зелёного — раскраска отключилась целиком',
+    )
+
+    // NO_COLOR сильнее живого терминала: договорённость, которую уважают все приличные CLI.
+    process.env.NO_COLOR = '1'
+    const respected = []
+    new Spinner({ isTTY: true, write: (text) => { respected.push(text); return true } }).succeed('готово')
+    assert.equal(respected.join('').includes(String.fromCharCode(27) + '[32m'), false, 'NO_COLOR не соблюдён')
+  } finally {
+    if (NO_COLOR === undefined) delete process.env.NO_COLOR
+    else process.env.NO_COLOR = NO_COLOR
+  }
+}
+
+/*
+ * ВИДИМАЯ ШИРИНА: СНИМАЕТСЯ НЕ ТОЛЬКО ЦВЕТ.
+ *
+ * Ширина считается по знакам, которые человек видит на экране: 'ESC[32m✓ESC[0m' занимает одну
+ * позицию, а .length считает девять, и правая стенка рамки уезжает на восемь.
+ *
+ * Прежняя версия ловила лишь раскраску `ESC[…m`. Этого хватало ровно до того, как в выводе появилась
+ * очистка строки `ESC[2K`: её она считала за четыре видимых знака. Проверки ниже перебирают виды
+ * последовательностей, а не один удобный.
+ */
+{
+  const E = String.fromCharCode(27)
+  const BEL = String.fromCharCode(7)
+  const cases = [
+    ['обычный текст без управляющих знаков', 'обычный текст', 13],
+    ['раскраска', `${E}[32m✓${E}[0m`, 1],
+    ['очистка строки — то, из-за чего расширяли', `\r${E}[2Kтекст`, 6],
+    ['перемещение курсора', `${E}[1;5Hтекст`, 5],
+    ['заголовок окна, завершённый BEL', `${E}]0;заголовок${BEL}x`, 1],
+    ['заголовок окна, завершённый ST', `${E}]0;заголовок${E}\\x`, 1],
+    ['переключатель набора знаков', `${E}(Bтекст`, 5],
+    ['восьмибитный CSI вместо ESC[', '32mтекст', 5],
+    ['пустая строка', '', 0],
+    ['null и undefined', null, 0],
+    // Квадратная скобка без ESC — это обычный текст, и съедать его нельзя.
+    ['текст, похожий на управляющий', '[2K это просто текст', 20],
+  ]
+  for (const [name, input, expected] of cases) {
+    assert.equal(visibleWidth(input), expected, `видимая ширина: ${name}`)
+  }
+  // Рамка не разъезжается: строка с цветом и очисткой занимает столько же, сколько её голый текст.
+  assert.equal(visibleWidth(`${E}[2m│${E}[0m`), visibleWidth('│'))
+}
+
+// Сама палитра: решение принимается по isTTY ПЕРЕДАННОГО потока и ни по чему больше.
+{
+  const NO_COLOR = process.env.NO_COLOR
+  delete process.env.NO_COLOR
+  try {
+    assert.equal(colorsFor({ isTTY: false }).green('✓'), '✓')
+    assert.ok(colorsFor({ isTTY: true }).green('✓').includes(String.fromCharCode(27)))
+    // Ни undefined, ни отсутствующий поток не должны включать цвет и не должны падать.
+    assert.equal(colorsFor(undefined).green('✓').includes(String.fromCharCode(27)), Boolean(process.stdout.isTTY))
+    assert.equal(colorsFor({}).green('✓'), '✓')
+    process.env.NO_COLOR = '1'
+    assert.equal(colorsFor({ isTTY: true }).green('✓'), '✓', 'NO_COLOR не соблюдён палитрой')
+  } finally {
+    if (NO_COLOR === undefined) delete process.env.NO_COLOR
+    else process.env.NO_COLOR = NO_COLOR
+  }
+}
+
+/*
+ * Диалог пишет в СВОЙ поток и палитру берёт по нему же — та же причина, что у спиннера.
+ *
+ * Пара обязательна и здесь. Проверка только на не-терминальном потоке была бы такой же
+ * средозависимой, как исходный дефект: в конвейере она проходит при любой реализации, потому что
+ * глобальный stdout там тоже не терминал. Терминальный случай — единственный, который отличает
+ * «палитра по своему потоку» от «палитра по process.stdout».
+ */
+{
+  const NO_COLOR = process.env.NO_COLOR
+  delete process.env.NO_COLOR
+  const quietOut = new PassThrough()
+  const paintedOut = new PassThrough()
+  paintedOut.isTTY = true
+  const quiet = new Ask(new PassThrough(), quietOut)
+  const painted = new Ask(new PassThrough(), paintedOut)
+  try {
+    assert.equal(quietOut.isTTY, undefined, 'PassThrough внезапно стал терминалом — проверка потеряла смысл')
+    assert.equal(quiet.c.green('✓'), '✓', 'диалог красит вывод в не-терминальный поток')
+    assert.ok(
+      painted.c.green('✓').includes(String.fromCharCode(27)),
+      'диалог не красит терминальный поток — значит смотрит не на него',
+    )
+  } finally {
+    quiet.close()
+    painted.close()
+    if (NO_COLOR === undefined) delete process.env.NO_COLOR
+    else process.env.NO_COLOR = NO_COLOR
+  }
 }
 
 // В терминале — одна итоговая строка вместо бегущей, а таймер обязательно остановлен.
@@ -273,4 +423,4 @@ function fakeTty() {
   assert.ok(plain.written.includes('Поиск…'), 'но сам этап в журнале виден')
 }
 
-console.log('[OK] TUI behaviour: 78 assertions')
+console.log(`[OK] TUI behaviour: ${checks} assertions`)
