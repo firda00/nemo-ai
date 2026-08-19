@@ -8,7 +8,7 @@
 
 import type { AgentSession, ChatMessage } from '../agent-runtime.ts'
 import { DEFAULT_AGENT_MODEL } from '../agent-runtime.ts'
-import type { ToolRegistry } from '../tools/registry.ts'
+import type { ToolOutcome, ToolRegistry } from '../tools/registry.ts'
 
 // ─── Роли ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -154,6 +154,7 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'compact', usage: '/compact', summary: 'сжать историю пересказом' },
   { name: 'undo', usage: '/undo', summary: 'отменить последний ход' },
   { name: 'export', usage: '/export [json|md]', summary: 'сохранить историю сессии' },
+  { name: 'qa', usage: '/qa <url|code>', summary: 'аудит сайта или прогон гейта качества' },
   { name: 'health', usage: '/health', summary: 'состояние зависимостей' },
   { name: 'balance', usage: '/balance', summary: 'остаток кредитов OpenRouter' },
   { name: 'clear', usage: '/clear', summary: 'забыть разговор, роль сохранить' },
@@ -202,6 +203,10 @@ export interface CommandDeps {
   readonly mcpStatus: () => Array<{ server: string; state: string; tools: string[] }>
   readonly health: () => Promise<Array<{ name: string; ok: boolean; detail: string }>>
   readonly balance: () => Promise<{ ok: true; text: string } | { ok: false; error: string }>
+  /** Прямой вызов инструмента через реестр: /browse и /qa зовут его, минуя модель. */
+  readonly runTool?: (name: string, args: Record<string, unknown>) => Promise<ToolOutcome>
+  /** Аудит сайта или репозитория. Возвращает готовые строки для терминала. */
+  readonly runQa?: (target: { kind: 'site'; url: string } | { kind: 'code' }) => Promise<{ lines: string[] }>
   readonly summarize: (messages: readonly ChatMessage[]) => Promise<string>
   readonly writeExport: (name: string, body: string) => Promise<string>
 }
@@ -318,12 +323,43 @@ export async function runSlash(command: SlashCommand, deps: CommandDeps): Promis
       // отправить агента не туда, куда просили.
       return { kind: 'lines', lines: [`  адрес должен начинаться с http:// или https://, получено: ${url}`] }
     }
-    return {
-      kind: 'prompt',
-      text: name === 'browse'
-        ? `Открой ${url} и перескажи, что там: чем занимается организация, есть ли контакты и виджеты записи.`
-        : `Открой ${url} и верни ТОЛЬКО JSON с полями name, phones, emails, socials, booking_widgets. Ничего не выдумывай: чего нет на странице — пустой список.`,
+
+    /*
+     * ПРЯМОЙ ВЫЗОВ, А НЕ ПРОСЬБА К МОДЕЛИ.
+     *
+     * Раньше `/browse` превращался в фразу «открой такой-то адрес», и дальше всё зависело от того,
+     * решит ли модель звать инструмент. Она регулярно решала иначе — отвечала по памяти или уточняла
+     * задачу, — и команда, названная прямой, вела себя как намёк. Здесь страница открывается сразу.
+     *
+     * Результат кладётся В ИСТОРИЮ: следующий вопрос про эту страницу модель встречает с данными, а
+     * не с пустыми руками.
+     */
+    if (!deps.runTool || !deps.registry.has('browser_navigate_and_extract')) {
+      return {
+        kind: 'lines',
+        lines: [
+          '  браузер недоступен: не установлен Playwright или задано SDR_BROWSER=0',
+          '  установка: npm i playwright && npx playwright install chromium',
+        ],
+      }
     }
+
+    const outcome = await deps.runTool('browser_navigate_and_extract', { url })
+    deps.session.recordToolCall(
+      'browser_navigate_and_extract',
+      { url },
+      outcome.ok ? JSON.stringify({ ok: true, result: outcome.result }) : JSON.stringify({ ok: false, error: outcome.error }),
+    )
+    if (!outcome.ok) return { kind: 'lines', lines: [`  × ${outcome.error}`] }
+
+    const page = outcome.result as PageResult
+    if (name === 'scrape') {
+      return {
+        kind: 'lines',
+        lines: JSON.stringify(scrapeShape(url, page), null, 2).split('\n').map((one) => `  ${one}`),
+      }
+    }
+    return { kind: 'lines', lines: describePage(url, page) }
   }
 
   if (name === 'compact') {
@@ -361,6 +397,29 @@ export async function runSlash(command: SlashCommand, deps: CommandDeps): Promis
     return { kind: 'lines', lines: [`  сохранено: ${path}`] }
   }
 
+  if (name === 'qa') {
+    const target = command.rest
+    if (!target) {
+      return {
+        kind: 'lines',
+        lines: ['  /qa https://example.com — аудит сайта', '  /qa code — прогон гейта качества репозитория'],
+      }
+    }
+    // Цель разбирается ДО проверки доступности: опечатка в цели встречается несравнимо чаще, чем
+    // сборка без аудита, и прятать её за «недоступно» значит отправить человека чинить не то.
+    const code = ['code', 'local', 'repo', '.'].includes(target.toLowerCase())
+    if (!code && !/^https?:\/\//i.test(target)) {
+      return {
+        kind: 'lines',
+        lines: [`  цель — адрес сайта (http:// или https://) либо слово code, получено: ${target}`],
+      }
+    }
+    if (!deps.runQa) return { kind: 'lines', lines: ['  аудит недоступен в этой сборке'] }
+
+    const result = await deps.runQa(code ? { kind: 'code' } : { kind: 'site', url: target })
+    return { kind: 'lines', lines: result.lines }
+  }
+
   if (name === 'health') {
     const checks = await deps.health()
     return {
@@ -375,6 +434,97 @@ export async function runSlash(command: SlashCommand, deps: CommandDeps): Promis
   }
 
   return { kind: 'unknown', name: command.name, suggestions: suggest(command.name) }
+}
+
+/** Что возвращает browser_navigate_and_extract. Описано здесь, чтобы не тянуть модуль браузера. */
+export interface PageResult {
+  finalUrl?: string
+  title?: string
+  text?: string
+  status?: number | null
+  blocked?: boolean
+  messengers?: Array<{ kind: string; url: string }>
+  bookingWidgets?: string[]
+  emails?: string[]
+  phones?: string[]
+}
+
+/**
+ * Страница человеческим языком.
+ *
+ * Текст показывается ОБРЕЗАННЫМ: страница на двести килобайт, вывалившаяся в терминал, стирает
+ * прокруткой весь предыдущий разговор. Модели в историю уходит полный результат — ей он нужен целиком.
+ */
+export function describePage(url: string, page: PageResult): string[] {
+  const text = (page.text ?? '').replace(/\s+/g, ' ').trim()
+  const lines = [
+    `  ${page.title || '(без заголовка)'}`,
+    `  ${page.finalUrl && page.finalUrl !== url ? `→ ${page.finalUrl}` : url}${page.status ? `  [${page.status}]` : ''}`,
+  ]
+  // Защита от бота — не «пустая страница»: разница определяет, что делать дальше, и молчать о ней
+  // значит отправить человека искать несуществующую ошибку в своём коде.
+  if (page.blocked) lines.push('  ⚠ страница отдала защиту от ботов, текст неполный')
+  lines.push('', `  ${text.slice(0, 600)}${text.length > 600 ? '…' : ''}`, '')
+  if (page.messengers?.length) {
+    lines.push(`  мессенджеры: ${page.messengers.map((one) => `${one.kind} → ${one.url}`).join(', ')}`)
+  }
+  if (page.bookingWidgets?.length) lines.push(`  виджеты записи: ${page.bookingWidgets.join(', ')}`)
+  if (page.emails?.length) lines.push(`  почта: ${page.emails.join(', ')}`)
+  if (page.phones?.length) lines.push(`  телефоны: ${page.phones.join(', ')}`)
+  if (!page.messengers?.length && !page.bookingWidgets?.length) lines.push('  мессенджеров и виджетов записи не найдено')
+  lines.push('', `  ${text.length} знаков текста — результат добавлен в контекст разговора`)
+  return lines
+}
+
+/**
+ * Телефоны из текста страницы.
+ *
+ * Браузерный инструмент их НЕ собирает — он отдаёт текст, мессенджеры и виджеты записи. Вернуть
+ * `phones: []` на этом основании значило бы сказать «телефонов на странице нет», хотя их просто никто
+ * не искал. Это ровно та тишина о непроверенном, которая делает отчёт хуже его отсутствия.
+ */
+export function extractPhones(text: string): string[] {
+  const found = String(text ?? '').match(/\+?\d[\d\s().-]{7,18}\d/g) ?? []
+  const normalized = found
+    .map((one) => one.replace(/[\s().-]/g, ''))
+    .filter((one) => {
+      const digits = one.replace(/\D/g, '')
+      // Пятнадцать цифр — предел E.164, длиннее номеров не бывает. Граница не придирка: без неё
+      // двадцатидвузначный артикул товара попадал в список телефонов, и человек звонил бы по номеру,
+      // которого не существует. Ровно это и случилось на первом прогоне извлекателя.
+      if (one.startsWith('+')) return digits.length >= 10 && digits.length <= 15
+      // Без кода страны осмысленны только национальные номера. Пятнадцатизначное число без плюса —
+      // почти наверняка не телефон, а идентификатор.
+      return digits.length >= 9 && digits.length <= 12
+    })
+  return [...new Set(normalized)].slice(0, 20)
+}
+
+/** Почта из текста страницы. Та же причина, что и у телефонов. */
+export function extractEmailsFromText(text: string): string[] {
+  const found = String(text ?? '').match(/[\w.+-]+@[\w-]+\.[\w.-]{2,}/g) ?? []
+  return [...new Set(found.map((one) => one.toLowerCase().replace(/[.,;]+$/, '')))].slice(0, 20)
+}
+
+/**
+ * Структурированная выжимка для /scrape.
+ *
+ * Всё, чего нет, становится ПУСТЫМ СПИСКОМ, а не пропущенным полем: пропущенное поле модель заполняет
+ * по своему разумению, то есть выдумывает.
+ */
+export function scrapeShape(url: string, page: PageResult): Record<string, unknown> {
+  const text = page.text ?? ''
+  return {
+    url: page.finalUrl ?? url,
+    title: page.title ?? null,
+    status: page.status ?? null,
+    blocked: Boolean(page.blocked),
+    phones: page.phones ?? extractPhones(text),
+    emails: page.emails ?? extractEmailsFromText(text),
+    messengers: page.messengers ?? [],
+    booking_widgets: page.bookingWidgets ?? [],
+    text_length: text.length,
+  }
 }
 
 /**

@@ -12,7 +12,7 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { loadLocalEnv } from './load-local-env.mjs'
-import { Ask, c, dashboard, isInteractiveTerminal, stopActiveSpinner } from './tui.mjs'
+import { Ask, Spinner, c, dashboard, isInteractiveTerminal, stopActiveSpinner } from './tui.mjs'
 import {
   AgentSession, buildAgentSystemPrompt, createOpenRouterStream, DEFAULT_AGENT_MODEL, MAX_STEPS,
   setSessionRegistry,
@@ -57,6 +57,8 @@ const { connectMcpServers, resolveMcpServers } = await import('./tools/mcp-clien
 
 const browser = createBrowserBridge()
 const cards = resolveLeadCardConfig()
+const { PlaywrightQaProbe } = await import('./tools/qa-probe.ts')
+const qaProbe = browser.engine ? new PlaywrightQaProbe() : null
 
 const { registry: fullRegistry, skipped } = buildPlatformRegistry({
   runPipeline: async ({ query, city, limit, icp }) => {
@@ -81,7 +83,15 @@ const { registry: fullRegistry, skipped } = buildPlatformRegistry({
       })),
     }
   },
-  browserEngine: browser.fallback ? browser.engine : undefined,
+  // Движок берётся НАПРЯМУЮ, а не через `browser.fallback ? … : undefined`. В прежнем виде поля
+  // engine в мосте не существовало вовсе, и браузерные инструменты не регистрировались никогда —
+  // модель отвечала «у меня нет такого инструмента» на прямую просьбу открыть сайт.
+  browserEngine: browser.engine ?? undefined,
+  // Зонд аудита строится лениво: конструктор Chromium не запускает, поэтому платить за него при
+  // старте не приходится, а инструмент модели виден сразу.
+  qaProbe: browser.engine ? qaProbe : undefined,
+  qaScreenshotDir: path.join(process.cwd(), 'qa-reports'),
+  qaWriteFile: async (at, data) => { await fs.mkdir(path.dirname(at), { recursive: true }); await fs.writeFile(at, data) },
   sendCard: cards.enabled
     ? async (lead) => {
       const [{ TelegramNotificationService }, { leadToCardNotification, FOUND_LEAD_STYLE }] = await Promise.all([
@@ -165,6 +175,31 @@ const session = new AgentSession(
   },
 )
 
+/**
+ * Прогон гейта качества отдельным процессом.
+ *
+ * Отдельным, а не вызовом внутрь: гейт поднимает vite, дёргает Supabase и живёт минуты. Запущенный в
+ * этом же процессе, он унаследовал бы его окружение и обработчики сигналов, а падение любого шага
+ * уронило бы CLI вместе с историей разговора.
+ */
+async function runQualityGate() {
+  const { spawn } = await import('node:child_process')
+  const started = Date.now()
+  return await new Promise((resolve) => {
+    const child = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'quality'], {
+      cwd: repoRoot, shell: process.platform === 'win32',
+    })
+    let output = ''
+    // stdout и stderr в ОДИН поток: гейт печатает имена шагов в первый, а причины падений во второй,
+    // и разделённые они дают отчёт, где видно что упало, но не видно почему.
+    child.stdout?.on('data', (chunk) => { output += chunk.toString() })
+    child.stderr?.on('data', (chunk) => { output += chunk.toString() })
+    child.on('error', (error) => resolve({ code: 1, output: `
+`, durationMs: Date.now() - started }))
+    child.on('close', (code) => resolve({ code: code ?? 1, output, durationMs: Date.now() - started }))
+  })
+}
+
 /** Применить роль: новый промпт и суженный круг инструментов. */
 function applyRole(next) {
   role = next
@@ -200,6 +235,59 @@ const commandDeps = {
   ],
   health: () => collectHealth(process.env),
   balance: () => fetchBalance(process.env.OPENROUTER_API_KEY),
+  /** Прямой вызов инструмента: /browse зовёт браузер, минуя модель. */
+  runTool: async (toolName, args) => await activeRegistry.call(toolName, args, { allowedActions: [] }),
+  runQa: async (target) => {
+    const startedAt = new Date()
+    const stamp = startedAt.toISOString().replace(/[:.]/g, '-')
+    const dir = path.join(process.cwd(), 'qa-reports')
+    await fs.mkdir(dir, { recursive: true })
+    const file = path.join(dir, `QA_REPORT_${stamp}.md`)
+
+    if (target.kind === 'code') {
+      const { runCodeQa, renderCodeReport } = await import('./tools/qa-runner.ts')
+      const spinner = new Spinner().start('гейт качества: это несколько минут')
+      const result = await runCodeQa(runQualityGate)
+      spinner.silence()
+      await fs.writeFile(file, renderCodeReport(result, startedAt.toISOString()), 'utf8')
+      return {
+        lines: [
+          `  ${result.ok ? '✓ гейт зелёный' : '× гейт КРАСНЫЙ'} — шагов ${result.steps.length}, упало ${result.failed.length}, ${Math.round(result.durationMs / 1000)} с`,
+          ...result.failed.slice(0, 8).map((one) => `  × ${one}`),
+          `  отчёт: ${file}`,
+        ],
+      }
+    }
+
+    if (!qaProbe) {
+      return { lines: ['  аудит сайта требует Playwright: npm i playwright && npx playwright install chromium'] }
+    }
+    const { runSiteAudit, renderSiteReport, summarizeAudit } = await import('./tools/qa-runner.ts')
+    // Зонд ОБЩИЙ с инструментом модели: два зонда — два процесса Chromium по 150 МБ, притом что
+    // одновременно они не работают.
+    const probe = qaProbe
+    const spinner = new Spinner().start(`аудит ${target.url}`)
+    try {
+      const audit = await runSiteAudit(probe, {
+        url: target.url,
+        screenshotPath: path.join(dir, `QA_SHOT_${stamp}.png`),
+        writeFile: async (at, data) => { await fs.writeFile(at, data) },
+      })
+      spinner.silence()
+      await fs.writeFile(file, renderSiteReport(audit, startedAt.toISOString()), 'utf8')
+      // Итог аудита кладётся в контекст: следующий вопрос «а что именно чинить?» модель встретит с
+      // находками, а не с пустыми руками.
+      session.recordToolCall('run_qa_audit', { url: target.url }, JSON.stringify({
+        ok: true,
+        result: { url: audit.url, score: audit.score, status: audit.status, findings: audit.findings },
+      }))
+      return { lines: [...summarizeAudit(audit), `  отчёт: ${file}`] }
+    } finally {
+      spinner.silence()
+      // Зонд НЕ закрывается: он общий с инструментом модели и живёт до конца сессии. Закрытие здесь
+      // означало бы перезапуск Chromium на каждый следующий аудит.
+    }
+  },
   summarize: async (messages) => {
     // Пересказ делает ТА ЖЕ модель отдельным запросом без инструментов: сжатие не должно ничего
     // вызывать, иначе /compact начнёт искать лидов заново.
@@ -295,6 +383,7 @@ async function runTurn(text) {
 
 ask.close()
 await mcp.close()
+await qaProbe?.close()
 await browser.close()
 console.log(`\n${c.dim('До связи.')}\n`)
 process.exit(0)

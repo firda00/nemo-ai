@@ -29,7 +29,11 @@ const runtime = stripComments(runtimeFull)
 const platform = stripComments(read('agent-hub/tools/platform.ts'))
 const registry = stripComments(read('agent-hub/tools/registry.ts'))
 const nemo = stripComments(read('agent-hub/nemo.mjs'))
-const ui = stripComments(read('agent-hub/nemo-ui.mjs'))
+const uiFull = read('agent-hub/nemo-ui.mjs')
+const ui = stripComments(uiFull)
+const bridge = stripComments(read('agent-hub/tools/enrich-browser.ts'))
+const qaRunnerFull = read('agent-hub/tools/qa-runner.ts')
+const qaRunner = stripComments(qaRunnerFull)
 const commands = stripComments(read('agent-hub/cli/commands.ts'))
 const commandsFull = read('agent-hub/cli/commands.ts')
 const wiring = stripComments(read('agent-hub/cli/wiring.ts'))
@@ -251,18 +255,30 @@ must(
   /\[Нн\]е выдумывай|Не выдумывай ничего/.test(commandsFull),
   'из просьбы о пересказе пропал запрет выдумывать: сжатие с придуманным телефоном отравит весь остаток разговора',
 )
+// `/scrape` больше не просит модель извлечь контакты — он строит выжимку из того, что реально нашёл
+// браузер. Запрет выдумывать превратился из фразы в промпте в устройство функции: чего на странице
+// нет, то становится пустым списком, а не пропущенным полем, которое модель заполнит по своему
+// разумению.
 must(
-  /Ничего не выдумывай/.test(commandsFull),
-  'из /scrape пропал запрет выдумывать — вернёт выдуманные контакты',
+  /messengers: page\.messengers \?\? \[\]/.test(commands) && /booking_widgets: page\.bookingWidgets \?\? \[\]/.test(commands),
+  'выжимка /scrape перестала подставлять пустые списки — пропущенное поле модель заполнит выдумкой',
+)
+// Телефоны и почта ИЩУТСЯ в тексте, а не объявляются отсутствующими: браузерный инструмент их не
+// собирает, и пустой список на этом основании — ложь о том, чего не проверяли.
+must(
+  /phones: page\.phones \?\? extractPhones\(text\)/.test(commands),
+  'телефоны снова объявляются отсутствующими вместо поиска в тексте страницы',
+)
+must(
+  /digits\.length <= 15/.test(commands),
+  'снята граница E.164 — в телефоны попадут артикулы и номера карт',
 )
 must(
   /не удалось узнать/.test(commands),
   'неудача запроса баланса выглядит как остаток — человек пойдёт пополнять счёт, на котором деньги есть',
 )
-must(
-  /`нет \$\{missing\.join\(', '\)\}/.test(wiring),
-  'проверка зависимостей перестала называть недостающий ключ',
-)
+// Проверку «называет ли отказ недостающий ключ» теперь несёт контракт про подсказки в /health ниже:
+// там же сверяется и файл, в который этот ключ класть.
 
 // Выгрузка сессии не выносит аргументы вызовов: файл легко уходит в чат, а в аргументах телефоны.
 must(
@@ -292,6 +308,103 @@ must(
 must(
   /connectMcpServers\(/.test(nemo),
   'MCP-серверы перестали подключаться при старте',
+)
+
+// ─── Браузер доступен ─────────────────────────────────────────────────────────────────────────────
+//
+// Поля engine в мосте не было вовсе, а точка входа писала `browser.fallback ? browser.engine :
+// undefined` — то есть браузерные инструменты не регистрировались НИКОГДА, включая SDR_BROWSER=1.
+// Модель отвечала «у меня нет такого инструмента» на прямую просьбу открыть сайт, и по коду это
+// выглядело настройкой, а не поломкой.
+
+must(
+  /engine: BrowserEngine \| null/.test(bridge),
+  'мост снова не отдаёт движок — браузерные инструменты перестанут регистрироваться',
+)
+must(
+  /browserEngine: browser\.engine/.test(nemo),
+  'точка входа снова добывает движок окольным путём',
+)
+must(
+  !/browser\.fallback \? browser\.engine/.test(nemo),
+  'вернулось условие, из-за которого движок всегда оказывался undefined',
+)
+must(
+  /export function browserToolsAvailable/.test(bridge),
+  'исчезло автоопределение браузера: инструмент снова потребует ручного SDR_BROWSER=1',
+)
+must(
+  /if \(DISABLING_VALUES\.has\(setting\)\) return false/.test(bridge),
+  'SDR_BROWSER=0 перестал выключать браузер — отменить автоопределение стало нечем',
+)
+// Умолчание ОБОГАЩЕНИЯ не сдвинулось: браузер на каждой компании прогона стоит минуту вместо десяти
+// секунд, и это решение принимает владелец прогона.
+must(
+  /return ENABLING_VALUES\.has\(\(env\.SDR_BROWSER \?\? ''\)/.test(bridge),
+  'браузер стал включаться при обогащении по умолчанию — прогон подорожает в шесть раз',
+)
+for (const role of ['sdr', 'qa']) {
+  const block = commands.slice(commands.indexOf(`\n  ${role}: {`), commands.indexOf(`\n  ${role}: {`) + 900)
+  must(/browser_navigate_and_extract/.test(block), `роль ${role} не видит браузер`)
+}
+
+// ─── Очистка строки перед рамкой ──────────────────────────────────────────────────────────────────
+
+must(
+  /export const CLEAR_LINE/.test(ui) && /\[2K/.test(ui),
+  'исчезла очистка строки: ход поиска снова налезет на левую границу рамки',
+)
+must(
+  /silenceSpinner\(\)\n\s*write\(CLEAR_LINE\)/.test(ui),
+  'спиннер гасится не перед очисткой — остаётся окно в 80 мс, в которое он пишет снова',
+)
+must(
+  /String\.fromCharCode\(27\)/.test(uiFull),
+  'байт ESC записан литералом — его уже трижды теряли при правках, и строка молча переставала стирать',
+)
+
+// ─── Аудит ────────────────────────────────────────────────────────────────────────────────────────
+
+must(
+  /critical: 40/.test(qaRunner),
+  'вес критической находки снижен: отчёт с высокой оценкой на сломанном сайте даёт основание не смотреть',
+)
+must(
+  /ok: code === 0 && failed\.length === 0/.test(qaRunner),
+  'код возврата гейта перестал учитываться — падение до первого шага объявится успехом',
+)
+must(
+  /linksChecked/.test(qaRunner) && /НЕ проверялись/.test(qaRunnerFull),
+  'из отчёта пропало различие «не проверялось» и «проверено, чисто»',
+)
+must(
+  /safeOrigin\(one\) === origin/.test(qaRunner),
+  'обход ссылок вышел за свой домен — это всплеск запросов к чужим серверам с одной машины',
+)
+must(
+  /const critical = findings\.some/.test(qaRunner),
+  'снимок делается не только при критической находке — диск засорится картинками',
+)
+must(
+  /timeoutMs: 180_000/.test(qaRunner),
+  'у аудита снова стандартный таймаут реестра — обход ссылок не успеет',
+)
+must(pkg.scripts?.['test:qa'], 'проверки аудита не подключены к гейту')
+must(pkg.scripts?.['test:qa-live'], 'исчез сквозной прогон аудита на настоящем браузере')
+
+// ─── Подсказки в /health ──────────────────────────────────────────────────────────────────────────
+
+must(
+  /задайте \$\{missing\.join\(', '\)\} в \$\{SECRETS_FILE\}/.test(wiring),
+  'из /health пропало имя файла, куда класть ключи',
+)
+must(
+  /видеорендер отключён/.test(wiring),
+  'про ffmpeg снова говорится «spawn ENOENT» без последствия — это ничего не сообщает',
+)
+must(
+  /loadLocalEnv\(repoRoot\)/.test(nemo),
+  'автозагрузка .secrets.local при старте пропала',
 )
 
 if (failures.length) {

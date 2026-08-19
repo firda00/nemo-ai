@@ -78,6 +78,14 @@ export function probeBinary(
   })
 }
 
+/**
+ * Файл, куда класть ключи.
+ *
+ * Названием, а не описанием: «настройте окружение» отправляет искать, где это окружение задаётся, а
+ * `.secrets.local` — прямо в нужный файл. Он же первый в списке автозагрузки при старте.
+ */
+export const SECRETS_FILE = '.secrets.local'
+
 export interface HealthCheck { name: string; ok: boolean; detail: string }
 
 /**
@@ -96,8 +104,9 @@ export async function collectHealth(
     return {
       name,
       ok: missing.length === 0,
-      // Отказ называет НЕДОСТАЮЩИЙ КЛЮЧ. «Не настроен» без имени переменной заставляет читать код.
-      detail: missing.length === 0 ? 'настроен' : `нет ${missing.join(', ')} — ${hint}`,
+      // Отказ называет НЕДОСТАЮЩИЙ КЛЮЧ И ФАЙЛ, куда его писать. «Не настроен» без имени переменной
+      // заставляет читать код; имя переменной без файла — искать, где этот файл вообще лежит.
+      detail: missing.length === 0 ? 'настроен' : `задайте ${missing.join(', ')} в ${SECRETS_FILE} — ${hint}`,
     }
   }
 
@@ -121,7 +130,13 @@ export async function collectHealth(
     configured('Telegram', ['SDR_TELEGRAM_BOT_TOKEN', 'SDR_TELEGRAM_MANAGER_CHAT_ID'], 'карточки не уходят'),
     configured('CRM', ['CRM_WEBHOOK_URL'], 'выгрузка в CRM отключена'),
     configured('Dragonfly', ['DRAGONFLY_URL'], 'очередь задач отключена'),
-    { name: 'FFmpeg', ...ffmpeg },
+    {
+      name: 'FFmpeg',
+      ok: ffmpeg.ok,
+      // Про ffmpeg говорим ПОСЛЕДСТВИЕ, а не только факт: «spawn ENOENT» ничего не сообщает тому,
+      // кто не знает, зачем в этом проекте ffmpeg.
+      detail: ffmpeg.ok ? ffmpeg.detail : `системный бинарник не найден (видеорендер отключён): ${ffmpeg.detail}`,
+    },
     {
       name: 'Browser',
       ok: chromium.ok && env.SDR_BROWSER !== 'off',

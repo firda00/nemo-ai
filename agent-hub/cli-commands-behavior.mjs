@@ -14,11 +14,14 @@
 import assert from 'node:assert/strict'
 import {
   AGENT_ROLES, COMMANDS, COMPACT_INSTRUCTION, DEFAULT_ROLE, LOCAL_MODEL_BASE, MODEL_ALIASES,
-  canonicalName, completeSlash, parseSlash, renderTranscript, resolveModel, runSlash,
+  canonicalName, completeSlash, extractEmailsFromText, extractPhones, parseSlash, renderTranscript,
+  resolveModel, runSlash,
 } from './cli/commands.ts'
 import { AgentSession, DEFAULT_AGENT_MODEL, createOpenRouterStream, setSessionRegistry } from './agent-runtime.ts'
 import { ToolRegistry, defineTool, restrictRegistry } from './tools/registry.ts'
 import { collectHealth, fetchBalance, probeBinary, toolBadges } from './cli/wiring.ts'
+import { browserFallbackEnabled, browserToolsAvailable, createBrowserBridge } from './tools/enrich-browser.ts'
+import { CLEAR_LINE, createRenderer } from './nemo-ui.mjs'
 import { z } from 'zod'
 
 let checks = 0
@@ -165,6 +168,79 @@ check(() => {
   }
 })
 check(() => assert.ok(AGENT_ROLES.sdr.tools.includes('telegram_send_lead'), 'роль sdr обязана уметь отправлять лид'))
+
+/*
+ * БРАУЗЕР ДОСТУПЕН ВО ВСЕХ РАБОЧИХ РОЛЯХ.
+ *
+ * Роль, сузившая набор и забывшая браузер, отвечает «у меня нет такого инструмента» на прямую просьбу
+ * открыть сайт — при установленном Playwright. Со стороны это неотличимо от поломки.
+ */
+check(() => {
+  for (const name of ['general', 'sdr', 'dev', 'qa']) {
+    const role = AGENT_ROLES[name]
+    assert.ok(
+      role.tools === null || role.tools.includes('browser_navigate_and_extract'),
+      `роль ${name} не видит браузер`,
+    )
+  }
+})
+
+// Проверка сужения на настоящем реестре, а не только на списке имён: список может быть верным, а
+// сужение — терять инструмент.
+check(() => {
+  const full = makeRegistry()
+  full.register(defineTool({
+    name: 'browser_navigate_and_extract', description: 'открыть страницу', permission: 'read_only',
+    parameters: z.object({ url: z.string() }), execute: async () => ({}),
+  }))
+  for (const name of ['general', 'sdr', 'dev', 'qa']) {
+    const narrowed = restrictRegistry(full, AGENT_ROLES[name].tools)
+    assert.ok(narrowed.has('browser_navigate_and_extract'), `после сужения роль ${name} потеряла браузер`)
+  }
+})
+
+/*
+ * БРАУЗЕРНЫЙ ИНСТРУМЕНТ ВКЛЮЧЁН ПО УМОЛЧАНИЮ, КОГДА PLAYWRIGHT УСТАНОВЛЕН.
+ *
+ * Это НЕ то же самое, что автоматический разбор браузером при обогащении лидов: там браузер открывает
+ * каждую компанию прогона и стоит минуту вместо десяти секунд, поэтому там умолчание «выключено».
+ * Инструмент открывает страницу только по просьбе — держать его выключенным значит отказывать на
+ * прямой запрос.
+ */
+check(() => {
+  assert.equal(browserToolsAvailable({}, () => true), true, 'установленный Playwright не включает инструмент')
+  assert.equal(browserToolsAvailable({}, () => false), false, 'инструмент включён без Playwright')
+  assert.equal(browserToolsAvailable({ SDR_BROWSER: '0' }, () => true), false, 'SDR_BROWSER=0 не выключает')
+  assert.equal(browserToolsAvailable({ SDR_BROWSER: 'off' }, () => true), false)
+  assert.equal(browserToolsAvailable({ SDR_BROWSER: '1' }, () => false), true, 'явное включение должно работать без автоопределения')
+  // Умолчание обогащения не сдвинулось: цена прогона осталась прежней.
+  assert.equal(browserFallbackEnabled({}), false, 'браузер стал включаться при обогащении по умолчанию')
+})
+
+/*
+ * МОСТ ОТДАЁТ ДВИЖОК ОТДЕЛЬНО ОТ ОБОГАЩЕНИЯ.
+ *
+ * Поля engine в мосте не было вовсе, а вызывающий код писал `browser.fallback ? browser.engine :
+ * undefined` — то есть браузерные инструменты не регистрировались НИКОГДА, включая SDR_BROWSER=1.
+ * Модель отвечала, что такого инструмента у неё нет, и по коду это выглядело настройкой, а не поломкой.
+ */
+await checkAsync(async () => {
+  const fake = { harvest: async () => ({}), screenshot: async () => new Uint8Array(), close: async () => {} }
+  const bridge = createBrowserBridge({ env: {}, tools: true, engine: fake })
+  assert.ok(bridge.engine, 'мост не отдаёт движок для инструментов')
+  assert.equal(bridge.fallback, null, 'обогащение включилось само по себе')
+  await bridge.close()
+
+  const both = createBrowserBridge({ env: { SDR_BROWSER: '1' }, engine: fake })
+  assert.ok(both.engine, 'при явном включении движка тоже нет')
+  assert.ok(both.fallback, 'при SDR_BROWSER=1 обогащение должно работать')
+  await both.close()
+
+  const neither = createBrowserBridge({ env: { SDR_BROWSER: '0' }, engine: fake })
+  assert.equal(neither.engine, null, 'SDR_BROWSER=0 оставил движок')
+  assert.equal(neither.fallback, null)
+  await neither.close()
+})
 check(() => {
   for (const [name, role] of Object.entries(AGENT_ROLES)) {
     assert.equal(role.name, name, `роль ${name} названа внутри иначе`)
@@ -246,6 +322,7 @@ function deps(session, overrides = {}) {
     balance: async () => ({ ok: true, text: 'остаток $4.20' }),
     summarize: async () => 'Искали клиники и кофейни, нашли 12 и 4.',
     writeExport: async (name) => `/tmp/${name}`,
+    runQa: async () => ({ lines: ['  здоровье 100%'] }),
     ...overrides,
   }
 }
@@ -458,16 +535,102 @@ await checkAsync(async () => {
 
 // ─── /browse и /scrape ────────────────────────────────────────────────────────────────────────────
 
+/** Реестр с браузером и заглушкой страницы. */
+const PAGE = {
+  finalUrl: 'https://example.com/', title: 'Клиника Смайл', status: 200,
+  text: 'Стоматология в Ташкенте. Запись онлайн.',
+  messengers: [{ kind: 'telegram', url: 'https://t.me/smile' }],
+  bookingWidgets: ['yclients'], emails: ['hi@smile.uz'], phones: ['+998712000000'],
+}
+function browsingDeps(session, page = PAGE, overrides = {}) {
+  const registry = makeRegistry()
+  registry.register(defineTool({
+    name: 'browser_navigate_and_extract', description: 'открыть страницу', permission: 'read_only',
+    parameters: z.object({ url: z.string() }), execute: async () => page,
+  }))
+  const called = []
+  return {
+    ...deps(session),
+    registry,
+    runTool: async (name, args) => {
+      called.push(`${name}:${args.url}`)
+      return { ok: true, name, result: page, durationMs: 12 }
+    },
+    called,
+    ...overrides,
+  }
+}
+
+/*
+ * `/browse` ВЫПОЛНЯЕТ, а не просит модель выполнить.
+ *
+ * Раньше команда превращалась в фразу «открой такой-то адрес», и дальше всё зависело от того, решит ли
+ * модель звать инструмент. Она регулярно решала иначе — отвечала по памяти или уточняла задачу, — и
+ * команда, названная прямой, вела себя как намёк.
+ */
 await checkAsync(async () => {
-  const result = await run(seededSession(), '/browse https://example.com')
-  assert.equal(result.kind, 'prompt')
-  assert.ok(result.text.includes('https://example.com'))
+  const session = seededSession()
+  const browseDeps = browsingDeps(session)
+  const result = await runSlash(parseSlash('/browse https://example.com'), browseDeps)
+  assert.equal(result.kind, 'lines')
+  assert.deepEqual(browseDeps.called, ['browser_navigate_and_extract:https://example.com'], 'страница не открывалась')
+  assert.ok(result.lines.some((one) => one.includes('Клиника Смайл')), 'не показан заголовок')
+  assert.ok(result.lines.some((one) => one.includes('telegram')), 'не показаны мессенджеры')
+  assert.ok(result.lines.some((one) => one.includes('yclients')), 'не показаны виджеты записи')
 })
+
+/*
+ * РЕЗУЛЬТАТ ПОПАДАЕТ В КОНТЕКСТ — И ПРАВИЛЬНОЙ ПАРОЙ РЕПЛИК.
+ *
+ * Без записи в историю следующий вопрос «а что там про запись онлайн?» модель встретит с пустыми
+ * руками и либо переспросит, либо выдумает. А запись одной репликой вместо пары нарушила бы протокол:
+ * ответ инструмента без заказавшего его вызова отвергается вместе со всем следующим запросом.
+ */
 await checkAsync(async () => {
-  const result = await run(seededSession(), '/scrape https://example.com')
-  assert.equal(result.kind, 'prompt')
-  assert.ok(/JSON/.test(result.text))
-  assert.ok(/[Нн]ичего не выдумывай/.test(result.text), 'извлечение без запрета выдумывать даст выдуманные телефоны')
+  const session = seededSession()
+  const before = session.messages.length
+  await runSlash(parseSlash('/browse https://example.com'), browsingDeps(session))
+  assert.equal(session.messages.length, before + 2, 'в историю попала не пара реплик')
+  assert.deepEqual(historyFaults(session.messages), [], 'запись прямого вызова повредила историю')
+  const tool = session.messages.at(-1)
+  assert.equal(tool.role, 'tool')
+  assert.ok(tool.content.includes('Клиника Смайл'), 'модель не увидит содержимое страницы')
+  assert.equal(session.messages.at(-2).tool_calls[0].id, tool.tool_call_id, 'ссылка вызова и ответа не совпала')
+})
+
+// Неудача тоже попадает в историю: модель должна знать, что страница не открылась, иначе на следующий
+// вопрос ответит по памяти, как будто открылась.
+await checkAsync(async () => {
+  const session = seededSession()
+  const failing = browsingDeps(session, PAGE, {
+    runTool: async () => ({ ok: false, name: 'browser_navigate_and_extract', code: 'timeout', error: 'сайт не ответил за 20 с', durationMs: 20_000 }),
+  })
+  const result = await runSlash(parseSlash('/browse https://example.com'), failing)
+  assert.ok(result.lines[0].includes('не ответил'))
+  assert.deepEqual(historyFaults(session.messages), [])
+  assert.ok(session.messages.at(-1).content.includes('"ok":false'))
+})
+
+// Без браузера команда говорит, ЧТО поставить, а не просто «недоступно».
+await checkAsync(async () => {
+  const session = seededSession()
+  const result = await runSlash(parseSlash('/browse https://example.com'), { ...deps(session), runTool: undefined })
+  assert.ok(result.lines[0].includes('браузер недоступен'))
+  assert.ok(result.lines.some((one) => one.includes('playwright install')), 'отказ без способа починить бесполезен')
+})
+
+await checkAsync(async () => {
+  const session = seededSession()
+  const result = await runSlash(parseSlash('/scrape https://example.com'), browsingDeps(session))
+  const json = JSON.parse(result.lines.join('\n'))
+  assert.equal(json.title, 'Клиника Смайл')
+  assert.deepEqual(json.phones, ['+998712000000'])
+  assert.deepEqual(json.booking_widgets, ['yclients'])
+  // Пустой список честнее выдуманного значения: чего на странице нет, того нет.
+  const bare = await runSlash(parseSlash('/scrape https://example.com'), browsingDeps(seededSession(), { text: '', title: '' }))
+  const bareJson = JSON.parse(bare.lines.join('\n'))
+  assert.deepEqual(bareJson.phones, [])
+  assert.deepEqual(bareJson.messengers, [])
 })
 // Схему НЕ подставляем молча: однажды это отправит агента не туда, куда просили.
 await checkAsync(async () => {
@@ -693,6 +856,164 @@ await checkAsync(async () => {
   assert.equal(result.ok, false)
   assert.ok(result.detail.includes('не ответил'), result.detail)
   assert.ok(Date.now() - started >= 2_900, 'таймаут сработал раньше срока')
+})
+
+// ─── Контакты из текста страницы ──────────────────────────────────────────────────────────────────
+
+/*
+ * ТЕЛЕФОНЫ ИЩУТСЯ, А НЕ ОБЪЯВЛЯЮТСЯ ОТСУТСТВУЮЩИМИ.
+ *
+ * Браузерный инструмент собирает текст, мессенджеры и виджеты записи, но не телефоны. Вернуть
+ * `phones: []` на этом основании значило бы сказать «телефонов на странице нет», хотя их никто не
+ * искал, — та же тишина о непроверенном, которая делает отчёт хуже его отсутствия.
+ */
+check(() => {
+  const found = extractPhones('Звоните: +998 71 200-00-00 или +998901234567')
+  assert.deepEqual(found, ['+998712000000', '+998901234567'])
+})
+check(() => assert.deepEqual(extractPhones('тел. 712000000'), ['712000000'], 'национальный номер без кода страны потерян'))
+check(() => assert.deepEqual(extractPhones(''), []))
+
+/*
+ * ДЛИННЫЕ ЧИСЛА — НЕ ТЕЛЕФОНЫ.
+ *
+ * Пятнадцать цифр — предел E.164. Без этой границы двадцатидвузначный артикул товара попадал в список
+ * телефонов, и человек звонил по номеру, которого не существует. Именно это и случилось на первом
+ * прогоне извлекателя.
+ */
+check(() => {
+  const text = 'Артикул 1234567890123456789012, цена 4 500 000 сум, год 2026, карта 4111111111111111'
+  assert.deepEqual(extractPhones(text), [], `в телефоны попало лишнее: ${extractPhones(text).join(', ')}`)
+})
+// Год и цена короче нижней границы и отсеиваются сами.
+check(() => assert.deepEqual(extractPhones('в 2026 году, 4 500 000 сум'), []))
+// Плюс впереди не делает число телефоном: граница E.164 действует и для международной записи, иначе
+// её проверяет только ветка без плюса, а вторая остаётся без присмотра.
+check(() => assert.deepEqual(extractPhones('код +12345678901234567890 в документации'), []))
+check(() => assert.deepEqual(extractPhones('+998712000000'), ['+998712000000'], 'настоящий номер отсеян границей'))
+
+check(() => assert.deepEqual(extractEmailsFromText('Пишите: HI@Klinika.UZ.'), ['hi@klinika.uz']))
+check(() => assert.deepEqual(extractEmailsFromText('без почты'), []))
+// Повторы схлопываются: один и тот же адрес в шапке и подвале — это один адрес.
+check(() => assert.deepEqual(extractEmailsFromText('a@b.uz и снова a@b.uz'), ['a@b.uz']))
+
+// ─── /qa ──────────────────────────────────────────────────────────────────────────────────────────
+
+await checkAsync(async () => {
+  const session = seededSession()
+  const seen = []
+  const qaDeps = { ...deps(session), runQa: async (target) => { seen.push(target); return { lines: ['  здоровье 42%'] } } }
+  const site = await runSlash(parseSlash('/qa https://example.com'), qaDeps)
+  assert.deepEqual(seen[0], { kind: 'site', url: 'https://example.com' })
+  assert.ok(site.lines[0].includes('42%'))
+
+  for (const word of ['code', 'local', 'repo']) {
+    await runSlash(parseSlash(`/qa ${word}`), qaDeps)
+    assert.deepEqual(seen.at(-1), { kind: 'code' }, `«${word}» не распознано как аудит репозитория`)
+  }
+})
+// Ни адрес, ни «code» — отказ вслух: молча запустить не то, что просили, дороже отказа.
+await checkAsync(async () => {
+  const result = await run(seededSession(), '/qa какая-то-ерунда')
+  assert.ok(result.lines[0].includes('code'), result.lines[0])
+})
+// Сборка без аудита говорит об этом прямо, а не молчит.
+await checkAsync(async () => {
+  const session = seededSession()
+  const result = await runSlash(parseSlash('/qa code'), { ...deps(session), runQa: undefined })
+  assert.ok(result.lines[0].includes('недоступен'))
+})
+await checkAsync(async () => {
+  const result = await run(seededSession(), '/qa')
+  assert.ok(result.lines.some((one) => one.includes('https://')))
+  assert.ok(result.lines.some((one) => one.includes('code')))
+})
+
+// ─── Отрисовка: строка отбирается у спиннера ──────────────────────────────────────────────────────
+
+/*
+ * СПИННЕР ГАСИТСЯ ДО ОЧИСТКИ, А НЕ ПОСЛЕ.
+ *
+ * Спиннер перерисовывает свою строку по таймеру каждые 80 мс и не знает, что мы собираемся печатать
+ * рамку. Стереть строку, не погасив его, — оставить окно, в которое он успевает написать снова: именно
+ * так строка хода поиска налезала на левую границу плашки вызова инструмента.
+ */
+check(() => {
+  const order = []
+  const renderer = createRenderer(
+    (text) => { if (text.includes(CLEAR_LINE)) order.push('стёрли') },
+    () => order.push('погасили'),
+  )
+  renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: {}, step: 1 })
+  assert.deepEqual(order, ['погасили', 'стёрли'], `порядок: ${order.join(' → ')}`)
+})
+
+check(() => {
+  let out = ''
+  const renderer = createRenderer((text) => { out += text }, () => {})
+  renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: { query: 'кофейни' }, step: 1 })
+  assert.ok(out.startsWith(CLEAR_LINE), 'строка не очищена перед рамкой')
+  assert.ok(out.includes('⚙ Вызов инструмента'))
+})
+
+// Нижнюю границу рамки затирает тот же спиннер, если инструмент зажёг свой во время работы.
+check(() => {
+  const order = []
+  const renderer = createRenderer(
+    (text) => { if (text.includes(CLEAR_LINE)) order.push('стёрли') },
+    () => order.push('погасили'),
+  )
+  renderer.onEvent({ type: 'tool_end', name: 'search_leads', outcome: { ok: true, name: 'x', result: {}, durationMs: 1 }, step: 1 })
+  assert.deepEqual(order, ['погасили', 'стёрли'])
+})
+
+/*
+ * ПОСЛЕ ИТОГА — ПУСТАЯ СТРОКА.
+ *
+ * Модель начинает писать ответ сразу после закрытия рамки. Без отбивки первое слово ответа
+ * приклеивается к нижней границе, и рамка выглядит незакрытой.
+ */
+check(() => {
+  let out = ''
+  const renderer = createRenderer((text) => { out += text }, () => {})
+  renderer.onEvent({ type: 'tool_end', name: 'x', outcome: { ok: true, name: 'x', result: {}, durationMs: 1 }, step: 1 })
+  assert.ok(out.endsWith('\n\n'), 'нет отбивки между рамкой и текстом модели')
+})
+
+/*
+ * ОЧИСТКА НЕ СТИРАЕТ СОБСТВЕННЫЙ ТЕКСТ МОДЕЛИ.
+ *
+ * Стирание убирает ВСЁ, что написано на текущей строке, — включая только что выданный потоком ответ,
+ * ещё не закрытый переводом строки. Порядок обязан быть обратным очевидному: сначала закрыть свой
+ * текст, сохранив его, и только потом стирать. Обратный порядок стирал последнюю строку ответа с
+ * экрана, и выглядело это как будто модель её не написала.
+ */
+check(() => {
+  let out = ''
+  const renderer = createRenderer((text) => { out += text }, () => {})
+  renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
+  renderer.onEvent({ type: 'tool_start', name: 'x', args: {}, step: 1 })
+  const newlineAt = out.indexOf('\n')
+  const clearedAt = out.indexOf(CLEAR_LINE)
+  assert.ok(newlineAt >= 0 && clearedAt >= 0, 'ни перевода строки, ни очистки')
+  assert.ok(newlineAt < clearedAt, 'строка стёрта раньше, чем текст модели закрыт — текст исчезнет с экрана')
+})
+
+// Текст, шедший до рамки, закрывается переводом строки: иначе рамка встаёт посреди предложения.
+check(() => {
+  let out = ''
+  const renderer = createRenderer((text) => { out += text }, () => {})
+  renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
+  renderer.onEvent({ type: 'tool_start', name: 'x', args: {}, step: 1 })
+  assert.ok(out.includes('Сейчас поищу.'), 'текст пропал')
+  assert.ok(/Сейчас поищу\.[^…]*\n/.test(out), 'после текста нет перевода строки')
+})
+
+// Очистка — это возврат каретки И стирание. Один возврат каретки оставляет хвост прежней, более
+// длинной строки справа от новой — ровно то, что и наблюдалось.
+check(() => {
+  assert.ok(CLEAR_LINE.startsWith('\r'), 'нет возврата каретки')
+  assert.ok(CLEAR_LINE.includes(`${String.fromCharCode(27)}[2K`), 'нет стирания строки')
 })
 
 console.log(`[OK] CLI slash commands: ${checks} assertions`)

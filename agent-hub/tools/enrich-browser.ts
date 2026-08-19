@@ -8,6 +8,7 @@
 // граница прав — то есть браузер вызывается ровно на тех условиях, что и любой другой инструмент
 // агента. Прямой вызов движка обошёл бы всё это, и первый же зависший сайт остановил бы прогон.
 
+import { createRequire } from 'node:module'
 import { ToolRegistry } from './registry.ts'
 import { PlaywrightEngine, registerBrowserTools } from './browser.ts'
 import type { BrowserEngine } from './browser.ts'
@@ -31,9 +32,62 @@ export function browserFallbackEnabled(env: Record<string, string | undefined> =
   return ENABLING_VALUES.has((env.SDR_BROWSER ?? '').trim().toLowerCase())
 }
 
+/**
+ * Установлен ли Playwright.
+ *
+ * Разрешением модуля, а не запуском `npx playwright --version`: `.cmd` на Windows Node отказывается
+ * запускать без оболочки, а с оболочкой аргументы не экранируются. Разрешение отвечает на тот же
+ * вопрос мгновенно и без подпроцесса.
+ */
+export function playwrightInstalled(resolve?: (id: string) => string): boolean {
+  try {
+    const resolver = resolve ?? createRequire(import.meta.url).resolve
+    resolver('playwright')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Значения, выключающие браузер явно. Нужны, чтобы отменить автоопределение. */
+const DISABLING_VALUES = new Set(['0', 'off', 'false', 'no'])
+
+/**
+ * Доступен ли БРАУЗЕРНЫЙ ИНСТРУМЕНТ агента.
+ *
+ * Это НЕ то же самое, что `browserFallbackEnabled`, и разница существенная.
+ *
+ * Обогащение открывает браузером КАЖДУЮ компанию прогона: пятьдесят компаний, половина из них SPA —
+ * минута вместо десяти секунд. Такое решение принимает владелец прогона, поэтому там умолчание
+ * «выключено».
+ *
+ * Инструмент агента открывает страницу ТОЛЬКО когда человек попросил. Держать его выключенным по
+ * умолчанию значит отвечать «у меня нет такого инструмента» на прямую просьбу открыть сайт — при
+ * установленном Playwright. Поэтому здесь умолчание «включено, если пакет установлен», а
+ * `SDR_BROWSER=0` по-прежнему выключает всё.
+ */
+export function browserToolsAvailable(
+  env: Record<string, string | undefined> = process.env,
+  installed: () => boolean = playwrightInstalled,
+): boolean {
+  const setting = (env.SDR_BROWSER ?? '').trim().toLowerCase()
+  if (DISABLING_VALUES.has(setting)) return false
+  if (ENABLING_VALUES.has(setting)) return true
+  return installed()
+}
+
 export interface BrowserBridge {
   /** Передаётся в WebEnricher третьим аргументом. null — обогащение работает как раньше. */
   fallback: BrowserFallback | null
+  /**
+   * Движок для инструментов агента. null — Playwright не установлен или браузер выключен.
+   *
+   * ОТДЕЛЬНО ОТ fallback намеренно. Раньше вызывающий код писал `browser.fallback ? browser.engine :
+   * undefined`, а поля `engine` в мосте не было вовсе — то есть браузерные инструменты не
+   * регистрировались НИКОГДА, включая режим SDR_BROWSER=1. Модель на просьбу открыть сайт отвечала,
+   * что такого инструмента у неё нет, и по коду это выглядело как настройка, а не как поломка.
+   */
+  engine: BrowserEngine | null
   /** Сколько раз браузер реально понадобился. Нужно, чтобы видеть цену прогона. */
   stats: () => { calls: number; blocked: number; failures: number }
   /** Закрыть браузер. Вызывать ОБЯЗАТЕЛЬНО, иначе Chromium останется зомби-процессом. */
@@ -48,18 +102,33 @@ export interface BrowserBridge {
  */
 export function createBrowserBridge(options: {
   enabled?: boolean
+  /** Регистрировать ли инструменты агента. Умолчание — по наличию Playwright. */
+  tools?: boolean
   engine?: BrowserEngine
   registry?: ToolRegistry
   env?: Record<string, string | undefined>
 } = {}): BrowserBridge {
-  const enabled = options.enabled ?? browserFallbackEnabled(options.env)
-  if (!enabled) {
-    return { fallback: null, stats: () => ({ calls: 0, blocked: 0, failures: 0 }), close: async () => {} }
+  // Два РАЗНЫХ решения: открывать ли браузером каждую компанию прогона (дорого, по умолчанию нет) и
+  // давать ли агенту инструмент открыть страницу по просьбе (дёшево, по умолчанию да).
+  const fallbackEnabled = options.enabled ?? browserFallbackEnabled(options.env)
+  const toolsEnabled = options.tools ?? (fallbackEnabled || browserToolsAvailable(options.env))
+
+  if (!fallbackEnabled && !toolsEnabled) {
+    return {
+      fallback: null, engine: null,
+      stats: () => ({ calls: 0, blocked: 0, failures: 0 }), close: async () => {},
+    }
   }
 
   const registry = options.registry ?? new ToolRegistry()
   const engine = options.engine ?? new PlaywrightEngine()
   const { close } = registerBrowserTools(registry, engine)
+
+  // Браузер выключен для обогащения, но инструмент нужен: движок есть, автоматического использования
+  // нет. Именно это различение и было потеряно.
+  if (!fallbackEnabled) {
+    return { fallback: null, engine, stats: () => ({ calls: 0, blocked: 0, failures: 0 }), close }
+  }
 
   let calls = 0
   let blocked = 0
@@ -90,5 +159,5 @@ export function createBrowserBridge(options: {
     return bridged
   }
 
-  return { fallback, stats: () => ({ calls, blocked, failures }), close }
+  return { fallback, engine, stats: () => ({ calls, blocked, failures }), close }
 }

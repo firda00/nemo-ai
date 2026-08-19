@@ -43,6 +43,7 @@ $steps = @(
   @{ Name = 'Agent loop contracts'; Command = { npm run test:agent-loop } },
   @{ Name = 'Agent loop behaviour'; Command = { npm run test:agent } },
   @{ Name = 'CLI slash commands and roles'; Command = { npm run test:cli-commands } },
+  @{ Name = 'QA runner and site audit'; Command = { npm run test:qa } },
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
   @{ Name = 'Voice pipeline: codec, VAD, barge-in, analytics'; Command = { npm run test:voice } },

@@ -183,6 +183,28 @@ export class AgentSession {
     else this.messages[at] = { role: 'system', content: prompt }
   }
 
+  /**
+   * Записать в историю вызов инструмента, сделанный НЕ моделью.
+   *
+   * Нужно для команд вроде `/browse <url>`: человек вызвал инструмент напрямую, минуя модель, но
+   * результат обязан попасть в контекст — иначе следующий вопрос «а что там про запись онлайн?»
+   * модель встретит с пустыми руками и либо переспросит, либо выдумает.
+   *
+   * Обе реплики кладутся ВМЕСТЕ и только вместе. Реплика с вызовом без ответа и ответ без вызова
+   * одинаково отвергаются провайдером — причём не сейчас, а на следующем запросе, когда связь с
+   * командой уже не видна.
+   */
+  recordToolCall(name: string, args: Record<string, unknown>, content: string): void {
+    const id = `manual_${name}_${this.messages.length}`
+    this.messages.push({
+      role: 'assistant',
+      // Пояснение, а не пустота: без него в выгрузке сессии видно вызов, взявшийся ниоткуда.
+      content: `(вызов ${name} по прямой команде человека)`,
+      tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
+    })
+    this.messages.push({ role: 'tool', tool_call_id: id, name, content })
+  }
+
   /** Сменить модель: поток строится вызывающей стороной, сессия лишь принимает новый. */
   setStream(stream: AgentDeps['stream']): void {
     ;(this.deps as { stream: AgentDeps['stream'] }).stream = stream

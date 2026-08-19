@@ -29,6 +29,7 @@ import { z } from 'zod'
 import { defineTool, type ToolDefinition } from './registry.ts'
 import { ToolRegistry } from './registry.ts'
 import { buildNavigateAndExtractTool, buildScreenshotTool, type BrowserEngine } from './browser.ts'
+import { buildQaAuditTool, type QaProbe } from './qa-runner.ts'
 
 // ── search_leads ──────────────────────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,10 @@ export interface PlatformToolDeps {
   sendCard?: Parameters<typeof buildTelegramSendTool>[0]['sendCard']
   syncLead?: Parameters<typeof buildCrmSyncTool>[0]['syncLead']
   render?: Parameters<typeof buildRenderVideoTool>[0]['render']
+  /** Зонд аудита. Отдельно от browserEngine: аудиту нужны консоль и сеть, которых нет у движка. */
+  qaProbe?: QaProbe
+  qaScreenshotDir?: string
+  qaWriteFile?: (path: string, data: Uint8Array) => Promise<void>
   exportDirectory?: string
 }
 
@@ -271,6 +276,16 @@ export function buildPlatformRegistry(deps: PlatformToolDeps): { registry: ToolR
 
   if (deps.render) registry.register(buildRenderVideoTool({ render: deps.render }))
   else skipped.push('render_video_pitch (нет ffmpeg или он непригоден)')
+
+  // Аудит доступен и МОДЕЛИ, а не только команде /qa. Иначе на «проверь, почему сайт клиента тормозит»
+  // модель отвечает пересказом общих советов вместо замеров: инструмент есть, но он ей не показан.
+  if (deps.qaProbe) {
+    registry.register(buildQaAuditTool({
+      probe: deps.qaProbe,
+      screenshotDir: deps.qaScreenshotDir,
+      writeFile: deps.qaWriteFile,
+    }))
+  } else skipped.push('run_qa_audit (нет браузера для аудита)')
 
   registry.register(buildFsExportTool({ directory: deps.exportDirectory ?? process.cwd() }))
 
