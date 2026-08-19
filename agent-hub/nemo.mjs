@@ -23,6 +23,7 @@ import { createRenderer, confirmationPrompt } from './nemo-ui.mjs'
 import {
   AGENT_ROLES, COMPACT_INSTRUCTION, DEFAULT_ROLE, LOCAL_MODEL_BASE, completeSlash, parseSlash, runSlash,
 } from './cli/commands.ts'
+import { missionFor } from './cli/roles.ts'
 import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
 import { INPUT_PROMPT, estimateHistoryTokens, footerHints, hudLine, userLine } from './cli/hud.ts'
 
@@ -175,7 +176,7 @@ const ask = new Ask(undefined, undefined, {
 })
 
 const session = new AgentSession(
-  buildAgentSystemPrompt({ toolNames: fullRegistry.names(), hasConfirm: true, mission: role.mission }),
+  buildAgentSystemPrompt({ toolNames: fullRegistry.names(), hasConfirm: true, mission: missionFor(role) }),
   {
     registry: fullRegistry,
     stream: buildStream(),
@@ -228,7 +229,7 @@ function applyRole(next) {
   const narrowed = restrictRegistry(fullRegistry, next.tools)
   setSessionRegistry(session, narrowed)
   session.setSystemPrompt(buildAgentSystemPrompt({
-    toolNames: narrowed.names(), hasConfirm: true, mission: next.mission,
+    toolNames: narrowed.names(), hasConfirm: true, mission: missionFor(next),
   }))
   return narrowed
 }

@@ -22,6 +22,7 @@ import { ToolRegistry, defineTool, restrictRegistry } from './tools/registry.ts'
 import { collectHealth, fetchBalance, probeBinary, toolBadges } from './cli/wiring.ts'
 import { browserFallbackEnabled, browserToolsAvailable, createBrowserBridge } from './tools/enrich-browser.ts'
 import { CLEAR_LINE, createRenderer } from './nemo-ui.mjs'
+import { PLATFORM_CONTEXT, missionFor } from './cli/roles.ts'
 import { z } from 'zod'
 
 let checks = 0
@@ -1137,6 +1138,68 @@ await checkAsync(async () => {
       `«${line}» вернула вид результата «${result.kind}» — он уйдёт в модель`,
     )
   }
+})
+
+// ─── Контекст платформы ───────────────────────────────────────────────────────────────────────────
+
+/*
+ * СПРАВКА О ПЛАТФОРМЕ ЕСТЬ У КАЖДОЙ РОЛИ.
+ *
+ * Роль без неё на вопрос «что такое Nemo AI» отвечает по своей узкой специальности — а спрашивают
+ * об этом чаще всего те, кто выбирает продукт.
+ */
+check(() => {
+  for (const [name, role] of Object.entries(AGENT_ROLES)) {
+    assert.ok(missionFor(role).includes(PLATFORM_CONTEXT), `роль ${name} осталась без справки о платформе`)
+  }
+})
+
+/*
+ * СПРАВКА ИДЁТ ПЕРЕД СПЕЦИАЛИЗАЦИЕЙ, А НЕ ВМЕСТО НЕЁ.
+ *
+ * Это тот же класс ошибки, что уже стоил одной поломки: общий текст, поставленный первым и не
+ * ограниченный, задаёт умолчание. Здесь он говорит, ЧАСТЬЮ ЧЕГО является агент, а специализация
+ * остаётся за ролью и идёт следом.
+ */
+check(() => {
+  const dev = missionFor(AGENT_ROLES.dev)
+  assert.ok(dev.indexOf(PLATFORM_CONTEXT) < dev.indexOf('старшего разработчика'), 'справка встала после роли')
+  assert.ok(dev.includes('Поиском клиентов ты не занимаешься'), 'специализация вытеснена справкой')
+})
+
+// Изоляция ролей сохранилась: справка о платформе не вернула поиск клиентов в неторговые роли.
+check(() => {
+  for (const name of ['dev', 'qa', 'media']) {
+    assert.ok(!AGENT_ROLES[name].tools.includes('search_leads'), `роль ${name} снова умеет искать компании`)
+    assert.ok(
+      /[Пп]оиском клиентов ты не занимаешься/.test(missionFor(AGENT_ROLES[name])),
+      `в роли ${name} пропал прямой отказ от поиска клиентов`,
+    )
+  }
+})
+
+/*
+ * О ЦЕНАХ И СРОКАХ СКАЗАНО НЕ СОЧИНЯТЬ.
+ *
+ * Выдуманная цена — это не мелкая неточность: по ней человек строит бюджет и приходит к продавцу с
+ * числом, которого никто не называл. Хуже того, узнаётся это на встрече.
+ */
+check(() => {
+  assert.ok(/не сочиняй/.test(PLATFORM_CONTEXT), 'нет запрета выдумывать цены и сроки')
+  assert.ok(/Ustudy IT/.test(PLATFORM_CONTEXT), 'не сказано, к кому отправлять за условиями')
+})
+
+// Возможности платформы названы: команды, память на своих данных, интеграции.
+check(() => {
+  for (const feature of ['команды', 'RAG', 'Telegram', 'CRM']) {
+    assert.ok(PLATFORM_CONTEXT.includes(feature), `в справке не названо: ${feature}`)
+  }
+})
+
+// Роль без своей специализации получает справку и ничего сверх неё — без пустых строк на конце.
+check(() => {
+  const bare = missionFor({ name: 'x', title: 'x', mission: '   ', tools: null })
+  assert.equal(bare, PLATFORM_CONTEXT)
 })
 
 console.log(`[OK] CLI slash commands: ${checks} assertions`)
