@@ -437,6 +437,8 @@ export function createOpenRouterStream(options: {
   fetchImpl?: typeof fetch
   /** Другой адрес совместимого API — например локальная Ollama. */
   baseUrl?: string
+  /** Сообщить израсходованные токены, когда модель их назвала. Не всякая называет. */
+  onUsage?: (usage: { promptTokens: number; completionTokens: number; totalTokens: number }) => void
 }): AgentDeps['stream'] {
   const model = options.model ?? DEFAULT_AGENT_MODEL
   const fetchImpl = options.fetchImpl ?? fetch
@@ -461,6 +463,9 @@ export function createOpenRouterStream(options: {
         stream: true,
         messages,
         ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+        // Просим сообщить израсходованные токены последним фрагментом. Без этого счётчик контекста
+        // остаётся оценкой по знакам, а оценка на кириллице ошибается в полтора раза.
+        stream_options: { include_usage: true },
         max_tokens: 2_000,
       }),
       signal,
@@ -484,13 +489,31 @@ export function createOpenRouterStream(options: {
         if (!trimmed.startsWith('data:')) continue
         const payload = trimmed.slice(5).trim()
         if (payload === '[DONE]') { yield { kind: 'done', reason: 'stop' }; return }
-        let parsed: { choices?: Array<{ delta?: Record<string, unknown>; finish_reason?: string | null }> }
+        let parsed: {
+          choices?: Array<{ delta?: Record<string, unknown>; finish_reason?: string | null }>
+          usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+        }
         try {
           parsed = JSON.parse(payload)
         } catch {
           // Обрывок JSON в потоке — не повод падать: следующая порция обычно приходит целой.
           continue
         }
+        /*
+         * Израсходованные токены приходят ОТДЕЛЬНЫМ фрагментом, у которого choices пустой.
+         *
+         * Это настоящее число от модели, а не наша оценка, и подменять его оценкой нельзя: разница
+         * между «~32k» и «32k» — это разница между догадкой и фактом, и человек принимает по ним
+         * разные решения о том, пора ли сжимать контекст.
+         */
+        if (parsed.usage && typeof parsed.usage.total_tokens === 'number') {
+          options.onUsage?.({
+            promptTokens: parsed.usage.prompt_tokens ?? 0,
+            completionTokens: parsed.usage.completion_tokens ?? 0,
+            totalTokens: parsed.usage.total_tokens,
+          })
+        }
+
         const choice = parsed.choices?.[0]
         const delta = choice?.delta as { content?: string; tool_calls?: Array<Record<string, unknown>> } | undefined
         if (delta?.content) yield { kind: 'text', delta: delta.content }

@@ -24,6 +24,7 @@ import {
   AGENT_ROLES, COMPACT_INSTRUCTION, DEFAULT_ROLE, LOCAL_MODEL_BASE, completeSlash, parseSlash, runSlash,
 } from './cli/commands.ts'
 import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
+import { INPUT_PROMPT, estimateHistoryTokens, footerHints, hudLine, userLine } from './cli/hud.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 const localEnv = loadLocalEnv(repoRoot)
@@ -136,11 +137,32 @@ let role = AGENT_ROLES[DEFAULT_ROLE]
 let model = process.env.NEMO_AGENT_MODEL ?? DEFAULT_AGENT_MODEL
 let localModel = false
 
+/*
+ * Израсходованные токены.
+ *
+ * null означает «модель не сообщала», и это НЕ то же самое, что ноль: в строке состояния такой случай
+ * показывается оценкой с пометкой «~». Локальные модели usage почти никогда не присылают.
+ */
+let usedTokens = null
+
 const buildStream = () => createOpenRouterStream({
   apiKey: process.env.OPENROUTER_API_KEY,
   model,
   baseUrl: localModel ? LOCAL_MODEL_BASE : undefined,
+  onUsage: (usage) => { usedTokens = usage.totalTokens },
 })
+
+/** Ширина окна. Терминал могут растянуть посреди сессии, поэтому спрашиваем каждый раз. */
+const width = () => Math.max(48, Math.min(process.stdout.columns || 80, 120))
+
+/** Строка состояния: заполненность контекста, роль, модель, готовность. */
+const printHud = (busyMs = null) => console.log(hudLine({
+  model: localModel ? `${model} (локально)` : model,
+  role: role.name,
+  usedTokens,
+  estimatedTokens: estimateHistoryTokens(session.messages),
+  busyMs,
+}, width()))
 
 const renderer = createRenderer()
 // Tab по слеш-команде показывает варианты. Обычная фраза не трогается: подсказка команд посреди
@@ -166,7 +188,7 @@ const session = new AgentSession(
     confirm: async (name, args) => {
       stopActiveSpinner()
       console.log(confirmationPrompt(name, args))
-      const answer = (await ask.line(`${c.magenta('❯')} `)).trim().toLowerCase()
+      const answer = (await ask.line(c.magenta(INPUT_PROMPT))).trim().toLowerCase()
       // Умолчание — ОТКАЗ. Enter на вопросе про отправку сообщения живому человеку не должен означать
       // согласие: цена ошибки здесь несимметрична.
       return ['д', 'да', 'y', 'yes', 'ага'].includes(answer)
@@ -341,8 +363,12 @@ console.log(dashboard({
 }))
 
 console.log('')
+printHud()
+console.log(footerHints())
+console.log('')
+
 for (;;) {
-  const input = (await ask.line(`${c.magenta('❯')} `)).trim()
+  const input = (await ask.line(c.magenta(INPUT_PROMPT))).trim()
   if (!input) continue
 
   /*

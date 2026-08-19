@@ -124,7 +124,8 @@
     "test:qa": "node --experimental-strip-types agent-hub/qa-behavior.mjs",
     "test:qa-live": "node --experimental-strip-types agent-hub/qa-live.mjs",
     "audit:licenses": "npx --yes license-checker --onlyAllow \"MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;0BSD;CC0-1.0;Python-2.0;BlueOak-1.0.0\" --excludePackages \"duck@0.1.12\" --excludePrivatePackages --production",
-    "test:tty": "node agent-hub/tty-suites.mjs"
+    "test:tty": "node agent-hub/tty-suites.mjs",
+    "test:hud": "node --experimental-strip-types agent-hub/hud-behavior.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -1,14 +1,19 @@
-// Отрисовка агентного цикла в терминале: рамки вызова инструментов и потоковый текст.
+// Отрисовка агентного цикла в терминале: бейджи вызовов и потоковый текст.
 //
 // ОТДЕЛЬНО ОТ ТОЧКИ ВХОДА, потому что это чистые функции над событиями: их проверяют сравнением строк,
 // а не запуском агента с настоящей моделью. Точка входа занимается подключениями и вводом.
 //
-// ГЛАВНОЕ ПРАВИЛО ФАЙЛА: рамка, которую открыли, обязана закрыться. Событие tool_start рисует верх
-// рамки, tool_end — низ с итогом. Пропущенное закрытие оставляет на экране висящий короб, и человек
-// не понимает, идёт работа или всё сломалось. Ровно это и случилось при первом прогоне, когда человек
-// отказывался подтвердить действие.
+// ЧТО ЗАМЕНИЛО РАМКИ. Каждый вызов инструмента рисовался коробом в четыре строки. На цепочке из пяти
+// вызовов экран занимали двадцать строк служебной графики, среди которых терялся ответ модели —
+// то есть единственное, ради чего всё это запускали. Теперь вызов — одна строка, и появляется она
+// ПОСЛЕ завершения, когда есть что сказать: имя, итог, время.
+//
+// ПОКА ВЫЗОВ ИДЁТ, крутится спиннер с именем инструмента. Он транзитный: строка стирается и на её
+// месте появляется бейдж. Это заодно снимает старую беду рамок — открытый короб, который некому
+// закрыть при раннем выходе.
 
-import { c, stopActiveSpinner, visibleWidth } from './tui.mjs'
+import { c, stopActiveSpinner, visibleWidth, Spinner } from './tui.mjs'
+import { groupSummary, thoughtBadge, toolBadge, shortUrl, GROUP_THRESHOLD } from './cli/hud.ts'
 
 // Байт ESC собирается из кода намеренно: литеральный символ escape в исходнике невидим, и его уже
 // трижды теряли при правках — строка молча переставала стирать, а бегущий текст оставался на экране.
@@ -18,23 +23,15 @@ const ESC = String.fromCharCode(27)
  * Стереть текущую строку целиком и вернуть каретку в начало.
  *
  * `\r` без стирания недостаточен: он лишь возвращает каретку, и остаток прежней, более длинной строки
- * виден справа от новой. Именно так строка хода поиска («автосервис та | ✓ найдено 3…») налезала на
- * левую границу рамки вызова инструмента.
+ * виден справа от новой.
  */
 export const CLEAR_LINE = `\r${ESC}[2K`
 
-/** Ширина рамки. Уже стандартных 80 колонок: терминал бывает узким, а перенос ломает рамку. */
-const BOX_WIDTH = 74
-
-/** Обрезка по ВИДИМОЙ ширине: цвет не занимает места на экране, но занимает в строке. */
-function fit(text, width) {
-  const visible = visibleWidth(text)
-  if (visible <= width) return text + ' '.repeat(width - visible)
-  // Обрезаем по знакам, пока видимая ширина не уложится: срез по .length разрежет escape-последова-
-  // тельность пополам и раскрасит весь остаток экрана.
-  let cut = text
-  while (visibleWidth(cut) > width - 1 && cut.length > 0) cut = cut.slice(0, -1)
-  return `${cut}…`
+/** Человеческие подписи частых полей. Незнакомое поле показывается своим именем — это не ошибка. */
+const LABELS = {
+  query: 'Ниша', city: 'Город', limit: 'Лимит', icp: 'Профиль клиента',
+  url: 'Адрес', leadName: 'Лид', phone: 'Телефон', website: 'Сайт',
+  score: 'Балл', format: 'Формат', filename: 'Файл', scenes: 'Сцены',
 }
 
 /** Значения аргументов одной строкой — то, что человек прочитает, не вчитываясь в JSON. */
@@ -52,62 +49,18 @@ export function formatArgs(args) {
   return parts.join(' | ') || 'без параметров'
 }
 
-/** Человеческие подписи частых полей. Незнакомое поле показывается своим именем — это не ошибка. */
-const LABELS = {
-  query: 'Ниша', city: 'Город', limit: 'Лимит', icp: 'Профиль клиента',
-  url: 'Адрес', leadName: 'Лид', phone: 'Телефон', website: 'Сайт',
-  score: 'Балл', format: 'Формат', filename: 'Файл', scenes: 'Сцены',
-}
-
-/** Верх рамки вызова. */
-export function toolBoxTop(name, args) {
-  const title = ` ⚙ Вызов инструмента: ${name} `
-  const dashes = Math.max(0, BOX_WIDTH - visibleWidth(title))
-  return [
-    c.dim(`┌${title}${'─'.repeat(dashes)}┐`),
-    `${c.dim('│')} ${fit(formatArgs(args), BOX_WIDTH - 2)} ${c.dim('│')}`,
-  ].join('\n')
-}
-
-/**
- * Низ рамки с итогом.
- *
- * Итог показывается ВСЕГДА, включая отказ и отклонение человеком. Молча закрытая рамка выглядит как
- * успешный вызов, и человек узнаёт правду из следующего ответа модели — если она о нём скажет.
- */
-export function toolBoxBottom(outcome) {
-  const mark = outcome.ok ? c.green('✓') : c.red('×')
-  const summary = outcome.ok ? summarize(outcome.result) : `${outcome.code}: ${outcome.error}`
-  const line = `${mark} ${summary} ${c.dim(`(${outcome.durationMs} мс)`)}`
-  return [
-    `${c.dim('│')} ${fit(line, BOX_WIDTH - 2)} ${c.dim('│')}`,
-    c.dim(`└${'─'.repeat(BOX_WIDTH)}┘`),
-  ].join('\n')
-}
-
-/**
- * Короткое описание результата.
- *
- * Не JSON целиком: результат поиска — это сотня килобайт, и вывалить их в терминал значит стереть
- * весь предыдущий разговор прокруткой. Модель получает полный результат, человек — суть.
- */
-export function summarize(result) {
-  if (result === null || result === undefined) return 'готово'
-  if (Array.isArray(result)) return `${result.length} записей`
-  if (typeof result !== 'object') return String(result).slice(0, 60)
-
-  const parts = []
-  const record = result
-  if (typeof record.found === 'number') parts.push(`найдено ${record.found}`)
-  if (Array.isArray(record.leads)) parts.push(`лидов ${record.leads.length}`)
-  if (typeof record.hot === 'number') parts.push(`горячих ${record.hot}`)
-  if (typeof record.path === 'string') parts.push(record.path)
-  if (typeof record.bytes === 'number') parts.push(`${record.bytes} байт`)
-  if (typeof record.textLength === 'number') parts.push(`текста ${record.textLength}`)
-  if (Array.isArray(record.messengers)) parts.push(`мессенджеров ${record.messengers.length}`)
-  if (record.sent === true) parts.push('отправлено')
-  if (record.synced === true) parts.push('выгружено')
-  return parts.join(', ') || 'готово'
+/** Что показывать в бегущей строке, пока инструмент работает. Коротко: строка живёт секунды. */
+export function runningLabel(name, args) {
+  // Город через разделитель, а не «в <город>»: подставлять предлог к имени в именительном падеже
+  // значит печатать «в Ташкент» — мелкая неряшливость, которую видно каждому носителю языка.
+  if (name === 'search_leads') return `Ищу ${args?.query ?? 'компании'}${args?.city ? ` · ${args.city}` : ''}`
+  if (name.startsWith('browser_')) return `Открываю ${shortUrl(String(args?.url ?? ''))}`
+  if (name === 'run_qa_audit') return `Проверяю ${shortUrl(String(args?.url ?? ''))}`
+  if (name === 'fs_export') return 'Сохраняю файл'
+  if (name === 'telegram_send_lead') return 'Отправляю карточку'
+  if (name === 'crm_sync_lead') return 'Пишу в CRM'
+  if (name === 'render_video_pitch') return 'Собираю ролик'
+  return name
 }
 
 /** Запрос подтверждения действия. Показывает ИМЕННО то, что будет сделано. */
@@ -123,65 +76,119 @@ export function confirmationPrompt(name, args) {
 /**
  * Подписчик на события агента, печатающий их в поток.
  *
- * Состояние всего одно — «печатали ли мы текст последним»: перед рамкой инструмента нужен перевод
- * строки, но только если до этого шёл текст. Без этого рамка приклеивается к последнему слову ответа.
+ * Состояние здесь минимальное и всё нужное: шёл ли текст последним (иначе бейдж приклеится к слову),
+ * когда начался ход (для «Думал N с») и что уже вызвали (для сводки цепочки).
  */
-export function createRenderer(write = (text) => process.stdout.write(text), silenceSpinner = stopActiveSpinner) {
+export function createRenderer(
+  write = (text) => process.stdout.write(text),
+  silenceSpinner = stopActiveSpinner,
+  /*
+   * Как заводить бегущую строку.
+   *
+   * ЗАВИСИМОСТЬЮ, а не прямым вызовом new Spinner(): спиннер по умолчанию пишет в process.stdout, а
+   * не в поток, переданный этому подписчику. В проверках, где вывод собирается в строку, он писал
+   * мимо — прямо в терминал того, кто запустил тесты, и в собранном выводе его не было вовсе.
+   */
+  makeSpinner = (label) => new Spinner().start(label),
+) {
   let textFlowing = false
+  let turnStartedAt = null
+  let thoughtShown = false
+  let calls = []
+  let spinner = null
+  let pendingArgs = new Map()
 
   /**
    * Освободить строку под собственный вывод.
    *
-   * Спиннер пишет по таймеру, а не по нашей команде: он перерисовывает СВОЮ строку каждые 80 мс и не
-   * знает, что мы собираемся печатать рамку. Пока он жив, следующий его тик затрёт первую строку
-   * рамки — именно это и происходило, когда ход поиска налезал на левую границу плашки.
-   *
-   * Поэтому сначала гасим таймер, и только потом стираем строку: обратный порядок оставляет окно в
-   * 80 мс, в которое спиннер успевает написать снова.
+   * Порядок обратный очевидному: стирание убирает ВСЁ на текущей строке, включая текст, который
+   * модель только что выдала потоком и который ещё не закрыт переводом строки. Сначала закрываем свой
+   * текст, потом стираем — на новой строке стирать уже нечего, кроме остатков спиннера.
    */
   const takeLine = () => {
     silenceSpinner()
-    // ПОРЯДОК ЗДЕСЬ ОБРАТНЫЙ ОЧЕВИДНОМУ, и это стоило отдельной поломки.
-    //
-    // Стирание строки убирает ВСЁ, что на ней написано, — включая текст, который модель только что
-    // выдала потоком и который ещё не закрыт переводом строки. Сначала закрываем свой текст, сохраняя
-    // его, и только потом стираем: на новой строке стирать уже нечего, кроме остатков спиннера.
+    if (spinner) { spinner.silence(); spinner = null }
     if (textFlowing) { write('\n'); textFlowing = false }
     write(CLEAR_LINE)
   }
 
+  /** «Думал N с» печатается ОДИН раз за ход, до первого текста или первого вызова. */
+  const showThought = () => {
+    if (thoughtShown || turnStartedAt === null) return
+    thoughtShown = true
+    const elapsed = Date.now() - turnStartedAt
+    // Меньше трёхсот миллисекунд — не размышление, а сетевая задержка. Печатать её значит выдавать
+    // задержку канала за работу мысли.
+    if (elapsed >= 300) write(`${thoughtBadge(elapsed)}\n`)
+  }
+
   return {
+    /** Начало хода: сбрасываем счётчики. Вызывается точкой входа перед session.send. */
+    beginTurn() {
+      turnStartedAt = Date.now()
+      thoughtShown = false
+      calls = []
+      pendingArgs = new Map()
+    },
+
     onEvent(event) {
       if (event.type === 'text') {
+        if (!textFlowing) showThought()
         write(event.delta)
         textFlowing = true
         return
       }
+
       if (event.type === 'tool_start') {
-        takeLine()
-        write(`\n${toolBoxTop(event.name, event.args)}\n`)
+        // Только закрываем текст: очищать строку незачем — её тут же займёт бегущая строка спиннера,
+        // а лишняя очистка добавляет в вывод управляющую последовательность без единого следствия.
+        silenceSpinner()
+        if (spinner) { spinner.silence(); spinner = null }
+        if (textFlowing) { write('\n'); textFlowing = false }
+        showThought()
+        pendingArgs.set(`${event.step}:${event.name}`, event.args)
+        // Спиннер транзитный: его строка исчезнет, а на её месте встанет бейдж с итогом.
+        spinner = makeSpinner(runningLabel(event.name, event.args))
         return
       }
+
       if (event.type === 'tool_end') {
-        // Строка отбирается и здесь: инструмент мог зажечь свой спиннер, пока работал, и его тик
-        // затёр бы нижнюю границу рамки ровно так же, как затирал верхнюю.
+        if (spinner) { spinner.silence(); spinner = null }
         silenceSpinner()
         write(CLEAR_LINE)
-        // Перевод строки после итога отделяет рамку от текста, который модель начнёт писать следом.
-        // Без него первое слово ответа приклеивается к нижней границе рамки.
-        write(`${toolBoxBottom(event.outcome)}\n\n`)
+        const badge = {
+          name: event.name,
+          args: pendingArgs.get(`${event.step}:${event.name}`) ?? {},
+          ok: event.outcome.ok,
+          result: event.outcome.result,
+          error: event.outcome.ok ? undefined : `${event.outcome.code}: ${event.outcome.error}`,
+          durationMs: event.outcome.durationMs,
+        }
+        calls.push(badge)
+        write(`${toolBadge(badge)}\n`)
         return
       }
+
       if (event.type === 'error') {
         takeLine()
-        write(`${c.red('  × ')}${event.message}\n`)
+        write(`${c.red('  ✖ ')}${event.message}\n`)
       }
     },
-    /** Закрыть строку текста после ответа: без этого приглашение ввода приклеивается к последнему слову. */
+
+    /**
+     * Конец хода: закрыть строку текста и, если вызовов было много, подвести итог одной строкой.
+     *
+     * Сводка на двух вызовах дублировала бы то, что человек уже прочитал двумя строками выше, — она
+     * появляется от трёх, где список начинает просить, чтобы его свернули.
+     */
     finishTurn() {
+      if (spinner) { spinner.silence(); spinner = null }
       if (textFlowing) { write('\n'); textFlowing = false }
+      const summary = groupSummary(calls)
+      if (summary) write(`${summary}\n`)
+      calls = []
     },
   }
 }
 
-export { BOX_WIDTH, LABELS }
+export { LABELS, GROUP_THRESHOLD, visibleWidth }

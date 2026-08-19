@@ -950,78 +950,57 @@ await checkAsync(async () => {
  * СПИННЕР ГАСИТСЯ ДО ОЧИСТКИ, А НЕ ПОСЛЕ.
  *
  * Спиннер перерисовывает свою строку по таймеру каждые 80 мс и не знает, что мы собираемся печатать
- * рамку. Стереть строку, не погасив его, — оставить окно, в которое он успевает написать снова: именно
- * так строка хода поиска налезала на левую границу плашки вызова инструмента.
+ * бейдж. Стереть строку, не погасив его, — оставить окно, в которое он успевает написать снова:
+ * именно так строка хода поиска налезала на левую границу плашки вызова инструмента.
  */
 check(() => {
   const order = []
   const renderer = createRenderer(
     (text) => { if (text.includes(CLEAR_LINE)) order.push('стёрли') },
     () => order.push('погасили'),
+    () => ({ silence: () => {} }),
   )
-  renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: {}, step: 1 })
+  renderer.onEvent({ type: 'tool_end', name: 'search_leads', step: 1, outcome: { ok: true, name: 'x', result: {}, durationMs: 1 } })
   assert.deepEqual(order, ['погасили', 'стёрли'], `порядок: ${order.join(' → ')}`)
 })
 
-check(() => {
-  let out = ''
-  const renderer = createRenderer((text) => { out += text }, () => {})
-  renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: { query: 'кофейни' }, step: 1 })
-  assert.ok(out.startsWith(CLEAR_LINE), 'строка не очищена перед рамкой')
-  assert.ok(out.includes('⚙ Вызов инструмента'))
-})
-
-// Нижнюю границу рамки затирает тот же спиннер, если инструмент зажёг свой во время работы.
-check(() => {
-  const order = []
-  const renderer = createRenderer(
-    (text) => { if (text.includes(CLEAR_LINE)) order.push('стёрли') },
-    () => order.push('погасили'),
-  )
-  renderer.onEvent({ type: 'tool_end', name: 'search_leads', outcome: { ok: true, name: 'x', result: {}, durationMs: 1 }, step: 1 })
-  assert.deepEqual(order, ['погасили', 'стёрли'])
-})
-
 /*
- * ПОСЛЕ ИТОГА — ПУСТАЯ СТРОКА.
+ * БЕЙДЖ ПЕЧАТАЕТСЯ НА ЗАВЕРШЕНИИ, А НЕ НА СТАРТЕ.
  *
- * Модель начинает писать ответ сразу после закрытия рамки. Без отбивки первое слово ответа
- * приклеивается к нижней границе, и рамка выглядит незакрытой.
+ * На старте о вызове ещё нечего сказать: ни итога, ни времени. Пока он идёт, строку занимает
+ * бегущий спиннер, и он транзитный — стирается, а на его месте встаёт одна строка с итогом. Это
+ * заодно снимает старую беду рамок: открытый короб, который некому закрыть при раннем выходе.
  */
 check(() => {
   let out = ''
-  const renderer = createRenderer((text) => { out += text }, () => {})
-  renderer.onEvent({ type: 'tool_end', name: 'x', outcome: { ok: true, name: 'x', result: {}, durationMs: 1 }, step: 1 })
-  assert.ok(out.endsWith('\n\n'), 'нет отбивки между рамкой и текстом модели')
+  const renderer = createRenderer((text) => { out += text }, () => {}, () => ({ silence: () => {} }))
+  renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: { query: 'кофейни' }, step: 1 })
+  assert.equal(out.includes('✦'), false, 'бейдж напечатан до того, как вызов завершился')
+  renderer.onEvent({ type: 'tool_end', name: 'search_leads', step: 1, outcome: { ok: true, name: 'x', result: { found: 3 }, durationMs: 1200 } })
+  assert.ok(out.includes('✦'), 'бейдж не напечатан после завершения')
+  assert.ok(out.includes('1.2 с'), 'в бейдже нет времени вызова')
+  assert.equal(out.trimEnd().split('\n').filter((one) => one.includes('✦')).length, 1, 'бейдж занял больше одной строки')
 })
 
 /*
  * ОЧИСТКА НЕ СТИРАЕТ СОБСТВЕННЫЙ ТЕКСТ МОДЕЛИ.
  *
- * Стирание убирает ВСЁ, что написано на текущей строке, — включая только что выданный потоком ответ,
- * ещё не закрытый переводом строки. Порядок обязан быть обратным очевидному: сначала закрыть свой
- * текст, сохранив его, и только потом стирать. Обратный порядок стирал последнюю строку ответа с
- * экрана, и выглядело это как будто модель её не написала.
+ * Стирание убирает ВСЁ на текущей строке, включая только что выданный потоком ответ, ещё не закрытый
+ * переводом строки. Порядок обязан быть обратным очевидному: сначала закрыть свой текст, сохранив
+ * его, и только потом стирать. Обратный порядок стирал последнюю строку ответа с экрана, и выглядело
+ * это так, будто модель её не написала.
  */
 check(() => {
   let out = ''
-  const renderer = createRenderer((text) => { out += text }, () => {})
+  const renderer = createRenderer((text) => { out += text }, () => {}, () => ({ silence: () => {} }))
   renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
   renderer.onEvent({ type: 'tool_start', name: 'x', args: {}, step: 1 })
+  renderer.onEvent({ type: 'tool_end', name: 'x', step: 1, outcome: { ok: true, name: 'x', result: {}, durationMs: 1 } })
   const newlineAt = out.indexOf('\n')
   const clearedAt = out.indexOf(CLEAR_LINE)
   assert.ok(newlineAt >= 0 && clearedAt >= 0, 'ни перевода строки, ни очистки')
   assert.ok(newlineAt < clearedAt, 'строка стёрта раньше, чем текст модели закрыт — текст исчезнет с экрана')
-})
-
-// Текст, шедший до рамки, закрывается переводом строки: иначе рамка встаёт посреди предложения.
-check(() => {
-  let out = ''
-  const renderer = createRenderer((text) => { out += text }, () => {})
-  renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
-  renderer.onEvent({ type: 'tool_start', name: 'x', args: {}, step: 1 })
   assert.ok(out.includes('Сейчас поищу.'), 'текст пропал')
-  assert.ok(/Сейчас поищу\.[^…]*\n/.test(out), 'после текста нет перевода строки')
 })
 
 // Очистка — это возврат каретки И стирание. Один возврат каретки оставляет хвост прежней, более
@@ -1030,7 +1009,6 @@ check(() => {
   assert.ok(CLEAR_LINE.startsWith('\r'), 'нет возврата каретки')
   assert.ok(CLEAR_LINE.includes(`${String.fromCharCode(27)}[2K`), 'нет стирания строки')
 })
-
 // ─── Пять независимых ролей ───────────────────────────────────────────────────────────────────────
 
 /*

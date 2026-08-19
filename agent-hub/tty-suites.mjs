@@ -31,6 +31,7 @@ const SUITES = [
   'cli-commands-behavior.mjs',
   'agent-behavior.mjs',
   'lead-report-behavior.mjs',
+  'hud-behavior.mjs',
 ]
 
 /**

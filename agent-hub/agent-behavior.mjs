@@ -33,7 +33,8 @@ import { ToolRegistry, defineTool } from './tools/registry.ts'
 import {
   buildFsExportTool, buildPlatformRegistry, safeExportName, SearchLeadsParams,
 } from './tools/platform.ts'
-import { createRenderer, formatArgs, summarize, toolBoxBottom, toolBoxTop } from './nemo-ui.mjs'
+import { createRenderer, formatArgs, runningLabel } from './nemo-ui.mjs'
+import { groupSummary, humanBytes, seconds, shortUrl, thoughtBadge, toolBadge } from './cli/hud.ts'
 import { visibleWidth } from './tui.mjs'
 
 let checks = 0
@@ -559,39 +560,99 @@ check(() => assert.equal(formatArgs({ query: 'кофейни', website: '', phon
 check(() => assert.equal(formatArgs({}), 'без параметров'))
 check(() => assert.ok(formatArgs({ scenes: [1, 2, 3] }).includes('3 шт.'), 'массив показывается числом, а не целиком'))
 
-// Рамка не разъезжается от цвета и от длинных значений: ширина считается по видимым знакам.
+/*
+ * БЕЙДЖ ВЫЗОВА — ОДНА СТРОКА, И ОТКАЗ В НЕЙ ВИДЕН ВСЕГДА.
+ *
+ * Рамки в четыре строки на каждый вызов занимали двадцать строк экрана на цепочке из пяти, и ответ
+ * модели терялся среди служебной графики. Печатать бейдж только при успехе заманчиво — вывод чище, —
+ * но тогда неудавшийся вызов исчезает бесследно, и человек считает, что всё прошло.
+ */
 check(() => {
-  const box = [
-    toolBoxTop('search_leads', { query: 'я'.repeat(300), city: 'Ташкент' }),
-    toolBoxBottom({ ok: true, name: 'x', result: { found: 3 }, durationMs: 10 }),
-  ].join('\n')
-  const widths = new Set(box.split('\n').map(visibleWidth))
-  assert.equal(widths.size, 1, `строки рамки разной ширины: ${[...widths].join(', ')}`)
+  const good = toolBadge({ name: 'search_leads', args: {}, ok: true, result: { found: 14, hot: 4 }, durationMs: 22_100 })
+  assert.equal(good.includes('\n'), false, 'бейдж занял больше одной строки')
+  assert.ok(good.includes('14'))
+  assert.ok(good.includes('22.1 с'), 'в бейдже нет времени вызова')
+})
+check(() => {
+  const bad = toolBadge({ name: 'telegram_send_lead', args: {}, ok: false, error: 'permission_denied: отклонено', durationMs: 5 })
+  assert.ok(bad.includes('отклонено'), 'отказ не назван')
+  assert.ok(bad.includes('✖'), 'отказ не помечен')
+  assert.equal(bad.includes('✓'), false, 'отказ помечен как успех')
+})
+// Длинное значение не переносит бейдж на вторую строку: перенос ломает построчное чтение вывода.
+check(() => {
+  const long = toolBadge({
+    name: 'browser_navigate_and_extract',
+    args: { url: 'https://' + 'x'.repeat(300) + '.uz/very/long/path' },
+    ok: true, result: {}, durationMs: 1_000,
+  })
+  assert.equal(long.includes('\n'), false)
+  assert.ok(visibleWidth(long) < 100, `бейдж шире окна: ${visibleWidth(long)}`)
 })
 
-// Итог показывается ВСЕГДА, включая отказ: молча закрытая рамка выглядит как успешный вызов.
-check(() => assert.ok(toolBoxBottom({ ok: false, name: 'x', code: 'timeout', error: 'не ответил', durationMs: 5 }).includes('timeout')))
-check(() => assert.ok(toolBoxBottom({ ok: true, name: 'x', result: { sent: true }, durationMs: 5 }).includes('отправлено')))
+// Известные инструменты описываются своими словами, незнакомый — хотя бы именем: молчать нельзя.
+check(() => assert.ok(toolBadge({ name: 'fs_export', args: {}, ok: true, result: { path: '/tmp/leads.csv', bytes: 2458 }, durationMs: 5 }).includes('leads.csv')))
+check(() => assert.ok(toolBadge({ name: 'fs_export', args: {}, ok: true, result: { path: 'a.csv', bytes: 2458 }, durationMs: 5 }).includes('2.4 КБ')))
+check(() => assert.ok(toolBadge({ name: 'своё_имя', args: {}, ok: true, result: {}, durationMs: 5 }).includes('своё_имя')))
 
-// Сводка, а не JSON целиком: сотня килобайт результата поиска стёрла бы прокруткой весь разговор.
-check(() => assert.equal(summarize({ found: 14, hot: 4, leads: new Array(11) }), 'найдено 14, лидов 11, горячих 4'))
-check(() => assert.equal(summarize({ path: '/tmp/a.csv', bytes: 120 }), '/tmp/a.csv, 120 байт'))
-check(() => assert.equal(summarize(null), 'готово'))
-check(() => assert.equal(summarize([1, 2, 3]), '3 записей'))
-check(() => assert.ok(summarize({ text: 'я'.repeat(50_000), textLength: 50_000 }).length < 60))
+check(() => assert.equal(seconds(1_800), '1.8 с'))
+check(() => assert.equal(humanBytes(0), '0 Б'))
+check(() => assert.equal(humanBytes(2458), '2.4 КБ'))
+check(() => assert.equal(humanBytes(-1), '?', 'отрицательный размер — это сбой, а не «0 Б»'))
+check(() => assert.equal(shortUrl('https://stomaservice.uz/'), 'stomaservice.uz'))
+check(() => assert.ok(shortUrl('https://' + 'y'.repeat(80) + '.uz').length <= 44))
 
-// Перед рамкой инструмента нужен перевод строки — но только если до этого шёл текст, иначе рамка
-// приклеивается к последнему слову ответа.
+// «Думал N с» — тускло и одной строкой: это справка, а не событие.
+check(() => assert.ok(thoughtBadge(1_800).includes('1.8 с')))
+
+/*
+ * СВОДКА ЦЕПОЧКИ появляется от трёх вызовов.
+ *
+ * На двух она дублирует то, что человек уже прочитал двумя строками выше. С третьей начинается
+ * список, который хочется свернуть.
+ */
+check(() => assert.equal(groupSummary([{ name: 'fs_export', args: {}, ok: true, durationMs: 1 }]), null))
+check(() => assert.equal(groupSummary([
+  { name: 'fs_export', args: {}, ok: true, durationMs: 1 },
+  { name: 'search_leads', args: {}, ok: true, durationMs: 1 },
+]), null))
+check(() => {
+  const summary = groupSummary([
+    { name: 'browser_navigate_and_extract', args: {}, ok: true, durationMs: 1 },
+    { name: 'fs_export', args: {}, ok: true, durationMs: 1 },
+    { name: 'fs_export', args: {}, ok: true, durationMs: 1 },
+  ])
+  assert.ok(summary.includes('×2'), 'повторы не свёрнуты: ' + summary)
+  assert.equal(summary.includes('\n'), false, 'сводка заняла больше одной строки')
+})
+// Отказ в сводке назван отдельно: растворённый среди успехов, он успокаивает зря.
+check(() => {
+  const summary = groupSummary([
+    { name: 'fs_export', args: {}, ok: true, durationMs: 1 },
+    { name: 'fs_export', args: {}, ok: true, durationMs: 1 },
+    { name: 'telegram_send_lead', args: {}, ok: false, error: 'x', durationMs: 1 },
+  ])
+  assert.ok(summary.includes('отказов 1'), summary)
+})
+
+// Бегущая строка называет, ЧТО именно делается: «search_leads» человеку ничего не сообщает.
+check(() => assert.ok(runningLabel('search_leads', { query: 'клиники', city: 'Ташкент' }).includes('клиники')))
+check(() => assert.ok(runningLabel('browser_navigate_and_extract', { url: 'https://a.uz' }).includes('a.uz')))
+// Город через разделитель: подставлять предлог к имени в именительном падеже даёт «в Ташкент».
+check(() => assert.equal(runningLabel('search_leads', { query: 'клиники', city: 'Ташкент' }).includes('в Ташкент'), false))
+
+// Перед бейджем нужен перевод строки — но только если до этого шёл текст, иначе бейдж приклеивается
+// к последнему слову ответа.
 check(() => {
   let out = ''
-  const renderer = createRenderer((text) => { out += text })
+  const renderer = createRenderer((text) => { out += text }, () => {}, () => ({ silence: () => {} }))
   renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
   renderer.onEvent({ type: 'tool_start', name: 'search_leads', args: { query: 'кофейни' }, step: 1 })
-  assert.ok(out.includes('Сейчас поищу.\n'), 'рамка приклеилась к тексту')
+  assert.ok(out.includes('Сейчас поищу.\n'), 'бейдж приклеился к тексту')
 })
 check(() => {
   let out = ''
-  const renderer = createRenderer((text) => { out += text })
+  const renderer = createRenderer((text) => { out += text }, () => {}, () => ({ silence: () => {} }))
   renderer.onEvent({ type: 'error', message: 'сеть недоступна' })
   assert.ok(out.includes('сеть недоступна'))
 })
