@@ -77,7 +77,7 @@ verify_jwt = true
 [functions.orchestrate]
 verify_jwt = true
 
-# Ustudy Operations Team workflows (payment control, meeting-to-tasks) — real
+# Operations Team workflows (payment control, meeting-to-tasks) — real
 # specialist sub-agents, structured output, saves runs/tasks/notifications.
 [functions.ops-workflow]
 verify_jwt = true

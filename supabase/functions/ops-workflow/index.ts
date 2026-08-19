@@ -1,4 +1,4 @@
-// Ustudy Operations Team — real business workflows (structured, persisted).
+// Operations Team — real business workflows (structured, persisted).
 //   POST /functions/v1/ops-workflow   (Authorization: Bearer <user jwt>)
 //   action 'payment_control'  { department_id?, input, lang } -> reminders + admin escalations + summary
 //   action 'meeting_to_tasks' { department_id?, input, lang } -> decisions + tasks + weekly report

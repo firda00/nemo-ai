@@ -30,7 +30,7 @@ import { useI18n } from '../../i18n'
 import { useNavigate } from 'react-router-dom'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
-import { createUstudyOperationsTeam } from '../../lib/ustudyTeam'
+import { createOperationsTeam } from '../../lib/dynamicTeams'
 import { createCommerceTeam, type CommerceTeamKind } from '../../lib/commerceTeams'
 import { createIndustryTeam, type IndustryTeamKind } from '../../lib/industryTeams'
 import type { LegacyMarketplaceTeamKind } from '../../lib/legacyMarketplaceTeams'
@@ -453,7 +453,7 @@ export default function MarketplacePage() {
     if (tpl.title === 'Operations Team') {
       setSeeding(tpl.title)
       try {
-        const res = await createUstudyOperationsTeam(addAgent, deleteAgent)
+        const res = await createOperationsTeam(addAgent, deleteAgent)
         if (!res.error && res.agentId && res.departmentId) navigate(`/app/teams/${res.agentId}`)
         else toast(res.error ?? 'Could not create the complete team', 'error')
       } catch (error) {

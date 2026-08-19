@@ -1,5 +1,5 @@
 import type { AgentPrompt, PlatformAgent } from '../types/platform'
-import { saveDynamicTeam } from './ustudyTeam'
+import { saveDynamicTeam } from './dynamicTeams'
 
 export type IndustryTeamKind =
   | 'local-services'

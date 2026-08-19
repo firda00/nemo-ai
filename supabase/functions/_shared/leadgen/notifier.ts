@@ -130,7 +130,7 @@ export class TelegramNotifier implements Notifier {
 }
 
 /** Бот и чат для SDR-алертов — отдельная пара ключей, не бот службы поддержки платформы:
- * общий токен смешал бы алерты о лидах Ustudy IT с сообщениями клиентов Nemo в одном канале. */
+ * общий токен смешал бы алерты о собственных лидах с сообщениями клиентов платформы в одном канале. */
 export function resolveNotifier(env: NodeJS.ProcessEnv = process.env): TelegramNotifier | null {
   const token = env.SDR_TELEGRAM_BOT_TOKEN
   const chatId = env.SDR_TELEGRAM_CHAT_ID

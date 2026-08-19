@@ -1739,7 +1739,7 @@ export const extraUz = {
   "videoRenderPanel": {
     "assembleBtn": "Videoni yig‘ish",
     "brandLabel": "Brend (imzo)",
-    "brandPh": "Masalan: Ustudy",
+    "brandPh": "Masalan: Nemo AI",
     "breakBtn": "Kadrlarga bo‘lish",
     "breakingBtn": "Kadrlarga bo‘linmoqda…",
     "done": "Tayyor!",
@@ -3509,7 +3509,7 @@ export const extraRu = {
   "videoRenderPanel": {
     "assembleBtn": "Собрать видео",
     "brandLabel": "Бренд (подпись)",
-    "brandPh": "Напр.: Ustudy",
+    "brandPh": "Напр.: Nemo AI",
     "breakBtn": "Разобрать на кадры",
     "breakingBtn": "Раскадровка…",
     "done": "Готово!",
@@ -5279,7 +5279,7 @@ export const extraEn = {
   "videoRenderPanel": {
     "assembleBtn": "Assemble video",
     "brandLabel": "Brand (caption)",
-    "brandPh": "E.g.: Ustudy",
+    "brandPh": "E.g.: Nemo AI",
     "breakBtn": "Break into frames",
     "breakingBtn": "Storyboarding…",
     "done": "Done!",

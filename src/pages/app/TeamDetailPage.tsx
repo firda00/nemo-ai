@@ -13,7 +13,7 @@ import { PlanerkaSheetCard } from '../../components/platform/PlanerkaSheetCard'
 import { PlanerkaMembersCard } from '../../components/platform/PlanerkaMembersCard'
 import { CoordinatorAgentPanel } from '../../components/platform/CoordinatorAgentPanel'
 import { PlannerCommandCenter } from '../../components/platform/PlannerCommandCenter'
-import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/ustudyTeam'
+import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/dynamicTeams'
 import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
 

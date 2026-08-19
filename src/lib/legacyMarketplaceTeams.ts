@@ -1,5 +1,5 @@
 import type { AgentPrompt, PlatformAgent } from '../types/platform'
-import { saveDynamicTeam, type SeedResult } from './ustudyTeam'
+import { saveDynamicTeam, type SeedResult } from './dynamicTeams'
 
 export type LegacyMarketplaceTeamKind = 'sales' | 'education-admin' | 'content' | 'student-support' | 'custom'
 

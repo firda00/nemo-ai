@@ -22,6 +22,14 @@ export type CallOutcome = CallAnalytics['call_outcome']
 /** Что известно про звонок к моменту очередной реплики. */
 export interface DialogueContext {
   companyName?: string | null
+  /**
+   * От чьего имени звонит агент.
+   *
+   * НАСТРОЙКОЙ, А НЕ КОНСТАНТОЙ В КОДЕ. Здесь было зашито имя одной компании, и любой другой
+   * владелец платформы получал робота, представляющегося чужой фирмой — в первой же фразе, по
+   * телефону, живому человеку. Значение по умолчанию нейтрально.
+   */
+  callerCompany?: string | null
   city?: string | null
   /** Чем компания занимается — из справочника. Нужен, чтобы бот не спрашивал очевидное. */
   niche?: string | null
@@ -92,7 +100,7 @@ export function buildGreeting(context: DialogueContext): string {
   return [
     'Здравствуйте!',
     who,
-    'Меня зовут Нэмо, я ИИ-ассистент компании Ustudy.',
+    `Меня зовут Нэмо, я ИИ-ассистент ${context.callerCompany?.trim() || 'платформы Nemo AI'}.`,
     hook || 'Звоню по поводу автоматизации приёма заявок. Удобно говорить?',
   ].filter(Boolean).join(' ')
 }

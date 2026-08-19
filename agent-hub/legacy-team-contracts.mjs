@@ -5,7 +5,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 const legacySource = read('src/lib/legacyMarketplaceTeams.ts')
 const marketplaceSource = read('src/pages/app/MarketplacePage.tsx')
 const wizardSource = read('src/pages/app/EducationSalesWorkflowPage.tsx')
-const persistenceSource = read('src/lib/ustudyTeam.ts')
+const persistenceSource = read('src/lib/dynamicTeams.ts')
 const atomicMigration = read('supabase/migrations/20260803140000_atomic_agent_teams.sql')
 
 const expectedCounts = new Map([

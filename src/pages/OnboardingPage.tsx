@@ -17,7 +17,7 @@ import { TestChat } from '../components/platform/TestChat'
 import { TimezoneField, LanguageField } from '../components/platform/TimezoneField'
 import { cn } from '../lib/cn'
 import { recommendFirstTeam, type FirstTeamRecommendation, type OnboardingBusinessProfile } from '../lib/firstTeamRecommendation'
-import { saveDynamicTeam } from '../lib/ustudyTeam'
+import { saveDynamicTeam } from '../lib/dynamicTeams'
 import type { ChannelType, PlatformAgent, KnowledgeDoc, AgentKind, AgentPrompt } from '../types/platform'
 
 const inputCls = 'glass w-full rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-cobalt/50 focus:shadow-glow'
