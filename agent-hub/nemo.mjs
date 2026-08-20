@@ -28,6 +28,7 @@ import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
 import { INPUT_PROMPT, estimateHistoryTokens, footerHints, hudLine, userLine } from './cli/hud.ts'
 import { ensureSession, logout, readSession, writeSession } from './cli/login.ts'
 import { ask as askLine, askHidden } from './cli/prompt.ts'
+import { loadSkills, skillPromptBlock } from './cli/skills.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 const localEnv = loadLocalEnv(repoRoot)
@@ -269,13 +270,25 @@ async function runQualityGate() {
   })
 }
 
-/** Применить роль: новый промпт и суженный круг инструментов. */
+/*
+ * Подключённые маркетинговые методики.
+ *
+ * Живут ЗДЕСЬ, а не в сессии: это настройка сеанса, как роль и модель. В сессии они пережили бы
+ * /clear (он сохраняет системный промпт), но не пережили бы смену роли — та перестраивает промпт
+ * заново, и методика молча исчезла бы, а агент вернулся к общим местам, ничего об этом не сказав.
+ */
+let skillIds = []
+
+/** Применить роль: новый промпт, суженный круг инструментов и сохранённые методики. */
 function applyRole(next) {
   role = next
   const narrowed = restrictRegistry(fullRegistry, next.tools)
   setSessionRegistry(session, narrowed)
+  const block = skillIds.length ? skillPromptBlock(loadSkills(), skillIds) : ''
   session.setSystemPrompt(buildAgentSystemPrompt({
-    toolNames: narrowed.names(), hasConfirm: true, mission: missionFor(next),
+    toolNames: narrowed.names(),
+    hasConfirm: true,
+    mission: block ? `${missionFor(next)}\n\n${block}` : missionFor(next),
   }))
   return narrowed
 }
@@ -286,6 +299,10 @@ const commandDeps = {
   get registry() { return activeRegistry },
   setRole: (next) => { activeRegistry = applyRole(next) },
   currentRole: () => role,
+  activeSkills: () => skillIds,
+  // Перестроение промпта идёт через applyRole: одна дорога для роли и методик, иначе они разъедутся
+  // — методика подключилась бы, а круг инструментов остался от прошлой роли.
+  setSkills: (ids) => { skillIds = ids; activeRegistry = applyRole(role) },
   setModel: (resolved) => {
     model = resolved.id
     localModel = resolved.local

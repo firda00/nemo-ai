@@ -14,6 +14,7 @@ import type { ToolOutcome, ToolRegistry } from '../tools/registry.ts'
 // и исполнение команд. Реэкспорт оставлен, чтобы не менять места вызова.
 export { AGENT_ROLES, DEFAULT_ROLE, type AgentRole } from './roles.ts'
 import { AGENT_ROLES } from './roles.ts'
+import { catalogLines, loadSkills, skillPromptBlock } from './skills.ts'
 
 
 // ─── Модели ───────────────────────────────────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'undo', usage: '/undo', summary: 'отменить последний ход' },
   { name: 'export', usage: '/export [json|md]', summary: 'сохранить историю сессии' },
   { name: 'qa', usage: '/qa <url|code>', summary: 'аудит сайта или прогон гейта качества' },
+  { name: 'skill', usage: '/skill [id|off]', summary: 'подключить маркетинговую методику' },
   { name: 'health', usage: '/health', summary: 'состояние зависимостей' },
   { name: 'balance', usage: '/balance', summary: 'остаток кредитов OpenRouter' },
   { name: 'clear', usage: '/clear', summary: 'забыть разговор, роль сохранить' },
@@ -130,6 +132,9 @@ export interface CommandDeps {
   /** Сменить роль: вызывающая сторона перестраивает промпт и фильтр инструментов. */
   readonly setRole: (role: AgentRole) => void
   readonly currentRole: () => AgentRole
+  /** Активные маркетинговые методики. Живут рядом с ролью: и то и другое — настройка сеанса. */
+  readonly activeSkills?: () => string[]
+  readonly setSkills?: (ids: string[]) => void
   /** Сменить модель. Возвращает отказ строкой, если новая модель не принята. */
   readonly setModel: (resolved: { id: string; local: boolean }) => string | null
   readonly currentModel: () => string
@@ -351,6 +356,90 @@ export async function runSlash(command: SlashCommand, deps: CommandDeps): Promis
 
     const result = await deps.runQa(code ? { kind: 'code' } : { kind: 'site', url: target })
     return { kind: 'lines', lines: result.lines }
+  }
+
+  /*
+   * /skill — ПОДКЛЮЧЕНИЕ МЕТОДИКИ В СИСТЕМНЫЙ ПРОМПТ, А НЕ СПРАВКА.
+   *
+   * Навык — это инструкции о том, КАК работать, поэтому он идёт в системный промпт, а не репликой
+   * в разговор: реплика уедет из контекста при первом же /compact, и агент тихо вернётся к общим
+   * местам. Промпт переживает и сжатие, и /clear.
+   *
+   * ПО ОДНОМУ, А НЕ ВСЕ СРАЗУ. Навыков сорок девять, каждый — несколько килобайт. Загрузив всё, мы
+   * забьём контекст методиками и не оставим места под саму задачу.
+   */
+  if (name === 'skill') {
+    const skills = loadSkills()
+    if (!skills.length) {
+      return {
+        kind: 'lines',
+        lines: [
+          '  каталог навыков не найден: vendor/marketingskills отсутствует',
+          '  забрать: node scripts/vendor-marketing-skills.mjs',
+        ],
+      }
+    }
+
+    const active = deps.activeSkills?.() ?? []
+    const arg = command.rest.trim().toLowerCase()
+
+    if (!arg) {
+      return {
+        kind: 'lines',
+        lines: [
+          `  ${skills.length} методик, источник: github.com/coreyhaines31/marketingskills (MIT)`,
+          active.length ? `  подключены: ${active.join(', ')}` : '  сейчас не подключено ничего',
+          '',
+          ...catalogLines(skills),
+          '',
+          '  подключить: /skill <id>   ·   отключить все: /skill off',
+        ],
+      }
+    }
+
+    if (arg === 'off') {
+      deps.setSkills?.([])
+      return { kind: 'lines', lines: ['  методики отключены'] }
+    }
+
+    const found = skills.find((one) => one.id === arg)
+    if (!found) {
+      // Близкие по написанию подсказываются: идентификаторы длинные, и промах в одну букву — обычное дело.
+      /*
+       * Близкие ищутся ПО НАЧАЛУ СЛОВА, а не по вхождению подстроки.
+       *
+       * Вхождение не ловит самую частую опечатку — пропущенную букву в середине: «copywritng» не
+       * содержит «copywriting» и не содержится в нём, и подсказка молчала ровно там, где нужна
+       * больше всего. Общее начало в четыре знака покрывает и пропуск, и лишнюю букву, и
+       * перестановку.
+       */
+      const head = arg.slice(0, 4)
+      const near = skills
+        .map((one) => one.id)
+        .filter((id) => id.startsWith(head) || arg.startsWith(id.slice(0, 4)))
+        .slice(0, 4)
+      return {
+        kind: 'lines',
+        lines: [
+          `  нет методики «${arg}»`,
+          near.length ? `  похоже на: ${near.join(', ')}` : '  список: /skill',
+        ],
+      }
+    }
+
+    if (active.includes(found.id)) {
+      return { kind: 'lines', lines: [`  «${found.id}» уже подключена`] }
+    }
+
+    const next = [...active, found.id]
+    deps.setSkills?.(next)
+    return {
+      kind: 'lines',
+      lines: [
+        `  подключена методика «${found.id}» (${skillPromptBlock(skills, [found.id]).length} знаков в промпте)`,
+        `  всего подключено: ${next.length}`,
+      ],
+    }
   }
 
   if (name === 'health') {

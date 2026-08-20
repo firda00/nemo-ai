@@ -106,6 +106,8 @@ $steps = @(
   @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } },
   @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } },
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
+  @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
+  @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },
   @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )
 

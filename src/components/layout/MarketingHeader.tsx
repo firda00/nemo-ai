@@ -22,6 +22,7 @@ export function MarketingHeader() {
     { href: '/#templates', label: labels[1] },
     { href: '/#product', label: labels[2] },
     { href: '/pricing', label: labels[3] },
+    { href: '/docs/cli', label: 'CLI' },
   ]
 
   /*

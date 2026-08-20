@@ -5,6 +5,7 @@ import { useAuth } from './context/AuthContext'
 import { AppLayout } from './components/layout/AppLayout'
 import LandingPage from './pages/LandingPage'
 import PricingPage from './pages/PricingPage'
+import CliDocsPage from './pages/CliDocsPage'
 import PitchPage from './pages/PitchPage'
 import AuthPage from './pages/AuthPage'
 import OnboardingPage from './pages/OnboardingPage'
@@ -84,6 +85,9 @@ export default function App() {
     <Routes>
       <Route path="/" element={<RootRoute />} />
       <Route path="/pricing" element={<PricingPage />} />
+      {/* Два адреса на одну страницу: /docs — то, что набирают, /docs/cli — то, на что ссылаются. */}
+      <Route path="/docs" element={<CliDocsPage />} />
+      <Route path="/docs/cli" element={<CliDocsPage />} />
       <Route path="/pitch" element={<PitchPage />} />
       <Route path="/demo" element={<DemoPage />} />
       <Route path="/waitlist" element={<WaitlistPage />} />
