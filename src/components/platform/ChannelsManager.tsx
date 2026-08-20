@@ -229,7 +229,7 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
       {active && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setActive(null)} />
-          <div className="card relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
+          <div className="modal-panel relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: `${channelMeta[active].color}22`, color: channelMeta[active].color }}>

@@ -304,9 +304,15 @@ const cases = [
 
   // Рамка панели считает ширину БЕЗ escape-последовательностей: с .length правая стенка уезжает на
   // восемь позиций за каждый цвет, и панель превращается в лестницу.
+  //
+  // Проверка была прибита к ТОЧНОМУ тексту строки `width - visibleWidth(text)` и упала на
+  // переименовании переменной — при полностью исправном поведении. Ловить надо подмену меры, а не
+  // выбор имени: значение имеет то, что ширина берётся visibleWidth, а не .length.
+  // Саму ровность рамки теперь проверяет tui-behavior, отрисовкой панели с ячейками шире колонки.
   ['the dashboard measures visible width, not byte length',
     tui.includes('export function visibleWidth(text)')
-    && tui.includes('const gap = Math.max(0, width - visibleWidth(text))')
+    && /const gap = Math\.max\(0, width - visibleWidth\(/.test(tui)
+    && !/const gap = Math\.max\(0, width - [A-Za-z.]*\.length/.test(tui)
     && tui.includes('const topFill = ') && tui.includes('inner - visibleWidth(titleText)')],
 
   // Управляющий байт ESC в исходнике уже дважды пропадал при правке, унося за собой цвета и меру

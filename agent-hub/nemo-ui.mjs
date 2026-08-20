@@ -13,7 +13,7 @@
 // закрыть при раннем выходе.
 
 import { c, stopActiveSpinner, visibleWidth, Spinner } from './tui.mjs'
-import { groupSummary, thoughtBadge, toolBadge, shortUrl, GROUP_THRESHOLD } from './cli/hud.ts'
+import { agentBadge, groupSummary, thoughtBadge, toolBadge, shortUrl, GROUP_THRESHOLD } from './cli/hud.ts'
 
 // Байт ESC собирается из кода намеренно: литеральный символ escape в исходнике невидим, и его уже
 // трижды теряли при правках — строка молча переставала стирать, а бегущий текст оставался на экране.
@@ -94,6 +94,8 @@ export function createRenderer(
   let textFlowing = false
   let turnStartedAt = null
   let thoughtShown = false
+  let badgeShown = false
+  let turnRole = null
   let calls = []
   let spinner = null
   let pendingArgs = new Map()
@@ -123,17 +125,31 @@ export function createRenderer(
   }
 
   return {
-    /** Начало хода: сбрасываем счётчики. Вызывается точкой входа перед session.send. */
-    beginTurn() {
+    /**
+     * Начало хода: сбрасываем счётчики и запоминаем роль для бейджа.
+     *
+     * ВЫЗОВ ОБЯЗАТЕЛЕН, И ЕГО ОТСУТСТВИЕ НЕ ВИДНО. Пока точка входа этот метод не вызывала,
+     * turnStartedAt оставался null — и showThought выходил на первом же условии. Бейдж «✦ Думал N с»
+     * был написан, покрыт тестами через прямой вызов beginTurn и при этом не появлялся в терминале
+     * ни разу: тест звал метод, а живой цикл — нет. Контракт на связку добавлен в agent-loop.
+     */
+    beginTurn(roleName = null) {
       turnStartedAt = Date.now()
       thoughtShown = false
+      badgeShown = false
+      turnRole = roleName
       calls = []
       pendingArgs = new Map()
     },
 
     onEvent(event) {
       if (event.type === 'text') {
-        if (!textFlowing) showThought()
+        if (!textFlowing) {
+          showThought()
+          // Бейдж отделяет голос агента от реплики человека: без него ответ начинался голым текстом
+          // вплотную к вводу, и в длинной ленте два голоса читались как один.
+          if (!badgeShown && turnRole) { write(`${agentBadge(turnRole)}\n`); badgeShown = true }
+        }
         write(event.delta)
         textFlowing = true
         return

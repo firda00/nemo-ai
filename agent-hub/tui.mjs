@@ -294,9 +294,41 @@ export function visibleWidth(text) {
   return [...stripAnsi(text)].length
 }
 
+/**
+ * Обрезать по ВИДИМЫМ знакам, сохраняя escape-последовательности.
+ *
+ * Наивный slice здесь не годится дважды: он считает управляющие последовательности за знаки (и режет
+ * куда короче нужного) и может разрубить последовательность пополам, после чего в терминал уходит
+ * мусор вида «[3» вперемешку с текстом.
+ *
+ * Escape-последовательности копируются целиком и в счёт ширины не идут. Если хоть одна скопирована,
+ * в конец добавляется сброс: обрезанный кусок мог унести с собой закрывающий [0m, и тогда цвет
+ * растёкся бы на остаток строки — а в панели это вся правая колонка.
+ */
+function clipVisible(text, width) {
+  const source = String(text ?? '')
+  if (visibleWidth(source) <= width) return source
+  const budget = Math.max(0, width - 1) // знак под многоточие
+  let out = ''
+  let shown = 0
+  let painted = false
+  ANSI.lastIndex = 0
+  for (let i = 0; i < source.length && shown < budget;) {
+    const rest = source.slice(i)
+    const match = rest.match(new RegExp(`^(?:${ANSI.source})`, 'u'))
+    if (match) { out += match[0]; painted = true; i += match[0].length; continue }
+    const ch = [...rest][0]
+    out += ch
+    shown += 1
+    i += ch.length
+  }
+  return `${out}…${painted ? `${ESC}[0m` : ''}`
+}
+
 function padVisible(text, width) {
-  const gap = Math.max(0, width - visibleWidth(text))
-  return `${text}${' '.repeat(gap)}`
+  const clipped = clipVisible(text, width)
+  const gap = Math.max(0, width - visibleWidth(clipped))
+  return `${clipped}${' '.repeat(gap)}`
 }
 
 /**

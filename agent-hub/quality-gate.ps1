@@ -100,7 +100,8 @@ $steps = @(
   @{ Name = 'Visual RAG pilot limits and isolation'; Command = { npm run test:visual-rag } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
-  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } }
+  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
+  @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } }
 )
 
 Push-Location $root

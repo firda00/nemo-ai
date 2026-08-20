@@ -11,8 +11,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import {
-  Ask, Spinner, banner, colorsFor, isInteractiveTerminal, renderOption, resolveInput, resolveSelect,
-  visibleWidth,
+  Ask, Spinner, banner, colorsFor, dashboard, isInteractiveTerminal, renderOption, resolveInput, resolveSelect,
+  stripAnsi, visibleWidth,
 } from './tui.mjs'
 import { clipboardCommand, csvCell, exportFileName, toCsv, toJson, writeExport } from './lead-export.mjs'
 
@@ -421,6 +421,46 @@ function fakeTty() {
   assert.equal(spinner.timer, null)
   assert.equal(plain.written.includes(String.fromCharCode(27)), false, 'никаких escape-последовательностей в журнале')
   assert.ok(plain.written.includes('Поиск…'), 'но сам этап в журнале виден')
+}
+
+/*
+ * ЯЧЕЙКА ШИРЕ КОЛОНКИ НЕ ИМЕЕТ ПРАВА СДВИГАТЬ РАМКУ.
+ *
+ * padVisible умел только добивать пробелами. Строка «Инструменты: 5 активны [OSM, Browser,
+ * run_qa_audit, FS]» в колонку на 31 знак не влезала — и выталкивала разделитель вправо: в живом
+ * запуске шапка выглядела покосившейся ровно на одной строке из четырёх, и чем больше инструментов
+ * подключено, тем сильнее.
+ *
+ * Проверяется РАВЕНСТВО ШИРИН всех строк панели, а не наличие многоточия: многоточие — способ,
+ * ровная рамка — цель. И отдельно проверяется, что обрезка не рубит escape-последовательность
+ * пополам: в терминал тогда уходит мусор, а цвет растекается на остаток строки.
+ */
+check: {
+  const paint = colorsFor({ isTTY: true })
+  for (const cells of [
+    ['Инструменты: 5 активны [OSM, Browser, run_qa_audit, FS]'],
+    ['я'.repeat(200)],
+    [paint.magenta('очень длинная раскрашенная строка, которая не влезает в колонку')],
+    [`${paint.green('зелёное')} и ${paint.red('красное')} вперемешку, и всё это длиннее колонки`],
+    [''],
+    ['короткая'],
+  ]) {
+    const panel = dashboard({ title: 'т', left: cells, right: ['правая колонка'] })
+    const widths = [...new Set(panel.split('\n').map((one) => visibleWidth(one)))]
+    assert.equal(widths.length, 1, `рамка разъехалась на ${JSON.stringify(cells[0]).slice(0, 60)}: ширины ${widths}`)
+    // Оборванная последовательность оставила бы в видимом тексте хвост вида «[35m».
+    const body = panel.split('\n')[1]
+    assert.equal(/\[\d+m/.test(stripAnsi(body)), false, `escape-последовательность разрублена: ${JSON.stringify(body)}`)
+  }
+}
+
+// Цвет внутри обрезанной ячейки закрыт сбросом — иначе он растечётся на соседнюю колонку.
+check: {
+  const paint = colorsFor({ isTTY: true })
+  const panel = dashboard({ title: 'т', left: [paint.magenta('я'.repeat(80))], right: ['правая'] })
+  const row = panel.split('\n')[1]
+  const afterClip = row.slice(row.indexOf('…'))
+  assert.ok(afterClip.includes(`${String.fromCharCode(27)}[0m`), 'после обрезки нет сброса цвета')
 }
 
 console.log(`[OK] TUI behaviour: ${checks} assertions`)

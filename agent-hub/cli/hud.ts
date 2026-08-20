@@ -141,12 +141,36 @@ export function shortModel(model: string): string {
  */
 export function userLine(text: string, at: Date, width = 80, palette: Palette = defaultColors): string {
   const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-  const body = `${palette.magenta('›')} ${text}`
-  const pad = Math.max(1, width - visibleWidth(body) - stamp.length)
+  /*
+   * ВСТАВКА В НЕСКОЛЬКО СТРОК — ОДИН БЛОК, А НЕ ПЕРВАЯ СТРОКА И СИРОТЫ ПОД НЕЙ.
+   *
+   * Раньше текст подставлялся целиком, вместе с переводами строк. Маркер «›» доставался только
+   * первой строке, продолжение уходило вровень с левым краем — неотличимо от вывода агента, — а
+   * ширина считалась по всей склейке разом, из-за чего отметка времени вставала посреди последней
+   * строки вместо правого края первой.
+   *
+   * Первая строка несёт маркер и время, продолжение — тихую вертикаль: видно, где вставка началась
+   * и где кончилась, даже если вставили тридцать строк.
+   */
+  const lines = String(text).split('\n')
+  const bright = (one: string) => palette.bold(palette.cyan(one))
+  const head = `${palette.magenta('›')} ${bright(lines[0] ?? '')}`
+  const pad = Math.max(1, width - visibleWidth(head) - stamp.length)
   return [
-    `${body}${' '.repeat(pad)}${palette.dim(stamp)}`,
+    `${head}${' '.repeat(pad)}${palette.dim(stamp)}`,
+    ...lines.slice(1).map((one) => `${palette.dim('│')} ${bright(one)}`),
     palette.dim('─'.repeat(Math.max(1, width))),
   ].join('\n')
+}
+
+/**
+ * Бейдж ответа агента: `✦ Nemo (sdr)`.
+ *
+ * Печатается один раз за ход, перед первым текстом. Без него реплика модели начиналась с голого
+ * текста вплотную к вводу человека, и в длинной ленте эти два голоса сливались в один.
+ */
+export function agentBadge(role: string, palette: Palette = defaultColors): string {
+  return `${palette.cyan('✦')} ${palette.bold(`Nemo (${role})`)}`
 }
 
 // ─── Бейджи вызовов ───────────────────────────────────────────────────────────────────────────────

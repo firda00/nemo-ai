@@ -412,6 +412,9 @@ for (;;) {
 }
 
 async function runTurn(text) {
+  // Ход обязан открываться здесь: отсюда рендерер узнаёт и время начала (для «✦ Думал N с»), и роль
+  // (для бейджа «✦ Nemo (sdr)»). Без этого вызова оба бейджа молча не печатаются.
+  renderer.beginTurn(role.name)
   try {
     await session.send(text)
   } catch (error) {

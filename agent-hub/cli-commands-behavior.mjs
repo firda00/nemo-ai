@@ -22,7 +22,7 @@ import { ToolRegistry, defineTool, restrictRegistry } from './tools/registry.ts'
 import { collectHealth, fetchBalance, probeBinary, toolBadges } from './cli/wiring.ts'
 import { browserFallbackEnabled, browserToolsAvailable, createBrowserBridge } from './tools/enrich-browser.ts'
 import { CLEAR_LINE, createRenderer } from './nemo-ui.mjs'
-import { PLATFORM_CONTEXT, missionFor } from './cli/roles.ts'
+import { ANSWER_ANYWAY, FULL_ACCESS_RULE, HANDOFF_RULE, PLATFORM_CONTEXT, missionFor } from './cli/roles.ts'
 import { z } from 'zod'
 
 let checks = 0
@@ -1232,10 +1232,36 @@ check(() => {
   }
 })
 
-// Роль без своей специализации получает справку и ничего сверх неё — без пустых строк на конце.
+// Роль без своей специализации получает справку, общий хвост и правило доступа — и ничего сверх,
+// без пустых строк на конце.
 check(() => {
   const bare = missionFor({ name: 'x', title: 'x', mission: '   ', tools: null })
-  assert.equal(bare, PLATFORM_CONTEXT)
+  assert.equal(bare, [PLATFORM_CONTEXT, ANSWER_ANYWAY, FULL_ACCESS_RULE].join('\n\n'))
+  assert.equal(bare, bare.trimEnd(), 'промпт заканчивается пустой строкой')
+})
+
+/*
+ * ПРАВИЛО ДОСТУПА ВЫБИРАЕТСЯ ПО НАБОРУ ИНСТРУМЕНТОВ, А НЕ ПО ИМЕНИ РОЛИ.
+ *
+ * Роли со всем реестром (tools: null) передавать некуда: инструмента, которого ей не хватает, нет.
+ * Совет «переключитесь на /agent sdr» в ответ на рабочую задачу — ответ не по адресу.
+ *
+ * Проверяется именно связка с tools, а не «general — особая»: появится вторая полнодоступная роль,
+ * и она получит верное правило сама, без правки этого теста.
+ */
+check(() => {
+  for (const [name, role] of Object.entries(AGENT_ROLES)) {
+    const mission = missionFor(role)
+    if (role.tools === null) {
+      assert.ok(mission.includes(FULL_ACCESS_RULE), `полнодоступная роль ${name} без прямого запрета на /agent`)
+      assert.ok(!mission.includes(HANDOFF_RULE), `полнодоступной роли ${name} подсунуто ложное правило передачи`)
+      assert.ok(/НЕ предлагай \/agent/.test(mission), `роль ${name} не предупреждена, что советовать переключение незачем`)
+    } else {
+      assert.ok(mission.includes(HANDOFF_RULE), `урезанная роль ${name} осталась без правила передачи`)
+      assert.ok(!mission.includes(FULL_ACCESS_RULE), `урезанной роли ${name} обещаны все инструменты платформы`)
+    }
+    assert.ok(mission.includes(ANSWER_ANYWAY), `роль ${name} без правила «отвечай всё равно»`)
+  }
 })
 
 console.log(`[OK] CLI slash commands: ${checks} assertions`)

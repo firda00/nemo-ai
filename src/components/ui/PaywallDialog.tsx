@@ -21,7 +21,7 @@ export function PaywallDialog({ paywall, onClose }: { paywall: Paywall | null; o
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="card relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
+      <div className="modal-panel relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber/10 text-amber"><Lock size={18} /></span>
           <h3 className="text-lg font-semibold text-text">{title}</h3>

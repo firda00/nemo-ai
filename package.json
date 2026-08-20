@@ -16,6 +16,7 @@
     "test:ui-stability": "node agent-hub/ui-stability-contracts.mjs",
     "test:ui": "node agent-hub/site-smoke.mjs",
     "test:trace-ui": "node agent-hub/trace-ui-smoke.mjs",
+    "test:integrations-ui": "node agent-hub/integrations-ui-smoke.mjs",
     "test:autopost": "node agent-hub/autopost-contracts.mjs",
     "test:commerce": "node agent-hub/commerce-logistics-contracts.mjs",
     "test:industries": "node agent-hub/industry-teams-contracts.mjs",

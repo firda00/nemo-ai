@@ -16,7 +16,7 @@
 import assertStrict from 'node:assert/strict'
 import {
   CONTEXT_LIMITS, INPUT_PROMPT, contextLimitFor, estimateHistoryTokens, estimateTokens,
-  footerHints, hudLine, plural, shortCount, shortModel, toolBadge, userLine,
+  agentBadge, footerHints, hudLine, plural, shortCount, shortModel, toolBadge, userLine,
 } from './cli/hud.ts'
 import { colorsFor, visibleWidth } from './tui.mjs'
 
@@ -175,6 +175,53 @@ check: {
 check: {
   const painted = userLine('запрос', new Date(2026, 7, 19, 1, 2), 70, paint)
   assert.equal(visibleWidth(painted.split('\n')[1]), 70)
+}
+
+/*
+ * МНОГОСТРОЧНАЯ ВСТАВКА — ОДИН БЛОК.
+ *
+ * Текст подставлялся вместе с переводами строк: маркер доставался первой строке, продолжение уходило
+ * вровень с левым краем (неотличимо от вывода агента), а ширина считалась по всей склейке — отметка
+ * времени вставала посреди последней строки вместо правого края первой.
+ *
+ * Проверяется на разных формах, а не на одной удобной: пустые строки внутри вставки — обычное дело
+ * при копировании кода, и потерять на них маркер значит вернуть ровно тот же разрыв блока.
+ */
+check: {
+  for (const body of [
+    'одна\nдве',
+    'первая\n\nтретья',
+    'a\nb\nc\nd\ne',
+    'строка\n   с отступом\n\tи табом',
+    'хвост с пустой строкой\n',
+  ]) {
+    const rows = userLine(body, new Date(2026, 7, 19, 9, 5), 60, plain).split('\n')
+    const lines = body.split('\n')
+    assert.equal(rows.length, lines.length + 1, `вставка ${JSON.stringify(body)} потеряла строки`)
+    assert.ok(rows[0].startsWith('› '), 'первая строка без маркера ввода')
+    assert.ok(rows[0].includes('09:05'), 'время ушло с первой строки')
+    for (let i = 1; i < lines.length; i += 1) {
+      assert.ok(rows[i].startsWith('│ '), `строка ${i} вставки осталась без маркера: ${JSON.stringify(rows[i])}`)
+      assert.ok(rows[i].includes(lines[i]), `строка ${i} вставки потеряла текст`)
+    }
+    assert.ok(!rows.slice(1, -1).some((one) => one.includes('09:05')), 'время продублировалось внутри блока')
+    assert.equal(visibleWidth(rows[rows.length - 1]), 60, 'черта не по ширине окна')
+  }
+}
+
+/*
+ * БЕЙДЖ АГЕНТА НАЗЫВАЕТ РОЛЬ.
+ *
+ * «✦ Nemo» без роли не отвечает на вопрос, который бейдж и существует чтобы снимать: каким кругом
+ * инструментов сейчас отвечают. Роль подставляется, а не берётся из замыкания.
+ */
+check: {
+  for (const role of ['sdr', 'general', 'qa']) {
+    const badge = agentBadge(role, plain)
+    assert.ok(badge.startsWith('✦ '), `бейдж без маркера: ${badge}`)
+    assert.ok(badge.includes(`Nemo (${role})`), `бейдж не назвал роль ${role}: ${badge}`)
+  }
+  assert.equal(visibleWidth(agentBadge('sdr', paint)), visibleWidth(agentBadge('sdr', plain)), 'цвет изменил ширину бейджа')
 }
 
 // ─── Подсказки под вводом ─────────────────────────────────────────────────────────────────────────
