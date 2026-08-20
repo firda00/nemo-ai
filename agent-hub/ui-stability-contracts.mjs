@@ -68,6 +68,17 @@ check(28, 'Temperature explanation', /platform\.editor\.tempHint/.test(modelPick
 check(29, 'Missing lead photo fallback', /AgentAvatar/.test(leads) && /customerName\.charAt\(0\)/.test(dialogue), 'agents/leads and customers have deterministic fallback avatars')
 check(30, 'Backdrop closes modals', /onClick=\{onCancel\}/.test(confirm) && /onClick=\{onClose\}/.test(dialogue), 'shared confirms and dialogue drawer close from the backdrop')
 
+/*
+ * Знак живёт в двух местах: файлом бренда и инлайном в компоненте (инлайн нужен, чтобы логотип
+ * красился currentColor и не мигал отдельным запросом). Две копии одной графики расходятся —
+ * поэтому геометрия сверяется побайтно, а не на глаз.
+ */
+const markSvg = fs.readFileSync(path.join(root, 'public/brand/nemo-mark.svg'), 'utf8')
+const logoTsx = fs.readFileSync(path.join(root, 'src/components/ui/Logo.tsx'), 'utf8')
+const geometry = (text) => text.split(String.fromCharCode(100, 61, 34)).slice(1).map((piece) => piece.split(String.fromCharCode(34))[0])
+const markGeometry = geometry(markSvg)
+check(31, 'Logo drifted from the brand mark', markGeometry.length > 0 && JSON.stringify(markGeometry) === JSON.stringify(geometry(logoTsx)), 'inlined Logo.tsx keeps the exact path geometry of public/brand/nemo-mark.svg')
+
 fs.writeFileSync(path.join(root, 'agent-hub/ui-stability-contracts-report.json'), JSON.stringify({ generated_at: new Date().toISOString(), failed, partial, rows }, null, 2))
-console.log(`UI/stability contracts: ${30 - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
+console.log(`UI/stability contracts: ${31 - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
 if (failed) process.exit(1)

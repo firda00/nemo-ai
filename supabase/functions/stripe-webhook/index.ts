@@ -79,13 +79,50 @@ Deno.serve(async (req) => {
     const meta = (session as { metadata?: Record<string, string | number | undefined> }).metadata ?? {}
     const accountId = meta.account_id
     const tokens = Number(meta.tokens ?? 0)
-    if (accountId && tokens > 0) {
-      await admin.rpc('add_token_balance', { p_account: accountId, p_amount: tokens })
+    /*
+     * ОТКАЗ НАЧИСЛЕНИЯ ОБЯЗАН ОТМЕНИТЬ ОТМЕТКУ О ПРОСМОТРЕ СОБЫТИЯ.
+     *
+     * Здесь был путь тихой потери оплаты. Идентификатор события записывается ПЕРЕД начислением —
+     * это правильно, иначе повтор от Stripe начислит дважды. Но результат rpc не проверялся, и при
+     * отказе базы функция всё равно отвечала 200: Stripe считает событие доставленным и больше не
+     * повторяет, а запись в webhook_events превращает любую ручную переотправку в «дубликат».
+     * Человек заплатил, токенов не получил, и в журналах при этом всё зелёное.
+     *
+     * Поэтому отметка снимается, а ответ становится 500 — Stripe повторит, и повтор пройдёт.
+     */
+    const rollbackEvent = async () => {
+      if (!eventId) return
+      const { error } = await admin.from('webhook_events').delete().eq('id', eventId)
+      // Снять отметку не удалось — говорим об этом громко: следующая попытка Stripe будет отброшена
+      // как дубликат, и оплату придётся начислять руками.
+      if (error) console.error('stripe-webhook rollback failed, event stays marked:', eventId, error)
     }
-    // SUBSCRIPTION — activate the paid plan on the account
+
+    const retry = (what: string, detail: unknown) => {
+      console.error(`stripe-webhook ${what} failed:`, accountId, detail)
+      return rollbackEvent().then(() => new Response(JSON.stringify({ received: false, retry: true }), {
+        status: 500, headers: { 'Content-Type': 'application/json' },
+      }))
+    }
+
+    /*
+     * ПОРЯДОК ЗДЕСЬ ОБЯЗАТЕЛЕН: сначала идемпотентное, потом добавляющее.
+     *
+     * Включение плана — это присваивание: повтор ничего не меняет. Начисление токенов складывает:
+     * повтор удваивает. Если бы токены начислялись первыми, отказ на плане откатывал бы отметку о
+     * событии, Stripe повторял бы запрос — и начислил бы токены второй раз. Обратный порядок делает
+     * любой повтор безопасным: всё, что выполнено до складывающего шага, переживает переигровку.
+     */
     const plan = meta.plan ? String(meta.plan) : ''
     if (accountId && ['starter', 'pro', 'business', 'agency', 'enterprise'].includes(plan)) {
-      await admin.from('accounts').update({ plan }).eq('id', accountId)
+      const { error } = await admin.from('accounts').update({ plan }).eq('id', accountId)
+      // Оплаченный план, не включённый на аккаунте, — это оплата без услуги.
+      if (error) return await retry('plan activation', { plan, error })
+    }
+
+    if (accountId && tokens > 0) {
+      const { error } = await admin.rpc('add_token_balance', { p_account: accountId, p_amount: tokens })
+      if (error) return await retry('credit', { tokens, error })
     }
   }
 

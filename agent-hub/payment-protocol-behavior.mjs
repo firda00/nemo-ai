@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import {
   CLICK_ACTION,
@@ -268,4 +269,66 @@ const failed = parseClickRequest({ ...prepare, action: '1', error: '-5017', merc
 assert.equal(failed.error, '-5017', 'исход платежа доходит до обработчика')
 assert.equal(parseClickRequest({ ...prepare, action: '1' }).error, '', 'успех приходит без error или с нулём')
 
-console.log('[OK] Payment protocol behaviour: 112 assertions')
+
+// ─── Stripe: деньги не теряются и не удваиваются ──────────────────────────────────────────────────
+//
+// Проверки читают ИСХОДНИК вебхука: запустить функцию Deno здесь нечем, а свойства, которые они
+// защищают, стоят денег в обе стороны — потерянная оплата и двойное начисление.
+
+{
+  const stripe = readFileSync(new URL('../supabase/functions/stripe-webhook/index.ts', import.meta.url), 'utf8')
+
+  // Отметка о событии ставится ДО начисления: add_token_balance складывает, а Stripe повторяет
+  // доставку при любом сомнении — без отметки повтор начислил бы второй раз.
+  // Ищем МЕСТА ВЫЗОВА, а не упоминания: оба имени встречаются выше по файлу в комментариях,
+  // объясняющих порядок, и indexOf по голому имени сравнивал бы позиции пояснений, а не кода.
+  const markAt = stripe.indexOf(".from('webhook_events').insert(")
+  const creditAt = stripe.indexOf("admin.rpc('add_token_balance'")
+  assert.ok(markAt > 0 && creditAt > 0, 'в вебхуке Stripe нет отметки события или начисления')
+  assert.ok(markAt < creditAt, 'отметка о событии ставится после начисления — повтор удвоит токены')
+  assert.ok(stripe.includes('23505'), 'повтор распознаётся не по нарушению уникальности')
+
+  // Отказ начисления отменяет отметку и просит повтор. Здесь был путь тихой потери оплаты:
+  // результат rpc не проверялся, функция отвечала 200, Stripe больше не повторял, а запись в
+  // webhook_events превращала ручную переотправку в «дубликат». Человек заплатил, токенов не
+  // получил, и в журналах при этом всё зелёное.
+  assert.ok(stripe.includes('rollbackEvent'), 'отказ начисления не снимает отметку о событии')
+  assert.ok(stripe.includes(".from('webhook_events').delete()"), 'отметка события не удаляется при откате')
+  assert.ok(stripe.includes('status: 500'), 'при отказе начисления Stripe не просят повторить')
+  assert.ok(creditAt > 0, 'начисление вызывается не через admin.rpc')
+  /*
+   * ПРОВЕРЯЕТСЯ САМА ЗАЩИТА, А НЕ ОБЪЯВЛЕНИЕ ПЕРЕМЕННОЙ.
+   *
+   * Первая версия смотрела на `const { error }` рядом с вызовом. Мутация «убрать строку `if (error)
+   * return retry(...)`» её пережила: разбор результата остался, а реакции на отказ не стало — то
+   * есть проверка стерегла форму, а не свойство.
+   */
+  assert.ok(/if \(error\) return await retry\('credit'/.test(stripe), 'отказ начисления не приводит к повтору')
+  assert.ok(/if \(error\) return await retry\('plan activation'/.test(stripe), 'отказ включения плана не приводит к повтору')
+
+  // Порядок шагов: сначала идемпотентное (план), потом складывающее (токены). Если бы токены шли
+  // первыми, отказ на плане откатил бы отметку, Stripe повторил бы запрос — и начислил бы второй
+  // раз. Эта ошибка была допущена при первой правке и поймана до коммита.
+  const planAt = stripe.indexOf('.update({ plan })')
+  assert.ok(planAt > 0, 'включение плана пропало из вебхука')
+  assert.ok(planAt < creditAt, 'план включается после начисления токенов — повтор удвоит токены')
+
+  // Подпись и окно давности: без них любой может прислать себе оплату.
+  assert.ok(stripe.includes('STRIPE_WEBHOOK_SECRET'), 'подпись Stripe не проверяется')
+  /*
+   * ОКНО ДАВНОСТИ — ЧИСЛО, А НЕ ИМЯ.
+   *
+   * Проверка на присутствие TOLERANCE_SECONDS пережила подмену значения на Infinity: имя осталось,
+   * защита исчезла. Перехваченный подписанный запрос стало бы можно переигрывать вечно.
+   */
+  const tolerance = Number((/const TOLERANCE_SECONDS = (\d+)/.exec(stripe) ?? [])[1])
+  assert.ok(Number.isFinite(tolerance), 'окно давности подписи перестало быть конечным числом')
+  assert.ok(tolerance > 0 && tolerance <= 900, `окно давности ${tolerance} с выходит за разумные пределы`)
+  assert.ok(stripe.includes('invalid signature'), 'запрос без подписи не отвергается')
+
+  // Начисление только за собранный платёж: отложенные способы оплаты завершают сессию со статусом
+  // «не оплачено», и начислить тогда значит выдать токены за платёж, который может не состояться.
+  assert.ok(/paymentStatus !== 'paid'/.test(stripe), 'токены начисляются до подтверждения оплаты')
+}
+
+console.log('[OK] Payment protocol behaviour: 112 assertions + Stripe money safety')
