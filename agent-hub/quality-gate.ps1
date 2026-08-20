@@ -7,7 +7,9 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $steps = @(
   @{ Name = 'TypeScript and ESLint'; Command = { npm run test } },
-  @{ Name = 'Production build'; Command = { npm run build } },
+  # Сборка здесь — проверка компиляции, а не выкладываемый артефакт: обход проверки переменных
+  # ставится явно. Настоящая выкладка идёт без него и остановится, если переменные не заданы.
+  @{ Name = 'Production build'; Command = { $env:NEMO_ALLOW_DEMO_BUILD = '1'; npm run build } },
   @{ Name = 'Agent capability contracts'; Command = { npm run test:contracts } },
   @{ Name = 'Autopost and funnel contracts'; Command = { npm run test:autopost } },
   @{ Name = 'Commerce and logistics contracts'; Command = { npm run test:commerce } },

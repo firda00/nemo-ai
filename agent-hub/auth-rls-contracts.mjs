@@ -305,6 +305,56 @@ check(
 )
 
 // ---------- verdict ----------
+/*
+ * E. ПУБЛИЧНЫЕ ВЕБХУКИ ОБЪЯВЛЕНЫ ПУБЛИЧНЫМИ В МАНИФЕСТЕ, А НЕ ТОЛЬКО В КОММЕНТАРИИ.
+ *
+ * verify_jwt по умолчанию ИСТИНА, и это правильно. Но Telegram и Stripe не умеют присылать JWT
+ * Supabase: функция без записи `verify_jwt = false` в config.toml отвергнет каждый их запрос
+ * заголовком 401. Снаружи это выглядит как полностью исправная выкладка — функция развёрнута,
+ * логи чистые, — а сообщения клиентов и уведомления об оплате просто не доходят.
+ *
+ * Проверка идёт ОТ КОДА К МАНИФЕСТУ: признак публичности берётся из самой функции (она обязана
+ * проверять подпись своим способом — секретным токеном или HMAC), и для каждой такой обязана
+ * найтись запись в манифесте. Обратная проверка тоже нужна: `verify_jwt = false` у функции, которая
+ * подпись не проверяет, — это открытая наружу ручка со служебным ключом внутри.
+ */
+{
+  const config = fs.readFileSync(path.join(root, 'supabase/config.toml'), 'utf8')
+  const dir = path.join(root, 'supabase/functions')
+  const names = fs.readdirSync(dir).filter((name) => name !== '_shared'
+    && fs.statSync(path.join(dir, name)).isDirectory()
+    && fs.existsSync(path.join(dir, name, 'index.ts')))
+
+  const declaredPublic = new Set(
+    [...config.matchAll(/\[functions\.([\w-]+)\]([\s\S]*?)(?=\n\[|$)/g)]
+      .filter(([, , body]) => /verify_jwt\s*=\s*false/.test(body))
+      .map(([, name]) => name),
+  )
+
+  const selfVerified = []
+  for (const name of names) {
+    const source = fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8')
+    // Функция сама проверяет подлинность: секретный токен Telegram, подпись Stripe, подпись Click/Payme.
+    if (/x-telegram-bot-api-secret-token|Stripe-Signature|verifyClickSignature|verifyPaymeAuth|PUBLIC endpoint|verify_jwt = false/i.test(source)) {
+      selfVerified.push(name)
+    }
+  }
+
+  check('публичные вебхуки объявлены в манифесте', selfVerified.every((n) => declaredPublic.has(n)),
+    `без записи verify_jwt = false: ${selfVerified.filter((n) => !declaredPublic.has(n)).join(', ') || '—'}`)
+
+  for (const name of declaredPublic) {
+    if (!names.includes(name)) continue // запись есть, папки нет — отдельный случай, ниже
+    const source = fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8')
+    const verifies = /secret|signature|hmac|token|verify/i.test(source)
+    check(`${name}: открыта наружу и проверяет подлинность сама`, verifies,
+      'verify_jwt = false без собственной проверки подписи — ручка со служебным ключом открыта всем')
+  }
+
+  const orphaned = [...declaredPublic].filter((n) => !names.includes(n))
+  check('в манифесте нет публичных записей без функции', orphaned.length === 0, orphaned.join(', '))
+}
+
 if (failed) {
   console.error(`${failed} auth/RLS contract(s) failed.`)
   process.exit(1)

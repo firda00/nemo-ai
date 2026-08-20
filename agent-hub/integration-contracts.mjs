@@ -25,7 +25,34 @@ const googleOauth = read('supabase/functions/google-oauth/index.ts')
 const googleSetup = read('src/components/platform/GoogleSetup.tsx')
 
 check('integration store has no demo-connected seed', !/:\s*'connected'/.test(store.match(/const seed[\s\S]*?\n\}/)?.[0] ?? 'connected'))
-check('main catalog removed the fake widget snippet', !/cdn\.nemo\.ai|ag_demo/.test(page) && /data-channel/.test(page))
+/*
+ * СНИППЕТ ВИДЖЕТА — ОДИН, И АДРЕС В НЁМ НЕ ВЫДУМАН.
+ *
+ * Проверка требовала `data-channel` прямо в файле каталога. Сниппет с тех пор переехал в общий
+ * модуль src/lib/widget.ts — по причине, которую эта же проверка и должна ловить: строка собиралась
+ * в ТРЁХ местах, и хосты в них разошлись. Каталог и список каналов отдавали клиенту
+ * `nemo.185.8.213.144.sslip.io`, онбординг — `cdn.nemo.ai`. Работать мог максимум один, а отказ
+ * наступал на чужом сайте, то есть там, где мы его не увидим.
+ *
+ * Теперь проверяется не место строки, а её свойства: источник один, ключ — канал, хост берётся из
+ * окружения сборки, и ни один файл интерфейса не вписывает адрес руками.
+ */
+const widgetLib = read('src/lib/widget.ts')
+check('widget snippet is keyed by channel', /data-channel/.test(widgetLib))
+check('widget host comes from the build environment', /import\.meta\.env\.VITE_API_GATEWAY_URL/.test(widgetLib))
+check('main catalog has no fake widget snippet', !/cdn\.nemo\.ai|ag_demo/.test(page))
+{
+  // Хост, вписанный руками, — это разъезд адресов через одну правку. Ищем по всему интерфейсу.
+  const hardcoded = []
+  for (const [name, source] of [
+    ['IntegrationsPage', page],
+    ['ChannelsManager', read('src/components/platform/ChannelsManager.tsx')],
+    ['OnboardingPage', read('src/pages/OnboardingPage.tsx')],
+  ]) {
+    if (/https:\/\/[^"'`\s]*\/widget\.js/.test(source)) hardcoded.push(name)
+  }
+  check('no UI file hardcodes the widget host', hardcoded.length === 0, hardcoded.join(', '))
+}
 check('main catalog has no timer-simulated OAuth', !/setTimeout\(\(\) => finishConnect/.test(page))
 check('main catalog hydrates provider, Google and channel state from backend', /connect-provider/.test(page) && /google-oauth/.test(page) && /from\('channels'\)/.test(page))
 check('disconnect mutates the real backend', /action: 'disconnect'/.test(page) && /from\('channels'\)\.delete/.test(page))

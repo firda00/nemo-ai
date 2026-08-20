@@ -43,6 +43,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { INTEGRATIONS, INT_CATEGORIES, INT_REGIONS, type IntCategory, type IntRegion } from '../../data/integrations'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
 import { cn } from '../../lib/cn'
+import { widgetSnippet, widgetHostConfigured } from '../../lib/widget'
 
 type ConnectMethod = 'token' | 'oauth' | 'widget'
 interface FieldDef {
@@ -58,8 +59,6 @@ interface IntegrationDef {
   method: ConnectMethod
   fields?: FieldDef[]
 }
-
-const widgetSnippet = (channelId: string) => `<script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="${channelId}" async></script>`
 
 const statusStyle: Record<IntegrationStatus, string> = {
   connected: 'bg-teal/10 text-teal',
@@ -335,7 +334,9 @@ export default function IntegrationsPage() {
 
   const copySnippet = () => {
     if (!connResult?.channel_id) return
-    navigator.clipboard?.writeText(widgetSnippet(connResult.channel_id))
+    const snippet = widgetSnippet(connResult.channel_id)
+    if (!snippet) { toast(t('platform.integrations.widgetHostMissing')); return }
+    navigator.clipboard?.writeText(snippet)
     setCopied(true)
     toast(t('platform.integrations.copied'))
   }
@@ -703,8 +704,8 @@ export default function IntegrationsPage() {
                   <p className="text-xs text-muted">{t('platform.integrations.widgetNote')}</p>
                   {connResult?.channel_id && (
                     <>
-                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet(connResult.channel_id)}</pre>
-                      <button onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
+                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet(connResult.channel_id) ?? t('platform.integrations.widgetHostMissing')}</pre>
+                      <button disabled={!widgetHostConfigured} onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
                         {copied ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied ? t('platform.integrations.copied') : t('platform.integrations.copy')}
                       </button>
                     </>

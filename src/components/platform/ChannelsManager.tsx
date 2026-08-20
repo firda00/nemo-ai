@@ -8,6 +8,7 @@ import { useAgentStore } from '../../store/useAgentStore'
 import { channelMeta, channelLabel } from '../../lib/platformMeta'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
+import { widgetSnippet, widgetHostConfigured } from '../../lib/widget'
 import type { ChannelType } from '../../types/platform'
 
 const inputCls =
@@ -57,7 +58,7 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
 
   // The visitor pastes this on their site; it loads the widget and talks to widget-webhook
   // (keyed by the channel id, which we only have AFTER connecting).
-  const snippetFor = (cid: string) => `<script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="${cid}" async></script>`
+  const snippetFor = widgetSnippet
 
   const fieldsFor = (c: ChannelType): FieldDef[] => {
     switch (c) {
@@ -255,9 +256,10 @@ export function ChannelsManager({ agentId }: { agentId: string }) {
                     <p className="flex items-start gap-2 rounded-xl border border-teal/15 bg-teal/[0.05] p-3 text-xs leading-relaxed text-muted">
                       <Check size={15} className="mt-0.5 shrink-0 text-teal" /> {t('channelsManager.widgetConnected')}
                     </p>
-                    <pre className="overflow-x-auto rounded-xl border border-ice/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{snippetFor(result.channel_id ?? '')}</pre>
+                    <pre className="overflow-x-auto rounded-xl border border-ice/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{snippetFor(result.channel_id ?? '') ?? t('channelsManager.widgetHostMissing')}</pre>
                     <div className="flex items-center justify-between">
-                      <button onClick={() => copy(snippetFor(result.channel_id ?? ''), 'ws')} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-ice/[0.05]">
+                      <button disabled={!widgetHostConfigured}
+                        onClick={() => copy(snippetFor(result.channel_id ?? '') ?? '', 'ws')} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-ice/[0.05]">
                         {copied === 'ws' ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied === 'ws' ? t('platform.integrations.copied') : t('platform.integrations.copy')}
                       </button>
                       <Button size="sm" onClick={() => setActive(null)}>

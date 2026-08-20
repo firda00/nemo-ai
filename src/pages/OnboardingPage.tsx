@@ -756,10 +756,22 @@ export default function OnboardingPage() {
                                 <p className="text-[11px] text-muted">Optional now. You can finish connection later in agent settings.</p>
                               </div>
                             </div>
+                            {/*
+                              Здесь стоял ОБРАЗЕЦ сниппета, неверный в трёх местах сразу: чужой хост
+                              cdn.nemo.ai вместо адреса шлюза, атрибут data-agent вместо data-channel и
+                              черновик агента вместо идентификатора канала, которого на этом шаге ещё не
+                              существует. Скопировав его, человек получал код, который не подключится
+                              никогда, — и узнавал об этом на своём сайте, а не здесь.
+
+                              Настоящий сниппет выдаётся после подключения канала, из одного места
+                              (src/lib/widget.ts). До этого показывать нечего, и честнее так и сказать.
+                            */}
                             {channel === 'widget' && (
                               <div className="mt-3 rounded-xl border border-ice/10 bg-black/20 p-3">
-                                <p className="text-[11px] text-muted">Website widget snippet after creation:</p>
-                                <code className="mt-1 block break-all text-[11px] text-cyan">&lt;script src=&quot;https://cdn.nemo.ai/widget.js&quot; data-agent=&quot;{draft.id}&quot; async&gt;&lt;/script&gt;</code>
+                                <p className="text-[11px] text-muted">
+                                  The website snippet is issued after the channel is connected — you will find it
+                                  in Integrations, ready to copy.
+                                </p>
                               </div>
                             )}
                             {fields.length > 0 && (
