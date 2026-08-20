@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs'
 
-const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
+// Окончания строк нормализуются ПРИ ЧТЕНИИ.
+//
+// Рабочее дерево здесь CRLF, а проверки сравнивают исходный текст. Без нормализации каждое
+// сравнение с переводом строки надо писать как \r?\n, и забытое место падает НА ИСПРАВНОМ КОДЕ —
+// обычно сразу после git checkout, когда причину ищут в последней правке, а она не там.
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const blueprints = read('src/lib/commerceTeams.ts')
 const marketplace = read('src/pages/app/MarketplacePage.tsx')
 const teamDetail = read('src/pages/app/TeamDetailPage.tsx')
@@ -314,7 +319,9 @@ const checks = [
   ['a draft is owner-only to create and decide', commerceControl.includes("action === 'draft_listing'") && commerceControl.includes("|| action === 'draft_listing' || action === 'approve_listing_draft' || action === 'discard_listing_draft'")],
   ['the model writes prose and never a number', listingModule.includes('Never write a price, a discount, a delivery time or a warranty') && listingModule.includes('Never invent a material')],
   ['numbers are extracted from the owner text by pattern, not by model', listingModule.includes('export function extractNumbers') && listingModule.includes('A cost needs a word that means cost')],
-  ['a price the model returned is discarded rather than stored', listingModule.includes('export function parseCopy') && !/price/i.test(listingModule.split('export function parseCopy')[1].split('\n}')[0])],
+  // Граница функции режется по /\r?\n\}/, а не по строке '\n}': дерево CRLF, и такой строки в нём
+  // нет — split вернул бы ВЕСЬ остаток файла, и проверка искала бы «price» в чужом коде.
+  ['a price the model returned is discarded rather than stored', listingModule.includes('export function parseCopy') && !/price/i.test(listingModule.split('export function parseCopy')[1].split(/\r?\n\}/)[0])],
   ['the commission comes from categories the seller already sells in', listingModule.includes('The commission is never guessed') && listingChat.includes('Commission and returns are pooled per category')],
   ['an unmatched category asks the owner instead of borrowing a number', listingModule.includes('full list comes back to pick from') && commerceControl.includes('category_choices: category ? [] : candidates.options')],
   // The signal that actually bridges Russian input to Uzbek category names.

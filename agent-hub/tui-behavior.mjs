@@ -446,10 +446,10 @@ check: {
     ['короткая'],
   ]) {
     const panel = dashboard({ title: 'т', left: cells, right: ['правая колонка'] })
-    const widths = [...new Set(panel.split('\n').map((one) => visibleWidth(one)))]
+    const widths = [...new Set(panel.split(/\r?\n/).map((one) => visibleWidth(one)))]
     assert.equal(widths.length, 1, `рамка разъехалась на ${JSON.stringify(cells[0]).slice(0, 60)}: ширины ${widths}`)
     // Оборванная последовательность оставила бы в видимом тексте хвост вида «[35m».
-    const body = panel.split('\n')[1]
+    const body = panel.split(/\r?\n/)[1]
     assert.equal(/\[\d+m/.test(stripAnsi(body)), false, `escape-последовательность разрублена: ${JSON.stringify(body)}`)
   }
 }
@@ -458,7 +458,7 @@ check: {
 check: {
   const paint = colorsFor({ isTTY: true })
   const panel = dashboard({ title: 'т', left: [paint.magenta('я'.repeat(80))], right: ['правая'] })
-  const row = panel.split('\n')[1]
+  const row = panel.split(/\r?\n/)[1]
   const afterClip = row.slice(row.indexOf('…'))
   assert.ok(afterClip.includes(`${String.fromCharCode(27)}[0m`), 'после обрезки нет сброса цвета')
 }

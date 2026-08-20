@@ -186,7 +186,7 @@ check(() => {
   const lines = buildAssFile([
     { startMs: 2_000, endMs: 3_000, text: 'вторая' },
     { startMs: 0, endMs: 1_000, text: 'первая' },
-  ]).split('\n').filter((line) => line.startsWith('Dialogue'))
+  ]).split(/\r?\n/).filter((line) => line.startsWith('Dialogue'))
   assert.ok(lines[0].includes('первая'), 'реплики не отсортированы по времени')
 })
 

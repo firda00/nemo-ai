@@ -137,7 +137,7 @@ assert.ok(fitted[0].confidence >= fitted[fitted.length - 1].confidence)
 assert.ok(!fitted.some((k) => k.id === 'c0'), 'самое слабое отброшено первым')
 
 const tight = renderMemoryBlock(many, estimateTokens(MEMORY_GUARD) + 40)
-if (tight) assert.ok(tight.split('\n').length <= 8, 'в тесный бюджет попадает немного строк')
+if (tight) assert.ok(tight.split(/\r?\n/).length <= 8, 'в тесный бюджет попадает немного строк')
 
 // Бюджет учитывает и сам страж: иначе он вытеснит содержимое в рантайме, а не при подсчёте.
 assert.ok(estimateTokens(MEMORY_GUARD) > 0)

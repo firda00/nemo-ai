@@ -31,7 +31,7 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8')
  * прозу вокруг них.
  */
 const instructions = (dockerfile) => dockerfile
-  .split('\n')
+  .split(/\r?\n/)
   .filter((line) => !line.trimStart().startsWith('#'))
   .join('\n')
 

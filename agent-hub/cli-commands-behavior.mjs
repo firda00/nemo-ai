@@ -980,7 +980,7 @@ check(() => {
   renderer.onEvent({ type: 'tool_end', name: 'search_leads', step: 1, outcome: { ok: true, name: 'x', result: { found: 3 }, durationMs: 1200 } })
   assert.ok(out.includes('✦'), 'бейдж не напечатан после завершения')
   assert.ok(out.includes('1.2 с'), 'в бейдже нет времени вызова')
-  assert.equal(out.trimEnd().split('\n').filter((one) => one.includes('✦')).length, 1, 'бейдж занял больше одной строки')
+  assert.equal(out.trimEnd().split(/\r?\n/).filter((one) => one.includes('✦')).length, 1, 'бейдж занял больше одной строки')
 })
 
 /*
@@ -1056,7 +1056,7 @@ check(() => {
    * модель возвращается к ней каждый раз, когда задача неочевидна.
    */
   for (const name of ['dev', 'qa', 'media']) {
-    const first = AGENT_ROLES[name].mission.split('\n')[0]
+    const first = AGENT_ROLES[name].mission.split(/\r?\n/)[0]
     assert.ok(/^Ты — Nemo в роли /.test(first), `роль ${name} не объявляет себя первой строкой: ${first}`)
     assert.equal(/поиск|клиент|лид/i.test(first), false, `первая строка роли ${name} тянет в продажи: ${first}`)
   }

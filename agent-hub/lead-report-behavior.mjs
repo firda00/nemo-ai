@@ -80,7 +80,7 @@ assert.equal(renderLeadReport(undefined, {}), '')
 
 {
   const pitch = 'У вас 128 отзывов и 4.7 — поможем не терять заявки ночью.'
-  const line = formatLead(scored(90), 1).split('\n').find((one) => one.includes(pitch))
+  const line = formatLead(scored(90), 1).split(/\r?\n/).find((one) => one.includes(pitch))
   assert.ok(line, 'строка с питчем найдена')
   assert.equal(line.trim(), pitch, 'в строке только сам текст: ни 🔥, ни «первое касание:», ни номера')
 }

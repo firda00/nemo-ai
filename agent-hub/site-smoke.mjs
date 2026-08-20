@@ -58,7 +58,7 @@ const PROFILE_CLEANUP = /puppeteer_dev_chrome_profile|EBUSY|ENOTEMPTY|EPERM/
 process.on('unhandledRejection', (reason) => {
   const text = reason instanceof Error ? `${reason.message} ${reason.stack ?? ''}` : String(reason)
   if (PROFILE_CLEANUP.test(text)) {
-    console.warn(`[warn] профиль браузера не удалился, на результат не влияет: ${text.split('\n')[0]}`)
+    console.warn(`[warn] профиль браузера не удалился, на результат не влияет: ${text.split(/\r?\n/)[0]}`)
     return
   }
   console.error(reason)

@@ -8,7 +8,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '..')
-const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
+// Окончания строк нормализуются ПРИ ЧТЕНИИ.
+//
+// Рабочее дерево здесь CRLF, а проверки сравнивают исходный текст. Без нормализации каждое
+// сравнение с переводом строки пришлось бы писать особой формой, и забытое место падало бы
+// НА ИСПРАВНОМ КОДЕ — обычно сразу после git checkout, когда причину ищут в последней правке.
+// обычно сразу после git checkout, когда причину ищут в последней правке, а она не там.
+// Дешевле привести текст к одному виду один раз на входе.
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n')
 
 /** Код без комментариев. Проверять надо исполняемое, а не объяснение рядом с ним. */
 const stripComments = (source) => source
@@ -88,9 +95,9 @@ const cases = [
   // Провал Telegram не должен помешать зафиксировать задачу: незафиксированная задача будет взята
   // снова, и кредиты спишутся второй раз. Сообщение же можно отправить повторно.
   ['a Telegram failure can never block finish_sdr_job',
-    worker.split('async function alertHotLeads(')[1]?.split('\n}')[0]?.includes('try {')
+    worker.split('async function alertHotLeads(')[1]?.split(/\r?\n\}/)[0]?.includes('try {')
     && worker.includes("errors.push(`${lead.name}: ${String(error?.message ?? error)}`)")
-    && !worker.split('async function alertHotLeads(')[1]?.split('\n}')[0]?.includes('throw')],
+    && !worker.split('async function alertHotLeads(')[1]?.split(/\r?\n\}/)[0]?.includes('throw')],
 
   // Telegram отвечает конвертом {"ok":boolean} и умеет прислать отказ с кодом 200 — например, на
   // кривую разметку. Проверка только HTTP-статуса считала бы отвергнутое сообщение доставленным.
@@ -203,7 +210,7 @@ const cases = [
     && crmSync.includes('if (status === null) return true')
     && crmSync.includes('if (status >= 500 || status === 429) return true')
     // Тело функции заканчивается отказом: всё, что не перечислено выше, повторять нельзя.
-    && (crmSync.split('export function isRetryable')[1]?.split('\n}')[0] ?? '').trimEnd().endsWith('return false')],
+    && (crmSync.split('export function isRetryable')[1]?.split(/\r?\n\}/)[0] ?? '').trimEnd().endsWith('return false')],
 
   // Зависший приёмник не должен держать воркер, а повторы обязаны расходиться по времени.
   ['the webhook call is time-boxed and backs off exponentially',
@@ -221,7 +228,7 @@ const cases = [
   ['a CRM failure can never block finish_sdr_job',
     crmSync.includes('export async function syncHotLeadsToCrm')
     && !/\bthrow\b/.test(crmSync.split('export async function syncHotLeadsToCrm')[1] ?? '')
-    && worker.split('async function syncToCrm(')[1]?.split('\n}')[0]?.includes('try {')
+    && worker.split('async function syncToCrm(')[1]?.split(/\r?\n\}/)[0]?.includes('try {')
     && worker.indexOf('const alerted = await alertHotLeads(result.leads)')
       < worker.indexOf('const crm = await syncToCrm(result.leads, saved.idByKey)')
     && worker.indexOf('const crm = await syncToCrm(result.leads, saved.idByKey)')
@@ -474,7 +481,7 @@ const cases = [
   // упоминает и платформу, и местный путь, и совпадение нашлось бы всегда.
   ['platform mode never silently falls back to local execution',
     (() => {
-      const body = sdrRun.split('async function runFromFlags() {')[1]?.split('\n}')[0] ?? ''
+      const body = sdrRun.split('async function runFromFlags() {')[1]?.split(/\r?\n\}/)[0] ?? ''
       const platformBranch = body.split('if (platformBase() || process.env.NEMO_API_KEY) {')[1]?.split('  }')[0] ?? ''
       return platformBranch.includes('process.exit(1)')
         && platformBranch.includes('process.exit(0)')

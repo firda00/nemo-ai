@@ -104,7 +104,8 @@ check('createClient is gated by isSupabaseEnabled', /isSupabaseEnabled\s*\?\s*cr
 check('env values are trimmed before use', /VITE_SUPABASE_URL[\s\S]{0,60}\.trim\(\)/.test(supabaseSrc) && /VITE_SUPABASE_ANON_KEY[\s\S]{0,60}\.trim\(\)/.test(supabaseSrc))
 check('validators are offline (no fetch/await)', !/fetch\(|await /.test(supabaseSrc.match(/export function isValidSupabaseUrl[\s\S]*?\n\}/)?.[0] ?? 'await ') && !/fetch\(|await /.test(supabaseSrc.match(/export function isValidSupabaseAnonKey[\s\S]*?\n\}/)?.[0] ?? 'await '))
 {
-  const warn = supabaseSrc.match(/console\.warn\(([\s\S]*?)\)\n/)
+  // \r?\n: рабочее дерево CRLF, и `\)` + голый `\n` не совпадает — между ними стоит \r.
+  const warn = supabaseSrc.match(/console\.warn\(([\s\S]*?)\)\r?\n/)
   check('demo-mode warning exists and never prints the env values', Boolean(warn) && !/\$\{|\burl\b|\banon\b/.test(warn?.[1] ?? '${'), 'warning missing or interpolates url/anon')
 }
 

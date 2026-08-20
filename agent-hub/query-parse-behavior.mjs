@@ -147,19 +147,19 @@ check(() => {
     left: [color('35', 'NEMO'), 'Баланс: 100'],
     right: ['Как начать', color('36', 'ниша в город')],
   })
-  const widths = new Set(box.split('\n').map((line) => visibleWidth(line)))
+  const widths = new Set(box.split(/\r?\n/).map((line) => visibleWidth(line)))
   assert.equal(widths.size, 1, `все строки рамки одной ширины, а получилось: ${[...widths].join(', ')}`)
 })
 
 // Пустая колонка не ломает рамку: строк слева и справа бывает разное количество.
 check(() => {
   const box = dashboard({ title: 'X', left: ['a', 'b', 'c'], right: ['1'] })
-  assert.equal(new Set(box.split('\n').map(visibleWidth)).size, 1)
-  assert.equal(box.split('\n').length, 5, 'верх + три строки + низ')
+  assert.equal(new Set(box.split(/\r?\n/).map(visibleWidth)).size, 1)
+  assert.equal(box.split(/\r?\n/).length, 5, 'верх + три строки + низ')
 })
 
 // Заголовок вписан в верхнюю границу, а не напечатан над ней.
-check(() => assert.ok(dashboard({ title: 'Nemo SDR', left: ['a'], right: ['b'] }).split('\n')[0].includes('Nemo SDR')))
+check(() => assert.ok(dashboard({ title: 'Nemo SDR', left: ['a'], right: ['b'] }).split(/\r?\n/)[0].includes('Nemo SDR')))
 
 // --- Меню одной строкой ---------------------------------------------------------------------------
 
@@ -211,13 +211,13 @@ check(() => assert.ok(leadCard(hotLead, 1).includes('нет онлайн-зап�
 // Питч отделён ПУСТОЙ строкой и идёт последним: его выделяют мышью и копируют целиком, и любая наша
 // строка, прилипшая снизу, уедет в чужой чат вместе с текстом.
 check(() => {
-  const lines = leadCard(hotLead, 1).split('\n')
+  const lines = leadCard(hotLead, 1).split(/\r?\n/)
   assert.ok(lines[lines.length - 1].includes('Здравствуйте!'), 'питч — последняя строка карточки')
   assert.equal(lines[lines.length - 2].trim(), '', 'над питчем пустая строка')
 })
 
 // Лид без питча не должен давать пустого хвоста.
-check(() => assert.equal(leadCard(coldLead, 2).split('\n').at(-1).trim() === '', false))
+check(() => assert.equal(leadCard(coldLead, 2).split(/\r?\n/).at(-1).trim() === '', false))
 // Лид без оценки — прочерк, а не «undefined/100».
 check(() => assert.ok(leadCard({ name: 'Х', enrichment: {}, score: null }, 1).includes('—/100')))
 check(() => assert.equal(leadCard({ name: 'Х', enrichment: {}, score: null }, 1).includes('undefined'), false))

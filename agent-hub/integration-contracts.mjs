@@ -4,7 +4,13 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/^\uFEFF/, '')
+// \u041E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u044F \u0441\u0442\u0440\u043E\u043A \u043D\u043E\u0440\u043C\u0430\u043B\u0438\u0437\u0443\u044E\u0442\u0441\u044F \u041F\u0420\u0418 \u0427\u0422\u0415\u041D\u0418\u0418.
+//
+// \u0420\u0430\u0431\u043E\u0447\u0435\u0435 \u0434\u0435\u0440\u0435\u0432\u043E \u0437\u0434\u0435\u0441\u044C CRLF, \u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u044E\u0442 \u0438\u0441\u0445\u043E\u0434\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442. \u0411\u0435\u0437 \u043D\u043E\u0440\u043C\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \u043A\u0430\u0436\u0434\u043E\u0435
+// \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0441 \u043F\u0435\u0440\u0435\u0432\u043E\u0434\u043E\u043C \u0441\u0442\u0440\u043E\u043A\u0438 \u043D\u0430\u0434\u043E \u043F\u0438\u0441\u0430\u0442\u044C \u043A\u0430\u043A \r?\n, \u0438 \u0437\u0430\u0431\u044B\u0442\u043E\u0435 \u043C\u0435\u0441\u0442\u043E \u043F\u0430\u0434\u0430\u0435\u0442 \u041D\u0410 \u0418\u0421\u041F\u0420\u0410\u0412\u041D\u041E\u041C \u041A\u041E\u0414\u0415 \u2014
+// \u043E\u0431\u044B\u0447\u043D\u043E \u0441\u0440\u0430\u0437\u0443 \u043F\u043E\u0441\u043B\u0435 git checkout, \u043A\u043E\u0433\u0434\u0430 \u043F\u0440\u0438\u0447\u0438\u043D\u0443 \u0438\u0449\u0443\u0442 \u0432 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0439 \u043F\u0440\u0430\u0432\u043A\u0435, \u0430 \u043E\u043D\u0430 \u043D\u0435 \u0442\u0430\u043C.
+// \u0414\u0435\u0448\u0435\u0432\u043B\u0435 \u043F\u0440\u0438\u0432\u0435\u0441\u0442\u0438 \u0442\u0435\u043A\u0441\u0442 \u043A \u043E\u0434\u043D\u043E\u043C\u0443 \u0432\u0438\u0434\u0443 \u043E\u0434\u0438\u043D \u0440\u0430\u0437 \u043D\u0430 \u0432\u0445\u043E\u0434\u0435.
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
 let failed = 0
 const check = (name, ok, detail = '') => {
   if (ok) console.log(`[OK] ${name}`)
@@ -127,6 +133,9 @@ const blockAfter = (text, marker, closer) => {
   const end = text.indexOf(closer, start)
   return end < 0 ? '' : text.slice(start, end)
 }
+// Разделитель — СТРОКА, а не регулярка: blockAfter ищет через indexOf, и регулярка превратилась бы
+// в текст «/\r?\n\}/», который не находится никогда. Тогда блок пуст, ключей ноль, и все интеграции
+// объявляются недостижимыми. Строка здесь верна, потому что read выше приводит файл к \n.
 const providerKeys = [...blockAfter(page, 'const PROVIDER_UI_TO_KEY', '\n}').matchAll(/^\s+(\w+):/gm)].map((m) => m[1])
 const connectableKeys = [...blockAfter(page, 'const CONNECTABLE', '\n  }').matchAll(/^\s+(\w+): \{/gm)].map((m) => m[1])
 const googleIds = [...(page.match(/GOOGLE_IDS = \[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1])

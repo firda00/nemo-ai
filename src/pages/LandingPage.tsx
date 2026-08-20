@@ -392,7 +392,20 @@ export default function LandingPage() {
     // Deliberately single-theme: the marketing page always renders on the brand's navy
     // ground. `theme-dark-scope` carries every colour token plus color-scheme, so native
     // controls and the page frame stay dark for a light-theme visitor too.
-    <div className="theme-dark-scope min-h-screen overflow-x-hidden">
+    /*
+     * overflow-x-CLIP, А НЕ HIDDEN — ИНАЧЕ ШАПКА НЕ ПРИЛИПАЕТ.
+     *
+     * `overflow-x: hidden` делает элемент КОНТЕЙНЕРОМ ПРОКРУТКИ: браузер вычисляет для него
+     * `overflow-y: auto`. А `position: sticky` липнет к ближайшему такому контейнеру — то есть к
+     * этому div, который сам никогда не прокручивается, потому что прокручивается окно. Шапка
+     * при этом уезжала вверх вместе со страницей, хотя в стилях честно стояло sticky top-0.
+     *
+     * Измерено: при scrollY = 1359 верх шапки оказывался на −1359px, то есть за экраном.
+     *
+     * `clip` обрезает то же горизонтальное переполнение, но контейнера прокрутки НЕ создаёт, и
+     * sticky продолжает считать от окна.
+     */
+    <div className="theme-dark-scope min-h-screen overflow-x-clip">
       <MarketingHeader />
 
       <main>

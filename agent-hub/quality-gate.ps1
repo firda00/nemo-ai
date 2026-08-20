@@ -103,7 +103,8 @@ $steps = @(
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
   @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
-  @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } }
+  @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } },
+  @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } }
 )
 
 Push-Location $root

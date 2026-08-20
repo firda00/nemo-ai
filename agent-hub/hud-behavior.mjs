@@ -156,7 +156,7 @@ check: {
 
 check: {
   const line = userLine('найди 10 клиник в Ташкенте', new Date(2026, 7, 19, 9, 5), 60, plain)
-  const rows = line.split('\n')
+  const rows = line.split(/\r?\n/)
   assert.equal(rows.length, 2, 'реплика человека — текст и черта под ним')
   assert.ok(rows[0].includes('найди 10 клиник в Ташкенте'))
   // Время с ведущими нулями: «9:5» читается как ошибка вёрстки.
@@ -167,14 +167,14 @@ check: {
 // Длинная реплика не ломает вёрстку: отступ до времени не уходит в минус.
 check: {
   const long = userLine('я'.repeat(300), new Date(2026, 7, 19, 14, 32), 60, plain)
-  assert.equal(long.split('\n').length, 2)
+  assert.equal(long.split(/\r?\n/).length, 2)
   assert.ok(long.includes('14:32'), 'время потерялось на длинной реплике')
 }
 
 // Цвет не влияет на ширину черты — иначе она разъедется относительно строки состояния.
 check: {
   const painted = userLine('запрос', new Date(2026, 7, 19, 1, 2), 70, paint)
-  assert.equal(visibleWidth(painted.split('\n')[1]), 70)
+  assert.equal(visibleWidth(painted.split(/\r?\n/)[1]), 70)
 }
 
 /*
@@ -195,8 +195,8 @@ check: {
     'строка\n   с отступом\n\tи табом',
     'хвост с пустой строкой\n',
   ]) {
-    const rows = userLine(body, new Date(2026, 7, 19, 9, 5), 60, plain).split('\n')
-    const lines = body.split('\n')
+    const rows = userLine(body, new Date(2026, 7, 19, 9, 5), 60, plain).split(/\r?\n/)
+    const lines = body.split(/\r?\n/)
     assert.equal(rows.length, lines.length + 1, `вставка ${JSON.stringify(body)} потеряла строки`)
     assert.ok(rows[0].startsWith('› '), 'первая строка без маркера ввода')
     assert.ok(rows[0].includes('09:05'), 'время ушло с первой строки')

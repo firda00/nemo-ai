@@ -476,7 +476,7 @@ check(() => {
 })
 // CSV: строка СВЕРХУ. Снизу её съедают программы, читающие файл до первой пустой строки.
 check(() => {
-  const lines = withAttribution('имя\nА', 'csv').split('\n')
+  const lines = withAttribution('имя\nА', 'csv').split(/\r?\n/)
   assert.ok(lines[0].includes(OSM_ATTRIBUTION))
   assert.equal(lines[1], 'имя')
 })

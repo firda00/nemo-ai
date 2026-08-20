@@ -24,11 +24,21 @@ export function MarketingHeader() {
     { href: '/pricing', label: labels[3] },
   ]
 
+  /*
+   * ПОЛОСА ВО ВСЮ ШИРИНУ, ПРИЖАТАЯ К ВЕРХУ.
+   *
+   * Здесь была плавающая «таблетка» (sticky top-4, скруглённая, с отступами по краям). Прилипала
+   * она исправно, но при прокрутке под ней просвечивало содержимое по бокам. Полоса с нижней
+   * границей отделяет шапку от страницы на всю ширину окна.
+   *
+   * Цвет — ТОКЕНАМИ, а не slate-950/slate-800. Приложение живёт в двух темах, и прибитый тёмный
+   * фон дал бы на светлой тёмную шапку над светлой страницей. bg-bg/80 берёт тот же тон, что и
+   * страница, и остаётся верным в обеих.
+   */
   return (
-    <div className="sticky top-4 z-50 px-4">
-      {/* floating glass pill nav on dark */}
-      <div className="container-page">
-        <div className="flex h-[60px] items-center justify-between rounded-pill border border-white/10 bg-panel/70 px-4 shadow-soft backdrop-blur-xl sm:px-6">
+    <header className="sticky top-0 z-50 w-full border-b border-ice/10 bg-bg/80 backdrop-blur-md">
+      <div className="container-page px-4">
+        <div className="flex h-16 items-center justify-between">
           <Link to="/" className="flex items-center" onClick={() => setOpen(false)}>
             <Logo />
           </Link>
@@ -65,7 +75,7 @@ export function MarketingHeader() {
         </div>
 
         {open && (
-          <div className="mt-2 rounded-3xl border border-white/10 bg-panel/90 p-3 shadow-lg backdrop-blur-xl lg:hidden">
+          <div className="mb-3 rounded-2xl border border-ice/10 bg-panel p-3 shadow-lg lg:hidden">
             <div className="flex flex-col gap-1">
               {links.map((l) => (
                 <a key={l.href} href={l.href} onClick={() => setOpen(false)} className="rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-white/5 hover:text-text">
@@ -82,6 +92,6 @@ export function MarketingHeader() {
           </div>
         )}
       </div>
-    </div>
+    </header>
   )
 }

@@ -103,8 +103,10 @@ const cases = [
     && (migration.match(/execute function public\.v5_touch_updated_at\(\)/g) ?? []).length === 2
     // Имена триггеров проверяются отдельно: одного счёта вызовов функции недостаточно, потому что
     // переименованный триггер вешается на другую таблицу (или ни на какую) и счёт при этом не меняется.
-    && migration.includes('create trigger telephony_trunks_set_updated_at\n  before update on public.telephony_trunks')
-    && migration.includes('create trigger crm_integrations_set_updated_at\n  before update on public.crm_integrations')],
+    // Перевод строки ищется как \r?\n: рабочее дерево здесь CRLF, и проверка с голым \n объявляла
+    // дефект на исправной миграции — сразу после `git checkout`, когда git нормализует окончания.
+    && /create trigger telephony_trunks_set_updated_at\r?\n\s*before update on public\.telephony_trunks/.test(migration)
+    && /create trigger crm_integrations_set_updated_at\r?\n\s*before update on public\.crm_integrations/.test(migration)],
 
   // ── Согласие CHECK-ограничений и Zod ─────────────────────────────────────────────────────────
   //
@@ -150,7 +152,7 @@ const cases = [
   ['MarkdownV2 escaping covers the full Bot API list',
     ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
       .every((ch) => bot.includes('escapeMarkdownV2') && new RegExp(`\\${ch}`).test(
-        bot.split('export function escapeMarkdownV2')[1]?.split('\n').slice(0, 3).join('\n') ?? '',
+        bot.split('export function escapeMarkdownV2')[1]?.split(/\r?\n/).slice(0, 3).join('\n') ?? '',
       ))],
 
   // ── Отступление от ТЗ по кнопке записи ───────────────────────────────────────────────────────
@@ -226,7 +228,8 @@ const cases = [
     // Разрушительный пересиливает собственное readOnlyHint сервера, а молчание сервера трактуется как
     // действие, а не как безопасность.
     && mcp.indexOf('destructiveHint') < mcp.indexOf('readOnlyHint === true')
-    && mcp.split('export function resolvePermission')[1]?.includes("return 'action'\n}")],
+    // \r?\n по той же причине: с голым \n проверка падала на исправном файле в CRLF-дереве.
+    && /return 'action'\r?\n\}/.test(mcp.split('export function resolvePermission')[1] ?? '')],
 
   ['MCP tool names are namespaced so they cannot shadow ours',
     mcp.includes('const full = `mcp__${serverName}__${safe}`')
