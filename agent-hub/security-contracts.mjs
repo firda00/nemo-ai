@@ -184,6 +184,36 @@ check(38, 'Browser task write barrier',
     .map(([, key]) => key)
   check(41, 'No literal secrets in the compose file', literal.length === 0,
     literal.length ? `вписаны значением: ${literal.join(', ')}` : 'секреты подставляются из окружения')
+
+  /*
+   * 42. КАЖДАЯ ПЕРЕМЕННАЯ КОНТУРА ОБЪЯВЛЕНА В ОБРАЗЦЕ.
+   *
+   * Переменная, которую compose читает, но образец не упоминает, — это «поднялось и не работает» на
+   * чужой машине. У части из них есть значение по умолчанию, и тогда отказ ещё и молчаливый:
+   * GOTRUE_URI_ALLOW_LIST пустым разрешит ровно один адрес возврата, и вход с любого другого
+   * оборвётся без объяснений. Человек, разворачивающий контур, обязан узнать о переменной из
+   * образца, а не из чужого журнала.
+   */
+  const declaredEnv = new Set(
+    read('deploy/.env.server.example').split(/\r?\n/)
+      .map((line) => line.split('=')[0].trim())
+      .filter((key) => /^[A-Z_][A-Z0-9_]*$/.test(key)),
+  )
+  const usedEnv = [...new Set([...raw.matchAll(/\$\{([A-Z_][A-Z0-9_]*)[:?}-]/g)].map((m) => m[1]))]
+  const undeclared = usedEnv.filter((key) => !declaredEnv.has(key))
+  check(42, 'Every contour variable is documented', undeclared.length === 0,
+    undeclared.length ? `нет в deploy/.env.server.example: ${undeclared.join(', ')}` : `${usedEnv.length} переменных объявлены`)
+
+  /*
+   * 43. ПУБЛИЧНЫЙ КЛЮЧ И СЛУЖЕБНЫЙ НЕ ПЕРЕПУТАНЫ МЕСТАМИ.
+   *
+   * ANON_KEY уезжает в браузер как VITE_SUPABASE_ANON_KEY. SERVICE_ROLE_KEY обходит RLS целиком.
+   * Подстановка второго в сборку фронтенда выдала бы каждому посетителю права, которыми не
+   * ограничена ни одна политика, — и выглядело бы это как полностью рабочее приложение.
+   */
+  const frontendArgs = JSON.stringify(services.caddy?.build?.args ?? {})
+  check(43, 'Service-role key never reaches the frontend build', !/SERVICE_ROLE_KEY/.test(frontendArgs),
+    'в аргументы сборки фронтенда уходит только ANON_KEY')
 }
 
 fs.writeFileSync(path.join(root, 'agent-hub/security-contracts-report.json'), JSON.stringify({ generated_at: new Date().toISOString(), failed, partial, rows }, null, 2))

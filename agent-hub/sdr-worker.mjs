@@ -34,13 +34,26 @@ const LEASE_SECONDS = 900
 const HEARTBEAT_MS = 240_000
 const IDLE_PAUSE_MS = 15_000
 
+/*
+ * АДРЕС БЕРЁТСЯ ЦЕЛИКОМ, ЕСЛИ ОН ЗАДАН, И ТОЛЬКО ПОТОМ СТРОИТСЯ ИЗ REF.
+ *
+ * Здесь стояло `https://${ref}.supabase.co` без вариантов — то есть воркер умел работать ТОЛЬКО с
+ * облаком. В контуре на своём сервере (docker-compose.prod.yml) Supabase живёт за собственным Kong,
+ * и такой воркер поднялся бы, отчитался о готовности и продолжил разбирать очередь ОБЛАКА, пока
+ * всё остальное работает локально. Две базы, один воркер, задвоенная рассылка — и ни одной ошибки
+ * в журнале.
+ *
+ * Порядок тот же, что в agent-hub/server/env.ts и agent-hub/media/main.ts: приём в репозитории уже
+ * есть, и заводить рядом второй было бы хуже, чем повторить существующий.
+ */
+const serviceKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
 const ref = process.env.SUPABASE_PROJECT_REF
-const serviceKey = process.env.SUPABASE_SECRET_KEY
-if (!ref || !serviceKey) {
-  console.error('[worker] нужны SUPABASE_PROJECT_REF и SUPABASE_SECRET_KEY (подхватываются из .secrets.local)')
+const url = process.env.SUPABASE_URL ?? (ref ? `https://${ref}.supabase.co` : '')
+if (!url || !serviceKey) {
+  console.error('[worker] нужны SUPABASE_URL (или SUPABASE_PROJECT_REF) и SUPABASE_SECRET_KEY (подхватываются из .secrets.local)')
   process.exit(1)
 }
-const admin = createClient(`https://${ref}.supabase.co`, serviceKey)
+const admin = createClient(url, serviceKey)
 
 /** Лиды задачи пишутся здесь, а не общим store из notifier.ts: нужна привязка job_id. */
 async function saveLeads(job, leads) {

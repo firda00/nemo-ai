@@ -52,6 +52,38 @@ for (const [name, content] of SAMPLES) {
   assert.ok(result.report.includes('Коммит остановлен'), `отчёт без объяснения: ${name}`)
 }
 
+/*
+ * --- ПОДСТАНОВКА ПЕРЕМЕННОЙ В ПОЗИЦИИ ПАРОЛЯ — НЕ СЕКРЕТ ------------------------------------------
+ *
+ * `postgres://user:${POSTGRES_PASSWORD}@host/db` секрета не содержит: значение приходит из
+ * окружения при запуске. Такие строки неизбежны — GoTrue, PostgREST и Storage принимают ТОЛЬКО
+ * полный URI, отдельного поля под пароль у них нет, и без этого сужения весь самостоятельный
+ * контур нельзя было бы закоммитить.
+ *
+ * ПАРА ПРОВЕРОК, А НЕ ОДНА. Сузить правило легко до того, что оно перестанет ловить и настоящий
+ * пароль — а заметить это будет нечем: сканер продолжит рапортовать «находок нет». Поэтому рядом
+ * с каждым разрешённым случаем стоит запрещённый, отличающийся ровно подстановкой.
+ */
+const SUBSTITUTIONS_ARE_SAFE = [
+  ['compose', 'GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@postgres:5432/postgres'],
+  ['оболочка без скобок', 'DATABASE_URL=postgres://app:$DB_PASSWORD@db:5432/app'],
+  ['шаблон помощника', 'uri: mongodb+srv://user:{{ vault_password }}@cluster.example.net'],
+  ['заполнитель в документации', 'redis://default:<REDIS_PASSWORD>@cache:6379'],
+]
+for (const [name, content] of SUBSTITUTIONS_ARE_SAFE) {
+  assert.equal(scan(content).caught, false, `ложное срабатывание на подстановке: ${name}`)
+}
+
+// А вот это обязано ловиться по-прежнему — в том числе в том же самом файле контура.
+const LITERALS_STILL_CAUGHT = [
+  ['литерал в compose', 'GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:hunter2secret@postgres:5432/postgres'],
+  ['подстановка рядом с литералом', 'postgres://app:${PREFIX}realpassword123@db:5432/app'],
+  ['пустая подстановка не оправдание', 'postgres://app:${}xyzsecret@db:5432/app'],
+]
+for (const [name, content] of LITERALS_STILL_CAUGHT) {
+  assert.equal(scan(content).caught, true, `настоящий пароль перестал ловиться: ${name}`)
+}
+
 // --- Значение НЕ печатается ------------------------------------------------------------------------
 // Отчёт о найденном ключе, где напечатан сам ключ, — это второй канал утечки: он уходит в консоль,
 // в журнал сборки и в переписку с поддержкой.

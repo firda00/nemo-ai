@@ -13,6 +13,7 @@ dist-ssr
 *.local
 
 # Environment files and deployment credentials. Keep only documented examples tracked.
+.vercel
 .env
 .env.*
 !.env.example
@@ -80,3 +81,6 @@ agent-hub/ui-stability-contracts-report.json
 # файлами и проверки gstack, которых требует CLAUDE.md, и библиотека скиллов. Это общая
 # инфраструктура проекта, а не локальная настройка: спрятать её значит забрать её у всех остальных.
 /.claude/launch.json
+
+.vercel
+.env*
