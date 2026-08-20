@@ -26,20 +26,66 @@ import {
 import { missionFor } from './cli/roles.ts'
 import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
 import { INPUT_PROMPT, estimateHistoryTokens, footerHints, hudLine, userLine } from './cli/hud.ts'
+import { ensureSession, logout, readSession, writeSession } from './cli/login.ts'
+import { ask as askLine, askHidden } from './cli/prompt.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 const localEnv = loadLocalEnv(repoRoot)
 const debug = process.argv.includes('--debug')
 
-if (!process.env.OPENROUTER_API_KEY) {
-  console.error('Нужен OPENROUTER_API_KEY: агент без модели работать не может.')
-  console.error('Ключ подхватывается из .secrets.local, .env.local или .env.')
-  process.exit(1)
-}
 if (!isInteractiveTerminal()) {
   // Агент — диалоговый режим. В конвейере он повис бы на первом же вопросе, и выглядело бы это как
   // зависший процесс. Для скриптов есть режим флагов у sdr:run.
   console.error('Агенту нужен терминал. Для скриптов: npm run sdr:run -- --query "..." --city "..."')
+  process.exit(1)
+}
+
+// ── Вход в аккаунт ───────────────────────────────────────────────────────────────────────────────
+//
+// До всего остального: остальные шаги имеют смысл только для того, кто вошёл. Сессия лежит в
+// ~/.nemo/auth.json, и при живом токене вопросов не задаётся вовсе.
+if (process.argv.includes('logout')) {
+  logout()
+  console.log('Сессия удалена.')
+  process.exit(0)
+}
+
+const tty = { input: process.stdin, output: process.stdout }
+const account = process.env.NEMO_SKIP_LOGIN
+  ? null
+  : await ensureSession({
+    read: () => readSession(),
+    write: (value) => writeSession(value),
+    clear: () => logout(),
+    askEmail: () => askLine(tty, `${c.dim('Почта')} `),
+    askPassword: () => askHidden(tty, `${c.dim('Пароль')} `),
+    say: (line) => console.log(`  ${line}`),
+  })
+
+if (!account && !process.env.NEMO_SKIP_LOGIN) {
+  console.error('Без входа продолжать нечем. Регистрация — в веб-панели Nemo AI.')
+  process.exit(1)
+}
+
+/*
+ * КЛЮЧ МОДЕЛИ — ОТДЕЛЬНАЯ ВЕЩЬ ОТ ВХОДА, И ОБ ЭТОМ НАДО СКАЗАТЬ ПРЯМО.
+ *
+ * Вход опознаёт человека и открывает его аккаунт на платформе. Обращаться к языковой модели он при
+ * этом НЕ разрешает: запросы уходят напрямую в OpenRouter по личному ключу, потому что прокси,
+ * который считал бы расход по балансу аккаунта, ещё не построен.
+ *
+ * Раньше здесь стоял выход с ошибкой. Для локального запуска это годилось, для установленной
+ * командой — нет: человек, только что успешно вошедший, получал отказ без объяснения, что именно
+ * от него хотят. Теперь названы оба пути, включая тот, где ключ не нужен вовсе.
+ */
+if (!process.env.OPENROUTER_API_KEY) {
+  console.log('')
+  console.log(`  ${c.yellow('Ключ модели не найден.')} Вход выполнен, но обращаться к модели пока нечем.`)
+  console.log('  Расход модели идёт по ВАШЕМУ ключу, не по балансу аккаунта: прокси на платформе ещё нет.')
+  console.log('')
+  console.log(`    ${c.dim('вариант 1')}  OPENROUTER_API_KEY=... nemo        ${c.dim('— ключ с openrouter.ai')}`)
+  console.log(`    ${c.dim('вариант 2')}  nemo, затем /model local           ${c.dim('— своя модель через Ollama, ключ не нужен')}`)
+  console.log('')
   process.exit(1)
 }
 

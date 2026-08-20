@@ -74,6 +74,37 @@ for (const [name, content] of SUBSTITUTIONS_ARE_SAFE) {
   assert.equal(scan(content).caught, false, `ложное срабатывание на подстановке: ${name}`)
 }
 
+/*
+ * --- ОБЪЯВЛЕНИЕ ПОЛЯ — НЕ ПАРОЛЬ -----------------------------------------------------------------
+ *
+ * В коде входа строк `password: string` неизбежно много: параметр, принимающий пароль, честнее
+ * всего так и назвать. Значения в них нет вовсе — это описание того, ЧТО будет передано.
+ *
+ * И снова ПАРАМИ: рядом с каждым разрешённым объявлением стоит настоящий пароль, отличающийся
+ * только тем, что справа стоит значение. Сузить правило до бесполезности легко, а заметить это
+ * нечем — сканер продолжит рапортовать «находок нет».
+ */
+const DECLARATIONS_ARE_SAFE = [
+  ['параметр функции', '  password: string,'],
+  ['необязательное поле', '  password?: string'],
+  ['схема Zod', 'const Login = z.object({ password: z.string().min(8) })'],
+  ['чтение окружения', 'const password = process.env.NEMO_E2E_PASSWORD'],
+  ['поле объекта-типа', 'interface Creds { password: string }'],
+]
+for (const [name, content] of DECLARATIONS_ARE_SAFE) {
+  assert.equal(scan(content).caught, false, `ложное срабатывание на объявлении: ${name}`)
+}
+
+const REAL_PASSWORDS_STILL_CAUGHT = [
+  ['значение рядом с объявлением', "  password: 'hunter2secret',"],
+  ['в документации', 'Пароль: kX9-mn21-Qw77'],
+  ['латиницей', 'password = correcthorsebattery'],
+  ['похоже на тип, но это значение', "password: stringify_me_9x7"],
+]
+for (const [name, content] of REAL_PASSWORDS_STILL_CAUGHT) {
+  assert.equal(scan(content).caught, true, `настоящий пароль перестал ловиться: ${name}`)
+}
+
 // А вот это обязано ловиться по-прежнему — в том числе в том же самом файле контура.
 const LITERALS_STILL_CAUGHT = [
   ['литерал в compose', 'GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:hunter2secret@postgres:5432/postgres'],

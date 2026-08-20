@@ -104,7 +104,9 @@ $steps = @(
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
   @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
   @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } },
-  @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } }
+  @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } },
+  @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
+  @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )
 
 Push-Location $root

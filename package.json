@@ -128,7 +128,11 @@
     "audit:licenses": "npx --yes license-checker --onlyAllow \"MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;0BSD;CC0-1.0;Python-2.0;BlueOak-1.0.0\" --excludePackages \"duck@0.1.12\" --excludePrivatePackages --production",
     "test:tty": "node agent-hub/tty-suites.mjs",
     "test:hud": "node --experimental-strip-types agent-hub/hud-behavior.mjs",
-    "test:legal": "node --experimental-strip-types agent-hub/legal-contracts.mjs"
+    "test:legal": "node --experimental-strip-types agent-hub/legal-contracts.mjs",
+    "build:cli": "node scripts/build-cli.mjs",
+    "test:cli-install": "node agent-hub/cli-install-smoke.mjs",
+    "test:cli-auth": "node --experimental-strip-types agent-hub/cli-auth-behavior.mjs",
+    "prepack": "npm run build:cli"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -160,6 +164,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.5.0",
+    "esbuild": "^0.28.2",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -175,5 +180,15 @@
   },
   "optionalDependencies": {
     "onnxruntime-node": "^1.27.0"
+  },
+  "bin": {
+    "nemo": "./dist/cli.js"
+  },
+  "files": [
+    "dist/cli.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.6"
   }
 }
