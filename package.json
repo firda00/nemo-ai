@@ -132,9 +132,9 @@
     "build:cli": "node scripts/build-cli.mjs",
     "test:cli-install": "node agent-hub/cli-install-smoke.mjs",
     "test:cli-auth": "node --experimental-strip-types agent-hub/cli-auth-behavior.mjs",
-    "prepack": "npm run build:cli",
     "test:marketing-skills": "node --experimental-strip-types agent-hub/marketing-skills-behavior.mjs",
-    "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs"
+    "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs",
+    "prepare": "npm run build:cli"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -61,10 +61,78 @@ check('ссылка в шапке лендинга', /\/docs\/cli/.test(header))
  * а отправка пользователя к постороннему коду с правами глобальной установки.
  */
 {
-  const installs = [...docs.matchAll(/command: '(?:npm i -g|npx) ([a-z0-9@/-]+)/g)].map((m) => m[1])
-  const wrong = installs.filter((name) => name !== pkg.name)
-  check('команды установки ставят наш пакет', wrong.length === 0,
-    wrong.length ? `в документации: ${[...new Set(wrong)].join(', ')}, в package.json: ${pkg.name}` : pkg.name)
+  /*
+   * ИСТОЧНИК УСТАНОВКИ ОБЯЗАН БЫТЬ НАШИМ, И ПРОВЕРЯТЬ ЭТО НАДО НЕ ПО ИМЕНИ В package.json.
+   *
+   * Первая редакция сверяла имя пакета из команды с polem name в package.json — они совпадали, и
+   * проверка проходила. Но имя `nemo-ai` В РЕЕСТРЕ NPM ПРИНАДЛЕЖИТ ПОСТОРОННЕМУ (автор emadjumaah).
+   * То есть документация честно совпадала сама с собой и при этом велела людям ставить чужой код
+   * глобально. Совпадение с package.json ничего не говорит о том, кому принадлежит имя снаружи.
+   *
+   * Пока своё имя в реестре не занято, единственный безопасный источник — репозиторий проекта.
+   * Проверяется явно: спецификация обязана быть github:firda00/... либо областью, которой мы
+   * владеем. Голое имя пакета запрещено.
+   */
+  const specs = [...docs.matchAll(/command: '(?:npm i -g|npm install -g|npx) ([^ ']+)/g)].map((m) => m[1])
+  const OWN = /^(?:github:firda00\/|@nemoai\/|@firda00\/)/
+  const bare = specs.filter((spec) => !OWN.test(spec))
+  check('установка ведёт в наш источник, а не в чужой пакет реестра', bare.length === 0,
+    bare.length ? `голые имена: ${[...new Set(bare)].join(', ')} — в npm они могут принадлежать кому угодно` : `${specs.length} команд`)
+
+  // Скрипты установки не должны обходить это правило своим путём.
+  for (const [name, text] of [['install.sh', read('public/install.sh')], ['install.ps1', read('public/install.ps1')]]) {
+    const inScript = [...text.matchAll(/npm install -g ["'$]?([^ "'$\n]+)/g)].map((m) => m[1])
+    const suspicious = inScript.filter((spec) => !OWN.test(spec) && !spec.includes('Repo') && !spec.includes('REPO'))
+    check(`${name} ставит из нашего источника`, suspicious.length === 0,
+      suspicious.length ? suspicious.join(', ') : 'из переменной с github: спецификацией')
+    check(`${name} называет наш репозиторий`, /github:firda00\/nemo-ai/.test(text))
+  }
+}
+
+/*
+ * ── Установка из git требует prepare, а не prepack ──────────────────────────────────────────
+ *
+ * npm запускает prepare при установке из git И ставит для него devDependencies. prepack при такой
+ * установке не вызывается вовсе — значит dist/cli.js не соберётся, команда nemo не появится, и
+ * человек получит «успешную» установку без самой программы. Проверено вживую: ровно так и вышло.
+ */
+check('сборка CLI привязана к prepare', pkg.scripts?.prepare?.includes('build:cli') === true,
+  pkg.scripts?.prepare ?? 'prepare отсутствует')
+check('prepack не подменяет prepare', !pkg.scripts?.prepack,
+  pkg.scripts?.prepack ? 'prepack при установке из git не вызывается' : 'нет')
+
+// ── Нативные установщики опубликованы и доступны по адресу из документации ──────────────────
+{
+  const shPath = path.join(root, 'public/install.sh')
+  const psPath = path.join(root, 'public/install.ps1')
+  check('install.sh лежит в public', fs.existsSync(shPath))
+  check('install.ps1 лежит в public', fs.existsSync(psPath))
+
+  const urls = [...docs.matchAll(/(https:\/\/[^ '|]+\/install\.(?:sh|ps1))/g)].map((m) => m[1])
+  check('в документации есть обе однострочные команды', urls.length >= 2, urls.join(', '))
+
+  /*
+   * Адрес в документации обязан вести на файл, который мы кладём в public. Опечатка в имени даёт
+   * страницу приложения вместо скрипта — а `curl … | bash` выполнит её как оболочку, и человек
+   * увидит поток синтаксических ошибок вместо установки.
+   */
+  const wrongName = urls.filter((url) => !/\/install\.(?:sh|ps1)$/.test(url))
+  check('адреса установщиков совпадают с именами файлов', wrongName.length === 0, wrongName.join(', '))
+
+  const sh = read('public/install.sh')
+  check('install.sh проверяет наличие Node.js', /command -v node/.test(sh))
+  check('install.sh проверяет версию Node.js', /NODE_MIN_MAJOR|20/.test(sh) && /NODE_MIN_MINOR|6/.test(sh))
+  check('install.sh сообщает об успехе', /Nemo CLI успешно установлен/.test(sh))
+  check('install.sh проверяет, что команда нашлась', /command -v nemo/.test(sh))
+  // Без set -e скрипт молча продолжает после отказа установки и рапортует об успехе.
+  check('install.sh останавливается на первой ошибке', /set -euo pipefail/.test(sh))
+
+  const ps = read('public/install.ps1')
+  check('install.ps1 проверяет наличие Node.js', /Get-Command node/.test(ps))
+  check('install.ps1 проверяет команду nemo', /Get-Command nemo/.test(ps))
+  check('install.ps1 обновляет PATH текущей сессии', /GetEnvironmentVariable\('Path'/.test(ps))
+  // 2>&1 к native-команде в PowerShell 5.1 ломает $? — результат обязан читаться по $LASTEXITCODE.
+  check('install.ps1 читает код возврата npm', /\$LASTEXITCODE/.test(ps))
 }
 
 // Команда, объявленная в bin, — та же, что человек набирает по документации.
@@ -95,13 +163,26 @@ check('ссылка в шапке лендинга', /\/docs\/cli/.test(header))
     return block.match(/command: '([^']*)'/)?.[1] ?? ''
   }
 
-  const ps = commandOf('powershell', 'unix')
-  check('в команде для PowerShell нет &&', ps.includes('&&') === false,
-    ps.includes('&&') ? `скопированная строка там не выполнится: ${ps}` : ps)
-  check('в команде для PowerShell есть ;', ps.includes(';'), ps)
+  const psNative = commandOf('native-windows', 'npm-unix')
+  check('однострочник для Windows идёт через irm | iex', /irm .*\| iex/.test(psNative), psNative)
 
-  const unix = commandOf('unix', 'npx')
-  check('в команде для macOS/Linux есть &&', unix.includes('&&'), unix)
+  const psNpm = commandOf('npm-windows', 'source')
+  check('в команде npm для PowerShell нет &&', psNpm.includes('&&') === false,
+    psNpm.includes('&&') ? `скопированная строка там не выполнится: ${psNpm}` : psNpm)
+  check('в команде npm для PowerShell есть ;', psNpm.includes(';'), psNpm)
+
+  const unixNative = commandOf('native-unix', 'native-windows')
+  check('однострочник для macOS/Linux идёт через curl | bash', /curl -fsSL .*\| bash/.test(unixNative), unixNative)
+
+  const unixNpm = commandOf('npm-unix', 'npm-windows')
+  check('в команде npm для macOS/Linux есть &&', unixNpm.includes('&&'), unixNpm)
+
+  /*
+   * НАТИВНАЯ УСТАНОВКА — ПЕРВАЯ. Её и рекомендуем: она проверяет Node, ставит и честно говорит,
+   * если команда не попала в PATH. Порядок вкладок — это и есть рекомендация: первую пробуют.
+   */
+  const firstTab = docs.slice(docs.indexOf('INSTALL_TABS')).match(/id: '([a-z-]+)'/)?.[1]
+  check('нативная установка стоит первой', firstTab?.startsWith('native') === true, firstTab ?? '?')
 
   check('предупреждение о PowerShell видно на странице', /PowerShell/.test(page) && /TriangleAlert|Alert/.test(page))
 }
