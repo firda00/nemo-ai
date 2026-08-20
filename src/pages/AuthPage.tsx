@@ -37,9 +37,24 @@ export default function AuthPage() {
   const [busy, setBusy] = useState(false)
 
   const isSignup = mode === 'signup'
+  /*
+   * Согласие с условиями при РЕГИСТРАЦИИ.
+   *
+   * Не отмечено по умолчанию: галочка, проставленная за человека, согласием не является — ни по
+   * смыслу, ни для проверяющего. При входе не спрашивается: условия принимают один раз, при создании
+   * аккаунта, а требовать подтверждения на каждом входе значит приучить не читать.
+   */
+  const [agreed, setAgreed] = useState(false)
   const from = (location.state as { from?: string } | null)?.from ?? '/app'
 
   const submit = async (e: FormEvent) => {
+    // Проверка ЗДЕСЬ, а не только в атрибуте disabled: кнопку можно включить через инструменты
+    // разработчика или отправить форму клавишей Enter, и тогда аккаунт создался бы без согласия.
+    if (isSignup && !agreed) {
+      e.preventDefault()
+      setErr(t('auth.consentRequired'))
+      return
+    }
     e.preventDefault()
     setErr('')
     setBusy(true)
@@ -239,11 +254,35 @@ export default function AuthPage() {
                     </div>
                   )}
 
+                  {isSignup && (
+                    <label className="flex items-start gap-2.5 text-xs leading-relaxed text-muted">
+                      <input
+                        type="checkbox"
+                        checked={agreed}
+                        onChange={(event) => setAgreed(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-white/20 bg-white/5 accent-violet"
+                        aria-describedby="consent-text"
+                      />
+                      <span id="consent-text">
+                        {t('auth.consentPrefix')}{' '}
+                        {/* Открываются в новой вкладке: уводить человека со страницы с наполовину
+                            заполненной формой — верный способ потерять и форму, и человека. */}
+                        <a href="/terms" target="_blank" rel="noreferrer" className="text-violet hover:underline">
+                          {t('auth.consentTerms')}
+                        </a>{' '}
+                        {t('auth.consentAnd')}{' '}
+                        <a href="/privacy" target="_blank" rel="noreferrer" className="text-violet hover:underline">
+                          {t('auth.consentPrivacy')}
+                        </a>
+                      </span>
+                    </label>
+                  )}
+
                   {err && (
                     <p className="rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{err}</p>
                   )}
 
-                  <Button type="submit" fullWidth size="lg" disabled={busy}>
+                  <Button type="submit" fullWidth size="lg" disabled={busy || (isSignup && !agreed)}>
                     {busy ? '…' : isSignup ? t('auth.signupButton') : t('auth.loginButton')}
                   </Button>
                 </form>

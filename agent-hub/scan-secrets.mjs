@@ -9,6 +9,7 @@
 
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 /**
  * Признаки секретов. Каждый — по ФОРМЕ значения, а не по имени переменной.
@@ -43,6 +44,53 @@ const SKIP = [
   /\.(png|jpg|jpeg|gif|webp|ico|pdf|zip|woff2?)$/i,
 ]
 
+/**
+ * Известные безопасные совпадения.
+ *
+ * СОВПАДЕНИЕ ПРОВЕРЯЕТСЯ ДОСЛОВНО, а не маской файла и не ослаблением правила. Файл целиком в SKIP
+ * означал бы, что настоящий ключ, положенный в него завтра, проедет молча. Здесь же исключается ровно
+ * одна строка ровно в одном файле: любая её правка снова включает проверку.
+ *
+ * КАЖДАЯ ЗАПИСЬ ОБЯЗАНА НАЗЫВАТЬ ПРИЧИНУ, и причина должна отвечать на вопрос «почему это не секрет»,
+ * а не «почему это мешает». Список, куда добавляют «чтобы прошло», перестаёт быть защитой на второй
+ * записи — поэтому проверка ниже требует непустого поля reason.
+ */
+/** Разделитель путей Windows. Собран из кода: обратная косая в литерале — источник ошибок. */
+const SEPARATOR = String.fromCharCode(92)
+
+export const KNOWN_SAFE = [
+  {
+    file: 'src/i18n/translations.ts',
+    line: "password: 'Parol',",
+    rule: 'пароль в документации',
+    reason: 'подпись поля ввода в узбекском словаре интерфейса: «Parol» — это слово «пароль», а не пароль',
+  },
+  {
+    file: 'src/i18n/translations.ts',
+    line: "password: 'Пароль',",
+    rule: 'пароль в документации',
+    reason: 'подпись поля ввода в русском словаре интерфейса',
+  },
+  {
+    file: 'src/i18n/translations.ts',
+    line: "password: 'Password', passwordPlaceholder: '••••••••', invite: 'Invite code', invitePlaceholder: 'BETA-XXXX',",
+    rule: 'пароль в документации',
+    reason: 'подписи полей ввода в английском словаре интерфейса; заполнитель — точки, а не значение',
+  },
+]
+
+/** Совпадает ли находка с известным безопасным случаем. Сравнение строки — по её содержимому. */
+export function knownSafe(file, rule, line, list = KNOWN_SAFE) {
+  const normalized = String(line ?? '').trim()
+  return list.some((one) => {
+    if (!one.reason?.trim()) return false
+    // Пути от git приходят через прямую косую, а от аргументов командной строки на Windows — через
+    // обратную. Без приведения исключение работало бы через раз, в зависимости от способа запуска.
+    const normalizedFile = file.split(SEPARATOR).join('/')
+    return one.file === normalizedFile && one.rule === rule && one.line === normalized
+  })
+}
+
 /** Файлы, помеченные к коммиту. Именно они уедут, а не то, что лежит рядом в рабочей папке. */
 function stagedFiles() {
   const out = execSync('git diff --cached --name-only --diff-filter=ACMR', { encoding: 'utf8' })
@@ -65,6 +113,9 @@ function scan(files) {
     for (const rule of RULES) {
       for (const [index, line] of lines.entries()) {
         if (!rule.re.test(line)) continue
+        // Известный безопасный случай пропускается ЗДЕСЬ, после срабатывания правила: так в отчёте
+        // видно, что правило работает, а исключение точечное.
+        if (knownSafe(file, rule.name, line)) continue
         // Значение НЕ печатается. Отчёт о найденном ключе, где напечатан сам ключ, — это второй
         // канал утечки: он уходит в консоль, в CI и в переписку.
         findings.push({ file, line: index + 1, rule: rule.name })
@@ -74,6 +125,16 @@ function scan(files) {
   }
   return findings
 }
+
+/*
+ * Прогон только при ПРЯМОМ запуске.
+ *
+ * Без этого импорт функции из набора проверок запускал бы сканер по индексу git — и проверка
+ * поведения превращалась бы в проверку текущего состояния репозитория.
+ */
+const directRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (!directRun) { /* импортировали ради функций — ничего не сканируем */ }
+else {
 
 const explicit = process.argv.slice(2).filter((one) => !one.startsWith('--'))
 const files = explicit.length ? explicit : stagedFiles()
@@ -89,3 +150,5 @@ if (findings.length) {
 }
 
 console.log(`[OK] Secrets scan: ${files.length} файлов, находок нет`)
+
+}

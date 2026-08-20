@@ -77,7 +77,10 @@ try {
     if (message.type() === 'error' && !/favicon/i.test(message.text())) runtimeErrors.push(`console: ${message.text()}`)
   })
 
-  const publicRoutes = ['/', '/pricing', '/demo', '/pitch', '/auth']
+  // Юридические страницы в списке НАМЕРЕННО: на них ссылается футер и чекбокс согласия при
+  // регистрации. Мёртвая ссылка в согласии — это согласие с документом, который человек не смог
+  // открыть, и обнаруживается это в худший момент: при разборе жалобы.
+  const publicRoutes = ['/', '/pricing', '/demo', '/pitch', '/auth', '/terms', '/privacy']
   // /app/memory входит сюда после того, как страница была задеплоена без пункта в меню: маршрут
   // существовал, дойти до него было нельзя, и ни одна проверка этого не заметила.
   const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/dialogues', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates', '/app/memory']

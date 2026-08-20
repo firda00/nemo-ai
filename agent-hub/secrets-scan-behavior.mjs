@@ -8,6 +8,7 @@
 // подделках. Все значения ниже — синтетические, сгенерированы для теста и никуда не ведут.
 
 import assert from 'node:assert/strict'
+import { KNOWN_SAFE, knownSafe } from './scan-secrets.mjs'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -74,4 +75,56 @@ for (const [name, content] of [
   assert.equal(scan(content).caught, false, `ложное срабатывание: ${name}`)
 }
 
-console.log('[OK] Secrets scan behaviour: 26 assertions')
+
+// --- Список известных безопасных совпадений -----------------------------------------------------
+//
+// Исключение существует потому, что в словаре интерфейса есть строка `password: 'Parol'` — подпись
+// поля ввода, а не пароль. Опасность списка не в самом исключении, а в том, во что он превращается
+// через полгода: «добавь сюда, чтобы прошло». Поэтому проверяется не только что исключение работает,
+// но и что оно узкое и что правило под ним живо.
+
+{
+  // Проверяется ПОВЕДЕНИЕ функции, а не текст файла. Структурная проверка («в исходнике есть слово
+  // reason») пропускала снятие самой проверки причины — это показал мутационный прогон.
+  const RULE = 'пароль в документации'
+  const FILE = 'src/i18n/translations.ts'
+  const LINE = "password: 'Parol',"
+
+  assert.equal(knownSafe(FILE, RULE, LINE), true, 'известное безопасное совпадение перестало распознаваться')
+
+  // Исключается СТРОКА, а не файл: соседняя строка того же файла обязана ловиться.
+  assert.equal(knownSafe(FILE, RULE, 'password: RealLeak12345'), false,
+    'исключение распространилось на весь файл — настоящий ключ в нём проедет молча')
+  // И не весь файл, и не любое правило: другое правило по той же строке не исключается.
+  assert.equal(knownSafe(FILE, 'ключ OpenAI', LINE), false, 'исключение сняло чужое правило')
+  // И не любой файл: та же строка в другом файле не исключается.
+  assert.equal(knownSafe('src/other.ts', RULE, LINE), false, 'исключение распространилось на чужой файл')
+
+  // Запись БЕЗ ПРИЧИНЫ не действует. Список, куда добавляют «чтобы прошло», перестаёт быть защитой.
+  const noReason = [{ file: FILE, rule: RULE, line: LINE, reason: '   ' }]
+  assert.equal(knownSafe(FILE, RULE, LINE, noReason), false, 'запись без причины сработала как исключение')
+  const withReason = [{ file: FILE, rule: RULE, line: LINE, reason: 'подпись поля' }]
+  assert.equal(knownSafe(FILE, RULE, LINE, withReason), true)
+
+  // Каждая запись в настоящем списке названа причиной.
+  for (const entry of KNOWN_SAFE) {
+    assert.ok(entry.reason?.trim().length > 10, `запись ${entry.file} без внятной причины`)
+    assert.ok(entry.line?.trim().length > 0, `запись ${entry.file} без точной строки`)
+  }
+
+  // Словарь не в общем списке пропуска: там исключается файл целиком.
+  const scanner = fs.readFileSync(path.join(root, 'agent-hub/scan-secrets.mjs'), 'utf8')
+  const skipBlock = scanner.split('const SKIP = [')[1]?.split(']')[0] ?? ''
+  assert.equal(skipBlock.includes('i18n'), false, 'словарь попал в общий список пропуска')
+}
+// Правило под исключением ЖИВО: настоящий пароль рядом со словом «password» по-прежнему ловится.
+assert.equal(scan('password: SuperSecret123').caught, true, 'исключение погасило всё правило целиком')
+assert.equal(scan('пароль: Xk9mQ2zPlmn').caught, true)
+// И даже в том же самом файле: исключена одна строка, а не файл.
+assert.equal(
+  scan(["password: 'Parol',", 'password: RealLeak12345'].join('\n'), '.ts').caught,
+  true,
+  'соседняя строка в том же файле проехала вместе с исключением',
+)
+
+console.log('[OK] Secrets scan behaviour: пройдено')

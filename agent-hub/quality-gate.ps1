@@ -45,6 +45,7 @@ $steps = @(
   @{ Name = 'CLI slash commands and roles'; Command = { npm run test:cli-commands } },
   @{ Name = 'QA runner and site audit'; Command = { npm run test:qa } },
     @{ Name = 'HUD and terminal layout'; Command = { npm run test:hud } },
+  @{ Name = 'Legal pages, consent and host split'; Command = { npm run test:legal } },
 @{ Name = 'Render suites under a TTY'; Command = { npm run test:tty } },
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
