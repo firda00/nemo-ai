@@ -216,6 +216,84 @@ check(38, 'Browser task write barrier',
     'в аргументы сборки фронтенда уходит только ANON_KEY')
 }
 
+/*
+ * 44–45. СПИСОК РАЗРЕШЁННЫХ ИСТОЧНИКОВ ЗАПРОСА.
+ *
+ * Здесь уже случился отказ, и он был шире, чем выглядел: боевого адреса фронтенда в списке не
+ * было, предзапрос получал 403 ещё до функции, и БРАУЗЕР НЕ МОГ ВЫЗВАТЬ НИ ОДНУ Edge Function из
+ * выложенного приложения. Снаружи это выглядело как «не удалось сохранить onboarding» — одна
+ * видимая кнопка из нескольких десятков молча неработающих вызовов. В разработке всё было
+ * исправно: localhost в списке есть.
+ *
+ * Проверяется НАСТОЯЩАЯ функция, вынутая из исходника и исполненная, а не наличие строк: список
+ * можно расширить так, что текст останется похожим, а смысл изменится.
+ */
+{
+  const source = read('supabase/functions/_shared/cors.ts')
+
+  /*
+   * Вынимаем константы и саму функцию, подменяя Deno.env заглушкой.
+   *
+   * Аннотации типов снимаются: new Function разбирает JavaScript, и `origin: string` для него —
+   * синтаксическая ошибка. Снимаются ТОЧЕЧНО, только у параметров и возвращаемых значений: общая
+   * замена «двоеточие и слово» съела бы объектные литералы и сама сломала бы разбор.
+   */
+  const slice = source
+    .slice(source.indexOf('const PROD_ORIGIN'), source.indexOf('/** A safe browser return origin'))
+    .replace(/\(([A-Za-z_$][\w$]*): [A-Za-z<>[\]|]+\)/g, '($1)')
+    .replace(/\):\s*(?:string|boolean|void)\s*\{/g, ') {')
+  const build = (env) => new Function('Deno', `${slice}; return originAllowed`)({ env: { get: (k) => env[k] } })
+
+  /*
+   * ОКРУЖЕНИЕ ПУСТОЕ НАМЕРЕННО.
+   *
+   * Первая редакция подставляла APP_URL с боевым адресом — и мутация «убрать этот адрес из списка
+   * в коде» ВЫЖИЛА: переменная прикрывала пропажу. Но переменная окружения — настройка развёртывания,
+   * её теряют при пересоздании проекта; список в коде обязан работать сам.
+   */
+  const allowed = build({})
+
+  const MUST_PASS = [
+    'https://nemo-ai-firda00s-projects.vercel.app',
+    'https://nemo-ai-swart.vercel.app',
+    'https://nemoai.uz',
+    'https://app.nemoai.uz',
+    'http://localhost:5173',
+    '', // сервер-серверный вызов Origin не шлёт
+  ]
+  const MUST_FAIL = [
+    // Любой человек за пять минут разворачивает свой сайт на vercel.app. Разрешив зону целиком,
+    // мы позволили бы его странице обращаться к нашим функциям с токеном вошедшего пользователя.
+    'https://evil-attacker.vercel.app',
+    // Похожее имя — самый дешёвый обход проверки «содержит nemoai.uz».
+    'https://nemoai.uz.evil.com',
+    'https://notnemoai.uz',
+    'http://nemoai.uz',                       // без шифрования
+    'https://nemo-ai-firda00s-projects.vercel.app.evil.com',
+    'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', // чужое расширение
+  ]
+
+  const wrongPass = MUST_PASS.filter((origin) => !allowed(origin))
+  const wrongFail = MUST_FAIL.filter((origin) => allowed(origin))
+  check(44, 'Production origins can call the functions', wrongPass.length === 0,
+    wrongPass.length ? `заблокированы: ${wrongPass.map((o) => o || '(пусто)').join(', ')}` : `${MUST_PASS.length} адресов`)
+  check(45, 'Look-alike and foreign origins stay blocked', wrongFail.length === 0,
+    wrongFail.length ? `ПРОПУЩЕНЫ: ${wrongFail.join(', ')}` : `${MUST_FAIL.length} адресов отклонено`)
+
+  /*
+   * Подстановка в списке сводит проверку на нет, и по тексту это незаметно.
+   *
+   * Смотрим на КОД БЕЗ КОММЕНТАРИЕВ. Первая редакция падала на исправном файле: в комментарии
+   * рядом со списком «*.vercel.app» упомянут ровно затем, чтобы объяснить, почему так нельзя.
+   * Пятый случай этого класса в репозитории — проверка ловит собственное объяснение.
+   */
+  const executable = slice
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^\s*\/\/.*$/gm, '')
+  check(46, 'The allowlist carries no wildcards', !/\*\.[a-z]/.test(executable) && !/\.endsWith\(['"]\.[a-z]/.test(executable),
+    'источники перечислены поимённо')
+}
+
 fs.writeFileSync(path.join(root, 'agent-hub/security-contracts-report.json'), JSON.stringify({ generated_at: new Date().toISOString(), failed, partial, rows }, null, 2))
 console.log(`Security contracts: ${rows.length - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
 if (failed) process.exit(1)
