@@ -19,7 +19,7 @@ services:
   - type: web
     name: nemo-gateway
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.backend
     plan: free
     region: frankfurt
     healthCheckPath: /health
@@ -50,7 +50,7 @@ services:
   # - type: worker
   #   name: nemo-sdr-worker
   #   runtime: docker
-  #   dockerfilePath: ./Dockerfile
+  #   dockerfilePath: ./Dockerfile.backend
   #   plan: starter
   #   region: frankfurt
   #   dockerCommand: node --experimental-strip-types agent-hub/sdr-worker.mjs --loop

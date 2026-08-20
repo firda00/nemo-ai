@@ -1,0 +1,156 @@
+# Единый контур Nemo AI на одном сервере (Oracle Cloud ARM64, Ubuntu 24.04).
+#
+# ЭТО АЛЬТЕРНАТИВА СВЯЗКЕ SUPABASE CLOUD + VERCEL, А НЕ ДОПОЛНЕНИЕ К НЕЙ.
+#
+# Одновременно они работать не должны: два воркера, смотрящие в разные базы, разберут одну очередь
+# дважды и разошлют клиентам по два сообщения. Сейчас боевой контур — Supabase Cloud: там развёрнуты
+# Edge Functions, туда указывают вебхуки Telegram и Stripe, там данные.
+#
+# ЧЕГО ЭТОТ ФАЙЛ ПОКА НЕ ДЕЛАЕТ — ЧИТАТЬ ДО ЗАПУСКА.
+#
+# 1. ПРИЛОЖЕНИЕ ЕЩЁ НЕ УМЕЕТ РАБОТАТЬ С ЭТОЙ БАЗОЙ НАПРЯМУЮ. Шлюз и воркер ходят к данным через
+#    createClient(url, serviceKey) — это HTTP-клиент Supabase (PostgREST), а не соединение с
+#    Postgres. Голый контейнер pgvector им предложить нечего: строки подключения они не читают.
+#    Пока SUPABASE_URL указывает на облако, контейнер postgres поднимется, будет healthy — и
+#    останется НЕИСПОЛЬЗОВАННЫМ, а работать всё продолжит с Supabase Cloud. Молча.
+#
+#    Чтобы контур стал самостоятельным, базы мало: нужен совместимый слой — PostgREST, GoTrue,
+#    Realtime, Storage. Это официальная сборка самостоятельного хостинга Supabase; она заменит
+#    сервис postgres ниже. Контейнер здесь — подготовленная почва (том, изоляция, схема), а не
+#    готовая замена облаку.
+#
+# 2. EDGE FUNCTIONS СЮДА НЕ ПЕРЕЕДУТ. Это Deno-функции платформы Supabase, запускать их здесь
+#    негде. Их логику придётся перенести в шлюз, а вебхуки Telegram и Stripe — перевесить на
+#    api.nemoai.uz. Схему база получит (deploy/init-supabase.sql), функции — нет.
+#
+# ЗАПУСК:
+#   cp deploy/.env.server.example .env.server && $EDITOR .env.server
+#   docker compose -f docker-compose.prod.yml --env-file .env.server up -d --build
+
+name: nemo
+
+services:
+  # ── База ────────────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    # ПОРТ НАРУЖУ НЕ ПУБЛИКУЕТСЯ, и это не формальность: публикация порта Docker'ом обходит правила
+    # UFW через цепочку DOCKER-USER. То есть «закрыл firewall'ом» здесь не работает — базу нашли бы
+    # сканером в первые сутки. Единственная защита — не публиковать вовсе.
+    networks: [backend]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nemo}
+      POSTGRES_USER: ${POSTGRES_USER:-nemo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?пустой пароль откроет базу всему контуру}
+      # Кодировка и локаль задаются при СОЗДАНИИ кластера; поменять их потом можно лишь пересозданием.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # initdb.d выполняется ТОЛЬКО на пустом томе. Для существующей базы файл не сделает ничего —
+      # докатывайте миграциями. Рассчитывать, что перезапуск «применит схему», нельзя.
+      - ./deploy/init-supabase.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER:-nemo}" -d "$${POSTGRES_DB:-nemo}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Шлюз ────────────────────────────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    # backend — к базе, egress — наружу (OpenRouter, Telegram) и для Caddy. Порт на хост НЕ
+    # публикуется: снаружи в шлюз ходят только через Caddy, по HTTPS и только на нужный домен.
+    networks: [backend, egress]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      NEMO_TOKEN_PEPPER: ${NEMO_TOKEN_PEPPER:?без перца все выданные токены обесценятся при перезапуске}
+      NEMO_CRM_WEBHOOK_SECRET: ${NEMO_CRM_WEBHOOK_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "require(''http'').get(''http://127.0.0.1:3000/health'', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(''error'', () => process.exit(1))"']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Фоновый воркер ──────────────────────────────────────────────────────────────────────────
+  #
+  # ОТДЕЛЬНЫМ СЕРВИСОМ, А НЕ ВТОРЫМ ПРОЦЕССОМ ПОД SUPERVISORD.
+  #
+  # Просили supervisord/PM2; цель понятна — оба процесса обязаны работать. Отдельный сервис даёт то
+  # же самое и лучше: под общим надзирателем падение воркера снаружи не видно — контейнер жив,
+  # healthcheck зелёный, а supervisord молча перезапускает процесс по кругу. Здесь у каждого свой
+  # перезапуск, свой журнал и свой статус в `docker compose ps`, и лишнего слоя нет вовсе.
+  # Образ ОДИН — расходится только команда, поэтому версии кода разойтись не могут.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend, egress]
+    command: ['node', '--experimental-strip-types', 'agent-hub/sdr-worker.mjs', '--loop']
+    environment:
+      NODE_ENV: production
+      SUPABASE_PROJECT_REF: ${SUPABASE_PROJECT_REF}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      SDR_TELEGRAM_BOT_TOKEN: ${SDR_TELEGRAM_BOT_TOKEN:-}
+      SDR_TELEGRAM_CHAT_ID: ${SDR_TELEGRAM_CHAT_ID:-}
+
+  # ── Фронтенд и обратный прокси ──────────────────────────────────────────────────────────────
+  #
+  # Собранный бандл лежит ВНУТРИ образа Caddy (Dockerfile.frontend), а не в общем томе: том между
+  # сборщиком и раздачей означает состояние, которое переживает выкладку. Бандл, собранный два
+  # релиза назад, продолжал бы раздаваться, пока кто-нибудь не заметит.
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?иначе приложение соберётся в демо-режим и будет выглядеть рабочим}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?}
+        VITE_API_GATEWAY_URL: ${VITE_API_GATEWAY_URL:?иначе клиенту нечего вставить себе на сайт}
+    restart: unless-stopped
+    depends_on: [gateway]
+    networks: [backend, egress]
+    ports:
+      - '80:80'     # нужен для ACME HTTP-01: без него сертификат не продлится
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      # Сертификаты переживают пересоздание контейнера. Без тома Let's Encrypt перевыпускал бы их
+      # на каждый рестарт и упёрся бы в предел — 5 выпусков на домен в неделю, после чего сайт
+      # остаётся без сертификата на несколько дней.
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?Let's Encrypt требует адрес для уведомлений об истечении}
+      SITE_ROOT_DOMAIN: ${SITE_ROOT_DOMAIN:-nemoai.uz}
+      SITE_APP_DOMAIN: ${SITE_APP_DOMAIN:-app.nemoai.uz}
+      SITE_API_DOMAIN: ${SITE_API_DOMAIN:-api.nemoai.uz}
+
+networks:
+  # internal: true отрезает выход в интернет для ВСЕХ, кто подключён только к этой сети. Для базы
+  # это и нужно: наружу ей ходить незачем, а вот попытка соединения ИЗ базы — верный признак того,
+  # что кто-то уже внутри.
+  backend:
+    internal: true
+  egress:
+    driver: bridge
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

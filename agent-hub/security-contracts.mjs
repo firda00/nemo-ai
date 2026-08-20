@@ -142,6 +142,50 @@ check(38, 'Browser task write barrier',
     && /validateReadOnlyMarketplaceBrowserTask\(url, taskText\)/.test(read('supabase/functions/_shared/tools.ts')),
   'browser tasks are limited to approved marketplace domains and read-only work until owner approvals exist')
 
+/*
+ * 39. КОНТУР НА СВОЁМ СЕРВЕРЕ НЕ ВЫСТАВЛЯЕТ БАЗУ И ШЛЮЗ НАРУЖУ.
+ *
+ * UFW НЕ ЗАКРЫВАЕТ ПОРТЫ, ОПУБЛИКОВАННЫЕ DOCKER'ОМ: правила Docker живут в цепочке DOCKER-USER и
+ * срабатывают раньше. Строка `ports: "5432:5432"`, добавленная на вечер отладки, открывает базу
+ * интернету — при том что `ufw status` продолжает показывать «deny incoming» и выглядит настроенным.
+ * На Oracle Cloud с белым IP такое находят сканером в первые сутки.
+ *
+ * Единственная защита — не публиковать порт вовсе. Проверяется РАЗБОРОМ YAML, а не поиском строки:
+ * `ports:` можно записать десятком способов, и текстовый поиск обходится случайно.
+ */
+{
+  const { parse } = await import('yaml')
+  const compose = parse(read('docker-compose.prod.yml'))
+  const services = compose.services ?? {}
+
+  const exposed = Object.entries(services)
+    .filter(([name]) => name !== 'caddy')
+    .filter(([, service]) => Array.isArray(service?.ports) && service.ports.length > 0)
+    .map(([name]) => name)
+  check(39, 'Self-hosted contour keeps the database private', exposed.length === 0,
+    exposed.length ? `порты опубликованы наружу: ${exposed.join(', ')}` : 'наружу выведен только Caddy (80/443)')
+
+  const dbNetworks = services.postgres?.networks ?? []
+  check(40, 'Database sits on an egress-free network',
+    compose.networks?.backend?.internal === true
+    && Array.isArray(dbNetworks) && dbNetworks.length === 1 && dbNetworks[0] === 'backend',
+    'postgres подключён только к backend, а backend помечен internal: true')
+
+  /*
+   * Пароль и служебный ключ обязаны приходить переменными, а не лежать в файле под гитом.
+   *
+   * Проверяется КЛЮЧ YAML в начале строки, а не имя где угодно в тексте. Первая редакция искала
+   * `POSTGRES_PASSWORD:` подстрокой — и находила его ВНУТРИ самой подстановки
+   * `${POSTGRES_PASSWORD:?сообщение}`, объявляя дефект на исправном файле.
+   */
+  const raw = read('docker-compose.prod.yml')
+  const literal = [...raw.matchAll(/^\s+(POSTGRES_PASSWORD|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|OPENROUTER_API_KEY|NEMO_TOKEN_PEPPER):\s*(.+)$/gm)]
+    .filter(([, , value]) => !value.trim().startsWith('$'))
+    .map(([, key]) => key)
+  check(41, 'No literal secrets in the compose file', literal.length === 0,
+    literal.length ? `вписаны значением: ${literal.join(', ')}` : 'секреты подставляются из окружения')
+}
+
 fs.writeFileSync(path.join(root, 'agent-hub/security-contracts-report.json'), JSON.stringify({ generated_at: new Date().toISOString(), failed, partial, rows }, null, 2))
 console.log(`Security contracts: ${rows.length - failed - partial} PASS, ${partial} PARTIAL, ${failed} FAIL.`)
 if (failed) process.exit(1)
