@@ -1,0 +1,323 @@
+# Единый контур Nemo AI на одном сервере (Oracle Cloud ARM64, Ubuntu 24.04).
+#
+# ЭТО АЛЬТЕРНАТИВА СВЯЗКЕ SUPABASE CLOUD + VERCEL, А НЕ ДОПОЛНЕНИЕ К НЕЙ.
+#
+# Одновременно они работать не должны: два воркера, смотрящие в разные базы, разберут одну очередь
+# дважды и разошлют клиентам по два сообщения. Сейчас боевой контур — Supabase Cloud: там развёрнуты
+# Edge Functions, туда указывают вебхуки Telegram и Stripe, там данные.
+#
+# КОНТУР САМОСТОЯТЕЛЬНЫЙ: здесь поднимается весь Supabase, а не только база.
+#
+# Приложение общается с данными через createClient(SUPABASE_URL, key) — это HTTP-клиент, а не
+# соединение с Postgres. Голая база ему ничего не даёт: строк подключения код не читает нигде.
+# Поэтому здесь стоит официальная сборка самостоятельного хостинга — postgres, kong, auth, rest,
+# realtime, storage и edge-runtime. SUPABASE_URL начинает указывать на Kong внутри контура, и
+# КОД ФРОНТЕНДА, ШЛЮЗА И ВОРКЕРА НЕ МЕНЯЕТСЯ: для них это тот же Supabase, только свой.
+#
+# ПОПРАВКА К ПРЕЖНЕЙ РЕДАКЦИИ ЭТОГО ФАЙЛА. Здесь было написано, что Edge Functions на своём сервере
+# запускать негде и их логику придётся переносить в шлюз. Это неверно: supabase/edge-runtime —
+# официальный образ ровно для этого, тот же Deno и тот же протокол. Функции из supabase/functions
+# монтируются в него как есть.
+#
+# ЧЕГО ЭТОТ ФАЙЛ НЕ ДЕЛАЕТ САМ:
+#   — не переносит ДАННЫЕ из облака (нужен pg_dump/pg_restore отдельно);
+#   — не перевешивает вебхуки: адреса Telegram и Stripe придётся перерегистрировать на
+#     https://api.nemoai.uz/functions/v1/… вручную, иначе они продолжат ходить в облако;
+#   — не поднимает Studio: панель управления здесь не нужна, а лишняя открытая наружу — риск.
+#
+# ЧТО НЕ ПРОВЕРЕНО: этот контур не запускался. Docker на машине разработки отсутствует, поэтому
+# проверены разбор YAML и согласованность имён и переменных, но не живой старт. Первый запуск
+# делайте на тестовом сервере, а не на боевом домене.
+#
+# ЗАПУСК:
+#   cp deploy/.env.server.example .env.server
+#   node deploy/make-keys.mjs "$(openssl rand -hex 32)"   # выпустить ANON_KEY и SERVICE_ROLE_KEY
+#   $EDITOR .env.server
+#   docker compose -f docker-compose.prod.yml --env-file .env.server up -d --build
+
+name: nemo
+
+services:
+  # ── База ────────────────────────────────────────────────────────────────────────────────────
+  #
+  # Образ supabase/postgres, а не pgvector/pgvector: помимо vector он несёт роли и расширения, без
+  # которых остальные службы не поднимутся вовсе — supabase_auth_admin и supabase_storage_admin для
+  # своих схем, authenticator для PostgREST, pgjwt и pgsodium. Простой Postgres с доустановленным
+  # pgvector здесь не подойдёт: службы стартуют и падают на первой же миграции.
+  postgres:
+    image: supabase/postgres:15.8.1.060
+    restart: unless-stopped
+    # ПОРТ НАРУЖУ НЕ ПУБЛИКУЕТСЯ, и это не формальность: публикация порта Docker'ом обходит правила
+    # UFW через цепочку DOCKER-USER. То есть «закрыл firewall'ом» здесь не работает — базу нашли бы
+    # сканером в первые сутки. Единственная защита — не публиковать вовсе.
+    networks: [backend]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: supabase_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?пустой пароль откроет базу всему контуру}
+      POSTGRES_HOST: /var/run/postgresql
+      # Тем же секретом подписывают токены GoTrue и проверяет PostgREST. Расхождение здесь означает
+      # не отказ во входе, а вход, который принимается одной службой и отвергается другой.
+      JWT_SECRET: ${JWT_SECRET:?}
+      JWT_EXP: 3600
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # initdb.d выполняется ТОЛЬКО на пустом томе. Для существующей базы файл не сделает ничего —
+      # докатывайте миграциями. Рассчитывать, что перезапуск «применит схему», нельзя.
+      #
+      # Префикс 90- намеренный: сначала отрабатывают собственные сценарии образа (роли, схемы auth
+      # и storage), и только потом наша схема, которая на эти роли ссылается.
+      - ./deploy/init-supabase.sql:/docker-entrypoint-initdb.d/90-nemo.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U supabase_admin -d "$${POSTGRES_DB:-postgres}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # ── Единая точка входа: Kong ────────────────────────────────────────────────────────────────
+  #
+  # Собирает разрозненные службы в один адрес, каким его ожидает supabase-js: /auth/v1, /rest/v1,
+  # /realtime/v1, /storage/v1, /functions/v1. Без него пришлось бы править клиентский код — а он
+  # общий с облачной сборкой, и расхождение вылезло бы на одной из двух площадок.
+  kong:
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on:
+      auth: { condition: service_started }
+      rest: { condition: service_started }
+    networks: [backend, egress]
+    environment:
+      KONG_DATABASE: 'off'
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      # Заголовки Supabase бывают длинными (JWT в apikey и Authorization разом): с буферами по
+      # умолчанию Kong отвечает 494 на совершенно законный запрос.
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      ANON_KEY: ${ANON_KEY:?выпустите ключи скриптом deploy/make-keys.mjs}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?выпустите ключи скриптом deploy/make-keys.mjs}
+    volumes:
+      - ./deploy/kong.yml:/home/kong/kong.yml:ro
+    # Порт наружу не публикуется: снаружи в Kong ходят только через Caddy, по HTTPS.
+
+  # ── Аутентификация ──────────────────────────────────────────────────────────────────────────
+  auth:
+    image: supabase/gotrue:v2.177.0
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend, egress]
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL:?внешний адрес Kong — на него GoTrue строит ссылки в письмах}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}
+      GOTRUE_SITE_URL: ${SITE_URL:-https://app.nemoai.uz}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      # Подтверждение почты требует настроенного SMTP. Включать его БЕЗ почты — значит запереть
+      # каждого нового пользователя навсегда: письмо не уйдёт, а войти он не сможет.
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+
+  # ── Данные: PostgREST ───────────────────────────────────────────────────────────────────────
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage,graphql_public}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: 'false'
+      # Роль берётся из JWT — именно так и работает RLS: PostgREST переключает роль в базе, и
+      # политики видят auth.uid(). Без этого все запросы пришли бы одной ролью, и изоляция исчезла.
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+
+  # ── Подписки в реальном времени ─────────────────────────────────────────────────────────────
+  realtime:
+    image: supabase/realtime:v2.34.47
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    environment:
+      PORT: 4000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-postgres}
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_ENC_KEY: ${REALTIME_ENC_KEY:?ровно 16 знаков — иначе служба не поднимется}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:?не короче 64 знаков}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      RLIMIT_NOFILE: '10000'
+      SEED_SELF_HOST: 'true'
+      RUN_JANITOR: 'true'
+
+  # ── Файлы ───────────────────────────────────────────────────────────────────────────────────
+  storage:
+    image: supabase/storage-api:v1.19.3
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      rest: { condition: service_started }
+    networks: [backend]
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: 'false'   # преобразования требуют отдельной службы imgproxy
+    volumes:
+      - storage_data:/var/lib/storage
+
+  # ── Edge Functions ──────────────────────────────────────────────────────────────────────────
+  #
+  # Тот же Deno, что в облаке. Функции монтируются из репозитория как есть — переписывать их не
+  # нужно. verify_jwt здесь общий для всех: публичные вебхуки проверяют подлинность сами
+  # (секретный токен Telegram, подпись Stripe), и это то же решение, что verify_jwt = false в
+  # облачном манифесте.
+  functions:
+    image: supabase/edge-runtime:v1.67.4
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend, egress]
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgres://supabase_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      NEMO_TOKEN_PEPPER: ${NEMO_TOKEN_PEPPER}
+    volumes:
+      - ./supabase/functions:/home/deno/functions:ro
+    command: ['start', '--main-service', '/home/deno/functions']
+
+  # ── Шлюз ────────────────────────────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      kong: { condition: service_started }
+    # backend — к базе, egress — наружу (OpenRouter, Telegram) и для Caddy. Порт на хост НЕ
+    # публикуется: снаружи в шлюз ходят только через Caddy, по HTTPS и только на нужный домен.
+    networks: [backend, egress]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      # Свой Kong внутри контура, а не облако. Имя службы, а не домен: наружу за этим ходить незачем.
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      NEMO_TOKEN_PEPPER: ${NEMO_TOKEN_PEPPER:?без перца все выданные токены обесценятся при перезапуске}
+      NEMO_CRM_WEBHOOK_SECRET: ${NEMO_CRM_WEBHOOK_SECRET:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "require(''http'').get(''http://127.0.0.1:3000/health'', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(''error'', () => process.exit(1))"']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Фоновый воркер ──────────────────────────────────────────────────────────────────────────
+  #
+  # ОТДЕЛЬНЫМ СЕРВИСОМ, А НЕ ВТОРЫМ ПРОЦЕССОМ ПОД SUPERVISORD.
+  #
+  # Просили supervisord/PM2; цель понятна — оба процесса обязаны работать. Отдельный сервис даёт то
+  # же самое и лучше: под общим надзирателем падение воркера снаружи не видно — контейнер жив,
+  # healthcheck зелёный, а supervisord молча перезапускает процесс по кругу. Здесь у каждого свой
+  # перезапуск, свой журнал и свой статус в `docker compose ps`, и лишнего слоя нет вовсе.
+  # Образ ОДИН — расходится только команда, поэтому версии кода разойтись не могут.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      kong: { condition: service_started }
+    networks: [backend, egress]
+    command: ['node', '--experimental-strip-types', 'agent-hub/sdr-worker.mjs', '--loop']
+    environment:
+      NODE_ENV: production
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SECRET_KEY: ${SERVICE_ROLE_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      SDR_TELEGRAM_BOT_TOKEN: ${SDR_TELEGRAM_BOT_TOKEN:-}
+      SDR_TELEGRAM_CHAT_ID: ${SDR_TELEGRAM_CHAT_ID:-}
+
+  # ── Фронтенд и обратный прокси ──────────────────────────────────────────────────────────────
+  #
+  # Собранный бандл лежит ВНУТРИ образа Caddy (Dockerfile.frontend), а не в общем томе: том между
+  # сборщиком и раздачей означает состояние, которое переживает выкладку. Бандл, собранный два
+  # релиза назад, продолжал бы раздаваться, пока кто-нибудь не заметит.
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?иначе приложение соберётся в демо-режим и будет выглядеть рабочим}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?}
+        VITE_API_GATEWAY_URL: ${VITE_API_GATEWAY_URL:?иначе клиенту нечего вставить себе на сайт}
+    restart: unless-stopped
+    depends_on: [gateway, kong]
+    networks: [backend, egress]
+    ports:
+      - '80:80'     # нужен для ACME HTTP-01: без него сертификат не продлится
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      # Сертификаты переживают пересоздание контейнера. Без тома Let's Encrypt перевыпускал бы их
+      # на каждый рестарт и упёрся бы в предел — 5 выпусков на домен в неделю, после чего сайт
+      # остаётся без сертификата на несколько дней.
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?Let's Encrypt требует адрес для уведомлений об истечении}
+      SITE_ROOT_DOMAIN: ${SITE_ROOT_DOMAIN:-nemoai.uz}
+      SITE_APP_DOMAIN: ${SITE_APP_DOMAIN:-app.nemoai.uz}
+      SITE_API_DOMAIN: ${SITE_API_DOMAIN:-api.nemoai.uz}
+      SITE_SUPABASE_DOMAIN: ${SITE_SUPABASE_DOMAIN:-supabase.nemoai.uz}
+
+networks:
+  # internal: true отрезает выход в интернет для ВСЕХ, кто подключён только к этой сети. Для базы
+  # это и нужно: наружу ей ходить незачем, а вот попытка соединения ИЗ базы — верный признак того,
+  # что кто-то уже внутри.
+  backend:
+    internal: true
+  egress:
+    driver: bridge
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -115,11 +115,21 @@ export async function tgSendDetailed(botToken: string, chatId: number | string, 
 
 type TelegramResponse<T = unknown> = { ok?: boolean; result?: T; description?: string }
 
+/*
+ * allowed_updates — БЕЛЫЙ СПИСОК, а не подсказка. Здесь стояло только ["message"], и это делало
+ * все инлайн-кнопки бота мёртвыми: обработчик разбирает callback_query четырьмя ветками
+ * (экономика, карточка товара, партия себестоимости, цена), но Telegram эти обновления просто
+ * не присылал. Человек жал «✅ Да, сохранить» — и не происходило ничего, без ошибки в журналах.
+ *
+ * Список обязан совпадать с тем, что код действительно разбирает: message и callback_query.
+ * Шире — лишний трафик и оплаченные впустую вызовы, уже — снова немые кнопки.
+ */
+export const TG_ALLOWED_UPDATES = ['message', 'callback_query']
 export async function tgSetWebhook(botToken: string, url: string, secret: string): Promise<TelegramResponse> {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, secret_token: secret, allowed_updates: ['message'] }),
+    body: JSON.stringify({ url, secret_token: secret, allowed_updates: TG_ALLOWED_UPDATES }),
   })
   return await res.json()
 }

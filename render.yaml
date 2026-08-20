@@ -1,0 +1,65 @@
+# Развёртывание шлюза и фонового воркера на Render (бесплатный тариф).
+#
+# ДВА СЕРВИСА ИЗ ОДНОГО ОБРАЗА: код общий, расходится команда запуска. Разделены они не для красоты —
+# у них разная природа отказа. Шлюз обязан отвечать на запрос сейчас; воркер обязан рано или поздно
+# разобрать очередь. Свалив их в один процесс, получаем шлюз, который не отвечает, пока воркер занят.
+#
+# ЧТО ЗНАЧИТ БЕСПЛАТНЫЙ ТАРИФ RENDER, И ЭТО ВАЖНО ДЛЯ ВЕБХУКОВ:
+# бесплатный web-сервис ЗАСЫПАЕТ после ~15 минут без запросов и просыпается 30–60 секунд. Telegram
+# ждёт ответа на вебхук считаные секунды и на таймаут отвечает повтором — то есть первое сообщение
+# после простоя может задвоиться или потеряться. Поэтому вебхуки Telegram идут в Supabase Edge
+# Functions (они не засыпают), а на шлюзе остаётся то, что переживает задержку: приём вебхуков CRM,
+# выдача widget.js, служебные ручки.
+#
+# Бесплатный worker Render не предусмотрен: фоновые сервисы платные. Бесплатные варианты для воркера —
+# Koyeb (один вечно живой сервис) или запуск по расписанию через cron-job.org, дёргающий ручку шлюза.
+# Блок worker ниже оставлен рабочим и закомментирован, чтобы его нельзя было включить по недосмотру.
+
+services:
+  - type: web
+    name: nemo-gateway
+    runtime: docker
+    dockerfilePath: ./Dockerfile.backend
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Адрес и служебный ключ Supabase. Ключ — SECRET, в панели Render, НЕ в этом файле.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Перец для отпечатков токенов. В продакшне запасного значения нет намеренно: подставить
+      # случайное молча означало бы обесценить все ранее выданные токены без единого слова.
+      # generateValue даёт постоянное значение на сервис — но задать своё и сохранить его надёжнее:
+      # пересоздание сервиса с generateValue выдаст новый перец и разом обнулит все токены.
+      - key: NEMO_TOKEN_PEPPER
+        sync: false
+      # Необязательный: без него приём вебхуков CRM просто выключен, шлюз при этом поднимается.
+      # Значение обязано быть ASCII — иначе клиент физически не сможет отправить такой заголовок.
+      - key: NEMO_CRM_WEBHOOK_SECRET
+        sync: false
+
+  # ── Фоновый воркер ────────────────────────────────────────────────────────────────────────────
+  # На Render это ПЛАТНЫЙ тип сервиса (free для type: worker не существует). Раскомментируйте, когда
+  # будете готовы платить, либо поднимите тот же образ на Koyeb командой:
+  #   node --experimental-strip-types agent-hub/sdr-worker.mjs --loop
+  #
+  # - type: worker
+  #   name: nemo-sdr-worker
+  #   runtime: docker
+  #   dockerfilePath: ./Dockerfile.backend
+  #   plan: starter
+  #   region: frankfurt
+  #   dockerCommand: node --experimental-strip-types agent-hub/sdr-worker.mjs --loop
+  #   envVars:
+  #     - key: NODE_ENV
+  #       value: production
+  #     - key: SUPABASE_PROJECT_REF
+  #       sync: false
+  #     - key: SUPABASE_SECRET_KEY
+  #       sync: false
+  #     - key: OPENROUTER_API_KEY
+  #       sync: false

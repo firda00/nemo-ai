@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+DynamicUser=true
 WorkingDirectory=/opt/nemo-render
 EnvironmentFile=/opt/nemo-render/.env
 ExecStart=/usr/bin/node /opt/nemo-render/server.mjs
@@ -16,6 +17,12 @@ TasksMax=400
 # Chromium/Remotion write temp frames under /tmp — give the service a private tmp.
 PrivateTmp=true
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

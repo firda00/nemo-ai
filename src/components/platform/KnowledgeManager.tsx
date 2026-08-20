@@ -220,7 +220,7 @@ export function KnowledgeManager({ agentId, ownerType = 'agent' }: { agentId: st
       {form && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setForm(null)} />
-          <div className="card relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
+          <div className="modal-panel relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
             <div className="flex items-center justify-between">
               <h3 className="font-medium text-text">{t('platform.knowledge.src.' + form.source)}</h3>
               <button onClick={() => setForm(null)} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.06] hover:text-text">

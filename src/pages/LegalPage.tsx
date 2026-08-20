@@ -1,14 +1,48 @@
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
+import { useI18n } from '../i18n'
+import { privacyFor, termsFor, type LegalDocument } from '../content/legal'
+
+/*
+ * Юридические страницы.
+ *
+ * ТЕКСТ ЖИВЁТ В src/content/legal.ts, а не здесь. Юрист правит текст, а не разметку: отдать на
+ * вычитку файл с абзацами на трёх языках можно, отдать компонент с JSX — нет.
+ *
+ * ЯЗЫК БЕРЁТСЯ ИЗ ИНТЕРФЕЙСА. Прежняя версия была только на английском, а продукт продаётся в
+ * Узбекистане: договор, который покупатель не может прочитать на своём языке, юридически шаток и
+ * просто невежлив.
+ */
 
 export function PrivacyPage() {
-  return <Legal title="Privacy Policy"><p>Effective August 3, 2026. Nemo processes account details, business profiles, prompts, files, agent runs, approvals, integration metadata and owner-submitted Browser snapshots to provide supervised AI teams.</p><h2>Data use</h2><p>We use data to authenticate users, run requested workflows, secure the service, provide support and calculate usage. Marketing messages require separate optional consent.</p><h2>AI and service providers</h2><p>Requested content may be sent to configured model, infrastructure, payment, browser or integration providers only as needed for the selected workflow. API credentials are treated as write-only secrets and are not displayed back to users.</p><h2>Control and retention</h2><p>Owners can request access, correction, export or deletion of account data. Browser evidence and business memory remain account-scoped. Retention controls will be expanded before public US launch.</p><h2>Uzbekistan and United States</h2><p>Nemo is currently operated from Uzbekistan and is being prepared for customers in Uzbekistan and the United States. We do not claim GDPR, HIPAA or SOC 2 compliance without completed legal and technical verification.</p><h2>Contact</h2><p>Until Nemo purchases its production domain, privacy requests are accepted through authenticated in-app support. A dedicated privacy email will replace this temporary channel.</p></Legal>
+  const { lang } = useI18n()
+  return <LegalDoc doc={privacyFor(lang)} />
 }
 
 export function TermsPage() {
-  return <Legal title="Terms of Service"><p>Effective August 3, 2026. Nemo provides supervised AI agents and teams. Users remain responsible for reviewing outputs and authorizing consequential actions.</p><h2>Acceptable use</h2><p>Do not use Nemo for unauthorized access, credential theft, CAPTCHA or security bypass, spam, unlawful surveillance, harmful automation or actions against systems you do not own or have permission to operate.</p><h2>Approvals</h2><p>Read-only agents cannot perform external mutations. Approval-required agents create a decision request. Approval alone does not guarantee execution or success.</p><h2>Data and accounts</h2><p>Users must provide accurate account information and protect their credentials. Nemo may suspend abusive, unsafe or unpaid accounts.</p><h2>Service status</h2><p>Nemo is an early-stage product. Features, limits and integrations may change. Specific compliance, uptime or outcome guarantees apply only when written in a separate signed agreement.</p></Legal>
+  const { lang } = useI18n()
+  return <LegalDoc doc={termsFor(lang)} />
 }
 
-function Legal({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div className="min-h-screen bg-bg"><MarketingHeader/><main className="container-page mx-auto max-w-3xl space-y-4 py-12 text-sm leading-relaxed text-muted [&_h2]:pt-4 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-text"><h1 className="text-3xl font-semibold text-text">{title}</h1>{children}</main><MarketingFooter/></div>
+function LegalDoc({ doc }: { doc: LegalDocument }) {
+  return (
+    <div className="min-h-screen bg-bg">
+      <MarketingHeader />
+      <main className="container-page mx-auto max-w-3xl space-y-6 py-12 text-sm leading-relaxed text-muted">
+        <header className="space-y-2">
+          <h1 className="text-3xl font-semibold text-text">{doc.title}</h1>
+          {/* Дата вступления в силу на видном месте: без неё непонятно, какую редакцию человек принял. */}
+          <p className="text-xs text-muted">{doc.updated}</p>
+        </header>
+        <p>{doc.intro}</p>
+        {doc.sections.map((section) => (
+          <section key={section.heading} className="space-y-2">
+            <h2 className="pt-4 text-xl font-semibold text-text">{section.heading}</h2>
+            {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+          </section>
+        ))}
+      </main>
+      <MarketingFooter />
+    </div>
+  )
 }

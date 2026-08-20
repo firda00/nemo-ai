@@ -1,0 +1,10607 @@
+-- ЭТОТ ФАЙЛ СОБРАН. НЕ ПРАВЬТЕ ЕГО РУКАМИ.
+--
+-- Источник — supabase/migrations. Правка здесь потеряется при следующей сборке, а до тех пор
+-- будет расходиться с боевой базой молча: оба файла выглядят рабочими.
+--
+--   изменить схему:  создать миграцию в supabase/migrations
+--   пересобрать:     node deploy/build-init-sql.mjs
+--   применить:       supabase db push   (предпочтительно — умеет докатывать)
+--
+-- Этот файл нужен для ОДНОГО случая: поднять схему на чистом проекте вставкой в SQL-редактор,
+-- когда CLI недоступен. Для существующего проекта используйте db push: повторный прогон всего
+-- файла целиком безопаснее не стал — часть миграций не идемпотентна.
+--
+-- Собрано из 144 миграций: 20260624090000_init.sql … 20260817220000_v5_core_schema.sql
+
+begin;
+-- ─── 20260624090000_init.sql ─────────────────────────────────────────────────────────────────
+-- Nemo AI — initial schema (NEMO_AI_SPEC §7). Postgres + Row-Level Security.
+-- Edge Functions use the service_role key and bypass RLS; the frontend (anon /
+-- authenticated) is scoped per account by the policies below.
+
+create extension if not exists pgcrypto;
+
+-- ---------- tables ----------
+create table public.accounts (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null default 'Nemo account',
+  plan          text not null default 'beta',
+  token_balance bigint not null default 100000,
+  created_at    timestamptz not null default now()
+);
+
+create table public.users (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  email      text,
+  role       text not null default 'owner',     -- owner | operator
+  language   text not null default 'uz',
+  created_at timestamptz not null default now()
+);
+
+create table public.agents (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  name         text not null,
+  avatar       text,
+  prompt       jsonb not null default '{"role":"","tasks":"","tone":"","rules":""}',
+  model        text not null default 'openai/gpt-4o-mini',   -- OpenRouter model id
+  temperature  numeric not null default 0.6,
+  timezone     text not null default 'Asia/Tashkent',
+  schedule     text not null default '24/7',
+  default_lang text not null default 'auto',    -- auto | uz | ru
+  status       text not null default 'active',  -- active | paused | draft
+  created_at   timestamptz not null default now()
+);
+
+create table public.channels (
+  id           uuid primary key default gen_random_uuid(),
+  agent_id     uuid not null references public.agents(id) on delete cascade,
+  type         text not null,                   -- telegram | whatsapp | instagram | widget
+  credentials  jsonb not null default '{}',     -- { bot_token, username, ... } (server-only)
+  secret_token text,                            -- Telegram webhook secret
+  status       text not null default 'connected',
+  created_at   timestamptz not null default now()
+);
+
+create table public.dialogues (
+  id               uuid primary key default gen_random_uuid(),
+  agent_id         uuid not null references public.agents(id) on delete cascade,
+  channel_id       uuid references public.channels(id) on delete set null,
+  channel          text not null,
+  external_id      text,                         -- telegram chat id
+  customer_name    text,
+  customer_contact text,
+  status           text not null default 'open', -- open | resolved | needs_operator | error
+  tags             text[] not null default '{}',
+  operator_takeover boolean not null default false,
+  operator_id      uuid,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  unique (channel_id, external_id)
+);
+
+create table public.messages (
+  id          uuid primary key default gen_random_uuid(),
+  dialogue_id uuid not null references public.dialogues(id) on delete cascade,
+  author      text not null check (author in ('customer','agent','operator')),
+  content     text not null default '',
+  media_url   text,
+  created_at  timestamptz not null default now()
+);
+
+create table public.leads (
+  id            uuid primary key default gen_random_uuid(),
+  dialogue_id   uuid references public.dialogues(id) on delete cascade,
+  fields        jsonb not null default '{}',
+  status        text not null default 'new',
+  pushed_to_crm boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+create table public.knowledge_docs (
+  id         uuid primary key default gen_random_uuid(),
+  owner_type text not null default 'agent',     -- account | agent
+  owner_id   uuid not null,
+  source     text not null default 'faq',       -- file | faq | link
+  name       text,
+  content    text,                              -- naive RAG: raw text injected into prompt
+  status     text not null default 'indexed',
+  created_at timestamptz not null default now()
+);
+
+create table public.usage (
+  id         uuid primary key default gen_random_uuid(),
+  account_id uuid references public.accounts(id) on delete cascade,
+  tokens     bigint not null default 0,
+  cost       numeric not null default 0,
+  model      text,
+  created_at timestamptz not null default now()
+);
+
+create index on public.dialogues (channel_id, external_id);
+create index on public.messages (dialogue_id, created_at);
+create index on public.knowledge_docs (owner_id);
+
+-- ---------- helpers ----------
+create or replace function public.current_account_id()
+returns uuid language sql stable security definer set search_path = public as $$
+  select account_id from public.users where id = auth.uid()
+$$;
+
+-- new auth signup -> auto-provision an account + user row
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare new_account uuid;
+begin
+  insert into public.accounts (name) values (coalesce(new.email, 'Nemo')) returning id into new_account;
+  insert into public.users (id, account_id, email) values (new.id, new_account, new.email);
+  return new;
+end; $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- updated_at touch on dialogues
+create or replace function public.touch_updated_at()
+returns trigger language plpgsql as $$
+begin new.updated_at = now(); return new; end; $$;
+create trigger dialogues_touch before update on public.dialogues
+  for each row execute function public.touch_updated_at();
+
+-- ---------- RLS ----------
+alter table public.accounts       enable row level security;
+alter table public.users          enable row level security;
+alter table public.agents         enable row level security;
+alter table public.channels       enable row level security;
+alter table public.dialogues      enable row level security;
+alter table public.messages       enable row level security;
+alter table public.leads          enable row level security;
+alter table public.knowledge_docs enable row level security;
+alter table public.usage          enable row level security;
+
+create policy acc_self    on public.accounts  for select using (id = public.current_account_id());
+create policy usr_self    on public.users     for select using (account_id = public.current_account_id());
+create policy agents_acc  on public.agents    for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+create policy channels_acc on public.channels for all
+  using (agent_id in (select id from public.agents where account_id = public.current_account_id()))
+  with check (agent_id in (select id from public.agents where account_id = public.current_account_id()));
+create policy dialogues_acc on public.dialogues for all
+  using (agent_id in (select id from public.agents where account_id = public.current_account_id()))
+  with check (agent_id in (select id from public.agents where account_id = public.current_account_id()));
+create policy messages_acc on public.messages for all
+  using (dialogue_id in (select id from public.dialogues
+         where agent_id in (select id from public.agents where account_id = public.current_account_id())))
+  with check (true);
+create policy leads_acc on public.leads for all
+  using (dialogue_id in (select id from public.dialogues
+         where agent_id in (select id from public.agents where account_id = public.current_account_id())))
+  with check (true);
+create policy knowledge_acc on public.knowledge_docs for all
+  using (owner_id in (select id from public.agents where account_id = public.current_account_id()))
+  with check (owner_id in (select id from public.agents where account_id = public.current_account_id()));
+create policy usage_acc on public.usage for select using (account_id = public.current_account_id());
+
+-- ---------- realtime (live dialogues / messages in the panel) ----------
+alter publication supabase_realtime add table public.messages;
+alter publication supabase_realtime add table public.dialogues;
+
+-- ─── 20260624120000_agent_ui_fields.sql ──────────────────────────────────────────────────────
+-- UI fields the frontend agent editor needs that aren't in the base §7 schema.
+alter table public.agents add column if not exists avatar_color text not null default 'violet';
+alter table public.agents add column if not exists lead_form jsonb not null default '{}'::jsonb;
+
+-- ─── 20260624150000_review_fixes.sql ─────────────────────────────────────────────────────────
+-- Phase 1–2b review fixes (security + correctness).
+
+-- 1) Close the RLS write hole: WITH CHECK must enforce the same ownership as USING,
+--    otherwise an authenticated user could INSERT rows into other accounts' dialogues.
+drop policy if exists messages_acc on public.messages;
+create policy messages_acc on public.messages for all
+  using (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  )
+  with check (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+drop policy if exists leads_acc on public.leads;
+create policy leads_acc on public.leads for all
+  using (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  )
+  with check (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+-- 2) Never expose channel secrets to the browser roles. Row access is still allowed
+--    by RLS, but credentials/secret_token are unreadable by anon/authenticated.
+--    NOTE: a column-level REVOKE is a no-op while the role holds a table-level SELECT
+--    grant (Supabase grants one by default), so we revoke the table grant and re-grant
+--    SELECT only on the safe columns. Edge Functions use service_role (bypasses this).
+revoke select on public.channels from anon, authenticated;
+grant select (id, agent_id, type, status, created_at) on public.channels to anon, authenticated;
+
+-- 4) Cost guard: atomic token-balance decrement.
+create or replace function public.decrement_token_balance(p_account uuid, p_amount bigint)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.accounts
+  set token_balance = greatest(0, token_balance - p_amount)
+  where id = p_account;
+$$;
+
+-- ─── 20260624170000_agent_account_default.sql ────────────────────────────────────────────────
+-- Fix: onboarding inserts an agent before the app shell hydrates account_id,
+-- so the frontend would omit account_id and hit the NOT NULL constraint.
+-- Give the column a server-side default that resolves the caller's account
+-- from their JWT. RLS with-check still enforces it equals current_account_id().
+alter table public.agents
+  alter column account_id set default public.current_account_id();
+
+-- Idempotent safety: UI fields used by the editor (added in an earlier migration).
+alter table public.agents add column if not exists avatar_color text default 'violet';
+alter table public.agents add column if not exists lead_form jsonb not null default '{}';
+
+-- Server-only store for customer-provided LLM provider API keys (BYO key).
+-- The client may INSERT/UPDATE its own account's keys but can never SELECT them
+-- back; Edge Functions read them via service_role. Keeps secrets off the client.
+create table if not exists public.provider_keys (
+  id         uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  provider   text not null,                 -- openai | anthropic | google | ...
+  api_key    text not null,
+  created_at timestamptz not null default now(),
+  unique (account_id, provider)
+);
+
+alter table public.provider_keys enable row level security;
+
+-- write-only from the client: insert/update/delete own rows, but NO select policy
+drop policy if exists provider_keys_write on public.provider_keys;
+create policy provider_keys_write on public.provider_keys for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+-- the client must never read raw keys back
+revoke select on public.provider_keys from anon, authenticated;
+-- but it needs to know WHICH providers have a key (to show "connected" state)
+grant select (provider, created_at) on public.provider_keys to authenticated;
+
+-- ─── 20260624180000_research_runs.sql ────────────────────────────────────────────────────────
+-- Autonomous research agent: each run saves its task, the steps it took, the
+-- sourced findings and the final report. Account-scoped via RLS like everything else.
+create table if not exists public.research_runs (
+  id         uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  task       text not null,
+  status     text not null default 'done',   -- running | done | error
+  report     text,
+  sources    jsonb not null default '[]',
+  steps      jsonb not null default '[]',
+  tokens     bigint not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.research_runs enable row level security;
+
+drop policy if exists research_acc on public.research_runs;
+create policy research_acc on public.research_runs for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+create index if not exists research_runs_acc_idx on public.research_runs (account_id, created_at desc);
+
+-- ─── 20260625120000_admin_tokens.sql ─────────────────────────────────────────────────────────
+-- Platform admin + token economy (grants, gift codes, balance limits).
+
+-- 1) platform admin flag on users
+alter table public.users add column if not exists is_admin boolean not null default false;
+
+-- bootstrap: promote the owner email if it already registered
+update public.users set is_admin = true where email = 'ustudyit1@gmail.com';
+
+-- auto-promote that email on future signups (re-declare the trigger fn)
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare new_account uuid;
+begin
+  insert into public.accounts (name) values (coalesce(new.email, 'Nemo')) returning id into new_account;
+  insert into public.users (id, account_id, email, is_admin)
+  values (new.id, new_account, new.email, coalesce(new.email, '') = 'ustudyit1@gmail.com');
+  return new;
+end; $$;
+
+-- 2) admin balance helpers (SECURITY DEFINER — called by edge fns via service_role)
+create or replace function public.add_token_balance(p_account uuid, p_amount bigint)
+returns bigint language sql security definer set search_path = public as $$
+  update public.accounts set token_balance = token_balance + p_amount where id = p_account
+  returning token_balance;
+$$;
+
+create or replace function public.set_token_balance(p_account uuid, p_amount bigint)
+returns bigint language sql security definer set search_path = public as $$
+  update public.accounts set token_balance = greatest(p_amount, 0) where id = p_account
+  returning token_balance;
+$$;
+
+-- 3) gift codes
+create table if not exists public.gift_codes (
+  id          uuid primary key default gen_random_uuid(),
+  code        text not null unique,
+  tokens      bigint not null,
+  created_by  uuid,
+  redeemed_by uuid,
+  redeemed_at timestamptz,
+  created_at  timestamptz not null default now()
+);
+alter table public.gift_codes enable row level security;
+-- No client policies: only Edge Functions (service_role) touch this table.
+
+-- ─── 20260626120000_phase2_step1.sql ─────────────────────────────────────────────────────────
+-- Phase 2 · Step 1 — agent kinds, detailed settings, departments + memory.
+-- Account-scoped via RLS like the rest of the schema (NEMO_AI_SPEC §7).
+
+-- ---------- agents: kind + detailed (optional) settings ----------
+-- `type` was added live earlier but never captured in a migration file — make it
+-- idempotent here so the file-based migrations are complete.
+alter table public.agents add column if not exists type    text not null default 'chat';
+alter table public.agents add column if not exists country text;   -- where the business/agent operates
+alter table public.agents add column if not exists purpose text;   -- what the agent is used for
+alter table public.agents add column if not exists niche   text;   -- industry / sphere (tailors prompts + team)
+
+-- ---------- departments (a manager agent's team of sub-agents) ----------
+create table if not exists public.departments (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  main_agent_id uuid references public.agents(id) on delete set null,
+  name          text not null default 'Bo''lim',
+  niche         text,
+  created_at    timestamptz not null default now()
+);
+
+create table if not exists public.sub_agents (
+  id            uuid primary key default gen_random_uuid(),
+  department_id uuid not null references public.departments(id) on delete cascade,
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  role          text not null,                       -- domain role chosen by the manager
+  name          text,
+  prompt        jsonb not null default '{"role":"","tasks":"","tone":"","rules":""}',
+  model         text not null default 'google/gemma-4-31b-it:free',
+  status        text not null default 'active',      -- active | paused
+  created_at    timestamptz not null default now()
+);
+
+-- ---------- agent memory (self-improving agents) ----------
+create table if not exists public.agent_memory (
+  id          uuid primary key default gen_random_uuid(),
+  account_id  uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  agent_id    uuid not null references public.agents(id) on delete cascade,
+  dialogue_id uuid references public.dialogues(id) on delete set null,
+  summary     text not null,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists departments_acc_idx  on public.departments (account_id, created_at desc);
+create index if not exists sub_agents_dept_idx   on public.sub_agents (department_id);
+create index if not exists agent_memory_agent_idx on public.agent_memory (agent_id, created_at desc);
+
+-- ---------- RLS ----------
+alter table public.departments  enable row level security;
+alter table public.sub_agents   enable row level security;
+alter table public.agent_memory enable row level security;
+
+drop policy if exists departments_acc on public.departments;
+create policy departments_acc on public.departments for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+drop policy if exists sub_agents_acc on public.sub_agents;
+create policy sub_agents_acc on public.sub_agents for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+drop policy if exists agent_memory_acc on public.agent_memory;
+create policy agent_memory_acc on public.agent_memory for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+-- ─── 20260627100000_security_token_rpc.sql ───────────────────────────────────────────────────
+-- Security hardening (vibe-security audit).
+--
+-- CRITICAL FIX — privilege escalation via PostgREST RPC.
+-- add_token_balance / set_token_balance / decrement_token_balance are
+-- SECURITY DEFINER (they bypass RLS to update accounts.token_balance) and were
+-- EXECUTE-able by anon + authenticated. Any logged-in user could mint themselves
+-- unlimited tokens, e.g.:
+--   supabase.rpc('add_token_balance', { p_account: <own account>, p_amount: 1e12 })
+-- draining the shared OpenRouter pool / bypassing billing entirely.
+--
+-- These helpers are only ever called by Edge Functions (service_role). Restrict
+-- EXECUTE to service_role so the client (anon/authenticated) cannot call them.
+revoke execute on function public.add_token_balance(uuid, bigint)       from public, anon, authenticated;
+revoke execute on function public.set_token_balance(uuid, bigint)       from public, anon, authenticated;
+revoke execute on function public.decrement_token_balance(uuid, bigint) from public, anon, authenticated;
+
+grant execute on function public.add_token_balance(uuid, bigint)       to service_role;
+grant execute on function public.set_token_balance(uuid, bigint)       to service_role;
+grant execute on function public.decrement_token_balance(uuid, bigint) to service_role;
+
+-- ─── 20260627140000_credits_economy.sql ──────────────────────────────────────────────────────
+-- Economics v2 — token balance is now in CREDITS.
+-- 1 credit = 1000 LLM tokens of usage; $1 = 250 credits. New accounts start with 1000.
+--
+-- Edge Functions still pass RAW LLM token counts to decrement_token_balance; this
+-- redefinition converts them to credits (ceil(llm/1000)) so NO function code changes.
+
+create or replace function public.decrement_token_balance(p_account uuid, p_amount bigint)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.accounts
+  set token_balance = greatest(0, token_balance - ceil(p_amount / 1000.0)::bigint)
+  where id = p_account;
+$$;
+
+-- one-time: convert existing balances from raw LLM tokens to credits
+update public.accounts set token_balance = ceil(token_balance / 1000.0)::bigint;
+
+-- new accounts start with 1000 credits (was 100000 raw tokens)
+alter table public.accounts alter column token_balance set default 1000;
+
+-- keep the security hardening: only service_role (Edge Functions) may charge the balance
+revoke execute on function public.decrement_token_balance(uuid, bigint) from public, anon, authenticated;
+grant  execute on function public.decrement_token_balance(uuid, bigint) to service_role;
+
+-- ─── 20260627150000_agent_work_hours.sql ─────────────────────────────────────────────────────
+-- Custom work hours: when schedule = 'work-hours', the agent is active only
+-- between work_start and work_end (HH:MM, in the agent's timezone). 24/7 = always.
+alter table public.agents add column if not exists work_start text;
+alter table public.agents add column if not exists work_end   text;
+
+-- ─── 20260627160000_account_blocked.sql ──────────────────────────────────────────────────────
+-- Admin moderation: an account can be blocked (soft — can log in but can't use
+-- the platform; its agents are paused). Hard ban (cannot log in) is done via the
+-- GoTrue admin API (auth.users ban_duration) from the admin-api function.
+alter table public.accounts add column if not exists blocked boolean not null default false;
+
+-- ─── 20260628120000_agent_voice.sql ──────────────────────────────────────────────────────────
+-- Voice (TTS/STT) per agent — config only for now; synthesis activates when a
+-- voice provider key is connected. Voice selection is chosen by the user.
+alter table public.agents add column if not exists voice_enabled boolean not null default false;
+alter table public.agents add column if not exists voice_mode    text;   -- tts | stt | both
+alter table public.agents add column if not exists voice_id      text;   -- selected voice
+
+-- ─── 20260628140000_referrals.sql ────────────────────────────────────────────────────────────
+-- Referral program: each account has a referral_code; signing up with a friend's
+-- code credits BOTH sides a bonus. "Пригласи друга — получи токены."
+
+alter table public.accounts add column if not exists referral_code text;
+alter table public.accounts add column if not exists referred_by  uuid references public.accounts(id) on delete set null;
+
+create unique index if not exists accounts_referral_code_idx on public.accounts (referral_code) where referral_code is not null;
+
+-- backfill codes for existing accounts
+update public.accounts
+set referral_code = upper(substr(md5(id::text || random()::text), 1, 8))
+where referral_code is null;
+
+-- signup hook: create account (with a referral code) + user, and apply the
+-- referral bonus when the new user signed up with a valid ref code (in metadata).
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  new_account uuid;
+  ref_code text;
+  ref_acc uuid;
+  bonus bigint := 200;  -- credits granted to each side on a successful referral
+begin
+  ref_code := upper(coalesce(new.raw_user_meta_data->>'ref', ''));
+  insert into public.accounts (name, referral_code)
+  values (coalesce(new.email, 'Nemo'), upper(substr(md5(new.id::text || random()::text), 1, 8)))
+  returning id into new_account;
+  insert into public.users (id, account_id, email, is_admin)
+  values (new.id, new_account, new.email, coalesce(new.email, '') = 'ustudyit1@gmail.com');
+
+  if ref_code <> '' then
+    select id into ref_acc from public.accounts where referral_code = ref_code and id <> new_account limit 1;
+    if ref_acc is not null then
+      update public.accounts set referred_by = ref_acc where id = new_account;
+      update public.accounts set token_balance = token_balance + bonus where id = ref_acc;
+      update public.accounts set token_balance = token_balance + bonus where id = new_account;
+    end if;
+  end if;
+  return new;
+end; $$;
+
+-- ─── 20260629000000_multi_agent_migration.sql ────────────────────────────────────────────────
+-- Migration to support Multi-Agent Orchestration (MAS)
+-- Nemo AI: Moving from single bots to Swarms of Agents
+
+-- 1. Create Swarms table (The container for a multi-agent team)
+create table public.swarms (
+  id            uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  name          text not null,
+  description   text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- 2. Update Agents table for Hierarchy
+-- We add swarm_id to link agents to a team, and parent_id to create Master -> Sub-agent relations.
+alter table public.agents add column if not exists swarm_id uuid references public.swarms(id) on delete cascade;
+alter table public.agents add column if not exists parent_id uuid references public.agents(id) on delete set null;
+alter table public.agents add column if not exists role text not null default 'specialist'; -- 'master' | 'specialist' | 'reviewer'
+
+-- 3. Link Dialogues to Swarms instead of just single agents
+-- This allows the "Brain" to manage the conversation across multiple agents.
+alter table public.dialogues add column if not exists swarm_id uuid references public.swarms(id) on delete cascade;
+
+-- 4. Agent Tools table (Capability management)
+create table public.agent_tools (
+  id         uuid primary key default gen_random_uuid(),
+  agent_id   uuid not null references public.agents(id) on delete cascade,
+  tool_type  text not null, -- 'web_search' | 'pdf_reader' | 'api_call' | 'database_query'
+  config_json jsonb not null default '{}',
+  created_at  timestamptz not null default now()
+);
+
+-- 5. Enhanced Message tracking for "Traces"
+-- We add agent_id to messages so we know exactly which agent in the swarm spoke.
+alter table public.messages add column if not exists agent_id uuid references public.agents(id) on delete set null;
+alter table public.messages add column if not exists message_type text not null default 'chat'; -- 'chat' | 'system_trace' | 'internal_monologue'
+
+-- 6. Shared Memory / Context for the Swarm
+create table public.swarm_context (
+  id         uuid primary key default gen_random_uuid(),
+  swarm_id   uuid not null references public.swarms(id) on delete cascade,
+  dialogue_id uuid not null references public.dialogues(id) on delete cascade,
+  key        text not null,
+  value      text,
+  updated_at timestamptz not null default now(),
+  unique(swarm_id, dialogue_id, key)
+);
+
+-- ---------- RLS POLICIES ----------
+alter table public.swarms enable row level security;
+create policy swarms_acc on public.swarms for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+alter table public.agent_tools enable row level security;
+create policy tools_acc on public.agent_tools for all
+  using (agent_id in (select id from public.agents where account_id = public.current_account_id()));
+
+alter table public.swarm_context enable row level security;
+create policy context_acc on public.swarm_context for all
+  using (swarm_id in (select id from public.swarms where account_id = public.current_account_id()));
+
+-- Indices for performance
+create index on public.agents (swarm_id);
+create index on public.agents (parent_id);
+create index on public.dialogues (swarm_id);
+create index on public.messages (agent_id);
+
+-- ─── 20260702120000_security_hardening.sql ───────────────────────────────────────────────────
+-- Security hardening (2026-07-02 audit). Defense-in-depth over the existing,
+-- already-solid account-scoped RLS. Safe to run once against prod.
+
+-- 1) Stripe webhook idempotency store. add_token_balance is additive, so a Stripe
+--    retry or a replay of a captured signed payload must not credit twice. The
+--    stripe-webhook function records each processed event id here (unique PK) and
+--    skips crediting on a duplicate. Service_role only (RLS on, no policy).
+create table if not exists public.webhook_events (
+  id         text primary key,          -- stripe event id (evt_...)
+  type       text,
+  created_at timestamptz not null default now()
+);
+alter table public.webhook_events enable row level security;
+revoke all on public.webhook_events from anon, authenticated;
+
+-- 2) provider_keys is WRITE-ONLY from the browser. The stored api_key must never
+--    be selectable by anon/authenticated — not even for the caller's own account —
+--    regardless of any future stray table-level SELECT grant. Replace the single
+--    FOR ALL policy (which also governed SELECT) with explicit write policies and
+--    NO select policy, then revoke the SELECT grant as belt-and-suspenders.
+--    (Agents read keys server-side via service_role in _shared/keys.ts.)
+drop policy if exists provider_keys_write on public.provider_keys;
+
+create policy provider_keys_insert on public.provider_keys for insert
+  with check (account_id = public.current_account_id());
+create policy provider_keys_update on public.provider_keys for update
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+create policy provider_keys_delete on public.provider_keys for delete
+  using (account_id = public.current_account_id());
+
+revoke select on public.provider_keys from anon, authenticated;
+
+-- 3) handle_new_user is a SECURITY DEFINER trigger that writes public.users
+--    (incl. the is_admin flag) and public.accounts. It only runs from the
+--    auth.users trigger; a client has no reason to hold EXECUTE on it. Revoke it
+--    (same hygiene applied to the token-balance helpers in 20260627100000).
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+
+-- ─── 20260703090000_ops_workflows.sql ────────────────────────────────────────────────────────
+-- Ustudy Operations Team — real workflow persistence (Payment Control, Meeting to Tasks).
+-- Reuses research_runs for the per-step agent trace + manager summary; adds tasks +
+-- notifications so the two workflows produce durable, viewable business output.
+-- Account-scoped via RLS like the rest of the schema.
+
+-- tag each run by workflow kind + link it to the team department
+alter table public.research_runs add column if not exists kind text not null default 'research';
+  -- research | team_run | payment_control | meeting_to_tasks
+alter table public.research_runs add column if not exists department_id uuid
+  references public.departments(id) on delete set null;
+
+-- tasks — Meeting-to-Tasks output (also usable for manual tasks)
+create table if not exists public.tasks (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  department_id uuid references public.departments(id) on delete set null,
+  run_id        uuid references public.research_runs(id) on delete set null,
+  title         text not null,
+  owner         text,
+  deadline      date,
+  priority      text not null default 'medium',    -- low | medium | high
+  status        text not null default 'todo',       -- todo | in_progress | done | overdue
+  source        text not null default 'meeting',    -- meeting | payment | manual
+  details       text,
+  created_at    timestamptz not null default now()
+);
+
+-- notifications — Payment-Control admin escalations (the "admin sees a task/notification")
+create table if not exists public.notifications (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  department_id uuid references public.departments(id) on delete set null,
+  run_id        uuid references public.research_runs(id) on delete set null,
+  kind          text not null default 'admin_escalation', -- admin_escalation | payment_risk | task_assigned
+  title         text not null,
+  body          text,
+  risk          text,                               -- low | medium | high
+  target        text,                               -- admin this escalation is for
+  read          boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+alter table public.tasks         enable row level security;
+alter table public.notifications enable row level security;
+
+drop policy if exists tasks_acc on public.tasks;
+create policy tasks_acc on public.tasks for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+drop policy if exists notifications_acc on public.notifications;
+create policy notifications_acc on public.notifications for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+create index if not exists tasks_acc_idx on public.tasks (account_id, created_at desc);
+create index if not exists notif_acc_idx on public.notifications (account_id, created_at desc);
+create index if not exists research_runs_dept_idx on public.research_runs (department_id, created_at desc);
+
+-- ─── 20260703140000_subagent_bots.sql ────────────────────────────────────────────────────────
+-- Per-sub-agent Telegram bots + group "task-bot".
+-- Each sub-agent can own its OWN Telegram bot (channels.sub_agent_id), answering
+-- in its own persona. A bot can also run in a GROUP as a task-bot (scope='group'):
+-- someone @mentions it and assigns a task to a person -> it creates a task row with
+-- the assignee's Telegram identity and can remind them. Account-scoped via RLS.
+
+-- ---------- channels: bind a bot to a specific sub-agent + declare its scope ----------
+alter table public.channels add column if not exists sub_agent_id uuid
+  references public.sub_agents(id) on delete cascade;
+alter table public.channels add column if not exists scope text not null default 'dm';
+  -- dm | group   (group = task-bot / team coordination chat)
+alter table public.channels add column if not exists label text; -- display name in the UI
+
+create index if not exists channels_sub_agent_idx on public.channels (sub_agent_id);
+
+-- ---------- tasks: carry the Telegram assignee + source chat so the bot can remind ----------
+alter table public.tasks add column if not exists channel_id uuid
+  references public.channels(id) on delete set null;
+alter table public.tasks add column if not exists telegram_chat_id text;  -- group the task came from
+alter table public.tasks add column if not exists assignee_tg text;       -- @username or numeric user id
+alter table public.tasks add column if not exists assignee_name text;     -- display name
+alter table public.tasks add column if not exists created_by text;        -- who assigned it (tg name)
+alter table public.tasks add column if not exists due_at timestamptz;     -- precise reminder time
+alter table public.tasks add column if not exists last_reminded_at timestamptz;
+
+create index if not exists tasks_due_idx on public.tasks (due_at) where status <> 'done';
+
+-- ---------- telegram_members: the "special list of user ids" the task-bot keeps ----------
+-- One row per person the bot has seen in a group, so it can resolve @mentions to a
+-- real Telegram user and remind them personally.
+create table if not exists public.telegram_members (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  channel_id    uuid references public.channels(id) on delete cascade,
+  chat_id       text not null,
+  tg_user_id    text not null,
+  username      text,
+  display_name  text,
+  created_at    timestamptz not null default now(),
+  unique(channel_id, chat_id, tg_user_id)
+);
+
+alter table public.telegram_members enable row level security;
+drop policy if exists telegram_members_acc on public.telegram_members;
+create policy telegram_members_acc on public.telegram_members for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+create index if not exists tg_members_chat_idx on public.telegram_members (channel_id, chat_id);
+
+-- ─── 20260703160000_google_accounts.sql ──────────────────────────────────────────────────────
+-- Google (Gmail/Sheets/Calendar) OAuth per account. The refresh_token is a secret:
+-- RLS is ENABLED with NO client policy, so ONLY service_role (the edge functions)
+-- can read/write it. The UI learns connection status via the google-oauth function,
+-- never by reading this table directly.
+create table if not exists public.google_accounts (
+  account_id     uuid primary key references public.accounts(id) on delete cascade,
+  google_email   text,
+  refresh_token  text not null,
+  scopes         text,
+  connected_by   uuid references auth.users(id) on delete set null,
+  connected_at   timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+
+alter table public.google_accounts enable row level security;
+-- intentionally NO policies -> table is service-role only (secret refresh_token).
+
+revoke all on public.google_accounts from anon, authenticated;
+
+-- ─── 20260703180000_account_plan.sql ─────────────────────────────────────────────────────────
+-- Per-account plan tier for cost control at scale. Expensive models (gpt-4o for the
+-- orchestrator manager/synth) are reserved for paid tiers + admins; free accounts use
+-- the cheap model. Metered by token_balance as before.
+alter table public.accounts add column if not exists plan text not null default 'free';
+  -- free | pro | business
+
+-- ─── 20260704120000_google_oauth_apps.sql ────────────────────────────────────────────────────
+-- Per-account Google OAuth app credentials.
+-- Each business can connect Gmail/Sheets/Calendar using its OWN Google Cloud OAuth
+-- client (self-service, no shared-app verification bottleneck). When an account has not
+-- set its own, the platform falls back to the shared Nemo app (env GOOGLE_CLIENT_ID/
+-- SECRET). Service-role only — the client_secret never leaves the server.
+create table if not exists public.google_oauth_apps (
+  account_id    uuid primary key references public.accounts(id) on delete cascade,
+  client_id     text not null,
+  client_secret text not null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+alter table public.google_oauth_apps enable row level security;
+-- No client policy on purpose: only service-role edge functions read/write these rows,
+-- so RLS default-deny keeps the secret unreadable from any client (like google_accounts).
+
+-- ─── 20260704160000_business_profiles.sql ────────────────────────────────────────────────────
+-- Per-account BUSINESS PROFILE — "train the AI on your own business".
+-- One row per account with the facts every agent/team should ground its work in
+-- (marketing strategy, content, channel replies). Not secret: the owner reads/edits
+-- it directly via RLS; edge functions read it via service role and inject it into prompts.
+create table if not exists public.business_profiles (
+  account_id  uuid primary key default public.current_account_id() references public.accounts(id) on delete cascade,
+  name        text,
+  industry    text,
+  about       text,
+  audience    text,
+  offerings   text,
+  tone        text,
+  cities      text,
+  links       text,
+  extra       text,
+  updated_at  timestamptz not null default now()
+);
+
+alter table public.business_profiles enable row level security;
+
+-- ─── 20260704180000_scheduled_posts.sql ──────────────────────────────────────────────────────
+-- Autoposting: scheduled content sent to a Telegram target by a connected bot.
+-- A cron-driven function (autopost run_due) sends due posts and stamps status.
+create table if not exists public.scheduled_posts (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  channel_id   uuid references public.channels(id) on delete set null,  -- which connected bot sends it
+  target_chat  text not null,                                           -- @channel or numeric chat id
+  content      text not null,
+  scheduled_at timestamptz not null,
+  status       text not null default 'scheduled',                       -- scheduled | posted | failed | canceled
+  posted_at    timestamptz,
+  error        text,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists scheduled_posts_due_idx on public.scheduled_posts (scheduled_at) where status = 'scheduled';
+
+alter table public.scheduled_posts enable row level security;
+
+-- ─── 20260706120000_referral_antifarm.sql ────────────────────────────────────────────────────
+-- Anti-farm hardening for the referral / signup economy (CSO finding).
+--
+-- Before: handle_new_user() paid +200 to BOTH sides at signup (auth.users INSERT),
+-- i.e. before the invited user proved a real email. A script could mass-register
+-- and farm the referrer's balance (200 x N) with throwaway/unconfirmed emails.
+--
+-- After:
+--   * signup only RECORDS the referral link (accounts.referred_by),
+--   * the +200/+200 bonus is paid ONCE, when the invited user's email is CONFIRMED
+--     (or immediately for pre-verified OAuth signups),
+--   * a per-referrer CAP limits how many referral bonuses one account can earn.
+--
+-- Requires email confirmation to be ON in Supabase Auth (Dashboard → Authentication)
+-- for the email/password path — otherwise there is no confirmation event to gate on.
+
+-- 1) Bookkeeping columns: idempotency flag + per-referrer counter.
+alter table public.accounts add column if not exists referral_bonus_paid boolean not null default false;
+alter table public.accounts add column if not exists referral_count      int     not null default 0;
+
+-- 2) Shared payout. Idempotent (claims the payout atomically via the
+--    referral_bonus_paid flag) and caps the referrer. Safe to call more than once.
+create or replace function public.pay_referral_bonus(p_new_account uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  ref_acc uuid;
+  bonus   bigint := 200;  -- credits to each side on a confirmed referral
+  cap     int    := 25;   -- max referral bonuses a single referrer can earn
+  claimed int;
+begin
+  -- Atomically claim the one-time payout for this invited account. Only the first
+  -- call where a referral link exists and the bonus is unpaid proceeds.
+  update public.accounts
+    set referral_bonus_paid = true
+    where id = p_new_account
+      and referred_by is not null
+      and referral_bonus_paid = false
+    returning referred_by into ref_acc;
+  get diagnostics claimed = row_count;
+  if claimed = 0 or ref_acc is null then
+    return;
+  end if;
+
+  -- Referrer: credit only while under the cap (blocks unbounded Sybil farming).
+  update public.accounts
+    set token_balance  = token_balance + bonus,
+        referral_count = referral_count + 1
+    where id = ref_acc
+      and referral_count < cap;
+
+  -- Invited side: always gets its one-time bonus.
+  update public.accounts
+    set token_balance = token_balance + bonus
+    where id = p_new_account;
+end;
+$$;
+
+-- 3) Signup hook (auth.users INSERT): create account + user, record the referral
+--    link, and pay the bonus IMMEDIATELY only when the email is already verified at
+--    creation (OAuth / pre-confirmed). Email/password signups wait for confirmation.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_account uuid;
+  ref_code    text;
+  ref_acc     uuid;
+begin
+  ref_code := upper(coalesce(new.raw_user_meta_data->>'ref', ''));
+  insert into public.accounts (name, referral_code)
+  values (coalesce(new.email, 'Nemo'), upper(substr(md5(new.id::text || random()::text), 1, 8)))
+  returning id into new_account;
+
+  insert into public.users (id, account_id, email, is_admin)
+  values (new.id, new_account, new.email, coalesce(new.email, '') = 'ustudyit1@gmail.com');
+
+  if ref_code <> '' then
+    select id into ref_acc from public.accounts where referral_code = ref_code and id <> new_account limit 1;
+    if ref_acc is not null then
+      update public.accounts set referred_by = ref_acc where id = new_account;
+    end if;
+  end if;
+
+  -- Pre-verified signups (OAuth providers set email_confirmed_at at creation) can be
+  -- paid right away; everyone else is paid by the confirmation trigger below.
+  if new.email_confirmed_at is not null then
+    perform public.pay_referral_bonus(new_account);
+  end if;
+
+  return new;
+end;
+$$;
+
+-- 4) Confirmation hook (auth.users UPDATE): the moment email_confirmed_at flips from
+--    NULL to set, pay the pending referral bonus for that user's account.
+create or replace function public.handle_email_confirmed()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  acc uuid;
+begin
+  if new.email_confirmed_at is not null and old.email_confirmed_at is null then
+    select account_id into acc from public.users where id = new.id;
+    if acc is not null then
+      perform public.pay_referral_bonus(acc);
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_confirmed on auth.users;
+create trigger on_auth_user_confirmed
+  after update on auth.users
+  for each row execute function public.handle_email_confirmed();
+
+-- 5) These run only as SECURITY DEFINER triggers / service-role helpers — no client
+--    should hold EXECUTE (belt-and-suspenders; default-deny already applies).
+revoke execute on function public.pay_referral_bonus(uuid)   from public, anon, authenticated;
+revoke execute on function public.handle_email_confirmed()   from public, anon, authenticated;
+
+-- ─── 20260706130000_follow_ups.sql ───────────────────────────────────────────────────────────
+-- Auto follow-up / nurture sequences ("автоворонка дожима").
+-- The AI keeps nudging a lead over several days (Telegram or email) until they
+-- convert or opt out. Each row is one running sequence; the follow-up edge function
+-- advances it on a schedule, generating each message from the conversation + the
+-- business profile. Account-scoped via RLS like the rest of the schema.
+
+create table if not exists public.follow_ups (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  agent_id     uuid references public.agents(id)   on delete set null,
+  dialogue_id  uuid references public.dialogues(id) on delete set null,
+  lead_id      uuid references public.leads(id)     on delete set null,
+  channel      text not null default 'telegram',        -- telegram | email
+  target       text not null,                           -- telegram chat id or email address
+  goal         text not null default '',                -- what the sequence nudges toward
+  status       text not null default 'active',          -- active | done | stopped | converted
+  step         int  not null default 0,                 -- how many messages already sent
+  max_steps    int  not null default 3,
+  cadence_hours int[] not null default '{24,72,168}',   -- delay before step 1, 2, 3 ...
+  next_run_at  timestamptz not null default now(),
+  last_sent_at timestamptz,
+  last_message text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+alter table public.follow_ups enable row level security;
+
+-- Owner can read + stop their own sequences from the UI. The follow-up edge function
+-- writes/advances rows with the service_role key (bypasses RLS), like the other bots.
+drop policy if exists follow_ups_acc on public.follow_ups;
+create policy follow_ups_acc on public.follow_ups for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+-- the cron scan orders by (status, next_run_at); the account list orders by recency
+create index if not exists follow_ups_due_idx on public.follow_ups (status, next_run_at);
+create index if not exists follow_ups_acc_idx on public.follow_ups (account_id, created_at desc);
+
+-- ─── 20260707150000_custom_tools.sql ─────────────────────────────────────────────────────────
+-- Custom tools ("Мои инструменты") — the user teaches an agent a NEW skill without us
+-- coding it: either a plain HTTP endpoint (URL + auth + parameter schema) or a whole MCP
+-- server (a community tool bundle). Each enabled row becomes a callable function the model
+-- can pick during runAgentTools. Secrets (auth headers) are read server-side only.
+-- Account-scoped via RLS like the rest of the schema.
+
+create table if not exists public.custom_tools (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  kind          text not null default 'http' check (kind in ('http', 'mcp')),
+  name          text not null,                                 -- function name the model calls (a-z0-9_)
+  description   text not null default '',                      -- when to use it (the model reads this)
+  -- HTTP tool
+  method        text not null default 'POST' check (method in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')),
+  url           text not null default '',                      -- may contain {{param}} placeholders
+  headers       jsonb not null default '{}'::jsonb,            -- static headers incl. Authorization (secret)
+  params        jsonb not null default '[]'::jsonb,            -- [{name,type,description,required}]
+  body_template text not null default '',                     -- optional JSON body with {{param}} placeholders
+  -- MCP server
+  mcp_url       text not null default '',                      -- streamable-HTTP MCP endpoint
+  mcp_headers   jsonb not null default '{}'::jsonb,            -- auth headers for the MCP server (secret)
+  enabled       boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+alter table public.custom_tools enable row level security;
+
+-- Owner manages their own tools from the UI. The reply bots read enabled rows with the
+-- service_role key (bypasses RLS) to build the tool list, like the other server-side flows.
+drop policy if exists custom_tools_acc on public.custom_tools;
+create policy custom_tools_acc on public.custom_tools for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+create index if not exists custom_tools_acc_idx on public.custom_tools (account_id, created_at desc);
+
+-- ─── 20260707170000_ops_watchdog.sql ─────────────────────────────────────────────────────────
+-- Autonomous ops watchdog log. A scheduled agent (ops-watchdog edge function) checks the
+-- site, edge functions, VPS worker, DB and the support queue every ~10 min and writes one
+-- row here. Platform-wide health (not account-scoped): the watchdog writes with the service
+-- role; any signed-in user may read the latest status for the monitoring page.
+
+create table if not exists public.ops_checks (
+  id         uuid primary key default gen_random_uuid(),
+  status     text not null default 'ok',          -- ok | warn | down
+  summary    text not null default '',
+  details    jsonb not null default '{}'::jsonb,   -- per-check {name: {ok, info}}
+  created_at timestamptz not null default now()
+);
+
+alter table public.ops_checks enable row level security;
+
+drop policy if exists ops_checks_read on public.ops_checks;
+create policy ops_checks_read on public.ops_checks for select
+  using (auth.role() = 'authenticated');
+
+create index if not exists ops_checks_idx on public.ops_checks (created_at desc);
+
+-- ─── 20260707190000_ops_usage_today.sql ──────────────────────────────────────────────────────
+-- Lightweight aggregate for the ops watchdog's cost guard: today's total tokens plus the
+-- single top-spending account. Done in the DB (no row fetch) so it scales at 40k users.
+create or replace function public.ops_usage_today()
+returns table (total bigint, top_account uuid, top_tokens bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  with day as (
+    select account_id, tokens from usage where created_at >= date_trunc('day', now())
+  ), tops as (
+    select account_id, sum(tokens) as t from day group by account_id order by t desc limit 1
+  )
+  select coalesce((select sum(tokens) from day), 0)::bigint,
+         (select account_id from tops),
+         coalesce((select t from tops), 0)::bigint;
+$$;
+
+revoke all on function public.ops_usage_today() from public;
+
+-- ─── 20260707200000_ops_daily_digest.sql ─────────────────────────────────────────────────────
+-- Per-account daily digest aggregate for the founder pulse agent. For every account that set
+-- an operator/owner Telegram (business_profiles.notify_chat_id), returns yesterday's dialogues,
+-- new leads and tokens burned — all computed in the DB (no row fetch) so it scales.
+create or replace function public.ops_daily_digest()
+returns table (account_id uuid, notify_chat_id text, dialogues bigint, leads bigint, tokens bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  with y as (
+    select (date_trunc('day', now()) - interval '1 day') as lo, date_trunc('day', now()) as hi
+  ),
+  d as (
+    select ag.account_id, count(*)::bigint as c
+    from dialogues dl join agents ag on ag.id = dl.agent_id, y
+    where dl.created_at >= y.lo and dl.created_at < y.hi
+    group by ag.account_id
+  ),
+  l as (
+    select ag.account_id, count(*)::bigint as c
+    from leads le
+      join dialogues dl on dl.id = le.dialogue_id
+      join agents ag on ag.id = dl.agent_id, y
+    where le.created_at >= y.lo and le.created_at < y.hi
+    group by ag.account_id
+  ),
+  t as (
+    select u.account_id, sum(u.tokens)::bigint as s
+    from usage u, y
+    where u.created_at >= y.lo and u.created_at < y.hi
+    group by u.account_id
+  )
+  select bp.account_id, bp.notify_chat_id,
+         coalesce(d.c, 0)::bigint, coalesce(l.c, 0)::bigint, coalesce(t.s, 0)::bigint
+  from business_profiles bp
+  left join d on d.account_id = bp.account_id
+  left join l on l.account_id = bp.account_id
+  left join t on t.account_id = bp.account_id
+  where bp.notify_chat_id is not null and bp.notify_chat_id <> '';
+$$;
+
+revoke all on function public.ops_daily_digest() from public;
+
+-- ─── 20260707210000_ops_review_fixes.sql ─────────────────────────────────────────────────────
+-- Review fixes for the ops agents:
+--  1) make the migration set reproducible — ensure business_profiles has the columns the
+--     app/functions already rely on (present on prod, but never added by a committed migration);
+--  2) close the SECURITY DEFINER leak properly — revoke EXECUTE from PUBLIC (the earlier
+--     `revoke from anon, authenticated` left the default PUBLIC grant intact);
+--  3) compute the day boundary in Asia/Tashkent (was UTC, shifting "today"/"yesterday" ~5h).
+
+alter table public.business_profiles add column if not exists notify_chat_id text;
+alter table public.business_profiles add column if not exists phone text;
+alter table public.business_profiles add column if not exists tasks_sheet_id text;
+
+-- today's total tokens + the single top-spending account (Tashkent day)
+create or replace function public.ops_usage_today()
+returns table (total bigint, top_account uuid, top_tokens bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  with b as (
+    select (date_trunc('day', now() at time zone 'Asia/Tashkent')) at time zone 'Asia/Tashkent' as lo
+  ), day as (
+    select account_id, tokens from usage, b where created_at >= b.lo
+  ), tops as (
+    select account_id, sum(tokens) as t from day group by account_id order by t desc limit 1
+  )
+  select coalesce((select sum(tokens) from day), 0)::bigint,
+         (select account_id from tops),
+         coalesce((select t from tops), 0)::bigint;
+$$;
+
+-- per-account yesterday digest (Tashkent day) for accounts with an owner Telegram
+create or replace function public.ops_daily_digest()
+returns table (account_id uuid, notify_chat_id text, dialogues bigint, leads bigint, tokens bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  with y as (
+    select (date_trunc('day', now() at time zone 'Asia/Tashkent') - interval '1 day') at time zone 'Asia/Tashkent' as lo,
+           (date_trunc('day', now() at time zone 'Asia/Tashkent')) at time zone 'Asia/Tashkent' as hi
+  ),
+  d as (
+    select ag.account_id, count(*)::bigint as c
+    from dialogues dl join agents ag on ag.id = dl.agent_id, y
+    where dl.created_at >= y.lo and dl.created_at < y.hi
+    group by ag.account_id
+  ),
+  l as (
+    select ag.account_id, count(*)::bigint as c
+    from leads le join dialogues dl on dl.id = le.dialogue_id join agents ag on ag.id = dl.agent_id, y
+    where le.created_at >= y.lo and le.created_at < y.hi
+    group by ag.account_id
+  ),
+  t as (
+    select u.account_id, sum(u.tokens)::bigint as s
+    from usage u, y
+    where u.created_at >= y.lo and u.created_at < y.hi
+    group by u.account_id
+  )
+  select bp.account_id, bp.notify_chat_id,
+         coalesce(d.c, 0)::bigint, coalesce(l.c, 0)::bigint, coalesce(t.s, 0)::bigint
+  from business_profiles bp
+  left join d on d.account_id = bp.account_id
+  left join l on l.account_id = bp.account_id
+  left join t on t.account_id = bp.account_id
+  where bp.notify_chat_id is not null and bp.notify_chat_id <> '';
+$$;
+
+revoke all on function public.ops_usage_today() from public;
+revoke all on function public.ops_daily_digest() from public;
+grant execute on function public.ops_usage_today() to service_role;
+grant execute on function public.ops_daily_digest() to service_role;
+
+-- ─── 20260707220000_ops_weekly_report.sql ────────────────────────────────────────────────────
+-- Weekly team report aggregate: for every account with an owner Telegram, this week's task
+-- stats (created / still open / overdue). Computed in the DB (Asia/Tashkent week). SECURITY
+-- DEFINER, but EXECUTE revoked from PUBLIC (only the service role calls it from the cron fn).
+create or replace function public.ops_weekly_report()
+returns table (account_id uuid, notify_chat_id text, created bigint, open_cnt bigint, overdue bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  with w as (
+    select (date_trunc('week', now() at time zone 'Asia/Tashkent') - interval '7 days') at time zone 'Asia/Tashkent' as lo
+  ),
+  agg as (
+    select t.account_id,
+      count(*) filter (where t.created_at >= w.lo)::bigint as created,
+      count(*) filter (where coalesce(t.status,'open') <> 'done')::bigint as open_cnt,
+      count(*) filter (where coalesce(t.status,'open') <> 'done' and t.due_at is not null and t.due_at < now())::bigint as overdue
+    from tasks t, w
+    group by t.account_id
+  )
+  select bp.account_id, bp.notify_chat_id,
+         coalesce(a.created, 0)::bigint, coalesce(a.open_cnt, 0)::bigint, coalesce(a.overdue, 0)::bigint
+  from business_profiles bp
+  left join agg a on a.account_id = bp.account_id
+  where bp.notify_chat_id is not null and bp.notify_chat_id <> '';
+$$;
+
+revoke all on function public.ops_weekly_report() from public;
+grant execute on function public.ops_weekly_report() to service_role;
+
+-- ─── 20260707230000_planerka.sql ─────────────────────────────────────────────────────────────
+-- Planerka (team stand-up) upgrade:
+--  1) tasks carry PROOF of completion + partial PROGRESS + who/when closed it, so a person
+--     can report "done" (with evidence) either in the group OR privately to the bot;
+--  2) business_profiles gets a report language so the morning brief / weekly scorecard are
+--     delivered in the language the owner picked (uz | ru | en);
+--  3) ops_weekly_report keeps working; a new per-person scorecard RPC powers the weekly report
+--     (promised / done / % / overdue-days), computed in the DB so it scales.
+-- Account-scoped via RLS like the rest of the schema.
+
+-- ---------- tasks: proof + progress + completion audit ----------
+alter table public.tasks add column if not exists progress     int  not null default 0;   -- 0..100
+alter table public.tasks add column if not exists proof_url    text;      -- telegram file_id or a link
+alter table public.tasks add column if not exists proof_type   text;      -- photo | document | link | note
+alter table public.tasks add column if not exists completed_at  timestamptz;
+alter table public.tasks add column if not exists completed_by  text;     -- tg display name of who reported done
+
+-- ---------- business_profiles: report language for briefs/reports ----------
+alter table public.business_profiles add column if not exists report_lang text not null default 'ru';  -- uz | ru | en
+
+-- ---------- per-person weekly scorecard (Asia/Tashkent week) ----------
+-- One row per (chat, assignee): assigned this week, done this week, still open, overdue,
+-- and the worst overdue-day count on their open tasks. SECURITY DEFINER; EXECUTE only for
+-- the service role (the weekly-report cron function). Grouped in the DB so it scales at 40k.
+create or replace function public.planerka_weekly_scorecard()
+returns table (
+  account_id       uuid,
+  telegram_chat_id text,
+  assignee         text,
+  assigned         bigint,
+  done             bigint,
+  open_cnt         bigint,
+  overdue          bigint,
+  max_overdue_days int
+)
+language sql
+security definer
+set search_path = public
+as $$
+  with w as (
+    select (date_trunc('week', now() at time zone 'Asia/Tashkent') - interval '7 days') at time zone 'Asia/Tashkent' as lo
+  )
+  select
+    t.account_id,
+    t.telegram_chat_id,
+    coalesce(nullif(t.assignee_tg, ''), t.assignee_name, '—') as assignee,
+    count(*) filter (where t.created_at >= w.lo)::bigint                                         as assigned,
+    count(*) filter (where t.status = 'done' and coalesce(t.completed_at, t.created_at) >= w.lo)::bigint as done,
+    count(*) filter (where coalesce(t.status,'todo') <> 'done')::bigint                          as open_cnt,
+    count(*) filter (where coalesce(t.status,'todo') <> 'done' and t.due_at is not null and t.due_at < now())::bigint as overdue,
+    coalesce(max(
+      case when coalesce(t.status,'todo') <> 'done' and t.due_at is not null and t.due_at < now()
+           then floor(extract(epoch from (now() - t.due_at)) / 86400)::int
+           else 0 end
+    ), 0) as max_overdue_days
+  from tasks t, w
+  where t.telegram_chat_id is not null
+  group by t.account_id, t.telegram_chat_id, assignee;
+$$;
+
+-- lock it down: Supabase grants anon/authenticated EXECUTE directly, so revoking only from
+-- PUBLIC leaves them able to call this SECURITY DEFINER function (which bypasses RLS and would
+-- expose every account's chat ids + task counts). Revoke from all three, grant only the cron role.
+revoke all on function public.planerka_weekly_scorecard() from public, anon, authenticated;
+grant execute on function public.planerka_weekly_scorecard() to service_role;
+
+-- Same hardening for the earlier ops DEFINER functions: `revoke ... from public` alone left
+-- anon/authenticated able to EXECUTE them (Supabase grants those roles execute directly), which
+-- exposed every account's notify chat + token totals. Revoke from all three; cron role only.
+do $$
+begin
+  if to_regprocedure('public.ops_weekly_report()') is not null then
+    revoke all on function public.ops_weekly_report() from public, anon, authenticated;
+    grant execute on function public.ops_weekly_report() to service_role;
+  end if;
+  if to_regprocedure('public.ops_daily_digest()') is not null then
+    revoke all on function public.ops_daily_digest() from public, anon, authenticated;
+    grant execute on function public.ops_daily_digest() to service_role;
+  end if;
+  if to_regprocedure('public.ops_usage_today()') is not null then
+    revoke all on function public.ops_usage_today() from public, anon, authenticated;
+    grant execute on function public.ops_usage_today() to service_role;
+  end if;
+end $$;
+
+-- ─── 20260707240000_task_assignee_id.sql ─────────────────────────────────────────────────────
+-- Strong assignee identity for tasks. Closing a task via DM was authorized by matching the
+-- task's assignee_name against the sender's Telegram display_name — a user-settable, non-unique
+-- field (spoofable: rename your profile to a colleague's name). We add the assignee's numeric
+-- Telegram user id (globally unique, non-spoofable) so completion is authorized by identity,
+-- not by display name. Legacy/name-only tasks simply can't be closed via DM (must be done in
+-- the group, where the bot verifies the sender's identity directly).
+alter table public.tasks add column if not exists assignee_tg_user_id text;
+create index if not exists tasks_assignee_uid_idx on public.tasks (assignee_tg_user_id) where status <> 'done';
+
+-- ─── 20260707250000_agent_growth.sql ─────────────────────────────────────────────────────────
+-- Self-evolving agents: the owner sets a GROWTH DIRECTION and the agent improves its own
+-- config (role/tasks/tone/rules) toward it, learning from its real conversations. Each
+-- evolution is stored (before/after + changelog) as a visible growth log, and can be applied
+-- or rolled back. Account-scoped via RLS.
+alter table public.agents add column if not exists growth_direction text;
+alter table public.agents add column if not exists auto_evolve boolean not null default false;
+
+create table if not exists public.agent_evolutions (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  agent_id      uuid not null references public.agents(id) on delete cascade,
+  direction     text,
+  summary       text,               -- changelog joined by newlines
+  prompt_before jsonb,
+  prompt_after  jsonb,
+  applied       boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+alter table public.agent_evolutions enable row level security;
+drop policy if exists agent_evolutions_acc on public.agent_evolutions;
+create policy agent_evolutions_acc on public.agent_evolutions for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+create index if not exists agent_evolutions_agent_idx on public.agent_evolutions (agent_id, created_at desc);
+
+-- ─── 20260708120000_discuss_cooldown.sql ─────────────────────────────────────────────────────
+-- Throttle the expensive group "discussion" (a single @mention fans out to ~6-7 LLM calls).
+-- Any group member could repeat it and drain the account's token balance. We record when a
+-- discussion last ran on a channel and enforce a cooldown before starting another.
+alter table public.channels add column if not exists last_discussion_at timestamptz;
+
+-- ─── 20260708130000_tg_updates.sql ───────────────────────────────────────────────────────────
+-- Idempotency for the Telegram webhook. Telegram RE-DELIVERS an update if it doesn't receive a
+-- fast 200 (slow LLM/tool work makes this common), which caused duplicate tasks and double LLM
+-- spend. We record each processed update per bot and skip re-deliveries. Service-role only.
+create table if not exists public.tg_updates (
+  channel_id uuid        not null,
+  update_id  bigint      not null,
+  created_at timestamptz not null default now(),
+  primary key (channel_id, update_id)
+);
+
+-- lock it down: only the service role (edge function) touches this; RLS with no policy denies
+-- anon/authenticated entirely.
+alter table public.tg_updates enable row level security;
+
+create index if not exists tg_updates_created_idx on public.tg_updates (created_at);
+
+-- ─── 20260708140000_ops_autopilot.sql ────────────────────────────────────────────────────────
+-- Autonomous "AI COO" (autopilot): each day an agent reads the account's real state and
+-- produces a short assessment + top actions, delivered to the owner and logged. This is the
+-- "the platform runs itself" layer — no human needed to watch the numbers.
+
+-- decisions log (per account), visible in the panel
+create table if not exists public.ops_reports (
+  id         uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  kind       text not null default 'autopilot',
+  summary    text,
+  actions    jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.ops_reports enable row level security;
+drop policy if exists ops_reports_acc on public.ops_reports;
+create policy ops_reports_acc on public.ops_reports for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+create index if not exists ops_reports_acc_idx on public.ops_reports (account_id, created_at desc);
+
+-- per-account daily signals for the autopilot (Asia/Tashkent day). SECURITY DEFINER, service role only.
+create or replace function public.ops_autopilot_signals()
+returns table (
+  account_id     uuid,
+  notify_chat_id text,
+  dialogues      bigint,
+  leads          bigint,
+  open_tasks     bigint,
+  overdue_tasks  bigint,
+  needs_operator bigint
+)
+language sql
+security definer
+set search_path = public
+as $$
+  with d as (
+    select (date_trunc('day', now() at time zone 'Asia/Tashkent')) at time zone 'Asia/Tashkent' as lo
+  ),
+  dia as (
+    select ag.account_id, count(*)::bigint c
+    from dialogues dl join agents ag on ag.id = dl.agent_id, d
+    where dl.created_at >= d.lo group by ag.account_id
+  ),
+  nop as (
+    select ag.account_id, count(*)::bigint c
+    from dialogues dl join agents ag on ag.id = dl.agent_id
+    where dl.status = 'needs_operator' group by ag.account_id
+  ),
+  led as (
+    select ag.account_id, count(*)::bigint c
+    from leads le join dialogues dl on dl.id = le.dialogue_id join agents ag on ag.id = dl.agent_id, d
+    where le.created_at >= d.lo group by ag.account_id
+  ),
+  tsk as (
+    select t.account_id,
+      count(*) filter (where coalesce(t.status,'todo') <> 'done')::bigint as open_cnt,
+      count(*) filter (where coalesce(t.status,'todo') <> 'done' and t.due_at is not null and t.due_at < now())::bigint as overdue_cnt
+    from tasks t group by t.account_id
+  )
+  select bp.account_id, bp.notify_chat_id,
+         coalesce(dia.c,0), coalesce(led.c,0), coalesce(tsk.open_cnt,0), coalesce(tsk.overdue_cnt,0), coalesce(nop.c,0)
+  from business_profiles bp
+  left join dia on dia.account_id = bp.account_id
+  left join nop on nop.account_id = bp.account_id
+  left join led on led.account_id = bp.account_id
+  left join tsk on tsk.account_id = bp.account_id
+  where bp.notify_chat_id is not null and bp.notify_chat_id <> '';
+$$;
+
+revoke all on function public.ops_autopilot_signals() from public, anon, authenticated;
+grant execute on function public.ops_autopilot_signals() to service_role;
+
+-- ─── 20260708150000_automations.sql ──────────────────────────────────────────────────────────
+-- AI-native automations: the Zapier/Make/n8n layer. An automation is a trigger + an ordered
+-- chain of steps (agent / http / notify). The novelty: the owner DESCRIBES it in words and an
+-- LLM builds the steps. Account-scoped via RLS.
+create table if not exists public.automations (
+  id          uuid primary key default gen_random_uuid(),
+  account_id  uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  name        text not null default 'Automation',
+  description text,
+  trigger     text not null default 'manual',   -- manual | webhook | schedule
+  webhook_secret text,                            -- for the incoming webhook trigger
+  steps       jsonb not null default '[]',        -- [{type:'agent'|'http'|'notify', ...}]
+  enabled     boolean not null default true,
+  last_run_at timestamptz,
+  last_result jsonb,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.automations enable row level security;
+drop policy if exists automations_acc on public.automations;
+create policy automations_acc on public.automations for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+create index if not exists automations_acc_idx on public.automations (account_id, created_at desc);
+create index if not exists automations_webhook_idx on public.automations (webhook_secret) where webhook_secret is not null;
+
+-- ─── 20260709000000_watched_sources.sql ──────────────────────────────────────────────────────
+-- Channel watch → auto-localize. A user pastes a YouTube channel link once; a cron
+-- polls its free RSS feed and, on each new video, localizes the title+description into
+-- the chosen languages as content_drafts (Telegram can auto-publish; others are drafts).
+-- All access goes through the watch-sources edge function (service role); RLS is enabled
+-- with no permissive policies so the tables are not directly reachable by anon/authenticated.
+
+create table if not exists public.watched_sources (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null references public.accounts(id) on delete cascade,
+  url           text not null,
+  kind          text not null default 'youtube',
+  external_id   text,                       -- youtube channel id (UC...)
+  title         text,
+  languages     text[] not null default '{}',
+  platforms     text[] not null default '{}',
+  auto_publish  boolean not null default false,
+  tg_channel_id uuid,                        -- channels.id of the sender bot (telegram auto-publish)
+  tg_target     text,                        -- @channel the bot posts into
+  last_video_id text,
+  active        boolean not null default true,
+  last_checked_at timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index if not exists watched_sources_account_idx on public.watched_sources(account_id);
+create index if not exists watched_sources_active_idx on public.watched_sources(active) where active;
+alter table public.watched_sources enable row level security;
+
+create table if not exists public.content_drafts (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  source_id    uuid references public.watched_sources(id) on delete set null,
+  video_id     text,
+  video_title  text,
+  video_url    text,
+  lang         text,
+  content      text,
+  status       text not null default 'draft',   -- draft | published
+  published_to text,                             -- 'telegram' when auto-posted
+  created_at   timestamptz not null default now()
+);
+create index if not exists content_drafts_account_idx on public.content_drafts(account_id, created_at desc);
+alter table public.content_drafts enable row level security;
+
+-- ─── 20260709010000_usage_dialogue.sql ───────────────────────────────────────────────────────
+-- Token-economy: attribute AI usage to a dialogue so cost-per-conversation / per-lead is
+-- computable (the < $0.05/lead unit-economics target). cost is now written per reply too.
+alter table public.usage add column if not exists dialogue_id uuid;
+create index if not exists usage_dialogue_idx on public.usage(dialogue_id) where dialogue_id is not null;
+
+-- ─── 20260709020000_routing_decisions.sql ────────────────────────────────────────────────────
+-- Routing observability: every intent-router decision (chosen teammate + confidence + whether it
+-- resolved) so routing accuracy is MEASURABLE, not a claimed >95%. Accessed via service role only.
+create table if not exists public.routing_decisions (
+  id          uuid primary key default gen_random_uuid(),
+  account_id  uuid not null references public.accounts(id) on delete cascade,
+  dialogue_id uuid,
+  from_agent  uuid,
+  to_agent    uuid,
+  chosen      text,
+  confidence  real,
+  resolved    boolean not null default false,
+  created_at  timestamptz not null default now()
+);
+create index if not exists routing_decisions_account_idx on public.routing_decisions(account_id, created_at desc);
+alter table public.routing_decisions enable row level security;
+
+-- ─── 20260709030000_webhook_dedup.sql ────────────────────────────────────────────────────────
+-- Idempotency for WhatsApp/Instagram (Meta redelivers a webhook if it doesn't get a fast 200).
+-- Telegram already dedups via tg_updates; this covers the other channels. Service-role only.
+create table if not exists public.webhook_dedup (
+  channel_id uuid not null,
+  msg_id     text not null,
+  created_at timestamptz not null default now(),
+  primary key (channel_id, msg_id)
+);
+alter table public.webhook_dedup enable row level security;
+
+-- ─── 20260709040000_bookings.sql ─────────────────────────────────────────────────────────────
+-- Internal bookings so a booking agent can ALWAYS schedule reliably (no hallucinated "записал"),
+-- even when Google Calendar isn't connected. Written by the book_appointment tool. Service-role only.
+create table if not exists public.bookings (
+  id             uuid primary key default gen_random_uuid(),
+  account_id     uuid references public.accounts(id) on delete cascade,
+  dialogue_id    uuid,
+  customer_name  text,
+  phone          text,
+  service        text,
+  scheduled_at   timestamptz,
+  scheduled_text text,        -- the date/time exactly as the customer said (fallback / reference)
+  notes          text,
+  status         text not null default 'booked',
+  created_at     timestamptz not null default now()
+);
+create index if not exists bookings_account_idx on public.bookings(account_id, created_at desc);
+alter table public.bookings enable row level security;
+
+-- ─── 20260709050000_tool_runs.sql ────────────────────────────────────────────────────────────
+-- tool_runs: audit trail of every agent tool execution (written by _shared/tools.ts, read by the
+-- observability view). This table was referenced everywhere but never had a migration — so the
+-- inserts were silently failing and the whole observability layer was empty. Service-role only.
+create table if not exists public.tool_runs (
+  id         uuid primary key default gen_random_uuid(),
+  account_id uuid references public.accounts(id) on delete cascade,
+  tool       text,
+  args       jsonb,
+  result     text,
+  ok         boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists tool_runs_account_idx on public.tool_runs(account_id, created_at desc);
+create index if not exists tool_runs_tool_idx on public.tool_runs(tool, created_at desc);
+alter table public.tool_runs enable row level security;
+
+-- ─── 20260709060000_tg_queue.sql ─────────────────────────────────────────────────────────────
+-- Durable queue for Telegram (#8): pgmq queue + RPC wrappers + a single-drainer lease.
+create extension if not exists pgmq;
+do $$ begin perform pgmq.create('tg_jobs'); exception when others then null; end $$;
+
+create or replace function public.q_send(payload jsonb) returns bigint language sql security definer set search_path=pgmq,public as $$ select pgmq.send('tg_jobs', payload) $$;
+create or replace function public.q_read(qty int, vt int default 30) returns setof pgmq.message_record language sql security definer set search_path=pgmq,public as $$ select * from pgmq.read('tg_jobs', vt, qty) $$;
+create or replace function public.q_delete(mid bigint) returns boolean language sql security definer set search_path=pgmq,public as $$ select pgmq.delete('tg_jobs', mid) $$;
+create or replace function public.q_len() returns bigint language sql security definer set search_path=pgmq,public as $$ select count(*)::bigint from pgmq.q_tg_jobs $$;
+
+-- Lease: exactly one worker drains at a time (advisory locks don't survive the transaction pooler).
+create table if not exists public.worker_lease (id int primary key, locked_until timestamptz not null default now());
+insert into public.worker_lease(id, locked_until) values (1, now()) on conflict (id) do nothing;
+create or replace function public.acquire_worker_lease(secs int default 60) returns boolean language sql as $$ update public.worker_lease set locked_until = now() + make_interval(secs => secs) where id = 1 and locked_until < now() returning true $$;
+create or replace function public.release_worker_lease() returns boolean language sql as $$ update public.worker_lease set locked_until = now() where id = 1 returning true $$;
+
+grant execute on function public.q_send(jsonb), public.q_read(int,int), public.q_delete(bigint), public.q_len(), public.acquire_worker_lease(int), public.release_worker_lease() to service_role;
+
+-- ─── 20260709130000_rag_knowledge_chunks.sql ─────────────────────────────────────────────────
+-- RAG: semantic knowledge base. The chunk/embed/retrieve pipeline was already coded
+-- (_shared/knowledge.ts + knowledge-index function) but was dead because this DB side never
+-- existed. This adds pgvector, the chunk store, a cosine-match RPC, and the indexes.
+create extension if not exists vector;
+
+create table if not exists public.knowledge_chunks (
+  id uuid primary key default gen_random_uuid(),
+  doc_id uuid references public.knowledge_docs(id) on delete cascade,
+  owner_id uuid not null,           -- the agent id
+  owner_type text not null default 'agent',
+  content text not null,
+  embedding vector(384),            -- gte-small dimensions
+  created_at timestamptz not null default now()
+);
+
+create index if not exists knowledge_chunks_owner_idx on public.knowledge_chunks (owner_id);
+create index if not exists knowledge_chunks_embedding_idx
+  on public.knowledge_chunks using hnsw (embedding vector_cosine_ops);
+
+-- Chunks are written by service_role (knowledge-index) and read ONLY through the SECURITY DEFINER
+-- RPC below (never directly by the browser). RLS on + no anon/auth policies = locked; service_role
+-- bypasses RLS, the definer RPC bypasses RLS.
+alter table public.knowledge_chunks enable row level security;
+
+-- Top-k chunks for one owner by cosine similarity. SECURITY DEFINER so it can read the locked
+-- table; only service_role may execute it (an authenticated user must NOT be able to pass an
+-- arbitrary owner_id and read another account's chunks).
+create or replace function public.match_knowledge(p_owner_id uuid, p_query vector(384), p_k int default 6)
+returns table(content text, similarity double precision)
+language sql stable security definer set search_path = public as $$
+  select c.content, 1 - (c.embedding <=> p_query) as similarity
+  from public.knowledge_chunks c
+  where c.owner_id = p_owner_id and c.embedding is not null
+  order by c.embedding <=> p_query
+  limit greatest(1, least(p_k, 20))
+$$;
+
+revoke all on function public.match_knowledge(uuid, vector, int) from public, anon, authenticated;
+grant execute on function public.match_knowledge(uuid, vector, int) to service_role;
+
+-- ─── 20260709140000_social_credentials.sql ───────────────────────────────────────────────────
+-- Autoposting connectors beyond Meta (Twitter/X, Reddit) need server-only credentials.
+-- Create the table here as well so a fresh migration chain never tries to ALTER a missing table.
+create table if not exists public.social_accounts (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  platform     text not null,
+  access_token text,
+  page_id      text,
+  ig_user_id   text,
+  label        text,
+  credentials  jsonb,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (account_id, platform)
+);
+alter table public.social_accounts add column if not exists credentials jsonb;
+alter table public.social_accounts enable row level security;
+
+-- ─── 20260709160000_agent_persona_and_skills.sql ─────────────────────────────────────────────
+-- Personal-assistant mode (an agent that answers in Telegram AS one specific person, not the
+-- organization) + user-selectable agent skills (capability bundles like data analysis).
+alter table public.agents add column if not exists persona_mode text not null default 'business';
+alter table public.agents add column if not exists owner_name text;
+alter table public.agents add column if not exists skills text[] not null default '{}';
+
+-- ─── 20260709170000_planerka_members_sheet.sql ───────────────────────────────────────────────
+-- A company connects its OWN Google Sheet as the planerka team roster (name + Telegram chat_id +
+-- username + department). The planerka reads it to DM each person their tasks directly.
+alter table public.business_profiles add column if not exists planerka_members_sheet_id text;
+alter table public.business_profiles add column if not exists planerka_members_tab text;      -- optional tab/sheet name
+alter table public.business_profiles add column if not exists planerka_members_map jsonb not null default '{}'::jsonb; -- optional column overrides {name,chatId,username,dept}
+
+-- ─── 20260710120000_messages_system_trace_rls.sql ────────────────────────────────────────────
+-- Messages write hardening: protect system_trace audit rows from client tampering.
+--
+-- system_trace rows are the operator-facing audit trail of how agents collaborated
+-- on a reply. They are written ONLY by the agent runtime through service_role
+-- (buildReply in supabase/functions/_shared/agent.ts — its callers telegram-webhook,
+-- whatsapp-webhook and widget-webhook all use SUPABASE_SERVICE_ROLE_KEY clients).
+-- Before this migration, the single messages_acc FOR ALL policy (from
+-- 20260624150000_review_fixes.sql) let any authenticated tenant client
+-- INSERT/UPDATE/DELETE its own system_trace rows — i.e. forge or erase the audit
+-- trail of its own account.
+--
+-- New model — tenant scope is byte-identical to the old policy:
+--   * SELECT: whole tenant scope, all message_type values. The dialogues panel
+--     keeps rendering traces and RLS-filtered realtime events keep flowing.
+--   * INSERT / UPDATE / DELETE: tenant scope AND message_type = 'chat'. Clients
+--     may only write chat rows. This is backward compatible today: the frontend
+--     performs no direct messages writes, and the two Edge Functions that write
+--     with the CALLER'S JWT (operator-send, test-agent) insert without
+--     message_type, so the column default 'chat' satisfies the new policy.
+--     UPDATE checks both the old row (USING) and the new row (WITH CHECK), so a
+--     trace row cannot be edited AND a chat row cannot be rewritten into a fake
+--     trace. internal_monologue rows get the same protection (clients should
+--     never write those either). service_role bypasses RLS as before.
+--   * Policies are TO authenticated: anon was already fully blocked in practice
+--     (current_account_id() is null without a session); now it is explicit.
+--
+-- Known limitation (documented, intentionally out of scope): this blocks DIRECT
+-- trace-row mutation only. A tenant can still lose traces by deleting the parent
+-- agent/dialogue (FK ON DELETE CASCADE — cascades are not filtered by the child
+-- table's DELETE policy). Immutable retention would need a separate append-only
+-- audit table or soft deletes.
+
+drop policy if exists messages_acc on public.messages;
+drop policy if exists messages_select_acc on public.messages;
+drop policy if exists messages_insert_chat on public.messages;
+drop policy if exists messages_update_chat on public.messages;
+drop policy if exists messages_delete_chat on public.messages;
+
+create policy messages_select_acc on public.messages for select
+  to authenticated
+  using (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+create policy messages_insert_chat on public.messages for insert
+  to authenticated
+  with check (
+    message_type = 'chat'
+    and dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+create policy messages_update_chat on public.messages for update
+  to authenticated
+  using (
+    message_type = 'chat'
+    and dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  )
+  with check (
+    message_type = 'chat'
+    and dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+create policy messages_delete_chat on public.messages for delete
+  to authenticated
+  using (
+    message_type = 'chat'
+    and dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+
+-- ─── 20260710130000_trace_retention_guard.sql ────────────────────────────────────────────────
+-- Trace retention guard: close the cascade-delete hole left by
+-- 20260710120000_messages_system_trace_rls.sql.
+--
+-- That migration made system_trace audit rows read-only for client roles, but
+-- documented one remaining path: FK ON DELETE CASCADE. Deleting a parent agent
+-- (agents -> dialogues -> messages) or dialogue (dialogues -> messages) erased
+-- the tenant's own audit trail even though direct trace writes/deletes were
+-- blocked, because cascaded deletes are not filtered by the child table's
+-- DELETE policy.
+--
+-- Fix: BEFORE DELETE row triggers on both parent tables. A SECURITY DEFINER
+-- function (owner = table owner, so RLS on public.messages cannot hide rows
+-- from the check) refuses the delete for client roles when the entity still
+-- has system_trace rows underneath it. Entities with no traces stay deletable
+-- by tenants exactly as before.
+--
+-- Caller gate (fail closed):
+--   * request.jwt.claims role = 'service_role'  -> allowed (runtime/admin
+--     Edge Functions; they can archive + clean up).
+--   * no JWT claims AND session_user is a direct trusted DB session
+--     (postgres / supabase_admin: migrations, dashboard SQL, pg_cron)
+--     -> allowed.
+--   * everything else — authenticated, anon, or any unknown/missing role
+--     arriving through the API authenticator — is guarded. "Guarded" only
+--     means the trace check applies; deletes of trace-free entities still
+--     succeed, so an unexpected context degrades safely, not destructively.
+--
+-- Because row triggers also fire on rows deleted BY a cascade, deeper paths
+-- (e.g. deleting an account cascades into agents) are covered by the same
+-- guard under the same request GUCs.
+
+-- FK join path used by the agents-side check (and generally missing for the
+-- dialogues.agent_id FK).
+create index if not exists dialogues_agent_id_idx on public.dialogues (agent_id);
+
+create or replace function public.guard_trace_parent_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  requester text := coalesce(
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+    nullif(current_setting('request.jwt.claim.role', true), '')
+  );
+  has_trace boolean;
+begin
+  if requester = 'service_role' then
+    return old;
+  end if;
+  if requester is null and session_user in ('postgres', 'supabase_admin') then
+    return old;
+  end if;
+
+  if tg_table_name = 'agents' then
+    select exists (
+      select 1
+      from public.messages m
+      join public.dialogues d on d.id = m.dialogue_id
+      where d.agent_id = old.id
+        and m.message_type = 'system_trace'
+    ) into has_trace;
+  elsif tg_table_name = 'dialogues' then
+    select exists (
+      select 1
+      from public.messages m
+      where m.dialogue_id = old.id
+        and m.message_type = 'system_trace'
+    ) into has_trace;
+  else
+    raise exception 'guard_trace_parent_delete is attached to unexpected table %.%', tg_table_schema, tg_table_name
+      using errcode = '42809'; -- wrong_object_type: refuse rather than guess
+  end if;
+
+  if has_trace then
+    raise exception 'cannot delete % %: it still has system_trace audit rows', tg_table_name, old.id
+      using errcode = '42501', -- insufficient_privilege -> PostgREST 403
+            hint = 'system_trace rows are the retained audit trail of agent collaboration; an administrator (service role) must archive or remove them first.';
+  end if;
+
+  return old;
+end;
+$$;
+
+drop trigger if exists agents_guard_trace_delete on public.agents;
+create trigger agents_guard_trace_delete
+  before delete on public.agents
+  for each row
+  execute function public.guard_trace_parent_delete();
+
+drop trigger if exists dialogues_guard_trace_delete on public.dialogues;
+create trigger dialogues_guard_trace_delete
+  before delete on public.dialogues
+  for each row
+  execute function public.guard_trace_parent_delete();
+
+-- ─── 20260711150000_autopost_repair.sql ──────────────────────────────────────────────────────
+-- Repair and harden autoposting so a fresh project matches the Edge Functions.
+
+create table if not exists public.social_accounts (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  platform     text not null,
+  access_token text,
+  page_id      text,
+  ig_user_id   text,
+  label        text,
+  credentials  jsonb,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (account_id, platform)
+);
+
+alter table public.social_accounts add column if not exists access_token text;
+alter table public.social_accounts add column if not exists page_id text;
+alter table public.social_accounts add column if not exists ig_user_id text;
+alter table public.social_accounts add column if not exists label text;
+alter table public.social_accounts add column if not exists credentials jsonb;
+alter table public.social_accounts add column if not exists created_at timestamptz not null default now();
+alter table public.social_accounts add column if not exists updated_at timestamptz not null default now();
+create unique index if not exists social_accounts_account_platform_uidx on public.social_accounts (account_id, platform);
+alter table public.social_accounts enable row level security;
+
+alter table public.scheduled_posts add column if not exists platform text not null default 'telegram';
+alter table public.scheduled_posts add column if not exists media_url text;
+alter table public.scheduled_posts add column if not exists claimed_at timestamptz;
+alter table public.scheduled_posts add column if not exists attempt_count integer not null default 0;
+alter table public.scheduled_posts alter column target_chat drop not null;
+
+alter table public.scheduled_posts drop constraint if exists scheduled_posts_status_check;
+alter table public.scheduled_posts add constraint scheduled_posts_status_check
+  check (status in ('scheduled', 'processing', 'posted', 'failed', 'canceled'));
+alter table public.scheduled_posts drop constraint if exists scheduled_posts_platform_check;
+alter table public.scheduled_posts add constraint scheduled_posts_platform_check
+  check (platform in ('telegram', 'facebook', 'instagram', 'twitter', 'reddit', 'tiktok', 'youtube'));
+
+create index if not exists scheduled_posts_claim_idx
+  on public.scheduled_posts (status, scheduled_at, claimed_at);
+
+-- Atomically claim due rows. SKIP LOCKED prevents duplicate posts when two cron
+-- invocations overlap; stale processing rows can be retried after 15 minutes.
+create or replace function public.claim_due_scheduled_posts(p_limit integer default 50)
+returns setof public.scheduled_posts
+language sql
+security definer
+set search_path = public
+as $$
+  with candidates as (
+    select id
+    from public.scheduled_posts
+    where (status = 'scheduled' and scheduled_at <= now())
+       or (status = 'processing' and claimed_at < now() - interval '15 minutes')
+    order by scheduled_at asc
+    for update skip locked
+    limit greatest(1, least(coalesce(p_limit, 50), 100))
+  )
+  update public.scheduled_posts p
+  set status = 'processing', claimed_at = now(), attempt_count = p.attempt_count + 1
+  from candidates c
+  where p.id = c.id
+  returning p.*;
+$$;
+
+revoke all on function public.claim_due_scheduled_posts(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_scheduled_posts(integer) to service_role;
+
+-- Dialogue-linked follow-ups resolve the target from the dialogue and must be
+-- allowed to omit a duplicated raw chat ID.
+alter table if exists public.follow_ups alter column target drop not null;
+alter table if exists public.follow_ups add column if not exists claimed_at timestamptz;
+alter table if exists public.follow_ups add column if not exists attempt_count integer not null default 0;
+
+create or replace function public.claim_due_follow_ups(p_limit integer default 50)
+returns setof public.follow_ups
+language sql
+security definer
+set search_path = public
+as $$
+  with candidates as (
+    select id
+    from public.follow_ups
+    where (status = 'active' and next_run_at <= now())
+       or (status = 'processing' and claimed_at < now() - interval '15 minutes')
+    order by next_run_at asc
+    for update skip locked
+    limit greatest(1, least(coalesce(p_limit, 50), 100))
+  )
+  update public.follow_ups f
+  set status = 'processing', claimed_at = now(), attempt_count = f.attempt_count + 1, updated_at = now()
+  from candidates c
+  where f.id = c.id
+  returning f.*;
+$$;
+
+revoke all on function public.claim_due_follow_ups(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_follow_ups(integer) to service_role;
+
+-- ─── 20260711160000_logistics_workflow.sql ───────────────────────────────────────────────────
+-- Durable lookup paths for Logistics Control tasks, delay alerts and approval drafts.
+alter table public.tasks add column if not exists subject_key text;
+
+create index if not exists tasks_logistics_open_idx
+  on public.tasks (account_id, department_id, status, created_at desc)
+  where source = 'logistics';
+
+create unique index if not exists tasks_logistics_exception_open_uidx
+  on public.tasks (account_id, department_id, source, subject_key)
+  where source = 'logistics' and status <> 'done' and subject_key is not null;
+
+create index if not exists notifications_logistics_idx
+  on public.notifications (account_id, department_id, kind, target, created_at desc)
+  where kind in ('delay_alert', 'logistics_escalation', 'approval_request');
+
+-- Reserve the full bounded workflow budget atomically before using Nemo's shared
+-- model key. The function caps input at 40 rows / 12k characters and both model
+-- calls cap output at 1800 tokens, so 50 credits is a conservative upper bound.
+-- Finalization refunds every unused reserved credit.
+create or replace function public.reserve_logistics_credits(p_account uuid, p_credits bigint)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare affected integer := 0;
+begin
+  if p_credits < 1 or p_credits > 50 then return false; end if;
+  update public.accounts
+     set token_balance = token_balance - p_credits
+   where id = p_account and token_balance >= p_credits;
+  get diagnostics affected = row_count;
+  return affected = 1;
+end;
+$$;
+
+create or replace function public.finalize_logistics_credits(p_account uuid, p_reserved bigint, p_tokens bigint)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.accounts
+     set token_balance = token_balance + greatest(0, p_reserved - ceil(greatest(p_tokens, 0) / 1000.0)::bigint)
+   where id = p_account;
+$$;
+
+revoke execute on function public.reserve_logistics_credits(uuid, bigint) from public, anon, authenticated;
+revoke execute on function public.finalize_logistics_credits(uuid, bigint, bigint) from public, anon, authenticated;
+grant execute on function public.reserve_logistics_credits(uuid, bigint) to service_role;
+grant execute on function public.finalize_logistics_credits(uuid, bigint, bigint) to service_role;
+
+-- ─── 20260711200000_industry_risk_policy.sql ─────────────────────────────────────────────────
+-- Server-enforced safety tier for regulated industry teams.
+-- The tier is persisted outside editable prompt/niche text, cannot be downgraded,
+-- and a database trigger blocks every channel write regardless of API/RLS path.
+
+alter table public.agents
+  add column if not exists risk_tier text not null default 'standard';
+
+alter table public.agents
+  add column if not exists template_key text;
+
+alter table public.channels
+  add column if not exists quarantined_credentials jsonb;
+
+update public.agents
+set risk_tier = 'standard'
+where risk_tier is null or risk_tier not in ('standard', 'regulated');
+alter table public.agents alter column risk_tier set default 'standard';
+alter table public.agents alter column risk_tier set not null;
+
+alter table public.agents drop constraint if exists agents_risk_tier_check;
+alter table public.agents
+  add constraint agents_risk_tier_check
+  check (risk_tier in ('standard', 'regulated'));
+
+create index if not exists agents_risk_tier_idx on public.agents (risk_tier);
+
+create or replace function public.enforce_agent_risk_tier()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  new.risk_tier := coalesce(new.risk_tier, 'standard');
+
+  if tg_op = 'INSERT' then
+    if new.template_key in (
+      'hr-recruiting',
+      'clinic-front-desk',
+      'accounting-collections',
+      'legal-office',
+      'insurance-operations'
+    ) or coalesce(new.niche, '') ~* '(^|[[:space:]])nemo-risk:regulated([[:space:]]|$)' then
+      new.risk_tier := 'regulated';
+    end if;
+    return new;
+  end if;
+
+  if old.template_key is not null and new.template_key is distinct from old.template_key then
+    raise exception 'agent template key cannot be changed or removed'
+      using errcode = '42501';
+  end if;
+
+  if old.risk_tier = 'regulated' and new.risk_tier <> 'regulated' then
+    raise exception 'regulated agent risk tier cannot be downgraded'
+      using errcode = '42501';
+  end if;
+
+  if new.template_key in (
+    'hr-recruiting',
+    'clinic-front-desk',
+    'accounting-collections',
+    'legal-office',
+    'insurance-operations'
+  ) or coalesce(new.niche, '') ~* '(^|[[:space:]])nemo-risk:regulated([[:space:]]|$)' then
+    new.risk_tier := 'regulated';
+  end if;
+
+  if new.risk_tier = 'regulated' and old.risk_tier <> 'regulated' then
+    update public.channels
+    set quarantined_credentials = case
+          when credentials <> '{}'::jsonb then credentials
+          else quarantined_credentials
+        end,
+        credentials = '{}'::jsonb,
+        status = 'safety_blocked'
+    where agent_id = old.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists agents_risk_tier_guard on public.agents;
+create trigger agents_risk_tier_guard
+  before insert or update of risk_tier, template_key, niche on public.agents
+  for each row execute function public.enforce_agent_risk_tier();
+
+create or replace function public.block_regulated_agent_channel()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_tier text;
+begin
+  select a.risk_tier into target_tier
+  from public.agents as a
+  where a.id = new.agent_id
+  for update;
+
+  if target_tier = 'regulated' and (
+    tg_op = 'INSERT'
+    or new.status <> 'safety_blocked'
+    or new.credentials <> '{}'::jsonb
+  ) then
+    raise exception 'live channels are disabled for regulated safety-beta teams'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists channels_regulated_agent_guard on public.channels;
+create trigger channels_regulated_agent_guard
+  before insert or update of agent_id, status, credentials on public.channels
+  for each row execute function public.block_regulated_agent_channel();
+
+-- Upgrade any template rows created during a rolling deployment. The update
+-- trigger preserves credentials and quarantines an already-connected channel.
+update public.agents
+set risk_tier = 'regulated'
+where risk_tier = 'standard'
+  and niche ~* '(^|[[:space:]])nemo-risk:regulated([[:space:]]|$)';
+
+-- Self-heal a partial/rolling deployment: no active credential remains in the
+-- column read by outbound jobs, while a server-only DB copy is retained
+-- for a future, explicitly approved restoration migration.
+update public.channels as c
+set quarantined_credentials = case
+      when c.credentials <> '{}'::jsonb then c.credentials
+      else c.quarantined_credentials
+    end,
+    credentials = '{}'::jsonb,
+    status = 'safety_blocked'
+from public.agents as a
+where a.id = c.agent_id
+  and a.risk_tier = 'regulated'
+  and (
+    c.status <> 'safety_blocked'
+    or c.credentials <> '{}'::jsonb
+  );
+
+-- ─── 20260711210000_channel_safe_read_columns.sql ────────────────────────────────────────────
+-- Keep channel credentials server-only while allowing the UI to read the
+-- non-secret metadata added for team and specialist Telegram connections.
+revoke select on public.channels from anon, authenticated;
+
+grant select (
+  id,
+  agent_id,
+  type,
+  status,
+  created_at,
+  sub_agent_id,
+  scope,
+  label
+) on public.channels to anon, authenticated;
+
+-- ─── 20260713120000_governed_agent_evolution.sql ─────────────────────────────────────────────
+-- Governed autonomous agent evolution. Prompt changes may be applied automatically only
+-- after an independent quality/safety review. Every change remains auditable and reversible.
+alter table public.agent_evolutions
+  add column if not exists auto_applied boolean not null default false,
+  add column if not exists review_score integer,
+  add column if not exists review_summary text,
+  add column if not exists applied_at timestamptz,
+  add column if not exists rolled_back_at timestamptz;
+
+alter table public.agent_evolutions
+  drop constraint if exists agent_evolutions_review_score_check;
+alter table public.agent_evolutions
+  add constraint agent_evolutions_review_score_check
+  check (review_score is null or review_score between 0 and 100);
+
+create index if not exists agent_evolutions_auto_applied_idx
+  on public.agent_evolutions (agent_id, applied_at desc)
+  where auto_applied = true;
+
+-- ─── 20260713150000_product_intelligence.sql ─────────────────────────────────────────────────
+-- First-party product telemetry, client error monitoring, feedback and safe rollouts.
+create table if not exists public.product_events (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  user_id uuid not null default auth.uid(),
+  name text not null check (name ~ '^[a-z0-9_]{2,80}$'),
+  path text,
+  properties jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists product_events_account_created_idx on public.product_events(account_id, created_at desc);
+create index if not exists product_events_name_created_idx on public.product_events(name, created_at desc);
+
+create table if not exists public.client_errors (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  user_id uuid not null default auth.uid(),
+  fingerprint text not null,
+  message text not null,
+  stack text,
+  path text,
+  browser text,
+  created_at timestamptz not null default now()
+);
+create index if not exists client_errors_account_created_idx on public.client_errors(account_id, created_at desc);
+
+create table if not exists public.customer_feedback (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id() references public.accounts(id) on delete cascade,
+  user_id uuid not null default auth.uid(),
+  rating smallint not null check (rating in (-1, 1)),
+  category text not null default 'product' check (category in ('product','agent_result','bug','idea')),
+  comment text check (char_length(comment) <= 2000),
+  path text,
+  agent_id uuid references public.agents(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists customer_feedback_account_created_idx on public.customer_feedback(account_id, created_at desc);
+
+create table if not exists public.feature_flags (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid references public.accounts(id) on delete cascade,
+  key text not null check (key ~ '^[a-z0-9_]{2,80}$'),
+  enabled boolean not null default false,
+  rollout_percent smallint not null default 100 check (rollout_percent between 0 and 100),
+  description text,
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists feature_flags_scope_key_uidx on public.feature_flags(coalesce(account_id, '00000000-0000-0000-0000-000000000000'::uuid), key);
+
+alter table public.product_events enable row level security;
+alter table public.client_errors enable row level security;
+alter table public.customer_feedback enable row level security;
+alter table public.feature_flags enable row level security;
+
+drop policy if exists product_events_acc on public.product_events;
+create policy product_events_acc on public.product_events for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id() and user_id = auth.uid());
+drop policy if exists client_errors_acc on public.client_errors;
+create policy client_errors_acc on public.client_errors for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id() and user_id = auth.uid());
+drop policy if exists customer_feedback_acc on public.customer_feedback;
+create policy customer_feedback_acc on public.customer_feedback for all
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id() and user_id = auth.uid());
+drop policy if exists feature_flags_read on public.feature_flags;
+create policy feature_flags_read on public.feature_flags for select
+  using (account_id is null or account_id = public.current_account_id());
+
+grant select, insert on public.product_events, public.client_errors, public.customer_feedback to authenticated;
+grant select on public.feature_flags to authenticated;
+
+insert into public.feature_flags(account_id, key, enabled, rollout_percent, description) values
+  (null, 'email_assistant', true, 100, 'Gmail inbox triage and human-approved drafts'),
+  (null, 'feedback_agent', true, 100, 'In-product feedback collection'),
+  (null, 'governed_evolution', true, 100, 'Guarded agent self-improvement')
+on conflict do nothing;
+
+-- ─── 20260713190000_security_gate_hardening.sql ──────────────────────────────────────────────
+-- Security gate: bound knowledge payloads and serialize agent creation bursts.
+
+alter table public.knowledge_docs
+  drop constraint if exists knowledge_docs_content_size_check;
+alter table public.knowledge_docs
+  add constraint knowledge_docs_content_size_check
+  check (content is null or char_length(content) <= 200000) not valid;
+alter table public.knowledge_docs validate constraint knowledge_docs_content_size_check;
+
+alter table public.knowledge_docs
+  drop constraint if exists knowledge_docs_name_size_check;
+alter table public.knowledge_docs
+  add constraint knowledge_docs_name_size_check
+  check (name is null or char_length(name) <= 255) not valid;
+alter table public.knowledge_docs validate constraint knowledge_docs_name_size_check;
+
+create or replace function public.guard_agent_creation_rate()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare recent_count integer;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(new.account_id::text, 913));
+  select count(*) into recent_count
+  from public.agents
+  where account_id = new.account_id
+    and created_at >= now() - interval '1 minute';
+  if recent_count >= 30 then
+    raise exception 'agent creation rate limit exceeded' using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists agents_creation_rate_guard on public.agents;
+create trigger agents_creation_rate_guard
+  before insert on public.agents
+  for each row execute function public.guard_agent_creation_rate();
+
+revoke execute on function public.guard_agent_creation_rate() from public, anon, authenticated;
+
+-- ─── 20260714090000_leads_concurrency.sql ────────────────────────────────────────────────────
+-- Leads concurrency hardening (security gate #29 "Concurrent CRM subagents").
+-- Concurrent agent turns on one dialogue previously did read-merge-write on
+-- leads.fields (last write silently dropped the other turn's captured fields),
+-- could insert duplicate lead rows for one dialogue, and could push the same
+-- lead to the external CRM twice. This migration moves the merge, the
+-- get-or-create and the CRM-push claim into atomic, serialized SQL.
+--
+-- Design notes:
+-- * Same-dialogue serialization uses pg_advisory_xact_lock instead of a unique
+--   index on dialogue_id because production may already hold duplicate rows
+--   and follow_ups.lead_id references them (deleting/merging legacy rows is a
+--   separate, riskier cleanup). The canonical row is the newest by
+--   (created_at desc, id desc); fields hidden in older legacy duplicates stay
+--   hidden, which matches the previous reader behavior.
+-- * CRM-push claim state lives in typed columns, not in the exported
+--   leads.fields JSONB. The claim self-expires after 10 minutes so a crashed
+--   function cannot wedge a lead forever; CRM HTTP calls time out well below
+--   the lease. Guarantee: single concurrent claimant, at-least-once delivery.
+--   An ambiguous provider failure (timeout / network) must NOT release the
+--   claim — the runtime lets the lease expire instead, because the remote CRM
+--   may have accepted the lead after our timeout fired.
+-- * Functions are SECURITY INVOKER and executable by service_role only:
+--   every buildReply caller (telegram/whatsapp/instagram/widget processors)
+--   already uses a service-role client, and browser roles must not reach a
+--   cross-tenant write path. p_account_id is still verified against the
+--   dialogue -> agent -> account chain to prevent confused-deputy bugs.
+
+alter table public.leads add column if not exists crm_push_claimed_at timestamptz;
+alter table public.leads add column if not exists crm_push_claim uuid;
+
+-- Legacy rows recorded a completed push only inside fields.crm_pushed; promote
+-- it to the typed pushed_to_crm column the new claim predicate relies on.
+-- Only actual provider markers count — the key was reachable by user-controlled
+-- lead-form labels, so any other value is junk and is scrubbed, not honored.
+update public.leads set pushed_to_crm = true
+  where pushed_to_crm = false and fields->>'crm_pushed' in ('bitrix24', 'amocrm', 'hubspot');
+update public.leads set fields = fields - 'crm_pushed'
+  where pushed_to_crm = false and fields ? 'crm_pushed';
+
+-- Browser roles only ever READ leads (inbox list + CSV export); every write
+-- must go through the RPCs below, or an authenticated client could bypass the
+-- serialization, duplicate rows, or forge claim state. Replace the FOR ALL
+-- policy with select-only and revoke DML outright.
+drop policy if exists leads_acc on public.leads;
+drop policy if exists leads_select_acc on public.leads;
+create policy leads_select_acc on public.leads for select to authenticated
+  using (
+    dialogue_id in (
+      select id from public.dialogues
+      where agent_id in (select id from public.agents where account_id = public.current_account_id())
+    )
+  );
+revoke insert, update, delete on public.leads from anon, authenticated;
+
+-- Deterministic canonical-row selection (newest lead per dialogue).
+create index if not exists leads_dialogue_latest_idx
+  on public.leads (dialogue_id, created_at desc, id desc);
+
+-- Atomic get-or-create + JSONB merge for one dialogue's lead. Serialized per
+-- dialogue, so two concurrent turns cannot lose each other's keys or insert
+-- duplicate rows. The incoming patch wins same-key conflicts in lock/commit
+-- order (which may differ from customer-message order); disjoint keys are
+-- never lost, matching the previous {...existing, ...clean} semantics.
+create or replace function public.merge_lead_fields(p_account_id uuid, p_dialogue_id uuid, p_patch jsonb)
+returns table (lead_id uuid, lead_fields jsonb)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+  v_fields jsonb;
+begin
+  if p_account_id is null or p_dialogue_id is null then
+    raise exception 'merge_lead_fields: account and dialogue are required' using errcode = '22004';
+  end if;
+  if p_patch is null or jsonb_typeof(p_patch) <> 'object' then
+    raise exception 'merge_lead_fields: patch must be a JSON object' using errcode = '22023';
+  end if;
+  if not exists (
+    select 1
+    from public.dialogues d
+    join public.agents a on a.id = d.agent_id
+    where d.id = p_dialogue_id and a.account_id = p_account_id
+  ) then
+    raise exception 'merge_lead_fields: dialogue does not belong to account' using errcode = '42501';
+  end if;
+  -- serialize concurrent turns of the same dialogue (get-or-create must not race)
+  perform pg_advisory_xact_lock(hashtextextended(p_dialogue_id::text, 917));
+  select l.id into v_id
+  from public.leads l
+  where l.dialogue_id = p_dialogue_id
+  order by l.created_at desc, l.id desc
+  limit 1
+  for update;
+  if v_id is null then
+    insert into public.leads (dialogue_id, fields, status)
+    values (p_dialogue_id, p_patch, 'new')
+    returning id, fields into v_id, v_fields;
+  else
+    update public.leads set fields = fields || p_patch where id = v_id
+    returning fields into v_fields;
+  end if;
+  return query select v_id, v_fields;
+end;
+$$;
+
+-- Single-claimant CRM push. Returns a claim token + the row's CURRENT fields
+-- (the push must use fresh data, not the caller's snapshot); returns no row
+-- when the lead is already pushed or another turn holds a live claim. The
+-- provider-valued fields->>'crm_pushed' guard also covers rows written by
+-- pre-migration function code during the deploy window (junk values written
+-- through a hostile lead-form label must not block the claim).
+create or replace function public.claim_lead_crm_push(p_account_id uuid, p_lead_id uuid)
+returns table (claim_token uuid, lead_fields jsonb)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_token uuid := gen_random_uuid();
+  v_fields jsonb;
+begin
+  if p_account_id is null or p_lead_id is null then
+    raise exception 'claim_lead_crm_push: account and lead are required' using errcode = '22004';
+  end if;
+  update public.leads l
+  set crm_push_claim = v_token,
+      crm_push_claimed_at = now()
+  where l.id = p_lead_id
+    and l.pushed_to_crm = false
+    and coalesce(l.fields->>'crm_pushed', '') not in ('bitrix24', 'amocrm', 'hubspot')
+    and (l.crm_push_claimed_at is null or l.crm_push_claimed_at < now() - interval '10 minutes')
+    and exists (
+      select 1
+      from public.dialogues d
+      join public.agents a on a.id = d.agent_id
+      where d.id = l.dialogue_id and a.account_id = p_account_id
+    )
+  returning l.fields into v_fields;
+  if not found then
+    return;
+  end if;
+  return query select v_token, v_fields;
+end;
+$$;
+
+-- Finish a claimed push. p_provider set = success (records the push and keeps
+-- the provider visible in fields.crm_pushed for the UI/CSV); p_provider null =
+-- definite failure (releases the claim so the next turn retries immediately
+-- instead of waiting out the lease). Only the token holder can finish.
+create or replace function public.finish_lead_crm_push(p_account_id uuid, p_lead_id uuid, p_token uuid, p_provider text)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  affected integer;
+begin
+  if p_account_id is null or p_lead_id is null or p_token is null then
+    raise exception 'finish_lead_crm_push: account, lead and token are required' using errcode = '22004';
+  end if;
+  if p_provider is null then
+    update public.leads l
+    set crm_push_claim = null,
+        crm_push_claimed_at = null
+    where l.id = p_lead_id
+      and l.crm_push_claim = p_token
+      and exists (
+        select 1
+        from public.dialogues d
+        join public.agents a on a.id = d.agent_id
+        where d.id = l.dialogue_id and a.account_id = p_account_id
+      );
+  else
+    update public.leads l
+    set pushed_to_crm = true,
+        crm_push_claim = null,
+        crm_push_claimed_at = null,
+        fields = l.fields || jsonb_build_object('crm_pushed', left(p_provider, 40))
+    where l.id = p_lead_id
+      and l.crm_push_claim = p_token
+      and exists (
+        select 1
+        from public.dialogues d
+        join public.agents a on a.id = d.agent_id
+        where d.id = l.dialogue_id and a.account_id = p_account_id
+      );
+  end if;
+  get diagnostics affected = row_count;
+  return affected = 1;
+end;
+$$;
+
+revoke all on function public.merge_lead_fields(uuid, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.claim_lead_crm_push(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.finish_lead_crm_push(uuid, uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.merge_lead_fields(uuid, uuid, jsonb) to service_role;
+grant execute on function public.claim_lead_crm_push(uuid, uuid) to service_role;
+grant execute on function public.finish_lead_crm_push(uuid, uuid, uuid, text) to service_role;
+
+-- ─── 20260714100000_team_shared_rag.sql ──────────────────────────────────────────────────────
+-- Team-shared RAG (release 2026-07). A department becomes a first-class
+-- knowledge owner: knowledge_docs.owner_type gains a working 'team' branch
+-- (owner_id = department id) with tenant-scoped RLS, and retrieval gets an
+-- account-aware RPC that reads the agent's own docs plus its department's
+-- shared docs. The RPC verifies every owner id against p_account_id
+-- (fail-closed) and joins through knowledge_docs, so a stale owner column on
+-- knowledge_chunks can never leak another owner's content.
+
+-- 1) two-branch document policy: browser CRUD stays tenant-scoped per branch.
+--    (The previous policy only recognized agent owners, which made any other
+--    owner_type unreachable.)
+drop policy if exists knowledge_acc on public.knowledge_docs;
+create policy knowledge_acc on public.knowledge_docs for all
+  using (
+    (owner_type = 'agent' and owner_id in (select id from public.agents where account_id = public.current_account_id()))
+    or (owner_type = 'team' and owner_id in (select id from public.departments where account_id = public.current_account_id()))
+  )
+  with check (
+    (owner_type = 'agent' and owner_id in (select id from public.agents where account_id = public.current_account_id()))
+    or (owner_type = 'team' and owner_id in (select id from public.departments where account_id = public.current_account_id()))
+  );
+
+-- owner_type is now load-bearing: constrain new rows to the known kinds without
+-- failing the migration on unaudited legacy values (NOT VALID skips old rows).
+alter table public.knowledge_docs drop constraint if exists knowledge_docs_owner_type_check;
+alter table public.knowledge_docs add constraint knowledge_docs_owner_type_check
+  check (owner_type in ('agent', 'team', 'account')) not valid;
+
+-- 2) chunks inherit the truth from their parent doc (corrects stale copies).
+update public.knowledge_chunks c
+   set owner_type = d.owner_type, owner_id = d.owner_id
+  from public.knowledge_docs d
+ where c.doc_id = d.id
+   and (c.owner_type is distinct from d.owner_type or c.owner_id is distinct from d.owner_id);
+
+-- 3) tenant integrity for the team graph: a department may only lead agents of
+--    its own account, and a sub-agent's department must belong to the
+--    sub-agent's account. RLS alone checks account_id columns but not these
+--    relationships, and service-role runtime queries traverse them.
+--    Pre-existing cross-tenant rows are remediated first (the triggers below
+--    only protect future writes): a mismatched lead link is severed and
+--    cross-tenant sub-agents are removed — such rows are corrupt by definition
+--    and must not stay reachable from either tenant.
+update public.departments d
+   set main_agent_id = null
+ where d.main_agent_id is not null
+   and exists (select 1 from public.agents a where a.id = d.main_agent_id and a.account_id <> d.account_id);
+
+delete from public.sub_agents s
+ where exists (select 1 from public.departments d where d.id = s.department_id and d.account_id <> s.account_id);
+
+create or replace function public.enforce_department_tenant()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_acc uuid;
+begin
+  if new.main_agent_id is null then
+    return new;
+  end if;
+  select account_id into v_acc from public.agents where id = new.main_agent_id;
+  if v_acc is null or v_acc <> new.account_id then
+    raise exception 'department lead must belong to the department''s account' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.enforce_sub_agent_tenant()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_acc uuid;
+begin
+  select account_id into v_acc from public.departments where id = new.department_id;
+  if v_acc is null or v_acc <> new.account_id then
+    raise exception 'sub-agent department must belong to the sub-agent''s account' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists departments_tenant_guard on public.departments;
+create trigger departments_tenant_guard
+  before insert or update of main_agent_id, account_id on public.departments
+  for each row execute function public.enforce_department_tenant();
+
+drop trigger if exists sub_agents_tenant_guard on public.sub_agents;
+create trigger sub_agents_tenant_guard
+  before insert or update of department_id, account_id on public.sub_agents
+  for each row execute function public.enforce_sub_agent_tenant();
+
+-- 4) account-aware team retrieval. Both owner branches are independently
+--    verified against p_account_id; unverified ids contribute nothing (fail
+--    closed). The join on knowledge_docs makes the DOCUMENT's current owner the
+--    source of truth, not the chunk's copied columns. match_knowledge (single
+--    owner) is kept unchanged for rollout compatibility and rollback.
+create or replace function public.match_knowledge_team(
+  p_account_id uuid,
+  p_agent_id uuid,
+  p_department_id uuid,
+  p_query vector(384),
+  p_k int default 6
+)
+returns table(content text, similarity double precision)
+language sql stable security definer set search_path = public as $$
+  select c.content, 1 - (c.embedding <=> p_query) as similarity
+  from public.knowledge_chunks c
+  join public.knowledge_docs d on d.id = c.doc_id
+  where c.embedding is not null
+    and (
+      (p_agent_id is not null and d.owner_type = 'agent' and d.owner_id = p_agent_id
+        and exists (select 1 from public.agents a where a.id = p_agent_id and a.account_id = p_account_id))
+      or
+      (p_department_id is not null and d.owner_type = 'team' and d.owner_id = p_department_id
+        and exists (select 1 from public.departments t where t.id = p_department_id and t.account_id = p_account_id))
+    )
+  order by c.embedding <=> p_query
+  limit greatest(1, least(p_k, 20))
+$$;
+
+revoke all on function public.match_knowledge_team(uuid, uuid, uuid, vector, int) from public, anon, authenticated;
+grant execute on function public.match_knowledge_team(uuid, uuid, uuid, vector, int) to service_role;
+
+-- ─── 20260714110000_transcribe_jobs.sql ──────────────────────────────────────────────────────
+-- Resumable long-audio transcription jobs (5-hour recordings).
+-- Job state previously lived as JSON in the PUBLIC media bucket — partial
+-- transcripts were reachable by URL and concurrent 'continue' calls could
+-- double-transcribe and double-bill. This table is service-role only (RLS on,
+-- no policies), claims are atomic (single conditional UPDATE with a lease),
+-- and finalize is idempotent (status+billed_at guard: exactly one biller).
+create table if not exists public.transcribe_jobs (
+  id              uuid primary key default gen_random_uuid(),
+  account_id      uuid not null references public.accounts(id) on delete cascade,
+  user_id         uuid not null,
+  file_name       text not null,           -- Gemini File API name (for cleanup)
+  file_uri        text not null,           -- Gemini File API uri
+  mime            text not null,
+  language        text not null default 'auto',
+  windows_done    int  not null default 0,
+  max_windows     int  not null default 7, -- derived from validated duration; hard 5h bound
+  transcript      text not null default '',
+  provider_tokens bigint not null default 0,
+  status          text not null default 'pending', -- pending | done | failed
+  claimed_at      timestamptz,             -- 3-minute processing lease
+  claim_token     uuid,                    -- proves lease OWNERSHIP: every write must match
+  billed_at       timestamptz,             -- set exactly once by the finalizer
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index if not exists transcribe_jobs_account_idx on public.transcribe_jobs (account_id, created_at desc);
+
+-- Service-role only: RLS enabled with NO anon/authenticated policies. The edge
+-- function verifies the caller's account before touching a job.
+alter table public.transcribe_jobs enable row level security;
+
+-- Transactional finalize: verify the claim token, persist the final transcript,
+-- record usage and decrement the balance IN ONE TRANSACTION, then mark the job
+-- done+billed. Exactly one caller can win (status+billed_at+token guard); any
+-- failure rolls back the whole finalize so it stays retryable — a job is never
+-- marked billed unless usage and the balance change committed with it.
+create or replace function public.finalize_transcribe_job(
+  p_job_id uuid,
+  p_account_id uuid,
+  p_claim_token uuid,
+  p_windows_done int,
+  p_transcript text,
+  p_provider_tokens bigint
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_billable bigint;
+  v_updated integer;
+begin
+  if p_job_id is null or p_account_id is null or p_claim_token is null then
+    raise exception 'finalize_transcribe_job: job, account and claim token are required' using errcode = '22004';
+  end if;
+  v_billable := greatest(coalesce(p_provider_tokens, 0), ceil(length(coalesce(p_transcript, ''))::numeric / 4)::bigint, 1);
+  update public.transcribe_jobs
+     set status = 'done',
+         billed_at = now(),
+         windows_done = p_windows_done,
+         transcript = coalesce(p_transcript, ''),
+         provider_tokens = coalesce(p_provider_tokens, 0),
+         claimed_at = null,
+         claim_token = null,
+         updated_at = now()
+   where id = p_job_id
+     and account_id = p_account_id
+     and status = 'pending'
+     and billed_at is null
+     and claim_token = p_claim_token;
+  get diagnostics v_updated = row_count;
+  if v_updated = 0 then
+    return null; -- lost the race, stale token, or job already finished
+  end if;
+  insert into public.usage (account_id, tokens, model)
+  values (p_account_id, v_billable, 'audio-transcription:gemini-file');
+  -- usage stores RAW LLM tokens; the balance is charged in CREDITS through the
+  -- existing converter (ceil(raw/1000)) so this path bills exactly like every
+  -- other Edge Function — inside this transaction
+  perform public.decrement_token_balance(p_account_id, v_billable);
+  return v_billable;
+end;
+$$;
+
+revoke all on function public.finalize_transcribe_job(uuid, uuid, uuid, int, text, bigint) from public, anon, authenticated;
+grant execute on function public.finalize_transcribe_job(uuid, uuid, uuid, int, text, bigint) to service_role;
+
+-- ─── 20260722120000_visual_rag_pilot.sql ─────────────────────────────────────────────────────
+-- Visual RAG (PixelRAG/OCR) pilot — additive, feature-flagged OFF by default.
+-- Clients can only SUBMIT (rate/size/concurrency-limited RPC) and READ their own
+-- account's rows. All processing writes belong to the service-role worker. The
+-- Qdrant contract is defense-in-depth: every point carries account_id in its
+-- payload AND every query must filter by account_id.
+create table if not exists public.visual_rag_jobs (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  created_by   uuid not null references auth.users(id) on delete cascade,
+  source_path  text not null,
+  source_bytes bigint not null check (source_bytes >= 1 and source_bytes <= 20971520),
+  page_count   int not null check (page_count >= 1 and page_count <= 200),
+  status       text not null default 'queued'
+               check (status in ('queued', 'processing', 'succeeded', 'failed', 'cancelled')),
+  result_path  text,
+  error_code   text,
+  created_at   timestamptz not null default now(),
+  started_at   timestamptz,
+  completed_at timestamptz
+);
+
+-- Composite uniqueness lets page rows prove that their account_id belongs to
+-- the same tenant as the parent job, even for service-role worker writes.
+alter table public.visual_rag_jobs
+  add constraint visual_rag_jobs_id_account_key unique (id, account_id);
+
+create index if not exists visual_rag_jobs_account_idx
+  on public.visual_rag_jobs (account_id, created_at desc);
+-- fast "active jobs" count for the per-account concurrency gate
+create index if not exists visual_rag_jobs_active_idx
+  on public.visual_rag_jobs (account_id)
+  where status in ('queued', 'processing');
+-- fast oldest-queued claim
+create index if not exists visual_rag_jobs_queued_idx
+  on public.visual_rag_jobs (created_at)
+  where status = 'queued';
+
+create table if not exists public.visual_rag_pages (
+  id              uuid primary key default gen_random_uuid(),
+  job_id          uuid not null,
+  account_id      uuid not null references public.accounts(id) on delete cascade,
+  page_number     int not null check (page_number >= 1 and page_number <= 200),
+  text_content    text,
+  qdrant_point_id uuid,
+  created_at      timestamptz not null default now(),
+  unique (job_id, page_number),
+  constraint visual_rag_pages_job_account_fk
+    foreign key (job_id, account_id)
+    references public.visual_rag_jobs(id, account_id) on delete cascade
+);
+
+create index if not exists visual_rag_pages_account_idx
+  on public.visual_rag_pages (account_id, created_at desc);
+
+-- RLS: members of the account may SELECT; there are NO client write policies.
+-- The service-role worker bypasses RLS for processing writes.
+alter table public.visual_rag_jobs enable row level security;
+alter table public.visual_rag_pages enable row level security;
+
+drop policy if exists visual_rag_jobs_select_acc on public.visual_rag_jobs;
+create policy visual_rag_jobs_select_acc on public.visual_rag_jobs
+  for select to authenticated
+  using (account_id = public.current_account_id());
+
+drop policy if exists visual_rag_pages_select_acc on public.visual_rag_pages;
+create policy visual_rag_pages_select_acc on public.visual_rag_pages
+  for select to authenticated
+  using (account_id = public.current_account_id());
+
+revoke all on public.visual_rag_jobs from public, anon, authenticated;
+revoke all on public.visual_rag_pages from public, anon, authenticated;
+grant select on public.visual_rag_jobs to authenticated;
+grant select on public.visual_rag_pages to authenticated;
+
+-- Submission gate. Derives the account from the caller (never accepts an
+-- account_id argument), checks the feature flag, validates the storage path,
+-- then serializes per-account limit checks with an advisory xact lock so
+-- concurrent submissions cannot both pass the same limit window.
+create or replace function public.submit_visual_rag_job(
+  p_source_path text,
+  p_source_bytes bigint,
+  p_page_count int
+)
+returns setof public.visual_rag_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid       uuid;
+  v_account   uuid;
+  v_prefix    text;
+  v_active    int;
+  v_pages_24h bigint;
+  v_subs_1m   int;
+  v_job       public.visual_rag_jobs;
+begin
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'unauthorized' using errcode = '42501';
+  end if;
+  select u.account_id into v_account from public.users u where u.id = v_uid;
+  if v_account is null then
+    raise exception 'unauthorized' using errcode = '42501';
+  end if;
+
+  if coalesce(current_setting('app.visual_rag_enabled', true), '') <> 'on' then
+    raise exception 'feature_disabled';
+  end if;
+
+  -- normalized storage path: must live under <account>/visual-rag/ and cannot
+  -- traverse ('..'), use backslashes, start with '/', or have an empty remainder
+  if p_source_path is null
+     or position('..' in p_source_path) > 0
+     or position('\' in p_source_path) > 0
+     or left(p_source_path, 1) = '/' then
+    raise exception 'invalid_path';
+  end if;
+  v_prefix := v_account::text || '/visual-rag/';
+  if left(p_source_path, length(v_prefix)) <> v_prefix
+     or length(p_source_path) <= length(v_prefix) then
+    raise exception 'invalid_path';
+  end if;
+
+  if p_source_bytes is null or p_source_bytes < 1 or p_source_bytes > 20971520 then
+    raise exception 'invalid_size';
+  end if;
+  if p_page_count is null or p_page_count < 1 or p_page_count > 200 then
+    raise exception 'invalid_pages';
+  end if;
+
+  -- serialize all limit checks per account
+  perform pg_advisory_xact_lock(hashtextextended(v_account::text, 0));
+
+  select count(*) into v_active
+    from public.visual_rag_jobs
+   where account_id = v_account and status in ('queued', 'processing');
+  if v_active >= 2 then
+    raise exception 'active_job_limit';
+  end if;
+
+  select coalesce(sum(page_count), 0) into v_pages_24h
+    from public.visual_rag_jobs
+   where account_id = v_account and created_at > now() - interval '24 hours';
+  if v_pages_24h + p_page_count > 1000 then
+    raise exception 'daily_page_limit';
+  end if;
+
+  select count(*) into v_subs_1m
+    from public.visual_rag_jobs
+   where account_id = v_account and created_at > now() - interval '1 minute';
+  if v_subs_1m >= 30 then
+    raise exception 'rate_limited';
+  end if;
+
+  insert into public.visual_rag_jobs (account_id, created_by, source_path, source_bytes, page_count)
+  values (v_account, v_uid, p_source_path, p_source_bytes, p_page_count)
+  returning * into v_job;
+  return next v_job;
+end;
+$$;
+
+revoke all on function public.submit_visual_rag_job(text, bigint, int) from public, anon;
+grant execute on function public.submit_visual_rag_job(text, bigint, int) to authenticated;
+
+-- Status read scoped to the caller's account (empty set on cross-tenant ids).
+create or replace function public.get_visual_rag_job(p_job_id uuid)
+returns setof public.visual_rag_jobs
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select j.*
+    from public.visual_rag_jobs j
+   where j.id = p_job_id
+     and j.account_id = (select u.account_id from public.users u where u.id = auth.uid());
+$$;
+
+revoke all on function public.get_visual_rag_job(uuid) from public, anon;
+grant execute on function public.get_visual_rag_job(uuid) to authenticated;
+
+-- Worker claim: oldest queued job, SKIP LOCKED so parallel workers never
+-- double-claim. The returned row carries id/account_id/source_path — the worker
+-- payload contract (account_id must reach the Qdrant point payload).
+create or replace function public.claim_visual_rag_job()
+returns setof public.visual_rag_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  update public.visual_rag_jobs j
+     set status = 'processing', started_at = now()
+   where j.id = (
+     select q.id from public.visual_rag_jobs q
+      where q.status = 'queued'
+      order by q.created_at
+      for update skip locked
+      limit 1
+   )
+   returning j.*;
+end;
+$$;
+
+revoke all on function public.claim_visual_rag_job() from public, anon, authenticated;
+grant execute on function public.claim_visual_rag_job() to service_role;
+
+-- Worker finalize: only a queued/processing job can finish, exactly once.
+create or replace function public.finalize_visual_rag_job(
+  p_job_id uuid,
+  p_status text,
+  p_result_path text default null,
+  p_error_code text default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_updated int;
+begin
+  if p_status not in ('succeeded', 'failed', 'cancelled') then
+    raise exception 'invalid_status';
+  end if;
+  update public.visual_rag_jobs
+     set status = p_status,
+         result_path = p_result_path,
+         error_code = p_error_code,
+         completed_at = now()
+   where id = p_job_id
+     and status in ('queued', 'processing');
+  get diagnostics v_updated = row_count;
+  return v_updated > 0;
+end;
+$$;
+
+revoke all on function public.finalize_visual_rag_job(uuid, text, text, text) from public, anon, authenticated;
+grant execute on function public.finalize_visual_rag_job(uuid, text, text, text) to service_role;
+
+-- ─── 20260722170000_skill_review_pipeline.sql ────────────────────────────────────────────────
+-- Governed custom-skill intake. Uploaded text is private by default; AI may only
+-- nominate a shared candidate. A platform admin is required to publish it.
+create table if not exists public.skill_submissions (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  agent_id uuid references public.agents(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 100),
+  source_filename text check (char_length(source_filename) <= 180),
+  content text not null check (char_length(content) between 1 and 12000),
+  content_sha256 text not null check (content_sha256 ~ '^[a-f0-9]{64}$'),
+  status text not null default 'private' check (status in ('private','shared_candidate','shared','rejected')),
+  compatibility_score smallint check (compatibility_score between 0 and 100),
+  analysis jsonb not null default '{}'::jsonb,
+  reviewed_by uuid references auth.users(id) on delete set null,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists skill_submissions_account_created_idx on public.skill_submissions(account_id, created_at desc);
+create index if not exists skill_submissions_shared_idx on public.skill_submissions(status, created_at desc) where status = 'shared';
+create unique index if not exists skill_submissions_account_hash_uidx on public.skill_submissions(account_id, content_sha256);
+
+alter table public.skill_submissions enable row level security;
+
+drop policy if exists skill_submissions_read on public.skill_submissions;
+create policy skill_submissions_read on public.skill_submissions for select to authenticated
+  using (account_id = public.current_account_id() or status = 'shared');
+
+-- Direct browser writes are deliberately denied. review-skill validates ownership,
+-- treats content as untrusted data and writes with service_role after auth checks.
+revoke insert, update, delete on public.skill_submissions from authenticated;
+grant select on public.skill_submissions to authenticated;
+
+comment on table public.skill_submissions is 'Private-by-default skill review queue; shared publication requires admin approval.';
+
+-- ─── 20260723120000_business_profile_company_details.sql ─────────────────────────────────────
+alter table public.business_profiles
+  add column if not exists company_email text,
+  add column if not exists employee_count text;
+
+-- ─── 20260723121000_blocked_accounts_fail_closed.sql ─────────────────────────────────────────
+create or replace function public.current_account_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select u.account_id
+  from public.users u
+  join public.accounts a on a.id = u.account_id
+  where u.id = auth.uid()
+    and coalesce(a.blocked, false) = false
+$$;
+
+-- ─── 20260723124500_assign_primary_super_admin.sql ───────────────────────────────────────────
+update public.users
+set is_admin = true
+where lower(email) = 'firdavsbahtiyorov505@gmail.com';
+
+-- ─── 20260723143000_sub_agent_capability_skills.sql ──────────────────────────────────────────
+-- Persist the exact capability methods assigned to every specialist.
+-- RLS on sub_agents already scopes these rows to current_account_id().
+alter table public.sub_agents
+  add column if not exists skills jsonb not null default '[]'::jsonb;
+
+alter table public.sub_agents
+  drop constraint if exists sub_agents_skills_array;
+
+alter table public.sub_agents
+  add constraint sub_agents_skills_array
+  check (jsonb_typeof(skills) = 'array');
+
+-- ─── 20260723162000_provider_key_ciphertext_guard.sql ────────────────────────────────────────
+-- Provider credentials may only enter the database through the server-side
+-- connection functions. Existing legacy rows remain readable so they can be
+-- rotated without an outage; every new or updated row must be ciphertext.
+
+revoke insert, update, delete on public.provider_keys from anon, authenticated;
+
+alter table public.provider_keys
+  drop constraint if exists provider_keys_ciphertext_only;
+
+alter table public.provider_keys
+  add constraint provider_keys_ciphertext_only
+  check (api_key ~ '^enc:v[12]:[^:]+:[^:]+$') not valid;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.provider_keys
+    where api_key !~ '^enc:v[12]:[^:]+:[^:]+$'
+  ) then
+    alter table public.provider_keys
+      validate constraint provider_keys_ciphertext_only;
+  end if;
+end
+$$;
+
+-- ─── 20260723183000_telegram_worker_reliability.sql ──────────────────────────────────────────
+-- Make Telegram queueing atomic and make the worker lease self-healing.
+-- A missing lease row previously made every worker invocation report that
+-- another worker was draining, leaving voice messages unread forever.
+
+create or replace function public.acquire_worker_lease(secs int default 60)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  acquired boolean := false;
+begin
+  insert into public.worker_lease(id, locked_until)
+  values (1, pg_catalog.now())
+  on conflict (id) do nothing;
+
+  update public.worker_lease
+     set locked_until = pg_catalog.now() + pg_catalog.make_interval(secs => greatest(1, least(secs, 300)))
+   where id = 1
+     and locked_until <= pg_catalog.now()
+  returning true into acquired;
+
+  return coalesce(acquired, false);
+end
+$$;
+
+create or replace function public.release_worker_lease()
+returns boolean
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.worker_lease
+     set locked_until = pg_catalog.now()
+   where id = 1
+  returning true
+$$;
+
+create or replace function public.enqueue_telegram_job(
+  p_channel_id uuid,
+  p_update_id bigint,
+  p_payload jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  inserted_rows integer := 0;
+begin
+  if p_channel_id is null or p_payload is null then
+    raise exception 'invalid telegram queue payload';
+  end if;
+
+  if p_update_id is not null then
+    insert into public.tg_updates(channel_id, update_id, created_at)
+    values (p_channel_id, p_update_id, pg_catalog.now())
+    on conflict (channel_id, update_id) do nothing;
+    get diagnostics inserted_rows = row_count;
+    if inserted_rows = 0 then
+      return false;
+    end if;
+  end if;
+
+  perform pgmq.send('tg_jobs', p_payload);
+  return true;
+end
+$$;
+
+revoke all on function public.acquire_worker_lease(int) from public, anon, authenticated;
+revoke all on function public.release_worker_lease() from public, anon, authenticated;
+revoke all on function public.enqueue_telegram_job(uuid, bigint, jsonb) from public, anon, authenticated;
+grant execute on function public.acquire_worker_lease(int) to service_role;
+grant execute on function public.release_worker_lease() to service_role;
+grant execute on function public.enqueue_telegram_job(uuid, bigint, jsonb) to service_role;
+
+-- ─── 20260723193000_agent_stt_model.sql ──────────────────────────────────────────────────────
+-- Explicit STT engine selection for Telegram voice transcription.
+alter table public.agents
+  add column if not exists stt_model text not null default 'auto';
+
+alter table public.agents
+  drop constraint if exists agents_stt_model_check;
+
+alter table public.agents
+  add constraint agents_stt_model_check
+  check (stt_model in ('auto', 'ovozify-whisper-small-uz', 'gemini-openrouter'));
+
+-- ─── 20260725120000_run_telemetry.sql ────────────────────────────────────────────────────────
+-- Run telemetry (C0). Three separate holes made every cost and model-mix number unusable:
+--
+--   1. `usage.cost` was written by 4 of 22 call sites, so total spend read as ~$0.02 on 700k
+--      tokens. Every other site inserted the row and left the column at its default.
+--   2. `usage.model` is free text and 9 call sites wrote a PIPELINE LABEL into it
+--      ('tool', 'media-image', 'research-agent', 'ops-workflow', 'subagent'…), so ~23% of
+--      tokens were attributed to models that do not exist.
+--   3. `research_runs.tokens` existed but was never set, so no run had a token count and
+--      cost-per-run could not be derived at all.
+--
+-- This adds the missing columns and separates the two meanings. It does not invent costs for
+-- historical rows: back-filling a price for a run whose model was never recorded would
+-- manufacture exactly the kind of confident-but-wrong number this whole change exists to stop.
+
+alter table public.usage add column if not exists stage   text;
+alter table public.usage add column if not exists run_ref uuid;
+
+-- A real model id always carries its provider prefix ("openai/gpt-4o"). Anything without one
+-- was a stage label in the wrong column: move it, and stop counting it as a model.
+update public.usage
+   set stage = model,
+       model = null
+ where model is not null
+   and model not like '%/%'
+   and stage is null;
+
+create index if not exists usage_run_ref_idx on public.usage (run_ref) where run_ref is not null;
+create index if not exists usage_account_created_idx on public.usage (account_id, created_at desc);
+
+alter table public.research_runs add column if not exists cost numeric not null default 0;
+
+-- Dead-letter sweep for browser tasks. A `run` that comes back pending writes result='running'
+-- and nothing ever revisits it: one such row has been running since 18 July. The watchdog
+-- closes them out; this partial index keeps that sweep cheap.
+create index if not exists tool_runs_pending_idx on public.tool_runs (tool, created_at)
+  where result = 'running';
+
+-- ─── 20260729110000_worker_lease_rls.sql ─────────────────────────────────────────────────────
+-- The Telegram worker lease is infrastructure state, not browser-readable data.
+-- RLS with no browser policies keeps the service-role worker functional while
+-- preventing direct lease reads or writes from anon/authenticated clients.
+alter table public.worker_lease enable row level security;
+revoke all on table public.worker_lease from anon, authenticated;
+
+-- ─── 20260730110000_queue_and_tenant_integrity.sql ───────────────────────────────────────────
+-- Keep queue internals and server-generated agent state inaccessible to browser roles.
+revoke all on function public.q_send(jsonb) from public, anon, authenticated;
+revoke all on function public.q_read(int, int) from public, anon, authenticated;
+revoke all on function public.q_delete(bigint) from public, anon, authenticated;
+revoke all on function public.q_len() from public, anon, authenticated;
+grant execute on function public.q_send(jsonb), public.q_read(int, int), public.q_delete(bigint), public.q_len() to service_role;
+
+-- account_id must agree with every referenced agent and dialogue. RLS alone cannot
+-- validate this because the referenced UUIDs are supplied by the caller.
+create or replace function public.enforce_agent_memory_tenant()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not exists (
+    select 1 from public.agents
+    where id = new.agent_id and account_id = new.account_id
+  ) then
+    raise exception 'agent does not belong to memory account';
+  end if;
+
+  if new.dialogue_id is not null and not exists (
+    select 1
+    from public.dialogues d
+    join public.agents a on a.id = d.agent_id
+    where d.id = new.dialogue_id
+      and d.agent_id = new.agent_id
+      and a.account_id = new.account_id
+  ) then
+    raise exception 'dialogue does not belong to memory agent/account';
+  end if;
+
+  return new;
+end
+$$;
+
+drop trigger if exists agent_memory_tenant_guard on public.agent_memory;
+create trigger agent_memory_tenant_guard
+before insert or update on public.agent_memory
+for each row execute function public.enforce_agent_memory_tenant();
+revoke all on function public.enforce_agent_memory_tenant() from public, anon, authenticated;
+revoke insert, update, delete on public.agent_memory from anon, authenticated;
+
+create or replace function public.enforce_agent_evolution_tenant()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not exists (
+    select 1 from public.agents
+    where id = new.agent_id and account_id = new.account_id
+  ) then
+    raise exception 'agent does not belong to evolution account';
+  end if;
+
+  return new;
+end
+$$;
+
+drop trigger if exists agent_evolutions_tenant_guard on public.agent_evolutions;
+create trigger agent_evolutions_tenant_guard
+before insert or update on public.agent_evolutions
+for each row execute function public.enforce_agent_evolution_tenant();
+revoke all on function public.enforce_agent_evolution_tenant() from public, anon, authenticated;
+revoke insert, update, delete on public.agent_evolutions from anon, authenticated;
+
+-- ─── 20260801100000_ops_checks_admin_only.sql ────────────────────────────────────────────────
+-- Platform health can expose operational topology. It is visible only to the
+-- platform administrator, while the watchdog continues to write via service_role.
+create or replace function public.is_platform_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce((select is_admin from public.users where id = auth.uid()), false);
+$$;
+
+revoke all on function public.is_platform_admin() from public, anon;
+grant execute on function public.is_platform_admin() to authenticated, service_role;
+
+drop policy if exists ops_checks_read on public.ops_checks;
+create policy ops_checks_read on public.ops_checks for select
+  using (public.is_platform_admin());
+
+-- ─── 20260803100000_browser_observations.sql ─────────────────────────────────────────────────
+-- Extension snapshots are service-written only; pairing secrets are stored hashed.
+create table if not exists public.browser_pairings (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  secret_hash text not null unique,
+  active boolean not null default true,
+  expires_at timestamptz not null,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.browser_observations (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  pairing_id uuid not null references public.browser_pairings(id) on delete restrict,
+  source_url text not null,
+  page_title text not null default '',
+  body_text text not null,
+  observed_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists browser_observations_account_created_idx on public.browser_observations(account_id, created_at desc);
+alter table public.browser_pairings enable row level security;
+alter table public.browser_observations enable row level security;
+revoke all on public.browser_pairings, public.browser_observations from anon, authenticated;
+
+-- ─── 20260803110000_owner_approval_queue.sql ─────────────────────────────────────────────────
+-- A decision record is separate from any executor. Approval alone never performs an action.
+create table if not exists public.approval_requests (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  source text not null check (source in ('browser', 'agent', 'workflow')),
+  action_type text not null,
+  summary text not null,
+  evidence jsonb not null default '{}'::jsonb,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'expired', 'cancelled')),
+  expires_at timestamptz not null,
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists approval_requests_account_pending_idx on public.approval_requests(account_id, status, created_at desc);
+alter table public.approval_requests enable row level security;
+revoke all on public.approval_requests from anon, authenticated;
+
+-- ─── 20260803120000_agent_action_policy.sql ──────────────────────────────────────────────────
+-- Agents may either observe only or prepare an owner-approved draft.
+-- An approved executor is intentionally not a valid value until an audited executor exists.
+alter table public.agents add column if not exists action_policy text not null default 'approval_required';
+alter table public.agents drop constraint if exists agents_action_policy_check;
+alter table public.agents add constraint agents_action_policy_check check (action_policy in ('read_only', 'approval_required'));
+
+-- ─── 20260803130000_mandatory_onboarding.sql ─────────────────────────────────────────────────
+alter table public.business_profiles
+  add column if not exists operating_markets text[] not null default '{}',
+  add column if not exists owner_role text,
+  add column if not exists primary_goal text,
+  add column if not exists task_types text[] not null default '{}',
+  add column if not exists data_sources text[] not null default '{}',
+  add column if not exists default_action_policy text not null default 'approval_required';
+
+alter table public.business_profiles drop constraint if exists business_profiles_action_policy_check;
+alter table public.business_profiles add constraint business_profiles_action_policy_check
+  check (default_action_policy in ('read_only', 'approval_required'));
+
+drop policy if exists "Owners read onboarding business profile" on public.business_profiles;
+create policy "Owners read onboarding business profile"
+  on public.business_profiles for select
+  to authenticated
+  using (account_id = public.current_account_id());
+
+create table if not exists public.user_consents (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  document text not null check (document in ('privacy', 'terms', 'marketing_email', 'marketing_telegram')),
+  version text not null,
+  granted boolean not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists user_consents_account_user_idx on public.user_consents(account_id, user_id, created_at desc);
+alter table public.user_consents enable row level security;
+revoke all on public.user_consents from anon, authenticated;
+
+-- ─── 20260803140000_atomic_agent_teams.sql ───────────────────────────────────────────────────
+create or replace function public.create_agent_team(
+  p_manager jsonb,
+  p_department jsonb,
+  p_specialists jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_account_id uuid := public.current_account_id();
+  v_agent_id uuid;
+  v_department_id uuid;
+  v_specialist jsonb;
+  v_name text := left(trim(coalesce(p_manager->>'name', '')), 60);
+  v_policy text := coalesce(p_manager->>'action_policy', 'approval_required');
+  v_risk text := coalesce(p_manager->>'risk_tier', 'standard');
+  v_count integer;
+begin
+  if auth.uid() is null or v_account_id is null then
+    raise exception using errcode = '42501', message = 'authenticated account required';
+  end if;
+  if jsonb_typeof(p_manager) <> 'object' or v_name = '' then
+    raise exception using errcode = '22023', message = 'valid manager is required';
+  end if;
+  if jsonb_typeof(coalesce(p_manager->'prompt', '{}'::jsonb)) <> 'object' then
+    raise exception using errcode = '22023', message = 'manager prompt must be an object';
+  end if;
+  if v_policy not in ('read_only', 'approval_required') then
+    raise exception using errcode = '22023', message = 'invalid action policy';
+  end if;
+  if v_risk not in ('standard', 'regulated') then
+    raise exception using errcode = '22023', message = 'invalid risk tier';
+  end if;
+  if jsonb_typeof(p_specialists) <> 'array' then
+    raise exception using errcode = '22023', message = 'specialists must be an array';
+  end if;
+  v_count := jsonb_array_length(p_specialists);
+  if v_count < 2 or v_count > 6 then
+    raise exception using errcode = '22023', message = 'a team requires 2 to 6 specialists';
+  end if;
+
+  insert into public.agents (
+    account_id, name, type, avatar_color, prompt, model, temperature, timezone,
+    schedule, work_start, work_end, default_lang, country, purpose, niche,
+    risk_tier, action_policy, template_key, status, lead_form, skills
+  ) values (
+    v_account_id,
+    v_name,
+    'workflow',
+    left(coalesce(p_manager->>'avatar_color', 'violet'), 20),
+    coalesce(p_manager->'prompt', '{}'::jsonb),
+    left(coalesce(p_manager->>'model', 'openai/gpt-4o-mini'), 160),
+    least(2, greatest(0, coalesce((p_manager->>'temperature')::numeric, 0.6))),
+    left(coalesce(p_manager->>'timezone', 'Asia/Tashkent'), 80),
+    case when p_manager->>'schedule' = 'work-hours' then 'work-hours' else '24/7' end,
+    nullif(left(coalesce(p_manager->>'work_start', ''), 5), ''),
+    nullif(left(coalesce(p_manager->>'work_end', ''), 5), ''),
+    left(coalesce(p_manager->>'default_lang', 'auto'), 10),
+    nullif(left(trim(coalesce(p_manager->>'country', '')), 120), ''),
+    nullif(left(trim(coalesce(p_manager->>'purpose', '')), 500), ''),
+    nullif(left(trim(coalesce(p_manager->>'niche', '')), 120), ''),
+    v_risk,
+    v_policy,
+    nullif(left(trim(coalesce(p_manager->>'template_key', '')), 120), ''),
+    'draft',
+    coalesce(p_manager->'lead_form', '{}'::jsonb),
+    case
+      when jsonb_typeof(coalesce(p_manager->'skills', '[]'::jsonb)) = 'array'
+      then array(select jsonb_array_elements_text(p_manager->'skills') limit 6)
+      else '{}'::text[]
+    end
+  ) returning id into v_agent_id;
+
+  insert into public.departments (account_id, main_agent_id, name, niche)
+  values (
+    v_account_id,
+    v_agent_id,
+    left(coalesce(nullif(trim(p_department->>'name'), ''), v_name), 60),
+    nullif(left(trim(coalesce(p_department->>'niche', '')), 120), '')
+  ) returning id into v_department_id;
+
+  for v_specialist in select value from jsonb_array_elements(p_specialists)
+  loop
+    if jsonb_typeof(v_specialist) <> 'object'
+      or trim(coalesce(v_specialist->>'role', '')) = ''
+      or trim(coalesce(v_specialist->>'name', '')) = ''
+      or jsonb_typeof(coalesce(v_specialist->'prompt', '{}'::jsonb)) <> 'object'
+      or jsonb_typeof(coalesce(v_specialist->'skills', '[]'::jsonb)) <> 'array'
+      or jsonb_array_length(coalesce(v_specialist->'skills', '[]'::jsonb)) > 6
+      or coalesce(v_specialist->>'status', 'active') not in ('active', 'paused') then
+      raise exception using errcode = '22023', message = 'invalid specialist';
+    end if;
+
+    insert into public.sub_agents (
+      account_id, department_id, role, name, prompt, skills, model, status
+    ) values (
+      v_account_id,
+      v_department_id,
+      left(trim(v_specialist->>'role'), 60),
+      left(trim(v_specialist->>'name'), 60),
+      v_specialist->'prompt',
+      v_specialist->'skills',
+      left(coalesce(v_specialist->>'model', 'openai/gpt-4o-mini'), 160),
+      coalesce(v_specialist->>'status', 'active')
+    );
+  end loop;
+
+  return jsonb_build_object('agent_id', v_agent_id, 'department_id', v_department_id, 'specialist_count', v_count);
+end;
+$$;
+
+revoke all on function public.create_agent_team(jsonb, jsonb, jsonb) from public, anon;
+grant execute on function public.create_agent_team(jsonb, jsonb, jsonb) to authenticated;
+
+-- ─── 20260803150000_data_leakage_hardening.sql ───────────────────────────────────────────────
+create table if not exists public.google_oauth_transactions (
+  id uuid primary key default gen_random_uuid(),
+  state_hash text not null unique,
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.google_oauth_transactions enable row level security;
+revoke all on public.google_oauth_transactions from anon, authenticated;
+
+create or replace function public.consume_google_oauth_transaction(p_state_hash text)
+returns table(account_id uuid)
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.google_oauth_transactions
+  set used_at = now()
+  where state_hash = p_state_hash
+    and used_at is null
+    and expires_at > now()
+  returning google_oauth_transactions.account_id;
+$$;
+
+revoke all on function public.consume_google_oauth_transaction(text) from public, anon, authenticated;
+grant execute on function public.consume_google_oauth_transaction(text) to service_role;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'private-audio',
+  'private-audio',
+  false,
+  188743680,
+  array['audio/mpeg','audio/mp4','audio/x-m4a','audio/wav','audio/ogg','audio/webm','video/mp4','application/octet-stream']
+)
+on conflict (id) do update set
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Users upload own private audio" on storage.objects;
+create policy "Users upload own private audio"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'private-audio'
+    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[2] = 'audio'
+  );
+
+alter table public.browser_observations
+  add column if not exists expires_at timestamptz;
+
+update public.browser_observations
+set expires_at = least(coalesce(expires_at, created_at + interval '24 hours'), created_at + interval '24 hours')
+where expires_at is null or expires_at > created_at + interval '24 hours';
+
+alter table public.browser_observations
+  alter column expires_at set default (now() + interval '24 hours'),
+  alter column expires_at set not null;
+
+create index if not exists browser_observations_expiry_idx on public.browser_observations(expires_at);
+
+create or replace function public.purge_expired_browser_observations()
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  delete from public.browser_observations where expires_at <= now();
+  delete from public.google_oauth_transactions where expires_at <= now() - interval '24 hours';
+$$;
+
+revoke all on function public.purge_expired_browser_observations() from public, anon, authenticated;
+grant execute on function public.purge_expired_browser_observations() to service_role;
+
+do $$
+begin
+  if exists(select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'nemo-private-data-retention';
+    perform cron.schedule('nemo-private-data-retention', '17 * * * *', 'select public.purge_expired_browser_observations();');
+  end if;
+end;
+$$;
+
+-- ─── 20260803160000_production_test_account.sql ──────────────────────────────────────────────
+alter table public.accounts
+  add column if not exists is_production_e2e boolean not null default false;
+
+create unique index if not exists accounts_single_production_e2e_idx
+  on public.accounts ((1))
+  where is_production_e2e;
+
+revoke update(is_production_e2e) on public.accounts from anon, authenticated;
+
+create or replace function public.guard_production_e2e_external_config()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  row_data jsonb := to_jsonb(new);
+  target_account uuid;
+begin
+  if tg_table_name = 'channels' then
+    select account_id into target_account from public.agents where id = (row_data->>'agent_id')::uuid;
+  else
+    target_account := nullif(row_data->>'account_id', '')::uuid;
+  end if;
+
+  if target_account is null or not exists(
+    select 1 from public.accounts where id = target_account and is_production_e2e
+  ) then
+    return new;
+  end if;
+
+  if tg_table_name = 'channels' then
+    if coalesce(row_data->'credentials', '{}'::jsonb) <> '{}'::jsonb
+      or coalesce(row_data->>'secret_token', '') <> '' then
+      raise exception using errcode = '42501', message = 'external credentials are disabled for the production test account';
+    end if;
+    return new;
+  end if;
+
+  if tg_table_name = 'business_profiles' then
+    if coalesce(row_data->>'phone', '') <> ''
+      or coalesce(row_data->>'notify_chat_id', '') <> ''
+      or coalesce(row_data->>'tasks_sheet_id', '') <> ''
+      or coalesce(row_data->>'planerka_members_sheet_id', '') <> '' then
+      raise exception using errcode = '42501', message = 'external destinations are disabled for the production test account';
+    end if;
+    return new;
+  end if;
+
+  if tg_table_name = 'user_consents' then
+    if row_data->>'document' in ('marketing_email', 'marketing_telegram') and (row_data->>'granted')::boolean then
+      raise exception using errcode = '42501', message = 'marketing is disabled for the production test account';
+    end if;
+    return new;
+  end if;
+
+  raise exception using errcode = '42501', message = 'external configuration is disabled for the production test account';
+end;
+$$;
+
+revoke all on function public.guard_production_e2e_external_config() from public, anon, authenticated;
+
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'provider_keys', 'google_accounts', 'google_oauth_apps', 'social_accounts',
+    'custom_tools', 'scheduled_posts', 'follow_ups', 'watched_sources',
+    'channels', 'business_profiles', 'user_consents'
+  ] loop
+    if to_regclass('public.' || table_name) is not null then
+      execute format('drop trigger if exists production_e2e_external_config_guard on public.%I', table_name);
+      execute format('create trigger production_e2e_external_config_guard before insert or update on public.%I for each row execute function public.guard_production_e2e_external_config()', table_name);
+    end if;
+  end loop;
+end;
+$$;
+
+-- ─── 20260803170000_autonomous_run_checkpoints.sql ───────────────────────────────────────────
+-- Durable checkpoints for browser-driven autonomous runs. The browser may disappear
+-- between paid stages, so every completed stage is persisted before another starts.
+-- Writes remain service-role only; orchestrate verifies the caller's account and user.
+create table if not exists public.autonomous_run_checkpoints (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null references public.accounts(id) on delete cascade,
+  user_id       uuid not null,
+  run_ref       uuid not null,
+  context_key   text not null default 'ad-hoc',
+  phase         text not null default 'team'
+    check (phase in ('team', 'review', 'synth')),
+  state         jsonb not null default '{}'::jsonb,
+  status        text not null default 'active'
+    check (status in ('active', 'completed', 'cancelled')),
+  expires_at    timestamptz not null default (now() + interval '7 days'),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique (account_id, run_ref)
+);
+
+create index if not exists autonomous_run_checkpoints_resume_idx
+  on public.autonomous_run_checkpoints (account_id, user_id, context_key, updated_at desc)
+  where status = 'active';
+
+alter table public.autonomous_run_checkpoints enable row level security;
+
+-- No anon/authenticated policies: state includes intermediate model output and source
+-- artifacts. Authenticated access is mediated by orchestrate; workers use service_role.
+revoke all on table public.autonomous_run_checkpoints from anon, authenticated;
+
+-- A lost HTTP response after synthesis must not create and bill a second final report.
+-- The run reference already groups usage; it now also idempotently identifies the output.
+alter table public.research_runs add column if not exists run_ref uuid;
+create unique index if not exists research_runs_account_run_ref_uidx
+  on public.research_runs (account_id, run_ref)
+  where run_ref is not null;
+
+-- ─── 20260803180000_autonomous_run_worker.sql ────────────────────────────────────────────────
+-- Claim-fenced durable execution for autonomous team runs. Browser roles never
+-- receive direct table/RPC access; authenticated reads are mediated by orchestrate.
+alter table public.autonomous_run_checkpoints
+  add column if not exists transition text not null default 'staff',
+  add column if not exists specialist_cursor integer not null default 0,
+  add column if not exists review_cursor integer not null default 0,
+  add column if not exists revision_round integer not null default 0,
+  add column if not exists claim_token uuid,
+  add column if not exists claimed_at timestamptz,
+  add column if not exists attempt_count integer not null default 0,
+  add column if not exists next_attempt_at timestamptz not null default now(),
+  add column if not exists last_error text,
+  add column if not exists immutable_input jsonb not null default '{}'::jsonb;
+
+alter table public.autonomous_run_checkpoints
+  drop constraint if exists autonomous_run_checkpoints_status_check;
+alter table public.autonomous_run_checkpoints
+  add constraint autonomous_run_checkpoints_status_check
+  check (status in ('active', 'queued', 'running', 'completed', 'failed', 'cancelled')) not valid;
+alter table public.autonomous_run_checkpoints
+  validate constraint autonomous_run_checkpoints_status_check;
+
+alter table public.autonomous_run_checkpoints
+  drop constraint if exists autonomous_run_checkpoints_transition_check;
+alter table public.autonomous_run_checkpoints
+  add constraint autonomous_run_checkpoints_transition_check
+  check (transition in ('staff', 'specialist', 'review', 'revision', 'synth')) not valid;
+alter table public.autonomous_run_checkpoints
+  validate constraint autonomous_run_checkpoints_transition_check;
+
+create index if not exists autonomous_run_worker_due_idx
+  on public.autonomous_run_checkpoints (next_attempt_at, created_at)
+  where status in ('queued', 'running');
+
+create unique index if not exists autonomous_run_one_active_user_uidx
+  on public.autonomous_run_checkpoints (account_id, user_id)
+  where status in ('queued', 'running');
+
+create or replace function public.claim_autonomous_run(p_lease_seconds integer default 600)
+returns setof public.autonomous_run_checkpoints
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  claimed public.autonomous_run_checkpoints;
+begin
+  with candidate as (
+    select id
+    from public.autonomous_run_checkpoints
+    where expires_at > now()
+      and attempt_count < 8
+      and (
+        (status = 'queued' and next_attempt_at <= now())
+        or (status = 'running' and claimed_at < now() - make_interval(secs => greatest(60, least(p_lease_seconds, 1800))))
+      )
+    order by next_attempt_at, created_at
+    for update skip locked
+    limit 1
+  )
+  update public.autonomous_run_checkpoints r
+  set status = 'running',
+      claim_token = gen_random_uuid(),
+      claimed_at = now(),
+      attempt_count = r.attempt_count + 1,
+      updated_at = now()
+  from candidate
+  where r.id = candidate.id
+  returning r.* into claimed;
+
+  if claimed.id is not null then return next claimed; end if;
+end
+$$;
+
+create or replace function public.finish_autonomous_transition(
+  p_run_id uuid,
+  p_claim_token uuid,
+  p_state jsonb,
+  p_phase text,
+  p_transition text,
+  p_specialist_cursor integer,
+  p_review_cursor integer,
+  p_revision_round integer,
+  p_status text default 'queued',
+  p_last_error text default null,
+  p_next_attempt_at timestamptz default now()
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_status not in ('queued', 'completed', 'failed')
+    or p_phase not in ('team', 'review', 'synth')
+    or p_transition not in ('staff', 'specialist', 'review', 'revision', 'synth') then
+    raise exception 'invalid autonomous transition';
+  end if;
+
+  update public.autonomous_run_checkpoints
+  set state = p_state,
+      phase = p_phase,
+      transition = p_transition,
+      specialist_cursor = greatest(0, p_specialist_cursor),
+      review_cursor = greatest(0, p_review_cursor),
+      revision_round = greatest(0, p_revision_round),
+      status = p_status,
+      attempt_count = case when p_last_error is null then 0 else attempt_count end,
+      last_error = left(p_last_error, 2000),
+      next_attempt_at = p_next_attempt_at,
+      claim_token = null,
+      claimed_at = null,
+      updated_at = now()
+  where id = p_run_id
+    and status = 'running'
+    and claim_token = p_claim_token;
+  return found;
+end
+$$;
+
+revoke all on function public.claim_autonomous_run(integer) from public, anon, authenticated;
+revoke all on function public.finish_autonomous_transition(uuid,uuid,jsonb,text,text,integer,integer,integer,text,text,timestamptz) from public, anon, authenticated;
+grant execute on function public.claim_autonomous_run(integer) to service_role;
+grant execute on function public.finish_autonomous_transition(uuid,uuid,jsonb,text,text,integer,integer,integer,text,text,timestamptz) to service_role;
+
+-- ─── 20260804120000_idempotent_usage_accounting.sql ──────────────────────────────────────────
+-- Usage and credit charging are one transaction. A worker retry reuses the
+-- logical transition key, so it cannot insert or charge the same stage twice.
+alter table public.usage add column if not exists billing_key text;
+
+alter table public.usage
+  drop constraint if exists usage_billing_key_length_check;
+alter table public.usage
+  add constraint usage_billing_key_length_check
+  check (billing_key is null or length(billing_key) between 1 and 200) not valid;
+alter table public.usage validate constraint usage_billing_key_length_check;
+
+create unique index if not exists usage_account_billing_key_uidx
+  on public.usage (account_id, billing_key)
+  where billing_key is not null;
+
+create or replace function public.record_token_usage(
+  p_account_id uuid,
+  p_billing_key text,
+  p_tokens bigint,
+  p_cost numeric,
+  p_model text default null,
+  p_stage text default null,
+  p_run_ref uuid default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  affected_rows bigint;
+begin
+  if p_account_id is null
+    or p_billing_key is null
+    or length(p_billing_key) not between 1 and 200
+    or p_tokens <= 0
+    or p_cost < 0 then
+    raise exception 'invalid usage accounting input';
+  end if;
+
+  insert into public.usage (account_id, billing_key, tokens, cost, model, stage, run_ref)
+  values (p_account_id, p_billing_key, p_tokens, p_cost, p_model, p_stage, p_run_ref)
+  on conflict (account_id, billing_key) where billing_key is not null do nothing;
+
+  get diagnostics affected_rows = row_count;
+  if affected_rows = 1 then
+    update public.accounts
+    set token_balance = greatest(0, token_balance - ceil(p_tokens / 1000.0)::bigint)
+    where id = p_account_id;
+    if not found then raise exception 'account not found'; end if;
+  end if;
+
+  return affected_rows = 1;
+end
+$$;
+
+revoke all on function public.record_token_usage(uuid,text,bigint,numeric,text,text,uuid) from public, anon, authenticated;
+grant execute on function public.record_token_usage(uuid,text,bigint,numeric,text,text,uuid) to service_role;
+
+-- ─── 20260804130000_research_review_inbox.sql ────────────────────────────────────────────────
+-- Team-quality escalation is owner work, not an external action, but it still
+-- needs a durable inbox and an auditable decision. Keep the generated peer
+-- review intact; store the owner's decision separately.
+alter table public.research_runs
+  add column if not exists human_review_status text,
+  add column if not exists human_reviewed_by uuid references auth.users(id) on delete set null,
+  add column if not exists human_reviewed_at timestamptz;
+
+alter table public.research_runs
+  drop constraint if exists research_runs_human_review_status_check;
+alter table public.research_runs
+  add constraint research_runs_human_review_status_check
+  check (human_review_status is null or human_review_status in ('pending', 'approved', 'rejected')) not valid;
+alter table public.research_runs validate constraint research_runs_human_review_status_check;
+
+alter table public.approval_requests
+  add column if not exists related_research_run_id uuid references public.research_runs(id) on delete cascade;
+
+alter table public.approval_requests
+  drop constraint if exists approval_requests_related_research_run_id_fkey;
+alter table public.approval_requests
+  add constraint approval_requests_related_research_run_id_fkey
+  foreign key (related_research_run_id) references public.research_runs(id) on delete set null;
+
+-- Report creation remains available through existing RLS, but browser roles
+-- cannot forge owner decisions or erase their audit trail.
+revoke update, delete on public.research_runs from anon, authenticated;
+
+create unique index if not exists approval_requests_research_review_uidx
+  on public.approval_requests (account_id, related_research_run_id)
+  where source = 'workflow' and action_type = 'research_quality_review';
+
+create or replace function public.prepare_research_quality_review()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.status = 'needs_review' and new.human_review_status is null then
+    new.human_review_status := 'pending';
+  end if;
+  return new;
+end
+$$;
+
+create or replace function public.queue_research_quality_review()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  section_count integer;
+begin
+  if new.status <> 'needs_review' or new.human_review_status <> 'pending' then return new; end if;
+
+  select count(*)::integer into section_count
+  from jsonb_array_elements(case when jsonb_typeof(new.steps) = 'array' then new.steps else '[]'::jsonb end) step
+  where coalesce((step->'review'->>'needs_human_review')::boolean, false);
+
+  insert into public.approval_requests (
+    account_id, source, action_type, summary, evidence, related_research_run_id, expires_at
+  ) values (
+    new.account_id,
+    'workflow',
+    'research_quality_review',
+    left(new.task, 240),
+    jsonb_build_object('research_run_id', new.id, 'run_ref', new.run_ref, 'sections', section_count),
+    new.id,
+    now() + interval '10 years'
+  )
+  on conflict (account_id, related_research_run_id)
+    where source = 'workflow' and action_type = 'research_quality_review'
+    do nothing;
+  return new;
+end
+$$;
+
+drop trigger if exists research_quality_review_prepare on public.research_runs;
+create trigger research_quality_review_prepare
+before insert or update of status on public.research_runs
+for each row execute function public.prepare_research_quality_review();
+
+drop trigger if exists research_quality_review_queue on public.research_runs;
+create trigger research_quality_review_queue
+after insert or update of status on public.research_runs
+for each row execute function public.queue_research_quality_review();
+
+create or replace function public.decide_approval_request(
+  p_account_id uuid,
+  p_user_id uuid,
+  p_request_id uuid,
+  p_decision text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  request_row public.approval_requests;
+begin
+  if p_decision not in ('approved', 'rejected') then raise exception 'invalid decision'; end if;
+  if not exists (
+    select 1 from public.users where id = p_user_id and account_id = p_account_id
+  ) then raise exception 'invalid owner context'; end if;
+
+  select * into request_row
+  from public.approval_requests
+  where id = p_request_id and account_id = p_account_id and status = 'pending' and expires_at > now()
+  for update;
+  if not found then return false; end if;
+
+  update public.approval_requests
+  set status = p_decision, decided_by = p_user_id, decided_at = now()
+  where id = request_row.id;
+
+  if request_row.source = 'workflow'
+    and request_row.action_type = 'research_quality_review'
+    and request_row.related_research_run_id is not null then
+    update public.research_runs
+    set human_review_status = p_decision,
+        human_reviewed_by = p_user_id,
+        human_reviewed_at = now(),
+        status = case when p_decision = 'approved' then 'done' else 'review_rejected' end
+    where id = request_row.related_research_run_id
+      and account_id = p_account_id
+      and human_review_status = 'pending';
+    if not found then raise exception 'research review is no longer pending'; end if;
+  end if;
+
+  return true;
+end
+$$;
+
+revoke all on function public.decide_approval_request(uuid,uuid,uuid,text) from public, anon, authenticated;
+grant execute on function public.decide_approval_request(uuid,uuid,uuid,text) to service_role;
+
+-- Existing escalated reports must appear immediately after deployment.
+update public.research_runs
+set human_review_status = 'pending'
+where status = 'needs_review' and human_review_status is null;
+
+insert into public.approval_requests (
+  account_id, source, action_type, summary, evidence, related_research_run_id, expires_at
+)
+select
+  run.account_id,
+  'workflow',
+  'research_quality_review',
+  left(run.task, 240),
+  jsonb_build_object(
+    'research_run_id', run.id,
+    'run_ref', run.run_ref,
+    'sections', (
+      select count(*) from jsonb_array_elements(case when jsonb_typeof(run.steps) = 'array' then run.steps else '[]'::jsonb end) step
+      where coalesce((step->'review'->>'needs_human_review')::boolean, false)
+    )
+  ),
+  run.id,
+  now() + interval '10 years'
+from public.research_runs run
+where run.status = 'needs_review' and run.human_review_status = 'pending'
+on conflict (account_id, related_research_run_id)
+  where source = 'workflow' and action_type = 'research_quality_review'
+  do nothing;
+
+-- ─── 20260804140000_token_usage_reservations.sql ─────────────────────────────────────────────
+-- Reserve quota before concurrent provider calls, then atomically settle actual
+-- usage and cache the logical action result for lost-response recovery.
+create table if not exists public.token_usage_reservations (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  billing_key text not null,
+  run_id uuid not null,
+  claim_token uuid not null,
+  reserved_tokens bigint not null check (reserved_tokens > 0),
+  reserved_credits bigint not null check (reserved_credits > 0),
+  monthly_limit bigint not null check (monthly_limit > 0),
+  status text not null default 'active' check (status in ('active', 'finalized', 'released', 'expired')),
+  actual_tokens bigint,
+  result jsonb,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  finalized_at timestamptz,
+  unique (account_id, billing_key)
+);
+
+alter table public.token_usage_reservations
+  add column if not exists monthly_limit bigint;
+alter table public.token_usage_reservations add column if not exists run_id uuid;
+alter table public.token_usage_reservations add column if not exists claim_token uuid;
+update public.token_usage_reservations set monthly_limit = 9223372036854775807 where monthly_limit is null;
+alter table public.token_usage_reservations alter column monthly_limit set not null;
+
+alter table public.token_usage_reservations enable row level security;
+revoke all on public.token_usage_reservations from public, anon, authenticated;
+
+create or replace function public.reserve_token_usage(
+  p_account_id uuid,
+  p_billing_key text,
+  p_reserved_tokens bigint,
+  p_monthly_limit bigint,
+  p_run_id uuid,
+  p_claim_token uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  existing public.token_usage_reservations;
+  balance bigint;
+  credits bigint;
+  expired_credits bigint;
+  used_tokens bigint;
+  active_tokens bigint;
+  month_start timestamptz := date_trunc('month', now() at time zone 'UTC') at time zone 'UTC';
+begin
+  if p_account_id is null or p_billing_key is null or length(p_billing_key) not between 1 and 200
+    or p_reserved_tokens <= 0 or p_monthly_limit <= 0 then raise exception 'invalid reservation input'; end if;
+  perform 1 from public.autonomous_run_checkpoints where id = p_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token for update;
+  if not found then raise exception 'worker claim lost'; end if;
+
+  select * into existing from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key;
+  if found and existing.status = 'finalized' then
+    return jsonb_build_object('status', existing.status, 'result', existing.result);
+  end if;
+  if found and existing.status = 'active' and existing.expires_at > now() then
+    return jsonb_build_object('status', 'in_progress');
+  end if;
+
+  select token_balance into balance from public.accounts where id = p_account_id for update;
+  if not found then raise exception 'account not found'; end if;
+
+  select * into existing from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key;
+  if found and existing.status = 'finalized' then
+    return jsonb_build_object('status', existing.status, 'result', existing.result);
+  end if;
+  if found and existing.status = 'active' and existing.expires_at > now() then
+    return jsonb_build_object('status', 'in_progress');
+  end if;
+
+  with released as (
+    update public.token_usage_reservations
+    set status = 'expired'
+    where account_id = p_account_id and status = 'active' and expires_at <= now()
+    returning reserved_credits
+  ) select coalesce(sum(reserved_credits), 0) into expired_credits from released;
+  balance := balance + expired_credits;
+  if expired_credits > 0 then update public.accounts set token_balance = balance where id = p_account_id; end if;
+
+  credits := ceil(p_reserved_tokens / 1000.0)::bigint;
+  select coalesce(sum(tokens), 0) into used_tokens from public.usage
+  where account_id = p_account_id and created_at >= month_start;
+  select coalesce(sum(reserved_tokens), 0) into active_tokens from public.token_usage_reservations
+  where account_id = p_account_id and status = 'active';
+
+  if balance < credits then return jsonb_build_object('status', 'denied_balance'); end if;
+  if used_tokens + active_tokens + p_reserved_tokens > p_monthly_limit then return jsonb_build_object('status', 'denied_quota'); end if;
+
+  insert into public.token_usage_reservations(account_id, billing_key, run_id, claim_token, reserved_tokens, reserved_credits, monthly_limit, expires_at)
+  values (p_account_id, p_billing_key, p_run_id, p_claim_token, p_reserved_tokens, credits, p_monthly_limit, now() + interval '10 minutes')
+  on conflict (account_id, billing_key) do update
+    set reserved_tokens = excluded.reserved_tokens,
+        reserved_credits = excluded.reserved_credits,
+        monthly_limit = excluded.monthly_limit,
+        run_id = excluded.run_id,
+        claim_token = excluded.claim_token,
+        status = 'active', result = null, actual_tokens = null,
+        expires_at = excluded.expires_at, finalized_at = null;
+  update public.accounts set token_balance = balance - credits where id = p_account_id;
+  return jsonb_build_object('status', 'reserved');
+end
+$$;
+
+create or replace function public.finalize_token_usage(
+  p_account_id uuid,
+  p_billing_key text,
+  p_tokens bigint,
+  p_cost numeric,
+  p_model text,
+  p_stage text,
+  p_run_ref uuid,
+  p_result jsonb,
+  p_run_id uuid,
+  p_claim_token uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  reservation public.token_usage_reservations;
+  actual_credits bigint;
+begin
+  -- Billing reflects provider work already performed. Cancellation or lease reclaim may
+  -- stop state writes, but must not erase that external spend.
+  perform 1 from public.autonomous_run_checkpoints where id = p_run_id and account_id = p_account_id for update;
+  if not found then raise exception 'worker run not found'; end if;
+  perform 1 from public.accounts where id = p_account_id for update;
+  if not found then raise exception 'account not found'; end if;
+  select * into reservation from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key for update;
+  if not found then raise exception 'reservation not found'; end if;
+  if reservation.run_id is distinct from p_run_id or reservation.claim_token is distinct from p_claim_token then
+    raise exception 'reservation ownership mismatch';
+  end if;
+  if reservation.status = 'finalized' then return false; end if;
+  if reservation.status <> 'active' or reservation.expires_at <= now() then raise exception 'reservation not active'; end if;
+  if p_tokens <= 0 or p_cost < 0 then raise exception 'invalid actual usage'; end if;
+  if p_result is null or octet_length(p_result::text) > 50000 then raise exception 'invalid cached result'; end if;
+
+  actual_credits := ceil(p_tokens / 1000.0)::bigint;
+  insert into public.usage(account_id, billing_key, tokens, cost, model, stage, run_ref)
+  values(p_account_id, p_billing_key, p_tokens, p_cost, p_model, p_stage, p_run_ref);
+  update public.accounts
+  set token_balance = token_balance + reservation.reserved_credits - actual_credits
+  where id = p_account_id;
+  update public.token_usage_reservations
+  set status = 'finalized', actual_tokens = p_tokens, result = p_result, finalized_at = now()
+  where id = reservation.id;
+  return true;
+end
+$$;
+
+create or replace function public.complete_worker_from_research_run(
+  p_worker_run_id uuid, p_claim_token uuid, p_account_id uuid, p_run_ref uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare existing public.research_runs;
+begin
+  perform 1 from public.autonomous_run_checkpoints
+  where id = p_worker_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token
+  for update;
+  if not found then raise exception 'worker claim lost'; end if;
+  select * into existing from public.research_runs
+  where account_id = p_account_id and run_ref = p_run_ref;
+  if not found or existing.report is null then return false; end if;
+  update public.autonomous_run_checkpoints
+  set state = state || jsonb_build_object('result', existing.report, 'resultId', existing.id),
+      phase = 'synth', transition = 'synth', status = 'completed',
+      claim_token = null, claimed_at = null, last_error = null,
+      next_attempt_at = now(), updated_at = now()
+  where id = p_worker_run_id and claim_token = p_claim_token and status = 'running';
+  return found;
+end
+$$;
+
+drop function if exists public.release_token_usage(uuid, text);
+create or replace function public.release_token_usage(
+  p_account_id uuid, p_billing_key text, p_run_id uuid, p_claim_token uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare reservation public.token_usage_reservations;
+begin
+  perform 1 from public.accounts where id = p_account_id for update;
+  if not found then raise exception 'account not found'; end if;
+  select * into reservation from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key for update;
+  if not found or reservation.status <> 'active' then return false; end if;
+  if reservation.run_id is distinct from p_run_id or reservation.claim_token is distinct from p_claim_token then return false; end if;
+  update public.accounts set token_balance = token_balance + reservation.reserved_credits where id = p_account_id;
+  update public.token_usage_reservations set status = 'released', result = null where id = reservation.id;
+  return true;
+end
+$$;
+
+create or replace function public.record_worker_token_usage(
+  p_run_id uuid, p_claim_token uuid, p_account_id uuid, p_billing_key text,
+  p_tokens bigint, p_cost numeric, p_model text, p_stage text, p_run_ref uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform 1 from public.autonomous_run_checkpoints
+  where id = p_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token
+  for update;
+  if not found then raise exception 'worker claim lost'; end if;
+  return public.record_token_usage(p_account_id, p_billing_key, p_tokens, p_cost, p_model, p_stage, p_run_ref);
+end
+$$;
+
+create or replace function public.persist_worker_research_run(
+  p_worker_run_id uuid, p_claim_token uuid, p_account_id uuid, p_task text,
+  p_status text, p_department_id uuid, p_run_ref uuid, p_report text,
+  p_sources jsonb, p_steps jsonb, p_model text, p_tokens bigint, p_cost numeric
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare persisted_id uuid;
+begin
+  perform 1 from public.autonomous_run_checkpoints
+  where id = p_worker_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token
+  for update;
+  if not found then raise exception 'worker claim lost'; end if;
+  insert into public.research_runs(account_id, task, status, kind, department_id, run_ref, report, sources, steps, model, tokens, cost)
+  values(p_account_id, p_task, p_status, 'team_run', p_department_id, p_run_ref, p_report, p_sources, p_steps, p_model, p_tokens, p_cost)
+  returning id into persisted_id;
+  update public.autonomous_run_checkpoints
+  set state = state || jsonb_build_object(
+        'result', p_report,
+        'resultId', persisted_id,
+        'escalatedCount', (select count(*) from jsonb_array_elements(p_steps) step where coalesce((step->'review'->>'needs_human_review')::boolean, false))
+      ),
+      phase = 'synth', transition = 'synth', status = 'completed',
+      specialist_cursor = jsonb_array_length(p_steps), review_cursor = jsonb_array_length(p_steps),
+      claim_token = null, claimed_at = null, last_error = null,
+      next_attempt_at = now(), updated_at = now()
+  where id = p_worker_run_id and claim_token = p_claim_token and status = 'running';
+  if not found then raise exception 'worker claim lost'; end if;
+  return persisted_id;
+end
+$$;
+
+revoke all on function public.reserve_token_usage(uuid,text,bigint,bigint,uuid,uuid) from public, anon, authenticated;
+revoke all on function public.finalize_token_usage(uuid,text,bigint,numeric,text,text,uuid,jsonb,uuid,uuid) from public, anon, authenticated;
+revoke all on function public.release_token_usage(uuid,text,uuid,uuid) from public, anon, authenticated;
+revoke all on function public.record_worker_token_usage(uuid,uuid,uuid,text,bigint,numeric,text,text,uuid) from public, anon, authenticated;
+revoke all on function public.persist_worker_research_run(uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb,jsonb,text,bigint,numeric) from public, anon, authenticated;
+revoke all on function public.complete_worker_from_research_run(uuid,uuid,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.reserve_token_usage(uuid,text,bigint,bigint,uuid,uuid) to service_role;
+grant execute on function public.finalize_token_usage(uuid,text,bigint,numeric,text,text,uuid,jsonb,uuid,uuid) to service_role;
+grant execute on function public.release_token_usage(uuid,text,uuid,uuid) to service_role;
+grant execute on function public.record_worker_token_usage(uuid,uuid,uuid,text,bigint,numeric,text,text,uuid) to service_role;
+grant execute on function public.persist_worker_research_run(uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb,jsonb,text,bigint,numeric) to service_role;
+grant execute on function public.complete_worker_from_research_run(uuid,uuid,uuid,uuid) to service_role;
+
+-- ─── 20260804150000_agent_eval_publish_gate.sql ──────────────────────────────────────────────
+-- A published agent is an active agent whose exact configuration passed an
+-- immutable sandbox evaluation. The database enforces this rather than trusting UI.
+alter table public.agents
+  add column if not exists config_revision bigint not null default 1 check (config_revision > 0),
+  add column if not exists published_revision bigint,
+  add column if not exists published_at timestamptz,
+  add column if not exists latest_eval_run_id uuid;
+
+alter table public.agents alter column status set default 'draft';
+-- Existing live agents are explicitly grandfathered for a non-disruptive rollout.
+-- Any behavior edit clears this marker and requires the normal eval/publish path.
+update public.agents
+set published_revision = config_revision, published_at = coalesce(published_at, now())
+where status = 'active' and published_revision is null;
+
+create table if not exists public.agent_eval_suites (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  config_revision bigint not null check (config_revision > 0),
+  suite_version integer not null default 1 check (suite_version > 0),
+  cases jsonb not null check (jsonb_typeof(cases) = 'array' and jsonb_array_length(cases) between 3 and 12),
+  generator_model text not null,
+  generator_version text not null default 'deterministic-v1',
+  created_at timestamptz not null default now(),
+  unique (agent_id, config_revision, suite_version)
+);
+
+create table if not exists public.agent_eval_runs (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  suite_id uuid not null references public.agent_eval_suites(id) on delete restrict,
+  config_revision bigint not null check (config_revision > 0),
+  status text not null check (status in ('running', 'passed', 'failed', 'error')),
+  results jsonb not null default '[]'::jsonb check (jsonb_typeof(results) = 'array'),
+  total_count integer not null default 0 check (total_count >= 0),
+  passed_count integer not null default 0 check (passed_count >= 0),
+  critical_failed_count integer not null default 0 check (critical_failed_count >= 0),
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  runner_version text not null default 'sandbox-v1',
+  judge_model text
+);
+
+create index if not exists agent_eval_suites_agent_revision_idx on public.agent_eval_suites(agent_id, config_revision, created_at desc);
+create index if not exists agent_eval_runs_agent_revision_idx on public.agent_eval_runs(agent_id, config_revision, completed_at desc);
+create unique index if not exists agent_eval_runs_one_active_account_uidx
+  on public.agent_eval_runs(account_id) where status = 'running';
+
+alter table public.agent_eval_suites enable row level security;
+alter table public.agent_eval_runs enable row level security;
+revoke all on public.agent_eval_suites, public.agent_eval_runs from public, anon, authenticated;
+drop policy if exists agent_eval_suites_account_read on public.agent_eval_suites;
+drop policy if exists agent_eval_runs_account_read on public.agent_eval_runs;
+create policy agent_eval_suites_account_read on public.agent_eval_suites for select to authenticated using (account_id = public.current_account_id());
+create policy agent_eval_runs_account_read on public.agent_eval_runs for select to authenticated using (account_id = public.current_account_id());
+
+create or replace function public.invalidate_agent_publication()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if row(
+    new.name, new.type, new.prompt, new.model, new.temperature, new.timezone,
+    new.schedule, new.work_start, new.work_end, new.default_lang, new.country,
+    new.purpose, new.niche, new.risk_tier, new.action_policy, new.voice_enabled,
+    new.voice_mode, new.voice_id, new.stt_model, new.persona_mode, new.owner_name,
+    new.skills, new.lead_form
+  ) is distinct from row(
+    old.name, old.type, old.prompt, old.model, old.temperature, old.timezone,
+    old.schedule, old.work_start, old.work_end, old.default_lang, old.country,
+    old.purpose, old.niche, old.risk_tier, old.action_policy, old.voice_enabled,
+    old.voice_mode, old.voice_id, old.stt_model, old.persona_mode, old.owner_name,
+    old.skills, old.lead_form
+  ) then
+    new.config_revision := old.config_revision + 1;
+    new.published_revision := null;
+    new.published_at := null;
+    new.latest_eval_run_id := null;
+    if old.status = 'active' then new.status := 'draft'; end if;
+  end if;
+  return new;
+end
+$$;
+
+drop trigger if exists agents_invalidate_publication on public.agents;
+create trigger agents_invalidate_publication
+before update on public.agents
+for each row execute function public.invalidate_agent_publication();
+
+create or replace function public.require_passing_agent_eval()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.status = 'active' and (tg_op = 'INSERT' or old.status is distinct from 'active') then
+    if current_setting('nemo.publish_authorized', true) is distinct from '1' then
+      raise exception using errcode = '42501', message = 'AGENT_PUBLISH_OWNER_REQUIRED';
+    end if;
+    if not exists (
+      select 1 from public.agent_eval_runs r
+      where r.id = new.latest_eval_run_id
+        and r.agent_id = new.id
+        and r.account_id = new.account_id
+        and r.config_revision = new.config_revision
+        and r.status = 'passed'
+        and r.critical_failed_count = 0
+    ) then
+      raise exception using errcode = '23514', message = 'AGENT_EVAL_REQUIRED';
+    end if;
+  end if;
+  return new;
+end
+$$;
+
+drop trigger if exists agents_require_passing_eval on public.agents;
+create trigger agents_require_passing_eval
+before insert or update of status on public.agents
+for each row execute function public.require_passing_agent_eval();
+
+create or replace function public.publish_agent(p_agent_id uuid, p_eval_run_id uuid)
+returns public.agents
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_agent public.agents; v_run public.agent_eval_runs;
+begin
+  select * into v_agent from public.agents where id = p_agent_id for update;
+  if not found then raise exception 'agent not found'; end if;
+  if not exists (select 1 from public.users where id = auth.uid() and account_id = v_agent.account_id and role = 'owner') then
+    raise exception using errcode = '42501', message = 'owner required';
+  end if;
+  select * into v_run from public.agent_eval_runs where id = p_eval_run_id for update;
+  if not found or v_run.account_id <> v_agent.account_id or v_run.agent_id <> v_agent.id
+    or v_run.config_revision <> v_agent.config_revision or v_run.status <> 'passed' or v_run.critical_failed_count <> 0 then
+    raise exception using errcode = '23514', message = 'AGENT_EVAL_REQUIRED';
+  end if;
+  perform set_config('nemo.publish_authorized', '1', true);
+  update public.agents set status = 'active', published_revision = config_revision,
+    published_at = now(), latest_eval_run_id = p_eval_run_id where id = v_agent.id
+  returning * into v_agent;
+  return v_agent;
+end
+$$;
+
+revoke all on function public.publish_agent(uuid, uuid) from public, anon;
+grant execute on function public.publish_agent(uuid, uuid) to authenticated;
+
+-- ─── 20260804160000_team_draft_and_usage_aggregate.sql ───────────────────────────────────────
+-- Repair production/source skew after the publish gate: atomic team creation must
+-- create a draft manager, and token admission must aggregate without a row cap.
+create or replace function public.create_agent_team(
+  p_manager jsonb,
+  p_department jsonb,
+  p_specialists jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_account_id uuid := public.current_account_id();
+  v_agent_id uuid;
+  v_department_id uuid;
+  v_specialist jsonb;
+  v_name text := left(trim(coalesce(p_manager->>'name', '')), 60);
+  v_policy text := coalesce(p_manager->>'action_policy', 'approval_required');
+  v_risk text := coalesce(p_manager->>'risk_tier', 'standard');
+  v_count integer;
+begin
+  if auth.uid() is null or v_account_id is null then
+    raise exception using errcode = '42501', message = 'authenticated account required';
+  end if;
+  if jsonb_typeof(p_manager) <> 'object' or v_name = '' then
+    raise exception using errcode = '22023', message = 'valid manager is required';
+  end if;
+  if jsonb_typeof(coalesce(p_manager->'prompt', '{}'::jsonb)) <> 'object' then
+    raise exception using errcode = '22023', message = 'manager prompt must be an object';
+  end if;
+  if v_policy not in ('read_only', 'approval_required') then
+    raise exception using errcode = '22023', message = 'invalid action policy';
+  end if;
+  if v_risk not in ('standard', 'regulated') then
+    raise exception using errcode = '22023', message = 'invalid risk tier';
+  end if;
+  if jsonb_typeof(p_specialists) <> 'array' then
+    raise exception using errcode = '22023', message = 'specialists must be an array';
+  end if;
+  v_count := jsonb_array_length(p_specialists);
+  if v_count < 2 or v_count > 6 then
+    raise exception using errcode = '22023', message = 'a team requires 2 to 6 specialists';
+  end if;
+
+  insert into public.agents (
+    account_id, name, type, avatar_color, prompt, model, temperature, timezone,
+    schedule, work_start, work_end, default_lang, country, purpose, niche,
+    risk_tier, action_policy, template_key, status, lead_form, skills
+  ) values (
+    v_account_id,
+    v_name,
+    'workflow',
+    left(coalesce(p_manager->>'avatar_color', 'violet'), 20),
+    coalesce(p_manager->'prompt', '{}'::jsonb),
+    left(coalesce(p_manager->>'model', 'openai/gpt-4o-mini'), 160),
+    least(2, greatest(0, coalesce((p_manager->>'temperature')::numeric, 0.6))),
+    left(coalesce(p_manager->>'timezone', 'Asia/Tashkent'), 80),
+    case when p_manager->>'schedule' = 'work-hours' then 'work-hours' else '24/7' end,
+    nullif(left(coalesce(p_manager->>'work_start', ''), 5), ''),
+    nullif(left(coalesce(p_manager->>'work_end', ''), 5), ''),
+    left(coalesce(p_manager->>'default_lang', 'auto'), 10),
+    nullif(left(trim(coalesce(p_manager->>'country', '')), 120), ''),
+    nullif(left(trim(coalesce(p_manager->>'purpose', '')), 500), ''),
+    nullif(left(trim(coalesce(p_manager->>'niche', '')), 120), ''),
+    v_risk,
+    v_policy,
+    nullif(left(trim(coalesce(p_manager->>'template_key', '')), 120), ''),
+    'draft',
+    coalesce(p_manager->'lead_form', '{}'::jsonb),
+    case
+      when jsonb_typeof(coalesce(p_manager->'skills', '[]'::jsonb)) = 'array'
+      then array(select jsonb_array_elements_text(p_manager->'skills') limit 6)
+      else '{}'::text[]
+    end
+  ) returning id into v_agent_id;
+
+  insert into public.departments (account_id, main_agent_id, name, niche)
+  values (
+    v_account_id,
+    v_agent_id,
+    left(coalesce(nullif(trim(p_department->>'name'), ''), v_name), 60),
+    nullif(left(trim(coalesce(p_department->>'niche', '')), 120), '')
+  ) returning id into v_department_id;
+
+  for v_specialist in select value from jsonb_array_elements(p_specialists)
+  loop
+    if jsonb_typeof(v_specialist) <> 'object'
+      or trim(coalesce(v_specialist->>'role', '')) = ''
+      or trim(coalesce(v_specialist->>'name', '')) = ''
+      or jsonb_typeof(coalesce(v_specialist->'prompt', '{}'::jsonb)) <> 'object'
+      or jsonb_typeof(coalesce(v_specialist->'skills', '[]'::jsonb)) <> 'array'
+      or jsonb_array_length(coalesce(v_specialist->'skills', '[]'::jsonb)) > 6
+      or coalesce(v_specialist->>'status', 'active') not in ('active', 'paused') then
+      raise exception using errcode = '22023', message = 'invalid specialist';
+    end if;
+
+    insert into public.sub_agents (
+      account_id, department_id, role, name, prompt, skills, model, status
+    ) values (
+      v_account_id,
+      v_department_id,
+      left(trim(v_specialist->>'role'), 60),
+      left(trim(v_specialist->>'name'), 60),
+      v_specialist->'prompt',
+      v_specialist->'skills',
+      left(coalesce(v_specialist->>'model', 'openai/gpt-4o-mini'), 160),
+      coalesce(v_specialist->>'status', 'active')
+    );
+  end loop;
+
+  return jsonb_build_object('agent_id', v_agent_id, 'department_id', v_department_id, 'specialist_count', v_count);
+end;
+$$;
+
+revoke all on function public.create_agent_team(jsonb, jsonb, jsonb) from public, anon;
+grant execute on function public.create_agent_team(jsonb, jsonb, jsonb) to authenticated;
+
+create or replace function public.monthly_token_usage(p_account_id uuid)
+returns bigint
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(sum(u.tokens), 0)::bigint
+  from public.usage u
+  where u.account_id = p_account_id
+    and u.created_at >= date_trunc('month', now() at time zone 'UTC') at time zone 'UTC'
+$$;
+
+revoke all on function public.monthly_token_usage(uuid) from public, anon, authenticated;
+grant execute on function public.monthly_token_usage(uuid) to service_role;
+
+-- ─── 20260805090000_commerce_control_center.sql ──────────────────────────────────────────────
+-- Uzum Ecommerce Control Center V1. Marketplace facts are append-only snapshots;
+-- owner-maintained unit economics never come from the marketplace connector.
+create table if not exists public.commerce_pilots (
+  account_id uuid primary key references public.accounts(id) on delete cascade,
+  status text not null default 'active' check (status in ('active', 'read_only', 'ended')),
+  started_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '14 days'),
+  read_only_at timestamptz,
+  created_at timestamptz not null default now(),
+  check (expires_at > started_at)
+);
+
+create table if not exists public.commerce_catalogs (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  source text not null check (source in ('uzum')),
+  external_shop_id text not null check (external_shop_id ~ '^[0-9]{1,18}$'),
+  name text not null check (char_length(name) between 1 and 120),
+  timezone text not null default 'Asia/Tashkent' check (timezone = 'Asia/Tashkent'),
+  status text not null default 'active' check (status in ('active', 'paused', 'no_access', 'error')),
+  last_synced_at timestamptz,
+  last_sync_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (account_id, source, external_shop_id)
+);
+
+create table if not exists public.commerce_skus (
+  id uuid primary key default gen_random_uuid(),
+  catalog_id uuid not null references public.commerce_catalogs(id) on delete cascade,
+  external_sku text not null check (char_length(external_sku) between 1 and 60),
+  external_product_id text,
+  title text not null check (char_length(title) between 1 and 160),
+  unit_cost_tiyin bigint check (unit_cost_tiyin >= 0),
+  commission_percent numeric(7,4) check (commission_percent between 0 and 100),
+  fulfillment_tiyin bigint check (fulfillment_tiyin >= 0),
+  returns_reserve_percent numeric(7,4) check (returns_reserve_percent between 0 and 100),
+  lead_time_days integer check (lead_time_days between 0 and 365),
+  moq integer check (moq between 1 and 10000000),
+  safety_stock integer check (safety_stock >= 0),
+  min_margin_percent numeric(7,4) check (min_margin_percent between 0 and 99.9999),
+  economics_revision bigint not null default 1 check (economics_revision > 0),
+  economics_updated_at timestamptz,
+  economics_updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (catalog_id, external_sku)
+);
+
+create table if not exists public.commerce_import_batches (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  catalog_id uuid not null references public.commerce_catalogs(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete restrict,
+  file_name text not null check (char_length(file_name) between 1 and 180),
+  file_sha256 text not null check (file_sha256 ~ '^[a-f0-9]{64}$'),
+  status text not null default 'staged' check (status in ('staged', 'confirmed', 'rejected', 'failed')),
+  total_rows integer not null default 0 check (total_rows >= 0),
+  valid_rows integer not null default 0 check (valid_rows >= 0),
+  unmatched_rows integer not null default 0 check (unmatched_rows >= 0),
+  error_rows integer not null default 0 check (error_rows >= 0),
+  confirmed_at timestamptz,
+  confirmed_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check (valid_rows + error_rows <= total_rows),
+  unique (account_id, catalog_id, file_sha256)
+);
+
+create table if not exists public.commerce_import_rows (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid not null references public.commerce_import_batches(id) on delete cascade,
+  row_number integer not null check (row_number > 0),
+  raw jsonb not null default '{}'::jsonb check (jsonb_typeof(raw) = 'object'),
+  external_sku text,
+  matched_sku_id uuid references public.commerce_skus(id) on delete set null,
+  match_status text not null check (match_status in ('matched', 'unmatched', 'invalid', 'confirmed')),
+  errors jsonb not null default '[]'::jsonb check (jsonb_typeof(errors) = 'array'),
+  unit_cost_tiyin bigint check (unit_cost_tiyin >= 0),
+  commission_percent numeric(7,4) check (commission_percent between 0 and 100),
+  fulfillment_tiyin bigint check (fulfillment_tiyin >= 0),
+  returns_reserve_percent numeric(7,4) check (returns_reserve_percent between 0 and 100),
+  lead_time_days integer check (lead_time_days between 0 and 365),
+  moq integer check (moq between 1 and 10000000),
+  safety_stock integer check (safety_stock >= 0),
+  min_margin_percent numeric(7,4) check (min_margin_percent between 0 and 99.9999),
+  created_at timestamptz not null default now(),
+  unique (batch_id, row_number)
+);
+
+create table if not exists public.commerce_sync_runs (
+  id uuid primary key default gen_random_uuid(),
+  catalog_id uuid not null references public.commerce_catalogs(id) on delete cascade,
+  scheduled_for timestamptz not null,
+  status text not null default 'queued' check (status in ('queued', 'running', 'completed', 'failed', 'skipped')),
+  claim_token uuid,
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  error text,
+  created_at timestamptz not null default now(),
+  unique (catalog_id, scheduled_for)
+);
+
+create table if not exists public.commerce_inventory_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  sku_id uuid not null references public.commerce_skus(id) on delete cascade,
+  sync_run_id uuid not null references public.commerce_sync_runs(id) on delete restrict,
+  observed_slot timestamptz not null,
+  observed_at timestamptz not null default now(),
+  price_tiyin bigint check (price_tiyin >= 0),
+  stock_total integer check (stock_total >= 0),
+  stock_fbo integer check (stock_fbo >= 0),
+  stock_fbs integer check (stock_fbs >= 0),
+  sold_units_7d integer check (sold_units_7d >= 0),
+  source jsonb not null default '{}'::jsonb check (jsonb_typeof(source) = 'object'),
+  created_at timestamptz not null default now(),
+  unique (sku_id, observed_slot)
+);
+
+create table if not exists public.commerce_recommendations (
+  id uuid primary key default gen_random_uuid(),
+  sku_id uuid not null references public.commerce_skus(id) on delete cascade,
+  snapshot_id uuid not null references public.commerce_inventory_snapshots(id) on delete restrict,
+  kind text not null check (kind in ('reorder', 'price_guard', 'missing_data')),
+  severity text not null check (severity in ('info', 'warning', 'critical')),
+  status text not null default 'open' check (status in ('open', 'dismissed', 'accepted', 'expired')),
+  dedupe_key text not null unique check (char_length(dedupe_key) between 1 and 180),
+  economics_revision bigint not null,
+  calculation jsonb not null check (jsonb_typeof(calculation) = 'object'),
+  suggested_action jsonb not null default '{}'::jsonb check (jsonb_typeof(suggested_action) = 'object'),
+  approval_request_id uuid references public.approval_requests(id) on delete set null,
+  first_detected_at timestamptz not null default now(),
+  last_detected_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists commerce_catalogs_account_idx on public.commerce_catalogs(account_id, status);
+create index if not exists commerce_skus_catalog_idx on public.commerce_skus(catalog_id);
+create index if not exists commerce_import_batches_catalog_idx on public.commerce_import_batches(catalog_id, created_at desc);
+create index if not exists commerce_import_rows_batch_status_idx on public.commerce_import_rows(batch_id, match_status);
+create index if not exists commerce_sync_runs_due_idx on public.commerce_sync_runs(status, scheduled_for);
+create index if not exists commerce_inventory_snapshots_sku_slot_idx on public.commerce_inventory_snapshots(sku_id, observed_slot desc);
+create index if not exists commerce_recommendations_sku_status_idx on public.commerce_recommendations(sku_id, status, severity);
+
+create or replace function public.commerce_touch_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end
+$$;
+
+drop trigger if exists commerce_catalogs_touch on public.commerce_catalogs;
+create trigger commerce_catalogs_touch before update on public.commerce_catalogs
+for each row execute function public.commerce_touch_updated_at();
+drop trigger if exists commerce_skus_touch on public.commerce_skus;
+create trigger commerce_skus_touch before update on public.commerce_skus
+for each row execute function public.commerce_touch_updated_at();
+drop trigger if exists commerce_recommendations_touch on public.commerce_recommendations;
+create trigger commerce_recommendations_touch before update on public.commerce_recommendations
+for each row execute function public.commerce_touch_updated_at();
+
+alter table public.commerce_pilots enable row level security;
+alter table public.commerce_catalogs enable row level security;
+alter table public.commerce_skus enable row level security;
+alter table public.commerce_import_batches enable row level security;
+alter table public.commerce_import_rows enable row level security;
+alter table public.commerce_sync_runs enable row level security;
+alter table public.commerce_inventory_snapshots enable row level security;
+alter table public.commerce_recommendations enable row level security;
+
+revoke all on public.commerce_pilots, public.commerce_catalogs, public.commerce_skus,
+  public.commerce_import_batches, public.commerce_import_rows, public.commerce_sync_runs,
+  public.commerce_inventory_snapshots, public.commerce_recommendations from public, anon, authenticated;
+grant select on public.commerce_pilots, public.commerce_catalogs, public.commerce_skus,
+  public.commerce_import_batches, public.commerce_import_rows, public.commerce_inventory_snapshots,
+  public.commerce_recommendations to authenticated;
+
+create policy commerce_pilots_account_read on public.commerce_pilots for select to authenticated
+  using (account_id = public.current_account_id());
+create policy commerce_catalogs_account_read on public.commerce_catalogs for select to authenticated
+  using (account_id = public.current_account_id());
+create policy commerce_skus_account_read on public.commerce_skus for select to authenticated
+  using (exists (select 1 from public.commerce_catalogs c where c.id = catalog_id and c.account_id = public.current_account_id()));
+create policy commerce_import_batches_account_read on public.commerce_import_batches for select to authenticated
+  using (account_id = public.current_account_id());
+create policy commerce_import_rows_account_read on public.commerce_import_rows for select to authenticated
+  using (exists (select 1 from public.commerce_import_batches b where b.id = batch_id and b.account_id = public.current_account_id()));
+create policy commerce_inventory_snapshots_account_read on public.commerce_inventory_snapshots for select to authenticated
+  using (exists (
+    select 1 from public.commerce_skus s join public.commerce_catalogs c on c.id = s.catalog_id
+    where s.id = sku_id and c.account_id = public.current_account_id()
+  ));
+create policy commerce_recommendations_account_read on public.commerce_recommendations for select to authenticated
+  using (exists (
+    select 1 from public.commerce_skus s join public.commerce_catalogs c on c.id = s.catalog_id
+    where s.id = sku_id and c.account_id = public.current_account_id()
+  ));
+
+create or replace function public.confirm_commerce_import(p_batch_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_batch public.commerce_import_batches;
+  v_user_id uuid := auth.uid();
+  v_row public.commerce_import_rows;
+  v_applied integer := 0;
+begin
+  select * into v_batch from public.commerce_import_batches where id = p_batch_id for update;
+  if not found then raise exception using errcode = 'P0002', message = 'commerce import not found'; end if;
+  if not exists (
+    select 1 from public.users u
+    where u.id = v_user_id and u.account_id = v_batch.account_id and u.role = 'owner'
+  ) then
+    raise exception using errcode = '42501', message = 'owner required';
+  end if;
+  if v_batch.status <> 'staged' then
+    raise exception using errcode = '23514', message = 'commerce import is not staged';
+  end if;
+
+  for v_row in
+    select * from public.commerce_import_rows
+    where batch_id = v_batch.id and match_status in ('matched', 'confirmed') and jsonb_array_length(errors) = 0
+    order by row_number
+  loop
+    if not exists (select 1 from public.commerce_skus s where s.id = v_row.matched_sku_id and s.catalog_id = v_batch.catalog_id) then
+      raise exception using errcode = '42501', message = 'import row references a foreign SKU';
+    end if;
+    update public.commerce_skus s set
+      unit_cost_tiyin = coalesce(v_row.unit_cost_tiyin, s.unit_cost_tiyin),
+      commission_percent = coalesce(v_row.commission_percent, s.commission_percent),
+      fulfillment_tiyin = coalesce(v_row.fulfillment_tiyin, s.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(v_row.returns_reserve_percent, s.returns_reserve_percent),
+      lead_time_days = coalesce(v_row.lead_time_days, s.lead_time_days),
+      moq = coalesce(v_row.moq, s.moq),
+      safety_stock = coalesce(v_row.safety_stock, s.safety_stock),
+      min_margin_percent = coalesce(v_row.min_margin_percent, s.min_margin_percent),
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now(),
+      economics_updated_by = v_user_id
+    where s.id = v_row.matched_sku_id;
+    update public.commerce_import_rows set match_status = 'confirmed' where id = v_row.id;
+    v_applied := v_applied + 1;
+  end loop;
+
+  update public.commerce_import_batches
+  set status = 'confirmed', confirmed_at = now(), confirmed_by = v_user_id
+  where id = v_batch.id;
+  return jsonb_build_object('batch_id', v_batch.id, 'applied_rows', v_applied);
+end
+$$;
+
+revoke all on function public.confirm_commerce_import(uuid) from public, anon;
+grant execute on function public.confirm_commerce_import(uuid) to authenticated;
+
+create or replace function public.claim_commerce_sync_runs(p_limit integer default 20)
+returns setof public.commerce_sync_runs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  with due as (
+    select r.id
+    from public.commerce_sync_runs r
+    join public.commerce_catalogs c on c.id = r.catalog_id
+    join public.commerce_pilots p on p.account_id = c.account_id
+    where r.scheduled_for <= now()
+      and p.status = 'active'
+      and p.expires_at > now()
+      and c.status = 'active'
+      and (r.status = 'queued' or (r.status = 'running' and r.claimed_at < now() - interval '10 minutes'))
+    order by r.scheduled_for
+    limit least(greatest(p_limit, 1), 50)
+    for update of r skip locked
+  )
+  update public.commerce_sync_runs r
+  set status = 'running', claim_token = gen_random_uuid(), claimed_at = now(), error = null
+  from due
+  where r.id = due.id
+  returning r.*;
+end
+$$;
+
+revoke all on function public.claim_commerce_sync_runs(integer) from public, anon, authenticated;
+grant execute on function public.claim_commerce_sync_runs(integer) to service_role;
+
+-- ─── 20260805100000_commerce_alert_delivery.sql ──────────────────────────────────────────────
+alter table public.commerce_recommendations
+  add column if not exists alerted_at timestamptz,
+  add column if not exists digest_sent_at date;
+
+create index if not exists commerce_recommendations_critical_unsent_idx
+  on public.commerce_recommendations(created_at)
+  where severity = 'critical' and alerted_at is null and status = 'open';
+
+-- ─── 20260805110000_commerce_telegram_links.sql ──────────────────────────────────────────────
+-- Short-lived deep-link tokens bind an owner chat without exposing Telegram IDs in URLs.
+create table if not exists public.commerce_telegram_links (
+  token uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  expires_at timestamptz not null default (now() + interval '15 minutes'),
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.commerce_telegram_links enable row level security;
+revoke all on public.commerce_telegram_links from public, anon, authenticated;
+
+-- ─── 20260805120000_commerce_economics_autofill.sql ──────────────────────────────────────────
+-- Owner-triggered economics estimates. Every estimated value is provenance-tracked per
+-- field in commerce_skus.estimated_fields; recommendations computed from estimates are
+-- capped at 'warning' severity, so critical Telegram alerts only ever fire from
+-- owner-confirmed numbers. Estimates are never invented silently: only an explicit
+-- owner action writes them, and any manual edit of a field removes its estimate mark.
+alter table public.commerce_skus
+  add column if not exists estimated_fields jsonb not null default '[]'::jsonb
+  check (jsonb_typeof(estimated_fields) = 'array');
+
+create or replace function public.autofill_commerce_economics(p_catalog_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_account uuid;
+  v_run_id uuid;
+  v_cost integer := 0;
+  v_supply integer := 0;
+begin
+  select account_id into v_account from public.commerce_catalogs where id = p_catalog_id;
+  if v_account is null then
+    raise exception using errcode = 'P0002', message = 'commerce catalog not found';
+  end if;
+  if not exists (
+    select 1 from public.users u
+    where u.id = v_user_id and u.account_id = v_account and u.role = 'owner'
+  ) then
+    raise exception using errcode = '42501', message = 'owner required';
+  end if;
+
+  select id into v_run_id from public.commerce_sync_runs
+  where catalog_id = p_catalog_id and status = 'completed'
+  order by scheduled_for desc limit 1;
+  if v_run_id is null then
+    raise exception using errcode = '23514', message = 'no completed sync yet';
+  end if;
+
+  -- Cost estimate: 50% of the latest observed retail price. Only fills SKUs the owner
+  -- has never priced, and is always marked as an estimate.
+  with latest as (
+    select n.sku_id, n.price_tiyin
+    from public.commerce_inventory_snapshots n
+    where n.sync_run_id = v_run_id
+  )
+  update public.commerce_skus s
+  set unit_cost_tiyin = l.price_tiyin / 2,
+      estimated_fields = s.estimated_fields || '["unit_cost_tiyin"]'::jsonb,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now(),
+      economics_updated_by = v_user_id
+  from latest l
+  where s.id = l.sku_id and s.catalog_id = p_catalog_id
+    and s.unit_cost_tiyin is null and l.price_tiyin > 0
+    and not s.estimated_fields ? 'unit_cost_tiyin';
+  get diagnostics v_cost = row_count;
+
+  -- Supply estimate: 15-day lead time, zero safety stock. Enables the reorder planner;
+  -- reorder alerts stay non-critical until the owner confirms these numbers.
+  update public.commerce_skus s
+  set lead_time_days = coalesce(s.lead_time_days, 15),
+      safety_stock = coalesce(s.safety_stock, 0),
+      estimated_fields = s.estimated_fields
+        || case when s.lead_time_days is null then '["lead_time_days"]'::jsonb else '[]'::jsonb end
+        || case when s.safety_stock is null then '["safety_stock"]'::jsonb else '[]'::jsonb end,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now(),
+      economics_updated_by = v_user_id
+  where s.catalog_id = p_catalog_id and (s.lead_time_days is null or s.safety_stock is null);
+  get diagnostics v_supply = row_count;
+
+  return jsonb_build_object('cost_estimated', v_cost, 'supply_estimated', v_supply);
+end
+$$;
+
+revoke all on function public.autofill_commerce_economics(uuid) from public, anon;
+grant execute on function public.autofill_commerce_economics(uuid) to authenticated;
+
+-- ─── 20260805130000_commerce_notify_channel.sql ──────────────────────────────────────────────
+-- An account can have several connected Telegram bots. Storing only notify_chat_id left the
+-- sender ambiguous: a digest could go out through a bot the owner never started a chat with,
+-- which Telegram rejects, so nothing arrived and no delivery was recorded. Bind the chat to the
+-- exact channel that received /start, and record which bot issued each deep link.
+alter table public.business_profiles
+  add column if not exists notify_channel_id uuid references public.channels(id) on delete set null;
+
+alter table public.commerce_telegram_links
+  add column if not exists channel_id uuid references public.channels(id) on delete set null;
+
+-- ─── 20260805140000_commerce_economics_proposals.sql ─────────────────────────────────────────
+-- Telegram economics input is a proposal, never a write. The bot parses what the owner said,
+-- stores it here as 'pending', and only an explicit Yes press moves the numbers into
+-- commerce_skus. Voice transcription and LLM extraction can both be wrong, so nothing touches
+-- money until a human confirms the exact parsed values shown back to them.
+create table if not exists public.commerce_economics_proposals (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  chat_id text not null check (char_length(chat_id) between 1 and 40),
+  sku_id uuid references public.commerce_skus(id) on delete cascade,
+  candidates jsonb not null default '[]'::jsonb check (jsonb_typeof(candidates) = 'array'),
+  product_query text not null check (char_length(product_query) between 1 and 200),
+  source_text text not null check (char_length(source_text) between 1 and 2000),
+  unit_cost_tiyin bigint check (unit_cost_tiyin >= 0),
+  lead_time_days integer check (lead_time_days between 0 and 365),
+  safety_stock integer check (safety_stock >= 0),
+  min_margin_percent numeric(7,4) check (min_margin_percent between 0 and 99.9999),
+  status text not null default 'pending' check (status in ('pending', 'applied', 'rejected', 'expired')),
+  expires_at timestamptz not null default (now() + interval '1 hour'),
+  applied_at timestamptz,
+  created_at timestamptz not null default now(),
+  -- A proposal that changes nothing is not worth confirming.
+  check (unit_cost_tiyin is not null or lead_time_days is not null or safety_stock is not null or min_margin_percent is not null)
+);
+
+create index if not exists commerce_economics_proposals_chat_idx
+  on public.commerce_economics_proposals(chat_id, status, created_at desc);
+
+alter table public.commerce_economics_proposals enable row level security;
+revoke all on public.commerce_economics_proposals from public, anon, authenticated;
+grant select on public.commerce_economics_proposals to authenticated;
+create policy commerce_economics_proposals_account_read on public.commerce_economics_proposals for select to authenticated
+  using (account_id = public.current_account_id());
+
+-- Applying a proposal is the same contract as an owner edit in the UI: the confirmed fields stop
+-- being estimates and the revision advances so recommendations recompute against real numbers.
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+  if v_proposal.sku_id is null then
+    raise exception using errcode = '23514', message = 'proposal has no resolved SKU';
+  end if;
+  -- The SKU must still belong to the proposing account.
+  if not exists (
+    select 1 from public.commerce_skus s
+    join public.commerce_catalogs c on c.id = s.catalog_id
+    where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+  ) then
+    raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := v_applied || 'unit_cost_tiyin'; end if;
+  if v_proposal.lead_time_days is not null then v_applied := v_applied || 'lead_time_days'; end if;
+  if v_proposal.safety_stock is not null then v_applied := v_applied || 'safety_stock'; end if;
+  if v_proposal.min_margin_percent is not null then v_applied := v_applied || 'min_margin_percent'; end if;
+
+  select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+  from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+  where field <> all (v_applied);
+
+  update public.commerce_skus s set
+    unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+    lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+    safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+    min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+    estimated_fields = v_estimated,
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = v_proposal.sku_id;
+
+  update public.commerce_economics_proposals
+  set status = 'applied', applied_at = now() where id = v_proposal.id;
+
+  return jsonb_build_object('sku_id', v_proposal.sku_id, 'applied_fields', to_jsonb(v_applied));
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- ─── 20260805150000_fix_proposal_applied_fields.sql ──────────────────────────────────────────
+-- `v_applied || 'unit_cost_tiyin'` looks like an append but Postgres resolves the untyped literal
+-- against anyarray||anyarray and fails with "malformed array literal" at runtime. Function
+-- creation does not catch it, so every Yes press failed in production while the SQL looked fine.
+-- array_append is unambiguous.
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+  if v_proposal.sku_id is null then
+    raise exception using errcode = '23514', message = 'proposal has no resolved SKU';
+  end if;
+  if not exists (
+    select 1 from public.commerce_skus s
+    join public.commerce_catalogs c on c.id = s.catalog_id
+    where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+  ) then
+    raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := array_append(v_applied, 'unit_cost_tiyin'); end if;
+  if v_proposal.lead_time_days is not null then v_applied := array_append(v_applied, 'lead_time_days'); end if;
+  if v_proposal.safety_stock is not null then v_applied := array_append(v_applied, 'safety_stock'); end if;
+  if v_proposal.min_margin_percent is not null then v_applied := array_append(v_applied, 'min_margin_percent'); end if;
+
+  select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+  from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+  where field <> all (v_applied);
+
+  update public.commerce_skus s set
+    unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+    lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+    safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+    min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+    estimated_fields = v_estimated,
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = v_proposal.sku_id;
+
+  update public.commerce_economics_proposals
+  set status = 'applied', applied_at = now() where id = v_proposal.id;
+
+  return jsonb_build_object('sku_id', v_proposal.sku_id, 'applied_fields', to_jsonb(v_applied));
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- ─── 20260805160000_commerce_fee_proposals.sql ───────────────────────────────────────────────
+-- Uzum's seller API does not expose commission, fulfillment or the returns reserve, so
+-- Price Guard cannot compute a margin at all today. Those three numbers live in the seller
+-- cabinet, which the read-only browser extension can already observe. This lets an
+-- observation become a proposal — never a write — and lets one proposal target a whole
+-- catalogue, because a seller's fees are an account-level fact, not a per-SKU one.
+alter table public.commerce_economics_proposals
+  add column if not exists commission_percent numeric(7,4) check (commission_percent between 0 and 100),
+  add column if not exists fulfillment_tiyin bigint check (fulfillment_tiyin >= 0),
+  add column if not exists returns_reserve_percent numeric(7,4) check (returns_reserve_percent between 0 and 100),
+  add column if not exists catalog_id uuid references public.commerce_catalogs(id) on delete cascade,
+  add column if not exists source text not null default 'telegram'
+    check (source in ('telegram', 'browser', 'ui'));
+
+-- A browser or UI proposal has no chat behind it.
+alter table public.commerce_economics_proposals alter column channel_id drop not null;
+alter table public.commerce_economics_proposals alter column chat_id drop not null;
+
+alter table public.commerce_economics_proposals
+  drop constraint if exists commerce_economics_proposals_check;
+
+alter table public.commerce_economics_proposals
+  add constraint commerce_economics_proposals_target_check
+  check (sku_id is not null or catalog_id is not null);
+
+alter table public.commerce_economics_proposals
+  add constraint commerce_economics_proposals_value_check
+  check (
+    unit_cost_tiyin is not null or lead_time_days is not null or safety_stock is not null
+    or min_margin_percent is not null or commission_percent is not null
+    or fulfillment_tiyin is not null or returns_reserve_percent is not null
+  );
+
+-- A telegram proposal must still carry the chat it came from, or the callback handler
+-- could not verify who is allowed to press the button.
+alter table public.commerce_economics_proposals
+  add constraint commerce_economics_proposals_telegram_check
+  check (source <> 'telegram' or (channel_id is not null and chat_id is not null));
+
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+  v_touched integer := 0;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := array_append(v_applied, 'unit_cost_tiyin'); end if;
+  if v_proposal.lead_time_days is not null then v_applied := array_append(v_applied, 'lead_time_days'); end if;
+  if v_proposal.safety_stock is not null then v_applied := array_append(v_applied, 'safety_stock'); end if;
+  if v_proposal.min_margin_percent is not null then v_applied := array_append(v_applied, 'min_margin_percent'); end if;
+  if v_proposal.commission_percent is not null then v_applied := array_append(v_applied, 'commission_percent'); end if;
+  if v_proposal.fulfillment_tiyin is not null then v_applied := array_append(v_applied, 'fulfillment_tiyin'); end if;
+  if v_proposal.returns_reserve_percent is not null then v_applied := array_append(v_applied, 'returns_reserve_percent'); end if;
+
+  if v_proposal.sku_id is not null then
+    -- Single SKU: the owner named this product, so its values are overwritten.
+    if not exists (
+      select 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+      where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+    end if;
+
+    select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+    from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+    where field <> all (v_applied);
+
+    update public.commerce_skus s set
+      unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+      lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+      safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+      min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+      commission_percent = coalesce(v_proposal.commission_percent, s.commission_percent),
+      fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, s.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, s.returns_reserve_percent),
+      estimated_fields = v_estimated,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.id = v_proposal.sku_id;
+    v_touched := 1;
+  else
+    if not exists (
+      select 1 from public.commerce_catalogs c
+      where c.id = v_proposal.catalog_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'catalogue does not belong to this account';
+    end if;
+
+    -- Catalogue-wide fees only FILL BLANKS. A seller who already typed a real commission for
+    -- one product must not have it silently replaced by a number scraped off a fees page.
+    update public.commerce_skus s set
+      commission_percent = coalesce(s.commission_percent, v_proposal.commission_percent),
+      fulfillment_tiyin = coalesce(s.fulfillment_tiyin, v_proposal.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(s.returns_reserve_percent, v_proposal.returns_reserve_percent),
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.catalog_id = v_proposal.catalog_id
+      and (
+        (v_proposal.commission_percent is not null and s.commission_percent is null)
+        or (v_proposal.fulfillment_tiyin is not null and s.fulfillment_tiyin is null)
+        or (v_proposal.returns_reserve_percent is not null and s.returns_reserve_percent is null)
+      );
+    get diagnostics v_touched = row_count;
+  end if;
+
+  update public.commerce_economics_proposals
+  set status = 'applied', applied_at = now() where id = v_proposal.id;
+
+  return jsonb_build_object(
+    'sku_id', v_proposal.sku_id,
+    'catalog_id', v_proposal.catalog_id,
+    'applied_fields', to_jsonb(v_applied),
+    'skus_touched', v_touched
+  );
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- ─── 20260806150000_commerce_catalog_min_margin.sql ──────────────────────────────────────────
+-- Minimum margin is the last field Price Guard needs and the only one no source can supply:
+-- not the Uzum API, not the seller cabinet, not the browser extension. It is a decision about
+-- how much the seller is willing to earn. Setting it per SKU across a 113-product catalogue is
+-- busywork, so a catalogue-wide proposal covers it in one confirmation.
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+  v_touched integer := 0;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := array_append(v_applied, 'unit_cost_tiyin'); end if;
+  if v_proposal.lead_time_days is not null then v_applied := array_append(v_applied, 'lead_time_days'); end if;
+  if v_proposal.safety_stock is not null then v_applied := array_append(v_applied, 'safety_stock'); end if;
+  if v_proposal.min_margin_percent is not null then v_applied := array_append(v_applied, 'min_margin_percent'); end if;
+  if v_proposal.commission_percent is not null then v_applied := array_append(v_applied, 'commission_percent'); end if;
+  if v_proposal.fulfillment_tiyin is not null then v_applied := array_append(v_applied, 'fulfillment_tiyin'); end if;
+  if v_proposal.returns_reserve_percent is not null then v_applied := array_append(v_applied, 'returns_reserve_percent'); end if;
+
+  if v_proposal.sku_id is not null then
+    if not exists (
+      select 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+      where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+    end if;
+
+    select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+    from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+    where field <> all (v_applied);
+
+    update public.commerce_skus s set
+      unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+      lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+      safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+      min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+      commission_percent = coalesce(v_proposal.commission_percent, s.commission_percent),
+      fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, s.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, s.returns_reserve_percent),
+      estimated_fields = v_estimated,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.id = v_proposal.sku_id;
+    v_touched := 1;
+  else
+    if not exists (
+      select 1 from public.commerce_catalogs c
+      where c.id = v_proposal.catalog_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'catalogue does not belong to this account';
+    end if;
+
+    -- Catalogue-wide values only FILL BLANKS, minimum margin included. A seller who set 30% on
+    -- one product must not have it flattened to the catalogue default; a bulk convenience must
+    -- never quietly overwrite a deliberate per-product decision.
+    update public.commerce_skus s set
+      commission_percent = coalesce(s.commission_percent, v_proposal.commission_percent),
+      fulfillment_tiyin = coalesce(s.fulfillment_tiyin, v_proposal.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(s.returns_reserve_percent, v_proposal.returns_reserve_percent),
+      min_margin_percent = coalesce(s.min_margin_percent, v_proposal.min_margin_percent),
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.catalog_id = v_proposal.catalog_id
+      and (
+        (v_proposal.commission_percent is not null and s.commission_percent is null)
+        or (v_proposal.fulfillment_tiyin is not null and s.fulfillment_tiyin is null)
+        or (v_proposal.returns_reserve_percent is not null and s.returns_reserve_percent is null)
+        or (v_proposal.min_margin_percent is not null and s.min_margin_percent is null)
+      );
+    get diagnostics v_touched = row_count;
+  end if;
+
+  update public.commerce_economics_proposals
+  set status = 'applied', applied_at = now() where id = v_proposal.id;
+
+  return jsonb_build_object(
+    'sku_id', v_proposal.sku_id,
+    'catalog_id', v_proposal.catalog_id,
+    'applied_fields', to_jsonb(v_applied),
+    'skus_touched', v_touched
+  );
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- ─── 20260806160000_commerce_catalog_defaults.sql ────────────────────────────────────────────
+-- Economics defaults belong to the catalogue, not to a one-time bulk update of its products.
+--
+-- Until now a seller set a 20% margin, the catalogue grew, and every product added afterwards
+-- arrived with empty economics — silently dropping out of Price Guard with nothing to signal
+-- it. Filling the blanks again is a treadmill: it only ever covers what already exists.
+--
+-- The inheritance is a BEFORE INSERT trigger rather than logic in the sync worker, so it holds
+-- for every path that can create a SKU — the worker, a CSV import, or code not written yet.
+alter table public.commerce_catalogs
+  add column if not exists default_min_margin_percent numeric(7,4) check (default_min_margin_percent between 0 and 99.9999),
+  add column if not exists default_commission_percent numeric(7,4) check (default_commission_percent between 0 and 100),
+  add column if not exists default_returns_reserve_percent numeric(7,4) check (default_returns_reserve_percent between 0 and 100),
+  add column if not exists default_fulfillment_tiyin bigint check (default_fulfillment_tiyin >= 0),
+  add column if not exists default_lead_time_days integer check (default_lead_time_days between 0 and 365),
+  add column if not exists default_safety_stock integer check (default_safety_stock >= 0);
+
+-- Unit cost has no catalogue default on purpose: it is a fact about one product's supplier,
+-- and a shared guess would quietly poison every margin in the catalogue.
+
+create or replace function public.commerce_sku_inherit_defaults()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  d public.commerce_catalogs;
+begin
+  select * into d from public.commerce_catalogs where id = new.catalog_id;
+  if not found then return new; end if;
+
+  -- Only fills what the caller left null: an explicit value always wins over the default.
+  new.min_margin_percent := coalesce(new.min_margin_percent, d.default_min_margin_percent);
+  new.commission_percent := coalesce(new.commission_percent, d.default_commission_percent);
+  new.returns_reserve_percent := coalesce(new.returns_reserve_percent, d.default_returns_reserve_percent);
+  new.fulfillment_tiyin := coalesce(new.fulfillment_tiyin, d.default_fulfillment_tiyin);
+  new.lead_time_days := coalesce(new.lead_time_days, d.default_lead_time_days);
+  new.safety_stock := coalesce(new.safety_stock, d.default_safety_stock);
+  return new;
+end
+$$;
+
+drop trigger if exists commerce_skus_inherit_defaults on public.commerce_skus;
+create trigger commerce_skus_inherit_defaults
+before insert on public.commerce_skus
+for each row execute function public.commerce_sku_inherit_defaults();
+
+-- Applying a catalogue-wide proposal now does two things: it records the value as the
+-- catalogue's default so future products inherit it, and it fills the blanks that already
+-- exist. Without the first half the seller would have to repeat the action after every sync.
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+  v_touched integer := 0;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := array_append(v_applied, 'unit_cost_tiyin'); end if;
+  if v_proposal.lead_time_days is not null then v_applied := array_append(v_applied, 'lead_time_days'); end if;
+  if v_proposal.safety_stock is not null then v_applied := array_append(v_applied, 'safety_stock'); end if;
+  if v_proposal.min_margin_percent is not null then v_applied := array_append(v_applied, 'min_margin_percent'); end if;
+  if v_proposal.commission_percent is not null then v_applied := array_append(v_applied, 'commission_percent'); end if;
+  if v_proposal.fulfillment_tiyin is not null then v_applied := array_append(v_applied, 'fulfillment_tiyin'); end if;
+  if v_proposal.returns_reserve_percent is not null then v_applied := array_append(v_applied, 'returns_reserve_percent'); end if;
+
+  if v_proposal.sku_id is not null then
+    if not exists (
+      select 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+      where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+    end if;
+
+    select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+    from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+    where field <> all (v_applied);
+
+    update public.commerce_skus s set
+      unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+      lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+      safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+      min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+      commission_percent = coalesce(v_proposal.commission_percent, s.commission_percent),
+      fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, s.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, s.returns_reserve_percent),
+      estimated_fields = v_estimated,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.id = v_proposal.sku_id;
+    v_touched := 1;
+  else
+    if not exists (
+      select 1 from public.commerce_catalogs c
+      where c.id = v_proposal.catalog_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'catalogue does not belong to this account';
+    end if;
+
+    -- The value becomes the catalogue's standing default, so tomorrow's products inherit it.
+    update public.commerce_catalogs c set
+      default_min_margin_percent = coalesce(v_proposal.min_margin_percent, c.default_min_margin_percent),
+      default_commission_percent = coalesce(v_proposal.commission_percent, c.default_commission_percent),
+      default_returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, c.default_returns_reserve_percent),
+      default_fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, c.default_fulfillment_tiyin),
+      default_lead_time_days = coalesce(v_proposal.lead_time_days, c.default_lead_time_days),
+      default_safety_stock = coalesce(v_proposal.safety_stock, c.default_safety_stock)
+    where c.id = v_proposal.catalog_id;
+
+    -- And the products that already exist get their blanks filled. Deliberate per-SKU values
+    -- are never flattened by a catalogue-wide action.
+    update public.commerce_skus s set
+      commission_percent = coalesce(s.commission_percent, v_proposal.commission_percent),
+      fulfillment_tiyin = coalesce(s.fulfillment_tiyin, v_proposal.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(s.returns_reserve_percent, v_proposal.returns_reserve_percent),
+      min_margin_percent = coalesce(s.min_margin_percent, v_proposal.min_margin_percent),
+      lead_time_days = coalesce(s.lead_time_days, v_proposal.lead_time_days),
+      safety_stock = coalesce(s.safety_stock, v_proposal.safety_stock),
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.catalog_id = v_proposal.catalog_id
+      and (
+        (v_proposal.commission_percent is not null and s.commission_percent is null)
+        or (v_proposal.fulfillment_tiyin is not null and s.fulfillment_tiyin is null)
+        or (v_proposal.returns_reserve_percent is not null and s.returns_reserve_percent is null)
+        or (v_proposal.min_margin_percent is not null and s.min_margin_percent is null)
+        or (v_proposal.lead_time_days is not null and s.lead_time_days is null)
+        or (v_proposal.safety_stock is not null and s.safety_stock is null)
+      );
+    get diagnostics v_touched = row_count;
+  end if;
+
+  update public.commerce_economics_proposals
+  set status = 'applied', applied_at = now() where id = v_proposal.id;
+
+  return jsonb_build_object(
+    'sku_id', v_proposal.sku_id,
+    'catalog_id', v_proposal.catalog_id,
+    'applied_fields', to_jsonb(v_applied),
+    'skus_touched', v_touched
+  );
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- ─── 20260806170000_commerce_manual_sync.sql ─────────────────────────────────────────────────
+-- Manual "sync now" needs a memory, or a seller waiting for a shop to appear will hold the
+-- button down and hammer Uzum on their own key — the account that gets rate-limited is theirs,
+-- not ours. One timestamp per account is enough; the pilot row already exists per account.
+alter table public.commerce_pilots
+  add column if not exists last_manual_sync_at timestamptz;
+
+-- Claims the manual sync slot atomically. Two tabs pressing the button at the same instant
+-- must not both pass the check: the UPDATE's own WHERE clause is the lock.
+create or replace function public.claim_commerce_manual_sync(p_account uuid, p_cooldown_seconds integer default 600)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_pilot public.commerce_pilots;
+  v_claimed boolean := false;
+begin
+  select * into v_pilot from public.commerce_pilots where account_id = p_account;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'no_pilot');
+  end if;
+  if v_pilot.status <> 'active' or v_pilot.expires_at <= now() then
+    return jsonb_build_object('ok', false, 'reason', 'pilot_inactive');
+  end if;
+
+  update public.commerce_pilots
+  set last_manual_sync_at = now()
+  where account_id = p_account
+    and (last_manual_sync_at is null or last_manual_sync_at <= now() - make_interval(secs => p_cooldown_seconds));
+  get diagnostics v_claimed = row_count;
+
+  if not v_claimed then
+    return jsonb_build_object(
+      'ok', false,
+      'reason', 'cooldown',
+      'retry_after_seconds',
+      ceil(extract(epoch from (v_pilot.last_manual_sync_at + make_interval(secs => p_cooldown_seconds) - now())))
+    );
+  end if;
+
+  -- Give this account's failed runs another chance. Scoped to the caller's catalogues: a manual
+  -- retry must never reset another tenant's runs.
+  update public.commerce_sync_runs r
+  set status = 'queued', claim_token = null, claimed_at = null, completed_at = null, error = null
+  from public.commerce_catalogs c
+  where c.id = r.catalog_id
+    and c.account_id = p_account
+    and r.status = 'failed'
+    and r.scheduled_for > now() - interval '24 hours';
+
+  return jsonb_build_object('ok', true, 'requeued', (
+    select count(*) from public.commerce_sync_runs r2
+    join public.commerce_catalogs c2 on c2.id = r2.catalog_id
+    where c2.account_id = p_account and r2.status = 'queued'
+  ));
+end
+$$;
+
+revoke all on function public.claim_commerce_manual_sync(uuid, integer) from public, anon, authenticated;
+grant execute on function public.claim_commerce_manual_sync(uuid, integer) to service_role;
+
+-- ─── 20260806180000_commerce_uzum_facts.sql ──────────────────────────────────────────────────
+-- Uzum already returns the commission, the category and the physical dimensions of every SKU.
+-- The worker fetched them every four hours and threw them away, while the seller was asked to
+-- supply the same numbers by hand. These columns keep the facts, and api_fields records which
+-- values came from Uzum so a later sync may refresh them WITHOUT ever overwriting a number the
+-- owner typed or confirmed themselves.
+alter table public.commerce_skus
+  add column if not exists uzum_category text,
+  add column if not exists length_mm integer check (length_mm >= 0),
+  add column if not exists width_mm integer check (width_mm >= 0),
+  add column if not exists height_mm integer check (height_mm >= 0),
+  add column if not exists weight_g integer check (weight_g >= 0),
+  add column if not exists api_fields jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(api_fields) = 'array');
+
+comment on column public.commerce_skus.api_fields is
+  'Economics fields whose current value came from the Uzum API. A sync may refresh these; it must never touch a field the owner set.';
+
+-- Ownership of a value is three-way and the three are mutually exclusive per field:
+--   api_fields        - Uzum said so; refreshable by the worker
+--   estimated_fields  - Nemo guessed; cannot raise a critical alert
+--   neither           - the owner stated it; nothing may overwrite it
+create or replace function public.commerce_apply_uzum_facts(
+  p_sku_id uuid,
+  p_category text,
+  p_commission numeric,
+  p_fulfillment_tiyin bigint,
+  p_return_percent numeric,
+  p_length integer,
+  p_width integer,
+  p_height integer,
+  p_weight integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku public.commerce_skus;
+  v_api jsonb;
+  v_estimated jsonb;
+  v_owns_commission boolean;
+  v_owns_fulfillment boolean;
+  v_owns_returns boolean;
+begin
+  select * into v_sku from public.commerce_skus where id = p_sku_id;
+  if not found then return; end if;
+
+  v_api := coalesce(v_sku.api_fields, '[]'::jsonb);
+  v_estimated := coalesce(v_sku.estimated_fields, '[]'::jsonb);
+
+  -- "The owner owns it" means: it has a value that came from neither Uzum nor a Nemo estimate.
+  v_owns_commission := v_sku.commission_percent is not null
+    and not (v_api ? 'commission_percent') and not (v_estimated ? 'commission_percent');
+  v_owns_fulfillment := v_sku.fulfillment_tiyin is not null
+    and not (v_api ? 'fulfillment_tiyin') and not (v_estimated ? 'fulfillment_tiyin');
+  v_owns_returns := v_sku.returns_reserve_percent is not null
+    and not (v_api ? 'returns_reserve_percent') and not (v_estimated ? 'returns_reserve_percent');
+
+  update public.commerce_skus s set
+    uzum_category = coalesce(p_category, s.uzum_category),
+    length_mm = coalesce(p_length, s.length_mm),
+    width_mm = coalesce(p_width, s.width_mm),
+    height_mm = coalesce(p_height, s.height_mm),
+    weight_g = coalesce(p_weight, s.weight_g),
+    commission_percent = case when v_owns_commission or p_commission is null
+      then s.commission_percent else p_commission end,
+    fulfillment_tiyin = case when v_owns_fulfillment or p_fulfillment_tiyin is null
+      then s.fulfillment_tiyin else p_fulfillment_tiyin end,
+    -- The observed return rate is a fact, but it is history on possibly tiny volumes rather
+    -- than a policy reserve — so it lands as an ESTIMATE and can never raise a critical alert.
+    returns_reserve_percent = case when v_owns_returns or p_return_percent is null
+      then s.returns_reserve_percent else least(p_return_percent, 100) end,
+    api_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        v_api
+        || case when p_commission is not null and not v_owns_commission then '["commission_percent"]'::jsonb else '[]'::jsonb end
+        || case when p_fulfillment_tiyin is not null and not v_owns_fulfillment then '["fulfillment_tiyin"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    estimated_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        -- A value Uzum supplied is no longer a guess.
+        (select coalesce(jsonb_agg(e), '[]'::jsonb) from jsonb_array_elements_text(v_estimated) as e
+         where not (p_commission is not null and not v_owns_commission and e = 'commission_percent')
+           and not (p_fulfillment_tiyin is not null and not v_owns_fulfillment and e = 'fulfillment_tiyin'))
+        || case when p_return_percent is not null and not v_owns_returns then '["returns_reserve_percent"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = p_sku_id;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer) to service_role;
+
+-- ─── 20260806190000_commerce_uzum_facts_batch.sql ────────────────────────────────────────────
+-- One round trip per catalogue instead of one per SKU. The per-SKU version made 140 sequential
+-- calls for a single shop and blew the function's 150-second limit — correct logic, unusable
+-- shape. The ownership rules are unchanged; only the batching is.
+create or replace function public.commerce_apply_uzum_facts_batch(p_facts jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fact jsonb;
+  v_applied integer := 0;
+begin
+  if jsonb_typeof(p_facts) <> 'array' then
+    raise exception using errcode = '22023', message = 'facts must be a json array';
+  end if;
+
+  for v_fact in select value from jsonb_array_elements(p_facts) loop
+    perform public.commerce_apply_uzum_facts(
+      (v_fact->>'sku_id')::uuid,
+      v_fact->>'category',
+      (v_fact->>'commission')::numeric,
+      (v_fact->>'fulfillment_tiyin')::bigint,
+      (v_fact->>'return_percent')::numeric,
+      (v_fact->>'length')::integer,
+      (v_fact->>'width')::integer,
+      (v_fact->>'height')::integer,
+      (v_fact->>'weight')::integer
+    );
+    v_applied := v_applied + 1;
+  end loop;
+  return v_applied;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts_batch(jsonb) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts_batch(jsonb) to service_role;
+
+-- ─── 20260806200000_commerce_facts_skip_unchanged.sql ────────────────────────────────────────
+-- Every four hours Uzum sends back the same commission and the same dimensions, and the first
+-- version rewrote all of them anyway: 140 updates, 140 revision bumps, on data that had not
+-- moved. That pushed a single shop past the function's time limit.
+--
+-- A sync now touches only what actually changed. Steady state costs one comparison per SKU.
+create or replace function public.commerce_apply_uzum_facts(
+  p_sku_id uuid,
+  p_category text,
+  p_commission numeric,
+  p_fulfillment_tiyin bigint,
+  p_return_percent numeric,
+  p_length integer,
+  p_width integer,
+  p_height integer,
+  p_weight integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku public.commerce_skus;
+  v_api jsonb;
+  v_estimated jsonb;
+  v_owns_commission boolean;
+  v_owns_fulfillment boolean;
+  v_owns_returns boolean;
+  v_next_commission numeric;
+  v_next_fulfillment bigint;
+  v_next_returns numeric;
+begin
+  select * into v_sku from public.commerce_skus where id = p_sku_id;
+  if not found then return; end if;
+
+  v_api := coalesce(v_sku.api_fields, '[]'::jsonb);
+  v_estimated := coalesce(v_sku.estimated_fields, '[]'::jsonb);
+
+  -- "The owner owns it" means: a value that came from neither Uzum nor a Nemo estimate.
+  v_owns_commission := v_sku.commission_percent is not null
+    and not (v_api ? 'commission_percent') and not (v_estimated ? 'commission_percent');
+  v_owns_fulfillment := v_sku.fulfillment_tiyin is not null
+    and not (v_api ? 'fulfillment_tiyin') and not (v_estimated ? 'fulfillment_tiyin');
+  v_owns_returns := v_sku.returns_reserve_percent is not null
+    and not (v_api ? 'returns_reserve_percent') and not (v_estimated ? 'returns_reserve_percent');
+
+  v_next_commission := case when v_owns_commission or p_commission is null
+    then v_sku.commission_percent else p_commission end;
+  v_next_fulfillment := case when v_owns_fulfillment or p_fulfillment_tiyin is null
+    then v_sku.fulfillment_tiyin else p_fulfillment_tiyin end;
+  v_next_returns := case when v_owns_returns or p_return_percent is null
+    then v_sku.returns_reserve_percent else least(p_return_percent, 100) end;
+
+  -- Nothing moved: no write, no revision bump, no recomputation downstream.
+  if v_next_commission is not distinct from v_sku.commission_percent
+     and v_next_fulfillment is not distinct from v_sku.fulfillment_tiyin
+     and v_next_returns is not distinct from v_sku.returns_reserve_percent
+     and coalesce(p_category, v_sku.uzum_category) is not distinct from v_sku.uzum_category
+     and coalesce(p_length, v_sku.length_mm) is not distinct from v_sku.length_mm
+     and coalesce(p_width, v_sku.width_mm) is not distinct from v_sku.width_mm
+     and coalesce(p_height, v_sku.height_mm) is not distinct from v_sku.height_mm
+     and coalesce(p_weight, v_sku.weight_g) is not distinct from v_sku.weight_g
+  then
+    return;
+  end if;
+
+  update public.commerce_skus s set
+    uzum_category = coalesce(p_category, s.uzum_category),
+    length_mm = coalesce(p_length, s.length_mm),
+    width_mm = coalesce(p_width, s.width_mm),
+    height_mm = coalesce(p_height, s.height_mm),
+    weight_g = coalesce(p_weight, s.weight_g),
+    commission_percent = v_next_commission,
+    fulfillment_tiyin = v_next_fulfillment,
+    -- The observed return rate is a fact, but it is history on possibly tiny volumes rather
+    -- than a policy reserve — so it lands as an ESTIMATE and can never raise a critical alert.
+    returns_reserve_percent = v_next_returns,
+    api_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        v_api
+        || case when p_commission is not null and not v_owns_commission then '["commission_percent"]'::jsonb else '[]'::jsonb end
+        || case when p_fulfillment_tiyin is not null and not v_owns_fulfillment then '["fulfillment_tiyin"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    estimated_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        -- A value Uzum supplied is no longer a guess.
+        (select coalesce(jsonb_agg(e), '[]'::jsonb) from jsonb_array_elements_text(v_estimated) as e
+         where not (p_commission is not null and not v_owns_commission and e = 'commission_percent')
+           and not (p_fulfillment_tiyin is not null and not v_owns_fulfillment and e = 'fulfillment_tiyin'))
+        || case when p_return_percent is not null and not v_owns_returns then '["returns_reserve_percent"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = p_sku_id;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer) to service_role;
+
+-- ─── 20260806210000_commerce_returns_sample.sql ──────────────────────────────────────────────
+-- The return reserve used to be Uzum's `returnedPercentage` copied straight through. On this
+-- catalogue that produced 83% on a scarf (five returns against six lifetime sales) and turned 98
+-- of 140 SKUs into "loss-making" ones. The rate is now shrunk toward the category and the
+-- catalogue in _shared/returnsReserve.ts, and the sample it rests on is stored alongside it so
+-- the interface can say how much the number is worth.
+alter table public.commerce_skus
+  add column if not exists returns_sample_units integer;
+
+comment on column public.commerce_skus.returns_sample_units is
+  'Lifetime units sold behind returns_reserve_percent. Small samples mean the reserve is mostly borrowed from the category.';
+
+-- The signature gains p_return_sample_units, so the old one is dropped rather than overloaded:
+-- two functions differing only in arity would let a stale caller keep writing unshrunk rates.
+drop function if exists public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer);
+
+create function public.commerce_apply_uzum_facts(
+  p_sku_id uuid,
+  p_category text,
+  p_commission numeric,
+  p_fulfillment_tiyin bigint,
+  p_return_percent numeric,
+  p_return_sample_units integer,
+  p_length integer,
+  p_width integer,
+  p_height integer,
+  p_weight integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku public.commerce_skus;
+  v_api jsonb;
+  v_estimated jsonb;
+  v_owns_commission boolean;
+  v_owns_fulfillment boolean;
+  v_owns_returns boolean;
+  v_next_commission numeric;
+  v_next_fulfillment bigint;
+  v_next_returns numeric;
+  v_next_sample integer;
+begin
+  select * into v_sku from public.commerce_skus where id = p_sku_id;
+  if not found then return; end if;
+
+  v_api := coalesce(v_sku.api_fields, '[]'::jsonb);
+  v_estimated := coalesce(v_sku.estimated_fields, '[]'::jsonb);
+
+  -- "The owner owns it" means: a value that came from neither Uzum nor a Nemo estimate.
+  v_owns_commission := v_sku.commission_percent is not null
+    and not (v_api ? 'commission_percent') and not (v_estimated ? 'commission_percent');
+  v_owns_fulfillment := v_sku.fulfillment_tiyin is not null
+    and not (v_api ? 'fulfillment_tiyin') and not (v_estimated ? 'fulfillment_tiyin');
+  v_owns_returns := v_sku.returns_reserve_percent is not null
+    and not (v_api ? 'returns_reserve_percent') and not (v_estimated ? 'returns_reserve_percent');
+
+  v_next_commission := case when v_owns_commission or p_commission is null
+    then v_sku.commission_percent else p_commission end;
+  v_next_fulfillment := case when v_owns_fulfillment or p_fulfillment_tiyin is null
+    then v_sku.fulfillment_tiyin else p_fulfillment_tiyin end;
+  v_next_returns := case when v_owns_returns or p_return_percent is null
+    then v_sku.returns_reserve_percent else least(p_return_percent, 100) end;
+  -- The sample describes Uzum's own history, so it follows the reserve rather than the owner:
+  -- when the owner has set their own reserve, the sample behind it is theirs and stays untouched.
+  v_next_sample := case when v_owns_returns then v_sku.returns_sample_units
+    else coalesce(p_return_sample_units, v_sku.returns_sample_units) end;
+
+  -- Nothing moved: no write, no revision bump, no recomputation downstream.
+  if v_next_commission is not distinct from v_sku.commission_percent
+     and v_next_fulfillment is not distinct from v_sku.fulfillment_tiyin
+     and v_next_returns is not distinct from v_sku.returns_reserve_percent
+     and v_next_sample is not distinct from v_sku.returns_sample_units
+     and coalesce(p_category, v_sku.uzum_category) is not distinct from v_sku.uzum_category
+     and coalesce(p_length, v_sku.length_mm) is not distinct from v_sku.length_mm
+     and coalesce(p_width, v_sku.width_mm) is not distinct from v_sku.width_mm
+     and coalesce(p_height, v_sku.height_mm) is not distinct from v_sku.height_mm
+     and coalesce(p_weight, v_sku.weight_g) is not distinct from v_sku.weight_g
+  then
+    return;
+  end if;
+
+  update public.commerce_skus s set
+    uzum_category = coalesce(p_category, s.uzum_category),
+    length_mm = coalesce(p_length, s.length_mm),
+    width_mm = coalesce(p_width, s.width_mm),
+    height_mm = coalesce(p_height, s.height_mm),
+    weight_g = coalesce(p_weight, s.weight_g),
+    commission_percent = v_next_commission,
+    fulfillment_tiyin = v_next_fulfillment,
+    -- Still an ESTIMATE, and deliberately so. Shrinking the rate makes it usable; it does not
+    -- make it a policy the owner agreed to, so it can never raise a critical alert.
+    returns_reserve_percent = v_next_returns,
+    returns_sample_units = v_next_sample,
+    api_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        v_api
+        || case when p_commission is not null and not v_owns_commission then '["commission_percent"]'::jsonb else '[]'::jsonb end
+        || case when p_fulfillment_tiyin is not null and not v_owns_fulfillment then '["fulfillment_tiyin"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    estimated_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        -- A value Uzum supplied is no longer a guess.
+        (select coalesce(jsonb_agg(e), '[]'::jsonb) from jsonb_array_elements_text(v_estimated) as e
+         where not (p_commission is not null and not v_owns_commission and e = 'commission_percent')
+           and not (p_fulfillment_tiyin is not null and not v_owns_fulfillment and e = 'fulfillment_tiyin'))
+        || case when p_return_percent is not null and not v_owns_returns then '["returns_reserve_percent"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = p_sku_id;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer, integer) to service_role;
+
+create or replace function public.commerce_apply_uzum_facts_batch(p_facts jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fact jsonb;
+  v_applied integer := 0;
+begin
+  if jsonb_typeof(p_facts) <> 'array' then
+    raise exception using errcode = '22023', message = 'facts must be a json array';
+  end if;
+
+  for v_fact in select value from jsonb_array_elements(p_facts) loop
+    perform public.commerce_apply_uzum_facts(
+      (v_fact->>'sku_id')::uuid,
+      v_fact->>'category',
+      (v_fact->>'commission')::numeric,
+      (v_fact->>'fulfillment_tiyin')::bigint,
+      (v_fact->>'return_percent')::numeric,
+      (v_fact->>'return_sample_units')::integer,
+      (v_fact->>'length')::integer,
+      (v_fact->>'width')::integer,
+      (v_fact->>'height')::integer,
+      (v_fact->>'weight')::integer
+    );
+    v_applied := v_applied + 1;
+  end loop;
+  return v_applied;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts_batch(jsonb) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts_batch(jsonb) to service_role;
+
+-- Rates already stored came from the unshrunk percentage. They are wrong in a way no future sync
+-- would repair on its own: the skip-unchanged branch compares against them, so a corrected rate
+-- that happens to match would be treated as "nothing moved". Clearing them forces one honest
+-- rewrite on the next sync, and until then the SKU reports missing data rather than a bad number.
+update public.commerce_skus
+   set returns_reserve_percent = null,
+       economics_revision = economics_revision + 1,
+       economics_updated_at = now()
+ where estimated_fields @> '["returns_reserve_percent"]'
+   and returns_reserve_percent is not null;
+
+-- ─── 20260806220000_commerce_recommendations_resolved.sql ────────────────────────────────────
+-- An alert had no way to stop being true. `dismissed` means the owner said no, `accepted` means
+-- they acted, `expired` means it aged out — none of them fit "the margin recovered and Nemo no
+-- longer raises this". So a price_guard row from a run before the margin model was corrected sat
+-- open indefinitely, telling the owner to raise a price that no longer needed raising.
+alter table public.commerce_recommendations
+  drop constraint if exists commerce_recommendations_status_check;
+
+alter table public.commerce_recommendations
+  add constraint commerce_recommendations_status_check
+  check (status in ('open', 'dismissed', 'accepted', 'expired', 'resolved'));
+
+alter table public.commerce_recommendations
+  add column if not exists resolved_at timestamptz;
+
+comment on column public.commerce_recommendations.resolved_at is
+  'When a sync stopped raising this alert. Set by the worker, never by the owner — dismissed is the owner''s verb.';
+
+-- Everything currently open was computed by the old margin model, which charged a returned unit
+-- its full retail price. The next sync re-raises whatever is still true; leaving these open would
+-- keep the corrected SKUs under an alert they have already cleared.
+update public.commerce_recommendations
+   set status = 'resolved', resolved_at = now()
+ where status = 'open'
+   and kind = 'price_guard';
+
+-- ─── 20260806230000_browser_observation_total_length.sql ─────────────────────────────────────
+-- A snapshot that lost half its page still read as a complete one. The bridge already returns
+-- whether it truncated, but only to the extension, in the moment — nothing survived to the row an
+-- agent reads hours later. The tariff capture that started this is stored at exactly 8000
+-- characters with its last sentence cut in half, and nothing in the row says so.
+alter table public.browser_observations
+  add column if not exists total_length integer;
+
+comment on column public.browser_observations.total_length is
+  'Characters the page actually held. Greater than length(body_text) means this observation is partial.';
+
+-- ─── 20260806240000_commerce_listing_drafts.sql ──────────────────────────────────────────────
+-- Listing Agent: a product the owner describes, turned into a draft that already knows what it
+-- costs to sell.
+--
+-- THERE IS NO PUBLISHED STATUS, AND THERE MUST NOT BE ONE. The Uzum integration is read-only;
+-- Nemo cannot create a listing in the seller's cabinet and will not pretend it did. 'ready' means
+-- the owner approved the text and can paste it in themselves. A status the platform cannot
+-- honestly set is a status that eventually lies to whoever reads the row.
+create table if not exists public.commerce_listing_drafts (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  -- Which catalogue's economics the draft was priced against. Commission comes from categories
+  -- this catalogue already sells in, so the numbers are only meaningful next to it.
+  catalog_id uuid references public.commerce_catalogs(id) on delete set null,
+  source_text text not null check (char_length(source_text) between 1 and 4000),
+
+  title_ru text check (char_length(title_ru) <= 100),
+  title_uz text check (char_length(title_uz) <= 100),
+  description_ru text check (char_length(description_ru) <= 800),
+  description_uz text check (char_length(description_uz) <= 800),
+  -- [{name, value}] the owner actually stated, and the names of the ones they did not.
+  attributes jsonb not null default '[]'::jsonb check (jsonb_typeof(attributes) = 'array'),
+  unknown_attributes jsonb not null default '[]'::jsonb check (jsonb_typeof(unknown_attributes) = 'array'),
+
+  uzum_category text check (char_length(uzum_category) <= 160),
+  commission_percent numeric(7,4) check (commission_percent between 0 and 100),
+  returns_reserve_percent numeric(7,4) check (returns_reserve_percent between 0 and 100),
+  length_mm integer check (length_mm > 0),
+  width_mm integer check (width_mm > 0),
+  height_mm integer check (height_mm > 0),
+  weight_g integer check (weight_g > 0),
+  fulfillment_tiyin bigint check (fulfillment_tiyin >= 0),
+  unit_cost_tiyin bigint check (unit_cost_tiyin >= 0),
+  min_margin_percent numeric(7,4) check (min_margin_percent between 0 and 99.9999),
+  min_selling_price_tiyin bigint check (min_selling_price_tiyin >= 0),
+  -- What the owner still has to supply. Empty means the draft is fully grounded.
+  missing jsonb not null default '[]'::jsonb check (jsonb_typeof(missing) = 'array'),
+  -- The exact substrings every extracted number came from, so the owner can check the parse.
+  evidence jsonb not null default '[]'::jsonb check (jsonb_typeof(evidence) = 'array'),
+
+  status text not null default 'draft' check (status in ('draft', 'ready', 'discarded')),
+  created_by uuid references auth.users(id) on delete set null,
+  approved_by uuid references auth.users(id) on delete set null,
+  approved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- A draft may only be marked ready by someone, at some time, together.
+  check ((status = 'ready') = (approved_at is not null))
+);
+
+create index if not exists commerce_listing_drafts_account_idx
+  on public.commerce_listing_drafts(account_id, status, created_at desc);
+
+alter table public.commerce_listing_drafts enable row level security;
+revoke all on public.commerce_listing_drafts from public, anon, authenticated;
+grant select on public.commerce_listing_drafts to authenticated;
+
+-- Read-only to the tenant, like every other commerce table: writes go through commerce-control,
+-- which checks the owner role. Cross-tenant reads return zero rows rather than an error.
+create policy commerce_listing_drafts_account_read on public.commerce_listing_drafts for select to authenticated
+  using (account_id = public.current_account_id());
+
+-- ─── 20260806250000_commerce_uzum_purchase_price.sql ─────────────────────────────────────────
+-- Uzum states the purchase price on every completed sale. Nemo was guessing it at half of retail:
+-- on one boni that guess was 17 500 against a real 7 500, and that factor of 2.3 sat inside every
+-- margin, floor price and alert the product produced.
+--
+-- The ownership rule is the one commission already follows, and it is the whole point: a fact from
+-- Uzum replaces a Nemo ESTIMATE and never touches a number the owner stated themselves. An owner
+-- who typed their cost has said something Uzum does not know — a different supplier, a different
+-- batch — and a sync that overwrote it would silently discard the better number.
+alter table public.commerce_skus
+  add column if not exists unit_cost_source text
+  check (unit_cost_source is null or unit_cost_source in ('uzum_sale', 'owner', 'estimate'));
+
+comment on column public.commerce_skus.unit_cost_source is
+  'Where unit_cost_tiyin came from. uzum_sale = purchasePrice on a completed sale; owner = stated by the seller; estimate = Nemo placeholder.';
+
+drop function if exists public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, integer, integer, integer, integer);
+
+create function public.commerce_apply_uzum_facts(
+  p_sku_id uuid,
+  p_category text,
+  p_commission numeric,
+  p_fulfillment_tiyin bigint,
+  p_return_percent numeric,
+  p_return_sample_units integer,
+  p_unit_cost_tiyin bigint,
+  p_length integer,
+  p_width integer,
+  p_height integer,
+  p_weight integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku public.commerce_skus;
+  v_api jsonb;
+  v_estimated jsonb;
+  v_owns_commission boolean;
+  v_owns_fulfillment boolean;
+  v_owns_returns boolean;
+  v_owns_cost boolean;
+  v_next_commission numeric;
+  v_next_fulfillment bigint;
+  v_next_returns numeric;
+  v_next_sample integer;
+  v_next_cost bigint;
+  v_next_cost_source text;
+begin
+  select * into v_sku from public.commerce_skus where id = p_sku_id;
+  if not found then return; end if;
+
+  v_api := coalesce(v_sku.api_fields, '[]'::jsonb);
+  v_estimated := coalesce(v_sku.estimated_fields, '[]'::jsonb);
+
+  -- "The owner owns it" means: a value that came from neither Uzum nor a Nemo estimate.
+  v_owns_commission := v_sku.commission_percent is not null
+    and not (v_api ? 'commission_percent') and not (v_estimated ? 'commission_percent');
+  v_owns_fulfillment := v_sku.fulfillment_tiyin is not null
+    and not (v_api ? 'fulfillment_tiyin') and not (v_estimated ? 'fulfillment_tiyin');
+  v_owns_returns := v_sku.returns_reserve_percent is not null
+    and not (v_api ? 'returns_reserve_percent') and not (v_estimated ? 'returns_reserve_percent');
+  v_owns_cost := v_sku.unit_cost_tiyin is not null
+    and not (v_api ? 'unit_cost_tiyin') and not (v_estimated ? 'unit_cost_tiyin');
+
+  v_next_commission := case when v_owns_commission or p_commission is null
+    then v_sku.commission_percent else p_commission end;
+  v_next_fulfillment := case when v_owns_fulfillment or p_fulfillment_tiyin is null
+    then v_sku.fulfillment_tiyin else p_fulfillment_tiyin end;
+  v_next_returns := case when v_owns_returns or p_return_percent is null
+    then v_sku.returns_reserve_percent else least(p_return_percent, 100) end;
+  v_next_sample := case when v_owns_returns then v_sku.returns_sample_units
+    else coalesce(p_return_sample_units, v_sku.returns_sample_units) end;
+  v_next_cost := case when v_owns_cost or p_unit_cost_tiyin is null
+    then v_sku.unit_cost_tiyin else p_unit_cost_tiyin end;
+  v_next_cost_source := case
+    when v_owns_cost then 'owner'
+    when p_unit_cost_tiyin is not null then 'uzum_sale'
+    when v_sku.unit_cost_tiyin is not null and (v_estimated ? 'unit_cost_tiyin') then 'estimate'
+    else v_sku.unit_cost_source
+  end;
+
+  -- Nothing moved: no write, no revision bump, no recomputation downstream.
+  if v_next_commission is not distinct from v_sku.commission_percent
+     and v_next_fulfillment is not distinct from v_sku.fulfillment_tiyin
+     and v_next_returns is not distinct from v_sku.returns_reserve_percent
+     and v_next_sample is not distinct from v_sku.returns_sample_units
+     and v_next_cost is not distinct from v_sku.unit_cost_tiyin
+     and v_next_cost_source is not distinct from v_sku.unit_cost_source
+     and coalesce(p_category, v_sku.uzum_category) is not distinct from v_sku.uzum_category
+     and coalesce(p_length, v_sku.length_mm) is not distinct from v_sku.length_mm
+     and coalesce(p_width, v_sku.width_mm) is not distinct from v_sku.width_mm
+     and coalesce(p_height, v_sku.height_mm) is not distinct from v_sku.height_mm
+     and coalesce(p_weight, v_sku.weight_g) is not distinct from v_sku.weight_g
+  then
+    return;
+  end if;
+
+  update public.commerce_skus s set
+    uzum_category = coalesce(p_category, s.uzum_category),
+    length_mm = coalesce(p_length, s.length_mm),
+    width_mm = coalesce(p_width, s.width_mm),
+    height_mm = coalesce(p_height, s.height_mm),
+    weight_g = coalesce(p_weight, s.weight_g),
+    commission_percent = v_next_commission,
+    fulfillment_tiyin = v_next_fulfillment,
+    -- Still an ESTIMATE, and deliberately so. Shrinking the rate makes it usable; it does not
+    -- make it a policy the owner agreed to, so it can never raise a critical alert.
+    returns_reserve_percent = v_next_returns,
+    returns_sample_units = v_next_sample,
+    unit_cost_tiyin = v_next_cost,
+    unit_cost_source = v_next_cost_source,
+    api_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        v_api
+        || case when p_commission is not null and not v_owns_commission then '["commission_percent"]'::jsonb else '[]'::jsonb end
+        || case when p_fulfillment_tiyin is not null and not v_owns_fulfillment then '["fulfillment_tiyin"]'::jsonb else '[]'::jsonb end
+        -- A cost Uzum charged on a real sale is a fact, and it stops being an estimate the moment
+        -- it lands. That is what lets Price Guard raise a critical alert on this SKU at all.
+        || case when p_unit_cost_tiyin is not null and not v_owns_cost then '["unit_cost_tiyin"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    estimated_fields = (
+      select coalesce(jsonb_agg(distinct field), '[]'::jsonb) from jsonb_array_elements_text(
+        -- A value Uzum supplied is no longer a guess.
+        (select coalesce(jsonb_agg(e), '[]'::jsonb) from jsonb_array_elements_text(v_estimated) as e
+         where not (p_commission is not null and not v_owns_commission and e = 'commission_percent')
+           and not (p_fulfillment_tiyin is not null and not v_owns_fulfillment and e = 'fulfillment_tiyin')
+           and not (p_unit_cost_tiyin is not null and not v_owns_cost and e = 'unit_cost_tiyin'))
+        || case when p_return_percent is not null and not v_owns_returns then '["returns_reserve_percent"]'::jsonb else '[]'::jsonb end
+      ) as field
+    ),
+    economics_revision = s.economics_revision + 1,
+    economics_updated_at = now()
+  where s.id = p_sku_id;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, bigint, integer, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts(uuid, text, numeric, bigint, numeric, integer, bigint, integer, integer, integer, integer) to service_role;
+
+create or replace function public.commerce_apply_uzum_facts_batch(p_facts jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fact jsonb;
+  v_applied integer := 0;
+begin
+  if jsonb_typeof(p_facts) <> 'array' then
+    raise exception using errcode = '22023', message = 'facts must be a json array';
+  end if;
+
+  for v_fact in select value from jsonb_array_elements(p_facts) loop
+    perform public.commerce_apply_uzum_facts(
+      (v_fact->>'sku_id')::uuid,
+      v_fact->>'category',
+      (v_fact->>'commission')::numeric,
+      (v_fact->>'fulfillment_tiyin')::bigint,
+      (v_fact->>'return_percent')::numeric,
+      (v_fact->>'return_sample_units')::integer,
+      (v_fact->>'unit_cost_tiyin')::bigint,
+      (v_fact->>'length')::integer,
+      (v_fact->>'width')::integer,
+      (v_fact->>'height')::integer,
+      (v_fact->>'weight')::integer
+    );
+    v_applied := v_applied + 1;
+  end loop;
+  return v_applied;
+end
+$$;
+
+revoke all on function public.commerce_apply_uzum_facts_batch(jsonb) from public, anon, authenticated;
+grant execute on function public.commerce_apply_uzum_facts_batch(jsonb) to service_role;
+
+-- Backfill the label for costs already on file, so "where did this number come from" has an answer
+-- for every row and not only the ones a future sync happens to touch.
+update public.commerce_skus
+   set unit_cost_source = case when estimated_fields ? 'unit_cost_tiyin' then 'estimate' else 'owner' end
+ where unit_cost_tiyin is not null and unit_cost_source is null;
+
+-- ─── 20260806260000_commerce_cost_batch.sql ──────────────────────────────────────────────────
+-- A dictated batch is several proposals that must be confirmed as one thing. The owner said
+-- "бони 18000, шарф 22000, заколки 9000" in one breath and pressed one button; applying two of
+-- the three because the third raced would leave them believing all three landed.
+alter table public.commerce_economics_proposals
+  add column if not exists batch_key uuid;
+
+comment on column public.commerce_economics_proposals.batch_key is
+  'Groups proposals dictated in one message so a single confirmation applies all of them.';
+
+create index if not exists commerce_economics_proposals_batch_idx
+  on public.commerce_economics_proposals(batch_key, status) where batch_key is not null;
+
+-- Applies every pending proposal in a batch, and reports what actually moved.
+--
+-- Ownership is unchanged: this calls the same per-proposal function the single-item flow uses, so
+-- a confirmed cost lands exactly the way a dictated one does — as the owner's own number, which
+-- outranks anything a later sync reads from Uzum.
+create or replace function public.apply_commerce_cost_batch(p_batch_key uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal record;
+  v_applied integer := 0;
+  v_skipped integer := 0;
+  v_result jsonb;
+begin
+  if p_batch_key is null then
+    raise exception using errcode = '22023', message = 'batch key is required';
+  end if;
+
+  -- Ordered and locked so two presses of the same button cannot both apply it. The second press
+  -- finds nothing pending and reports zero, which is the truth.
+  for v_proposal in
+    select id from public.commerce_economics_proposals
+     where batch_key = p_batch_key and status = 'pending' and expires_at > now()
+     order by created_at
+     for update skip locked
+  loop
+    v_result := public.apply_commerce_economics_proposal(v_proposal.id);
+    if coalesce(jsonb_array_length(v_result->'applied_fields'), 0) > 0 then
+      v_applied := v_applied + 1;
+    else
+      v_skipped := v_skipped + 1;
+    end if;
+  end loop;
+
+  -- Anything left pending in this batch expired between the card and the press. Marked, so it
+  -- cannot be applied later by a stale button.
+  update public.commerce_economics_proposals
+     set status = 'expired'
+   where batch_key = p_batch_key and status = 'pending';
+
+  return jsonb_build_object('applied', v_applied, 'skipped', v_skipped);
+end
+$$;
+
+revoke all on function public.apply_commerce_cost_batch(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_cost_batch(uuid) to service_role;
+
+-- ─── 20260806270000_commerce_owner_value_outranks_uzum.sql ───────────────────────────────────
+-- Two things the confirmation path got wrong, both about provenance.
+--
+-- 1. A confirmed value was removed from estimated_fields but LEFT IN api_fields. The Uzum sync
+--    reads ownership as "present in neither list", so for any SKU whose cost Uzum had supplied,
+--    the next sync would overwrite the number the owner had just dictated. The owner knows
+--    something Uzum does not — a different supplier, a different batch — and their word has to
+--    outrank a reading, not lose to it four hours later.
+--
+-- 2. unit_cost_source was never set here, so a cost the owner dictated kept the label 'estimate'.
+--    The column exists to answer "where did this number come from"; a label that says the wrong
+--    thing is worse than no label, because it is believed.
+create or replace function public.apply_commerce_economics_proposal(p_proposal_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_proposal public.commerce_economics_proposals;
+  v_applied text[] := '{}';
+  v_estimated jsonb;
+  v_api jsonb;
+  v_touched integer := 0;
+begin
+  select * into v_proposal from public.commerce_economics_proposals
+  where id = p_proposal_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'proposal not found';
+  end if;
+  if v_proposal.status <> 'pending' then
+    raise exception using errcode = '23514', message = 'proposal is not pending';
+  end if;
+  if v_proposal.expires_at <= now() then
+    update public.commerce_economics_proposals set status = 'expired' where id = v_proposal.id;
+    raise exception using errcode = '23514', message = 'proposal expired';
+  end if;
+
+  if v_proposal.unit_cost_tiyin is not null then v_applied := array_append(v_applied, 'unit_cost_tiyin'); end if;
+  if v_proposal.lead_time_days is not null then v_applied := array_append(v_applied, 'lead_time_days'); end if;
+  if v_proposal.safety_stock is not null then v_applied := array_append(v_applied, 'safety_stock'); end if;
+  if v_proposal.min_margin_percent is not null then v_applied := array_append(v_applied, 'min_margin_percent'); end if;
+  if v_proposal.commission_percent is not null then v_applied := array_append(v_applied, 'commission_percent'); end if;
+  if v_proposal.fulfillment_tiyin is not null then v_applied := array_append(v_applied, 'fulfillment_tiyin'); end if;
+  if v_proposal.returns_reserve_percent is not null then v_applied := array_append(v_applied, 'returns_reserve_percent'); end if;
+
+  if v_proposal.sku_id is not null then
+    if not exists (
+      select 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+      where s.id = v_proposal.sku_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'SKU does not belong to this account';
+    end if;
+
+    select coalesce(jsonb_agg(field), '[]'::jsonb) into v_estimated
+    from jsonb_array_elements_text((select estimated_fields from public.commerce_skus where id = v_proposal.sku_id)) as field
+    where field <> all (v_applied);
+
+    -- Out of BOTH lists. A field in neither is owned by the owner, and that is the only state a
+    -- later sync will not touch.
+    select coalesce(jsonb_agg(field), '[]'::jsonb) into v_api
+    from jsonb_array_elements_text((select coalesce(api_fields, '[]'::jsonb) from public.commerce_skus where id = v_proposal.sku_id)) as field
+    where field <> all (v_applied);
+
+    update public.commerce_skus s set
+      unit_cost_tiyin = coalesce(v_proposal.unit_cost_tiyin, s.unit_cost_tiyin),
+      unit_cost_source = case when v_proposal.unit_cost_tiyin is not null then 'owner' else s.unit_cost_source end,
+      lead_time_days = coalesce(v_proposal.lead_time_days, s.lead_time_days),
+      safety_stock = coalesce(v_proposal.safety_stock, s.safety_stock),
+      min_margin_percent = coalesce(v_proposal.min_margin_percent, s.min_margin_percent),
+      commission_percent = coalesce(v_proposal.commission_percent, s.commission_percent),
+      fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, s.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, s.returns_reserve_percent),
+      estimated_fields = v_estimated,
+      api_fields = v_api,
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.id = v_proposal.sku_id;
+    v_touched := 1;
+  else
+    if not exists (
+      select 1 from public.commerce_catalogs c
+      where c.id = v_proposal.catalog_id and c.account_id = v_proposal.account_id
+    ) then
+      raise exception using errcode = '42501', message = 'catalogue does not belong to this account';
+    end if;
+
+    -- The value becomes the catalogue's standing default, so tomorrow's products inherit it.
+    update public.commerce_catalogs c set
+      default_min_margin_percent = coalesce(v_proposal.min_margin_percent, c.default_min_margin_percent),
+      default_commission_percent = coalesce(v_proposal.commission_percent, c.default_commission_percent),
+      default_returns_reserve_percent = coalesce(v_proposal.returns_reserve_percent, c.default_returns_reserve_percent),
+      default_fulfillment_tiyin = coalesce(v_proposal.fulfillment_tiyin, c.default_fulfillment_tiyin),
+      default_lead_time_days = coalesce(v_proposal.lead_time_days, c.default_lead_time_days),
+      default_safety_stock = coalesce(v_proposal.safety_stock, c.default_safety_stock)
+    where c.id = v_proposal.catalog_id;
+
+    -- And the products that already exist get their blanks filled. Deliberate per-SKU values
+    -- are never flattened by a catalogue-wide action.
+    update public.commerce_skus s set
+      commission_percent = coalesce(s.commission_percent, v_proposal.commission_percent),
+      fulfillment_tiyin = coalesce(s.fulfillment_tiyin, v_proposal.fulfillment_tiyin),
+      returns_reserve_percent = coalesce(s.returns_reserve_percent, v_proposal.returns_reserve_percent),
+      min_margin_percent = coalesce(s.min_margin_percent, v_proposal.min_margin_percent),
+      lead_time_days = coalesce(s.lead_time_days, v_proposal.lead_time_days),
+      safety_stock = coalesce(s.safety_stock, v_proposal.safety_stock),
+      economics_revision = s.economics_revision + 1,
+      economics_updated_at = now()
+    where s.catalog_id = v_proposal.catalog_id
+      and (
+        (v_proposal.commission_percent is not null and s.commission_percent is null)
+        or (v_proposal.fulfillment_tiyin is not null and s.fulfillment_tiyin is null)
+        or (v_proposal.returns_reserve_percent is not null and s.returns_reserve_percent is null)
+        or (v_proposal.min_margin_percent is not null and s.min_margin_percent is null)
+        or (v_proposal.lead_time_days is not null and s.lead_time_days is null)
+        or (v_proposal.safety_stock is not null and s.safety_stock is null)
+      );
+    get diagnostics v_touched = row_count;
+  end if;
+
+  update public.commerce_economics_proposals
+     set status = 'applied', applied_at = now()
+   where id = v_proposal.id;
+
+  return jsonb_build_object('applied_fields', to_jsonb(v_applied), 'skus_touched', v_touched);
+end
+$$;
+
+revoke all on function public.apply_commerce_economics_proposal(uuid) from public, anon, authenticated;
+grant execute on function public.apply_commerce_economics_proposal(uuid) to service_role;
+
+-- Repair the rows already confirmed under the old function: a cost in neither list is the owner's,
+-- and it was labelled an estimate.
+update public.commerce_skus
+   set unit_cost_source = 'owner'
+ where unit_cost_tiyin is not null
+   and not (coalesce(estimated_fields, '[]'::jsonb) ? 'unit_cost_tiyin')
+   and not (coalesce(api_fields, '[]'::jsonb) ? 'unit_cost_tiyin')
+   and unit_cost_source is distinct from 'owner';
+
+-- ─── 20260806280000_commerce_stockout.sql ────────────────────────────────────────────────────
+-- The reorder planner answers "when will this run out". It needs a week of history to know the
+-- velocity, and until then it says nothing at all — while 94 of this seller's 140 SKUs are already
+-- at zero. Two thirds of the catalogue is not sellable today, and no amount of history is needed
+-- to see it: the stock came from Uzum this morning.
+--
+-- So a third kind of finding, which costs nothing to compute and is true from the first sync.
+alter table public.commerce_recommendations
+  drop constraint if exists commerce_recommendations_kind_check;
+
+alter table public.commerce_recommendations
+  add constraint commerce_recommendations_kind_check
+  check (kind in ('reorder', 'price_guard', 'missing_data', 'stockout'));
+
+comment on constraint commerce_recommendations_kind_check on public.commerce_recommendations is
+  'stockout: the SKU is at zero stock now. Independent of sales history, unlike reorder.';
+
+-- ─── 20260807190000_commerce_freshness_watchdog.sql ──────────────────────────────────────────
+-- A watchdog that lives inside the thing it watches is not a watchdog.
+--
+-- Every commerce finding is produced by the sync. If the Uzum key expires or the API changes shape,
+-- no new finding appears — and the digest, which sends only findings it has not sent today, finds
+-- nothing to send and stays quiet. The seller does not get an empty report that looks wrong; they
+-- get no report at all, which looks exactly like a calm week. A silent failure that presents as
+-- good news is the worst shape a failure can take, and it is the one shape this system had.
+--
+-- So freshness is read at delivery time, from the delivery path, which runs whether or not the
+-- sync does.
+alter table public.commerce_catalogs
+  add column if not exists stale_alerted_at timestamptz;
+
+comment on column public.commerce_catalogs.stale_alerted_at is
+  'When the owner was told this catalogue stopped updating. Cleared the moment data returns, so a '
+  'second outage alerts again while one continuous outage alerts once.';
+
+-- max(observed_at) rather than last_synced_at. The two disagree in exactly the case that matters:
+-- a sync that reaches Uzum, is answered with an empty list, and completes having written nothing
+-- stamps last_synced_at and looks healthy forever. Snapshots are the data; a sync run is only an
+-- attempt to fetch it.
+create index if not exists commerce_inventory_snapshots_sku_observed_idx
+  on public.commerce_inventory_snapshots(sku_id, observed_at desc);
+
+-- One round trip for every pilot catalogue. Deliberately not security definer: under the service
+-- role this sees everything the digest needs, and under a signed-in owner the underlying RLS
+-- scopes it to their own catalogues without this function having to re-implement that check.
+create or replace function public.commerce_catalog_freshness(p_account_ids uuid[])
+returns table (
+  catalog_id uuid,
+  owner_account_id uuid,
+  catalog_name text,
+  connected_at timestamptz,
+  last_synced_at timestamptz,
+  last_observed_at timestamptz,
+  last_sync_error text,
+  stale_alerted_at timestamptz
+)
+language sql
+stable
+set search_path = ''
+as $$
+  select
+    c.id,
+    c.account_id,
+    c.name,
+    c.created_at,
+    c.last_synced_at,
+    (select max(s.observed_at)
+       from public.commerce_inventory_snapshots s
+       join public.commerce_skus k on k.id = s.sku_id
+      where k.catalog_id = c.id),
+    c.last_sync_error,
+    c.stale_alerted_at
+  from public.commerce_catalogs c
+  where c.account_id = any(p_account_ids)
+    and c.status = 'active'
+  order by c.created_at, c.id
+$$;
+
+comment on function public.commerce_catalog_freshness(uuid[]) is
+  'Per-catalogue freshness for the silence watchdog: when data last actually arrived, not when a '
+  'sync last claimed to run.';
+
+-- ─── 20260807200000_org_memory.sql ───────────────────────────────────────────────────────────
+-- Общая память организации: то, что компания выяснила, работая.
+--
+-- Документы, которые загрузил человек, уже раздаются команде через match_knowledge_team. Они
+-- истинны по определению — их принёс владелец. Здесь другое: утверждения, которые вывели агенты.
+-- Вывод регулярно ошибается, поэтому у него обязаны быть происхождение, счёт свидетельств, срок
+-- годности и исход. Без них ошибка становится неотличима от факта уже на следующем прогоне.
+--
+-- Конструкция и разбор ревью: ORG_MEMORY_DESIGN_RU.md (ревизия 2).
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Во что организация верит
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+create table if not exists public.org_claims (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null default public.current_account_id()
+                  references public.accounts(id) on delete cascade,
+
+  -- Читаемое отдельно от контекста, в котором родилось. «Клиент платит после демо» — да.
+  -- «Он согласился» — нет: через месяц непонятно, кто и на что.
+  statement     text not null check (char_length(statement) between 8 and 600),
+  kind          text not null check (kind in ('fact', 'preference', 'constraint', 'lesson')),
+
+  -- Свободный ключ вида 'client:uuid', 'channel:telegram'. Ядро не знает, что такое клиент —
+  -- только что это ключ. Доменная нейтральность держится на этом.
+  subject       text not null check (char_length(subject) between 1 and 120),
+  subject_key   text not null check (char_length(subject_key) between 1 and 120),
+
+  -- Старшинство. Слово владельца перебивает вывод агента — тот же принцип, что в Commerce,
+  -- где значение владельца старше значения Uzum.
+  source        text not null check (source in ('owner', 'agent', 'tool', 'outcome')),
+  source_detail jsonb not null default '{}'::jsonb
+                  check (jsonb_typeof(source_detail) = 'object'),
+  run_ref       uuid,
+
+  -- Минимальная привилегия ВНУТРИ аккаунта. Изоляция арендаторов — не то же самое: факт,
+  -- выведенный при работе с одним клиентом, не обязан быть виден агенту, занятому другим.
+  audience      text not null default 'account'
+                  check (audience in ('account', 'department', 'agent', 'owner_only')),
+  audience_ref  uuid,
+
+  -- УВЕРЕННОСТЬ КАК СЧЁТ СВИДЕТЕЛЬСТВ. Колонки для присвоения нет вовсе — это и есть защита
+  -- от самоубеждения: агент физически не может поднять себе уверенность, ему нечего записать.
+  -- Beta(1,1) на старте даёт 0.5, что здесь означает незнание, а не «пятьдесят на пятьдесят».
+  evidence_for     integer not null default 0 check (evidence_for >= 0),
+  evidence_against integer not null default 0 check (evidence_against >= 0),
+  confidence    numeric(4,3) generated always as (
+                  round((1 + evidence_for)::numeric / (2 + evidence_for + evidence_against), 3)
+                ) stored,
+
+  valid_from    timestamptz not null default now(),
+  valid_until   timestamptz,
+
+  status        text not null default 'active'
+                  check (status in ('active', 'retired', 'disputed')),
+  supersedes    uuid,
+
+  embedding       public.vector(384),
+  embedding_model text not null default 'gte-small',
+
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+
+  -- Опора для составных внешних ключей: межаккаунтная ссылка становится невозможной физически,
+  -- а не по договорённости.
+  unique (account_id, id),
+  constraint org_claims_supersedes_same_account
+    foreign key (account_id, supersedes) references public.org_claims (account_id, id)
+    on delete set null,
+  -- Сужение круга чтения без указания, до кого именно, — это не сужение.
+  constraint org_claims_audience_ref_present check (
+    (audience in ('account', 'owner_only') and audience_ref is null)
+    or (audience in ('department', 'agent') and audience_ref is not null)
+  )
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Что организация сделала
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+create table if not exists public.org_decisions (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null default public.current_account_id()
+                 references public.accounts(id) on delete cascade,
+
+  -- Ссылка на существующий леджер, не новый источник истины. Аудит, не авторизация.
+  source       text not null check (source in ('approval', 'recommendation', 'run', 'manual')),
+  source_id    uuid,
+  summary      text not null check (char_length(summary) between 4 and 400),
+
+  -- Измеримое ожидание. Проверяется схемой, а не договорённостью: предсказание без метрики,
+  -- оператора и значения — пожелание, а из пожеланий не учатся.
+  expected     jsonb not null,
+  horizon_at   timestamptz not null,
+
+  -- Версия политики на момент решения. evolve-agent меняет промпты автоматически (autoMode),
+  -- и исход, измеренный через две недели, может относиться к другому агенту.
+  policy_ref   jsonb not null default '{}'::jsonb check (jsonb_typeof(policy_ref) = 'object'),
+
+  outcome      text not null default 'pending'
+                 check (outcome in ('pending', 'confirmed', 'refuted', 'unmeasurable')),
+  observed     jsonb,
+  resolved_at  timestamptz,
+
+  created_at   timestamptz not null default now(),
+
+  unique (account_id, id),
+  constraint org_decisions_horizon_after_creation check (horizon_at > created_at),
+  constraint org_decisions_expected_measurable check (
+    jsonb_typeof(expected) = 'object'
+    and jsonb_typeof(expected -> 'metric') = 'string'
+    and (expected ->> 'op') in ('>=', '>', '<=', '<', '==', '!=')
+    and expected ? 'value'
+  ),
+  constraint org_decisions_resolved_consistent check (
+    (outcome = 'pending' and resolved_at is null)
+    or (outcome <> 'pending' and resolved_at is not null)
+  )
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- На каких убеждениях решение стояло
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Массив uuid[] был бы дешевле и неверен: ни поэлементного внешнего ключа, ни привязки к
+-- арендатору, ни метаданных присвоения заслуги. Чужой claim_id вставился бы молча.
+create table if not exists public.org_decision_claims (
+  account_id   uuid not null,
+  decision_id  uuid not null,
+  claim_id     uuid not null,
+
+  -- Присвоение заслуги. Пять убеждений и один сработавший текст: плюс всем пятерым — это не
+  -- калибровка, а порча памяти. Автоматически двигается только primary, и только одиночный.
+  role         text not null default 'context'
+                 check (role in ('primary', 'supporting', 'context')),
+  weight       numeric(4,3) not null default 1.000 check (weight between 0 and 1),
+
+  -- Чем было убеждение НА МОМЕНТ решения. Иначе исход применится к переписанному смыслу.
+  confidence_at_decision numeric(4,3) not null check (confidence_at_decision between 0 and 1),
+  statement_hash         text not null check (char_length(statement_hash) between 8 and 128),
+
+  created_at   timestamptz not null default now(),
+
+  primary key (account_id, decision_id, claim_id),
+  foreign key (account_id, decision_id) references public.org_decisions (account_id, id) on delete cascade,
+  foreign key (account_id, claim_id)    references public.org_claims    (account_id, id) on delete cascade
+);
+
+-- Ровно одна главная гипотеза на решение. Без этого автоматическое обучение выключено —
+-- и это правильное поведение по умолчанию, а не ограничение.
+create unique index if not exists org_decision_claims_one_primary_idx
+  on public.org_decision_claims (account_id, decision_id) where role = 'primary';
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Идемпотентность извлечения
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- persist_worker_research_run завершает прогон атомарно, и после неё прогон терминален.
+-- Извлекать кандидатов до транзакции — двойная запись при повторе; после — потеря при падении;
+-- внутри — лишний вызов модели в критической секции под лизом. Значит, выходной ящик.
+create table if not exists public.org_memory_outbox (
+  id           uuid primary key default gen_random_uuid(),
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  run_ref      uuid not null,
+  event_type   text not null check (event_type in ('extract_claims', 'resolve_outcome')),
+  payload      jsonb not null default '{}'::jsonb check (jsonb_typeof(payload) = 'object'),
+  status       text not null default 'pending'
+                 check (status in ('pending', 'processing', 'done', 'failed')),
+  attempts     integer not null default 0 check (attempts >= 0),
+  claimed_at   timestamptz,
+  processed_at timestamptz,
+  last_error   text,
+  created_at   timestamptz not null default now(),
+  -- Вся идемпотентность держится на этой строке.
+  unique (account_id, run_ref, event_type)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Индексы
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Намеренно БЕЗ индекса HNSW по embedding. Он плохо дружит с предфильтром по аккаунту и теряет
+-- полноту, а «отбор первым» в SQL не гарантирует порядок исполнения. На сотнях утверждений
+-- точная сортировка по уже суженному множеству дешевле. Замер до выбора стратегии, а не после.
+create index if not exists org_claims_recall_idx
+  on public.org_claims (account_id, kind, subject_key) where status = 'active';
+create index if not exists org_claims_run_idx
+  on public.org_claims (account_id, run_ref) where run_ref is not null;
+create index if not exists org_decisions_due_idx
+  on public.org_decisions (account_id, horizon_at) where outcome = 'pending';
+create index if not exists org_outbox_due_idx
+  on public.org_memory_outbox (status, created_at) where status = 'pending';
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Изоляция
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+alter table public.org_claims          enable row level security;
+alter table public.org_decisions       enable row level security;
+alter table public.org_decision_claims enable row level security;
+alter table public.org_memory_outbox   enable row level security;
+
+-- Владелец ВИДИТ, во что система верит. Неисправляемая память хуже отсутствующей, а исправить
+-- можно только то, что видно.
+drop policy if exists org_claims_read on public.org_claims;
+create policy org_claims_read on public.org_claims for select
+  using (account_id = public.current_account_id());
+
+drop policy if exists org_decisions_read on public.org_decisions;
+create policy org_decisions_read on public.org_decisions for select
+  using (account_id = public.current_account_id());
+
+drop policy if exists org_decision_claims_read on public.org_decision_claims;
+create policy org_decision_claims_read on public.org_decision_claims for select
+  using (account_id = public.current_account_id());
+
+-- Но НЕ пишет напрямую: source='owner' нельзя подделать задним числом, а счётчики свидетельств
+-- нельзя выкрутить. Образец — approval_requests.
+revoke insert, update, delete on public.org_claims          from anon, authenticated;
+revoke insert, update, delete on public.org_decisions       from anon, authenticated;
+revoke insert, update, delete on public.org_decision_claims from anon, authenticated;
+revoke all                    on public.org_memory_outbox   from anon, authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- updated_at
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+create or replace function public.org_claims_touch()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists org_claims_touch_trg on public.org_claims;
+create trigger org_claims_touch_trg before update on public.org_claims
+  for each row execute function public.org_claims_touch();
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Поиск
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Принимает kind и subject_key, в отличие от первой редакции конструкции: без них маршрутизация
+-- по фазам нереализуема, а фильтрация top-k после выборки молча теряет релевантное.
+--
+-- p_account_id здесь — УТВЕРЖДЕНИЕ, а не граница доступа: security definer и service role
+-- обходят RLS. Границу ставит вызывающий; для воркера — org_claims_recall_for_run ниже.
+create or replace function public.match_org_claims(
+  p_account_id    uuid,
+  p_query         public.vector(384),
+  p_kinds         text[] default null,
+  p_subject_key   text default null,
+  p_agent_id      uuid default null,
+  p_department_id uuid default null,
+  p_k             int default 8
+)
+returns table (
+  id uuid, statement text, kind text, subject text, source text,
+  confidence numeric, evidence_for int, evidence_against int, similarity double precision
+)
+language sql stable security definer set search_path = ''
+as $$
+  select c.id, c.statement, c.kind, c.subject, c.source,
+         c.confidence, c.evidence_for, c.evidence_against,
+         -- Оператор назван схемой явно: при search_path = '' он иначе не резолвится, а ронять
+         -- пустой путь ради оператора значит менять границу безопасности ради синтаксиса.
+         1 - (c.embedding operator(public.<=>) p_query)
+    from public.org_claims c
+   where c.account_id = p_account_id
+     and c.status = 'active'
+     and c.embedding is not null
+     and (c.valid_until is null or c.valid_until > now())
+     and (p_kinds is null or c.kind = any(p_kinds))
+     and (p_subject_key is null or c.subject_key = p_subject_key)
+     -- owner_only не попадает агентам ни при каких параметрах.
+     and (
+       c.audience = 'account'
+       or (c.audience = 'agent' and c.audience_ref = p_agent_id)
+       or (c.audience = 'department' and c.audience_ref = p_department_id)
+     )
+   order by c.embedding operator(public.<=>) p_query
+   limit greatest(1, least(p_k, 20))
+$$;
+
+-- Безопасный вход для воркера: аккаунт ВЫВОДИТСЯ из захваченного чекпоинта, а не принимается
+-- рядом с ним. Личность прогона и аккаунт как два независимых параметра — это приглашение
+-- к подмене одного из них.
+create or replace function public.org_claims_recall_for_run(
+  p_checkpoint_id uuid,
+  p_claim_token   uuid,
+  p_query         public.vector(384),
+  p_kinds         text[] default null,
+  p_subject_key   text default null,
+  p_k             int default 8
+)
+returns table (
+  id uuid, statement text, kind text, subject text, source text,
+  confidence numeric, evidence_for int, evidence_against int, similarity double precision
+)
+language plpgsql stable security definer set search_path = ''
+as $$
+declare
+  v_account uuid;
+begin
+  select r.account_id into v_account
+    from public.autonomous_run_checkpoints r
+   where r.id = p_checkpoint_id and r.claim_token = p_claim_token and r.status = 'running';
+  if v_account is null then
+    raise exception using errcode = '42501', message = 'worker claim lost';
+  end if;
+  return query select * from public.match_org_claims(v_account, p_query, p_kinds, p_subject_key, null, null, p_k);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Запись
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Целостность живёт здесь; семантика (дедуп по эмбеддингу, отсев императивов) — в orgMemory.ts,
+-- где её можно протестировать вне Deno.
+--
+-- Возвращает, что произошло: 'inserted' | 'reinforced' | 'refused_owner_conflict' | 'disputed'.
+create or replace function public.org_claim_record(
+  p_account_id    uuid,
+  p_statement     text,
+  p_kind          text,
+  p_subject       text,
+  p_subject_key   text,
+  p_source        text,
+  p_source_detail jsonb default '{}'::jsonb,
+  p_run_ref       uuid default null,
+  p_audience      text default 'account',
+  p_audience_ref  uuid default null,
+  p_embedding     public.vector(384) default null,
+  p_conflicts     uuid[] default '{}'
+)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_id uuid;
+  v_owner_conflict int;
+  v_agent_conflict int;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'account is required';
+  end if;
+
+  -- Конфликтующие утверждения ищет вызывающий (это семантика), но проверяет их принадлежность
+  -- аккаунту база: подсунутый чужой id не должен ни на что повлиять.
+  select count(*) into v_owner_conflict
+    from public.org_claims c
+   where c.id = any(p_conflicts) and c.account_id = p_account_id
+     and c.status = 'active' and c.source = 'owner';
+
+  -- Владелец старше. Агент не переписывает то, что сказал человек.
+  if v_owner_conflict > 0 and p_source <> 'owner' then
+    return jsonb_build_object('result', 'refused_owner_conflict', 'conflicts', v_owner_conflict);
+  end if;
+
+  insert into public.org_claims (
+    account_id, statement, kind, subject, subject_key, source, source_detail,
+    run_ref, audience, audience_ref, embedding
+  ) values (
+    p_account_id, p_statement, p_kind, p_subject, p_subject_key, p_source,
+    coalesce(p_source_detail, '{}'::jsonb), p_run_ref,
+    coalesce(p_audience, 'account'), p_audience_ref, p_embedding
+  )
+  returning id into v_id;
+
+  -- Два несовместимых вывода агентов не разрешаются молча в пользу нового. Система сообщает,
+  -- что верит в два противоречащих утверждения, и отдаёт выбор владельцу.
+  select count(*) into v_agent_conflict
+    from public.org_claims c
+   where c.id = any(p_conflicts) and c.account_id = p_account_id and c.status = 'active';
+
+  if v_agent_conflict > 0 then
+    update public.org_claims set status = 'disputed'
+     where account_id = p_account_id and (id = any(p_conflicts) or id = v_id);
+    return jsonb_build_object('result', 'disputed', 'id', v_id, 'with', v_agent_conflict);
+  end if;
+
+  return jsonb_build_object('result', 'inserted', 'id', v_id);
+end;
+$$;
+
+-- Владелец снимает неверное утверждение. Авторизация по членству в аккаунте: сегодня в каждом
+-- аккаунте ровно один пользователь, поэтому «член» и есть владелец. Когда появятся команды,
+-- сюда понадобится роль — отдельным решением, а не молчаливым расширением этой проверки.
+create or replace function public.org_claim_retire(p_claim_id uuid, p_reason text default null)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_account uuid := public.current_account_id();
+  v_updated int;
+begin
+  if v_account is null then
+    raise exception using errcode = '42501', message = 'not authenticated';
+  end if;
+  update public.org_claims
+     set status = 'retired',
+         source_detail = source_detail || jsonb_build_object('retired_reason', coalesce(p_reason, ''), 'retired_by', 'owner')
+   where id = p_claim_id and account_id = v_account and status <> 'retired';
+  get diagnostics v_updated = row_count;
+  return jsonb_build_object('retired', v_updated);
+end;
+$$;
+
+-- Отзыв целого прогона. Прогон оказался мусорным — все порождённые им убеждения снимаются
+-- одним запросом. Без этого плохой прогон отравляет память навсегда.
+create or replace function public.org_claims_retract_run(p_account_id uuid, p_run_ref uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare v_updated int;
+begin
+  update public.org_claims set status = 'retired'
+   where account_id = p_account_id and run_ref = p_run_ref and status <> 'retired';
+  get diagnostics v_updated = row_count;
+  return jsonb_build_object('retired', v_updated);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Исход
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Идемпотентно по построению: переход pending → решённое и начисление свидетельства происходят
+-- в одном операторе. Повтор cron не начислит дважды, потому что второй раз строка уже не pending.
+--
+-- Свидетельство получает ТОЛЬКО одиночная главная гипотеза. Решение, где primary не назначен или
+-- их несколько, остаётся зарегистрированным, но необучающим — и это честнее, чем раздать плюс
+-- всем связанным убеждениям и назвать это калибровкой.
+create or replace function public.org_decision_resolve(
+  p_decision_id uuid,
+  p_outcome     text,
+  p_observed    jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_account uuid;
+  v_primary uuid;
+  v_primaries int;
+begin
+  if p_outcome not in ('confirmed', 'refuted', 'unmeasurable') then
+    raise exception using errcode = '22023', message = 'outcome must be confirmed, refuted or unmeasurable';
+  end if;
+
+  update public.org_decisions
+     set outcome = p_outcome, observed = coalesce(p_observed, '{}'::jsonb), resolved_at = now()
+   where id = p_decision_id and outcome = 'pending'
+  returning account_id into v_account;
+
+  if v_account is null then
+    return jsonb_build_object('applied', false, 'reason', 'already_resolved_or_missing');
+  end if;
+
+  select count(*), min(claim_id) into v_primaries, v_primary
+    from public.org_decision_claims
+   where account_id = v_account and decision_id = p_decision_id and role = 'primary';
+
+  if p_outcome = 'unmeasurable' or v_primaries <> 1 then
+    return jsonb_build_object('applied', true, 'learned', false,
+      'reason', case when p_outcome = 'unmeasurable' then 'unmeasurable' else 'no_single_primary' end);
+  end if;
+
+  update public.org_claims
+     set evidence_for     = evidence_for     + case when p_outcome = 'confirmed' then 1 else 0 end,
+         evidence_against = evidence_against + case when p_outcome = 'refuted'   then 1 else 0 end
+   where id = v_primary and account_id = v_account;
+
+  -- Снятие — не по среднему, а по накопленным свидетельствам: пять неудач подряд против одного
+  -- слабого коррелированного наблюдения не должны весить одинаково.
+  update public.org_claims
+     set status = 'retired'
+   where id = v_primary and account_id = v_account and status = 'active'
+     and evidence_against >= 5 and confidence < 0.300;
+
+  return jsonb_build_object('applied', true, 'learned', true, 'claim_id', v_primary);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Права
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+revoke all on function public.match_org_claims(uuid, public.vector, text[], text, uuid, uuid, int) from public, anon, authenticated;
+grant execute on function public.match_org_claims(uuid, public.vector, text[], text, uuid, uuid, int) to service_role;
+
+revoke all on function public.org_claims_recall_for_run(uuid, uuid, public.vector, text[], text, int) from public, anon, authenticated;
+grant execute on function public.org_claims_recall_for_run(uuid, uuid, public.vector, text[], text, int) to service_role;
+
+revoke all on function public.org_claim_record(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public.vector, uuid[]) from public, anon, authenticated;
+grant execute on function public.org_claim_record(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public.vector, uuid[]) to service_role;
+
+revoke all on function public.org_claims_retract_run(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.org_claims_retract_run(uuid, uuid) to service_role;
+
+revoke all on function public.org_decision_resolve(uuid, text, jsonb) from public, anon, authenticated;
+grant execute on function public.org_decision_resolve(uuid, text, jsonb) to service_role;
+
+-- Единственная функция, доступная владельцу напрямую: он должен уметь опровергнуть то,
+-- во что система верит, не проходя через агента.
+revoke all on function public.org_claim_retire(uuid, text) from public, anon;
+grant execute on function public.org_claim_retire(uuid, text) to authenticated, service_role;
+
+comment on table public.org_claims is
+  'Что организация вывела, работая. В отличие от knowledge_* — опровержимо, поэтому несёт '
+  'происхождение, счёт свидетельств и срок годности.';
+comment on column public.org_claims.confidence is
+  'Вычисляемая из свидетельств. Присвоить нельзя — колонки для этого нет, и это защита от '
+  'самоубеждения, а не удобство.';
+comment on table public.org_decision_claims is
+  'Нить обучения: без неё известно, что ошиблись, но не какое убеждение подвело.';
+
+-- ─── 20260807210000_org_memory_wiring.sql ────────────────────────────────────────────────────
+-- Подключение памяти: транзакционный выходной ящик.
+--
+-- persist_worker_research_run завершает прогон одной транзакцией и после неё прогон терминален.
+-- Извлекать кандидатов в память до неё — двойная запись при повторе; после — потеря при падении,
+-- потому что возвращаться уже некуда; внутри — лишний вызов модели в критической секции под лизом,
+-- где он задерживает выдачу отчёта ради необязательного обучения.
+--
+-- Поэтому здесь появляется только строка задания, в той же транзакции, что и результат. Забрать
+-- её и позвать модель — работа отдельного повторяемого воркера.
+create or replace function public.persist_worker_research_run(
+  p_worker_run_id uuid, p_claim_token uuid, p_account_id uuid, p_task text,
+  p_status text, p_department_id uuid, p_run_ref uuid, p_report text,
+  p_sources jsonb, p_steps jsonb, p_model text, p_tokens bigint, p_cost numeric
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare persisted_id uuid;
+begin
+  perform 1 from public.autonomous_run_checkpoints
+  where id = p_worker_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token
+  for update;
+  if not found then raise exception 'worker claim lost'; end if;
+  insert into public.research_runs(account_id, task, status, kind, department_id, run_ref, report, sources, steps, model, tokens, cost)
+  values(p_account_id, p_task, p_status, 'team_run', p_department_id, p_run_ref, p_report, p_sources, p_steps, p_model, p_tokens, p_cost)
+  returning id into persisted_id;
+  update public.autonomous_run_checkpoints
+  set state = state || jsonb_build_object(
+        'result', p_report,
+        'resultId', persisted_id,
+        'escalatedCount', (select count(*) from jsonb_array_elements(p_steps) step where coalesce((step->'review'->>'needs_human_review')::boolean, false))
+      ),
+      phase = 'synth', transition = 'synth', status = 'completed',
+      specialist_cursor = jsonb_array_length(p_steps), review_cursor = jsonb_array_length(p_steps),
+      claim_token = null, claimed_at = null, last_error = null,
+      next_attempt_at = now(), updated_at = now()
+  where id = p_worker_run_id and claim_token = p_claim_token and status = 'running';
+  if not found then raise exception 'worker claim lost'; end if;
+
+  -- Вся идемпотентность держится на уникальности (account_id, run_ref, event_type): повторное
+  -- завершение того же прогона не создаёт второго задания, и do nothing здесь — не небрежность,
+  -- а само правило. Провал этой вставки не должен отменять уже посчитанный отчёт: обучение
+  -- необязательно, отчёт обязателен.
+  begin
+    insert into public.org_memory_outbox (account_id, run_ref, event_type, payload)
+    values (p_account_id, p_run_ref, 'extract_claims',
+            jsonb_build_object('research_run_id', persisted_id, 'checkpoint_id', p_worker_run_id))
+    on conflict (account_id, run_ref, event_type) do nothing;
+  exception when others then
+    null;
+  end;
+
+  return persisted_id;
+end
+$$;
+
+revoke all on function public.persist_worker_research_run(uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb,jsonb,text,bigint,numeric) from public, anon, authenticated;
+grant execute on function public.persist_worker_research_run(uuid,uuid,uuid,text,text,uuid,uuid,text,jsonb,jsonb,text,bigint,numeric) to service_role;
+
+-- Забрать задание с лизом. skip locked, потому что два воркера не должны драться за одну строку,
+-- а тот, кто опоздал, обязан взять следующую, а не ждать.
+create or replace function public.org_memory_outbox_claim(p_limit int default 3, p_lease_seconds int default 300)
+returns setof public.org_memory_outbox
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.org_memory_outbox o
+     set status = 'processing', claimed_at = now(), attempts = o.attempts + 1
+   where o.id in (
+     select c.id from public.org_memory_outbox c
+      where c.status = 'pending'
+         -- Брошенное задание возвращается в работу: воркер мог умереть, не отчитавшись.
+         or (c.status = 'processing' and c.claimed_at < now() - make_interval(secs => p_lease_seconds))
+      order by c.created_at
+      limit greatest(1, least(p_limit, 20))
+      for update skip locked
+   )
+  returning o.*;
+$$;
+
+create or replace function public.org_memory_outbox_finish(p_id uuid, p_status text, p_error text default null)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.org_memory_outbox
+     set status = case when p_status in ('done', 'failed') then p_status else 'failed' end,
+         processed_at = now(),
+         last_error = left(p_error, 500)
+   where id = p_id;
+$$;
+
+revoke all on function public.org_memory_outbox_claim(int, int) from public, anon, authenticated;
+grant execute on function public.org_memory_outbox_claim(int, int) to service_role;
+revoke all on function public.org_memory_outbox_finish(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.org_memory_outbox_finish(uuid, text, text) to service_role;
+
+comment on function public.org_memory_outbox_claim(int, int) is
+  'Лизует задания извлечения памяти. Обучение отделено от прогона, чтобы падение обучения не '
+  'стоило отчёта, а падение прогона не стоило обучения.';
+
+-- ─── 20260807220000_org_memory_health.sql ────────────────────────────────────────────────────
+-- Отличить «памяти пока нет» от «память сломалась и молчит».
+--
+-- Отзыв утверждений деградирует мягко: не смог — вернул пустой список, прогон пошёл дальше. Это
+-- верное поведение (прогон без памяти делает то, что делал вчера; упавший не делает ничего) и
+-- оно же беззвучное. Пустой ответ выглядит одинаково в двух совершенно разных случаях: память
+-- работает и пуста, или Supabase.ai недоступен и она не заработает никогда.
+--
+-- Ровно такой отказ мы вчера ловили в Commerce: тишина, читающаяся как спокойствие.
+--
+-- Ключевое наблюдение, на котором стоит вся конструкция: 'empty' — это УСПЕХ машинерии. Если
+-- embedText отработал и запрос вернул ноль строк, путь жив. Сломано — это когда провалы есть,
+-- а успехов нет ни одного.
+create table if not exists public.org_memory_health (
+  account_id  uuid not null references public.accounts(id) on delete cascade,
+  day         date not null default (now() at time zone 'UTC')::date,
+
+  -- Отзыв вернул утверждения.
+  recalls_ok        integer not null default 0 check (recalls_ok >= 0),
+  -- Отзыв отработал и не нашёл ничего. Не отказ: доказательство, что путь цел.
+  recalls_empty     integer not null default 0 check (recalls_empty >= 0),
+  -- Supabase.ai не отдал вектор. Тот самый случай, ради которого таблица и заведена.
+  embed_failed      integer not null default 0 check (embed_failed >= 0),
+  -- Вектор получен, но запрос к базе не прошёл.
+  query_failed      integer not null default 0 check (query_failed >= 0),
+
+  last_error     text,
+  last_failed_at timestamptz,
+  updated_at     timestamptz not null default now(),
+
+  primary key (account_id, day)
+);
+
+alter table public.org_memory_health enable row level security;
+
+drop policy if exists org_memory_health_read on public.org_memory_health;
+create policy org_memory_health_read on public.org_memory_health for select
+  using (account_id = public.current_account_id());
+
+revoke insert, update, delete on public.org_memory_health from anon, authenticated;
+
+create index if not exists org_memory_health_recent_idx
+  on public.org_memory_health (day desc, account_id);
+
+-- Один upsert на попытку отзыва. Дёшево: строка на аккаунт в сутки, и в режиме воркера отзыв
+-- вообще один на прогон — остальные фазы работают от снимка.
+create or replace function public.org_memory_health_record(
+  p_account_id uuid,
+  p_outcome    text,
+  p_error      text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_account_id is null or p_outcome not in ('ok', 'empty', 'embed_failed', 'query_failed') then
+    return;
+  end if;
+  insert into public.org_memory_health as h (
+    account_id, day, recalls_ok, recalls_empty, embed_failed, query_failed, last_error, last_failed_at
+  ) values (
+    p_account_id, (now() at time zone 'UTC')::date,
+    case when p_outcome = 'ok' then 1 else 0 end,
+    case when p_outcome = 'empty' then 1 else 0 end,
+    case when p_outcome = 'embed_failed' then 1 else 0 end,
+    case when p_outcome = 'query_failed' then 1 else 0 end,
+    case when p_outcome like '%failed' then left(p_error, 300) end,
+    case when p_outcome like '%failed' then now() end
+  )
+  on conflict (account_id, day) do update set
+    recalls_ok     = h.recalls_ok     + excluded.recalls_ok,
+    recalls_empty  = h.recalls_empty  + excluded.recalls_empty,
+    embed_failed   = h.embed_failed   + excluded.embed_failed,
+    query_failed   = h.query_failed   + excluded.query_failed,
+    -- Последняя ошибка не затирается успехом: она нужна, чтобы объяснить утренний провал вечером.
+    last_error     = coalesce(excluded.last_error, h.last_error),
+    last_failed_at = coalesce(excluded.last_failed_at, h.last_failed_at),
+    updated_at     = now();
+end;
+$$;
+
+-- Сводка за окно, для сторожа. Считает по всем аккаунтам: недоступность Supabase.ai — отказ
+-- платформы, а не одного арендатора, и увидеть его надо по первому же аккаунту, а не по всем.
+create or replace function public.org_memory_health_window(p_days int default 2)
+returns table (
+  attempts bigint, successes bigint, empties bigint,
+  embed_failures bigint, query_failures bigint,
+  accounts_affected bigint, last_error text, last_failed_at timestamptz
+)
+language sql stable security definer set search_path = ''
+as $$
+  select
+    coalesce(sum(h.recalls_ok + h.recalls_empty + h.embed_failed + h.query_failed), 0),
+    coalesce(sum(h.recalls_ok), 0),
+    coalesce(sum(h.recalls_empty), 0),
+    coalesce(sum(h.embed_failed), 0),
+    coalesce(sum(h.query_failed), 0),
+    count(*) filter (where h.embed_failed + h.query_failed > 0),
+    (array_agg(h.last_error order by h.last_failed_at desc nulls last))[1],
+    max(h.last_failed_at)
+  from public.org_memory_health h
+  where h.day >= ((now() at time zone 'UTC')::date - greatest(1, least(p_days, 30)));
+$$;
+
+revoke all on function public.org_memory_health_record(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.org_memory_health_record(uuid, text, text) to service_role;
+revoke all on function public.org_memory_health_window(int) from public, anon, authenticated;
+grant execute on function public.org_memory_health_window(int) to service_role;
+
+comment on column public.org_memory_health.recalls_empty is
+  'Отзыв отработал и ничего не нашёл. Это успех машинерии, а не отказ: именно он отличает пустую '
+  'память от сломанной.';
+
+-- ─── 20260807230000_org_claim_ttl.sql ────────────────────────────────────────────────────────
+-- Срок годности утверждения.
+--
+-- Первый живой прогон извлёк из отчёта «за последние 7 дней ни один товар не был продан» и
+-- положил это в память навсегда. Утверждение было истинно неделю — и то по ошибке: в тот день
+-- продажи читались нулём из-за бага, который мы починили позже. Вечное убеждение, выведенное из
+-- моментального снимка, читается следующим прогоном как установленный факт и становится
+-- основанием плана. Схема умела valid_until с самого начала; заполнять его было некому.
+--
+-- Опорное правило живёт в orgMemory.ts, где его можно протестировать: наблюдения стареют,
+-- правила — нет. Здесь только возможность записать срок.
+
+-- Снимаем старую сигнатуру целиком, а не добавляем параметр со значением по умолчанию: две
+-- перегрузки с одинаковым префиксом аргументов — это вызов, который однажды уйдёт не туда.
+drop function if exists public.org_claim_record(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public.vector, uuid[]);
+
+create or replace function public.org_claim_record(
+  p_account_id    uuid,
+  p_statement     text,
+  p_kind          text,
+  p_subject       text,
+  p_subject_key   text,
+  p_source        text,
+  p_source_detail jsonb default '{}'::jsonb,
+  p_run_ref       uuid default null,
+  p_audience      text default 'account',
+  p_audience_ref  uuid default null,
+  p_embedding     public.vector(384) default null,
+  p_conflicts     uuid[] default '{}',
+  p_valid_until   timestamptz default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+  v_owner_conflict int;
+  v_agent_conflict int;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'account is required';
+  end if;
+
+  -- Конфликтующие утверждения ищет вызывающий (это семантика), но проверяет их принадлежность
+  -- аккаунту база: подсунутый чужой id не должен ни на что повлиять.
+  select count(*) into v_owner_conflict
+    from public.org_claims c
+   where c.id = any(p_conflicts) and c.account_id = p_account_id
+     and c.status = 'active' and c.source = 'owner';
+
+  -- Владелец старше. Агент не переписывает то, что сказал человек.
+  if v_owner_conflict > 0 and p_source <> 'owner' then
+    return jsonb_build_object('result', 'refused_owner_conflict', 'conflicts', v_owner_conflict);
+  end if;
+
+  insert into public.org_claims (
+    account_id, statement, kind, subject, subject_key, source, source_detail,
+    run_ref, audience, audience_ref, embedding, valid_until
+  ) values (
+    p_account_id, p_statement, p_kind, p_subject, p_subject_key, p_source,
+    coalesce(p_source_detail, '{}'::jsonb), p_run_ref,
+    coalesce(p_audience, 'account'), p_audience_ref, p_embedding, p_valid_until
+  )
+  returning id into v_id;
+
+  -- Два несовместимых вывода агентов не разрешаются молча в пользу нового. Система сообщает,
+  -- что верит в два противоречащих утверждения, и отдаёт выбор владельцу.
+  select count(*) into v_agent_conflict
+    from public.org_claims c
+   where c.id = any(p_conflicts) and c.account_id = p_account_id and c.status = 'active';
+
+  if v_agent_conflict > 0 then
+    update public.org_claims set status = 'disputed'
+     where account_id = p_account_id and (id = any(p_conflicts) or id = v_id);
+    return jsonb_build_object('result', 'disputed', 'id', v_id, 'with', v_agent_conflict);
+  end if;
+
+  return jsonb_build_object('result', 'inserted', 'id', v_id, 'valid_until', p_valid_until);
+end;
+$$;
+
+revoke all on function public.org_claim_record(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public.vector, uuid[], timestamptz) from public, anon, authenticated;
+grant execute on function public.org_claim_record(uuid, text, text, text, text, text, jsonb, uuid, text, uuid, public.vector, uuid[], timestamptz) to service_role;
+
+-- Отзыв уже фильтрует по valid_until, так что истечение действует само собой и ничего чистить не
+-- нужно. Индекс — чтобы фильтр не превращался в перебор, когда просроченных станет много.
+create index if not exists org_claims_live_idx
+  on public.org_claims (account_id, kind, subject_key, valid_until)
+  where status = 'active';
+
+comment on column public.org_claims.valid_until is
+  'Когда наблюдение перестаёт быть свидетельством. Пусто только у правил: наблюдения стареют, '
+  'правила — нет.';
+
+-- ─── 20260807240000_org_outcome_resolver.sql ─────────────────────────────────────────────────
+-- Обратная связь по исходу: регистрация решения и его разрешение по сроку.
+--
+-- Без этого «самообучение» остаётся переформулированием промпта. Убеждение получает свидетельство
+-- только здесь, и только через измерение — ни агент, ни менеджер не могут его присвоить.
+--
+-- Резолвер живёт в SQL и вызывается cron'ом напрямую, без edge-функции. Не из экономии: у него
+-- нет ни HTTP, ни секрета, ни холодного старта, а значит и трёх способов отказать молча.
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Наблюдатель
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Ядро доменно-нейтрально: оно знает не «остаток товара», а «метрику по ключу». Список метрик —
+-- единственное место, где вертикаль просачивается внутрь, и просачивается явно.
+--
+-- ВАЖНО: измеряем только по наблюдениям ПОСЛЕ горизонта. Данные, собранные до решения, ничего о
+-- его исходе не говорят, а измерить ими и назвать это результатом — самый дешёвый способ получить
+-- красивую точность ни о чём.
+create or replace function public.org_observe_metric(
+  p_account_id uuid,
+  p_metric     text,
+  p_params     jsonb,
+  p_after      timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku     uuid := nullif(p_params->>'sku_id', '')::uuid;
+  v_catalog uuid := nullif(p_params->>'catalog_id', '')::uuid;
+  v_value   numeric;
+  v_at      timestamptz;
+begin
+  -- Принадлежность арендатору проверяется здесь, а не доверяется вызывающему: функция
+  -- security definer, RLS её не прикрывает.
+  if v_sku is not null then
+    perform 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+     where s.id = v_sku and c.account_id = p_account_id;
+    if not found then
+      return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account');
+    end if;
+  end if;
+  if v_catalog is not null then
+    perform 1 from public.commerce_catalogs c where c.id = v_catalog and c.account_id = p_account_id;
+    if not found then
+      return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account');
+    end if;
+  end if;
+
+  if p_metric = 'commerce.sku.stock_total' then
+    select i.stock_total, i.observed_at into v_value, v_at
+      from public.commerce_inventory_snapshots i
+     where i.sku_id = v_sku and i.observed_at > p_after
+     order by i.observed_at desc limit 1;
+
+  elsif p_metric = 'commerce.sku.sold_units_7d' then
+    select i.sold_units_7d, i.observed_at into v_value, v_at
+      from public.commerce_inventory_snapshots i
+     where i.sku_id = v_sku and i.observed_at > p_after
+     order by i.observed_at desc limit 1;
+
+  elsif p_metric in ('commerce.catalog.sold_units_7d', 'commerce.catalog.skus_at_zero') then
+    -- По самому свежему полному слоту каталога после горизонта: смешивать соседние слоты значит
+    -- складывать разные моменты времени и выдавать сумму за состояние.
+    with slot as (
+      select max(i.observed_slot) s
+        from public.commerce_inventory_snapshots i
+        join public.commerce_skus k on k.id = i.sku_id
+       where k.catalog_id = v_catalog and i.observed_at > p_after
+    )
+    select case when p_metric = 'commerce.catalog.sold_units_7d'
+                then sum(coalesce(i.sold_units_7d, 0))
+                else count(*) filter (where coalesce(i.stock_total, 0) = 0) end,
+           max(i.observed_at)
+      into v_value, v_at
+      from public.commerce_inventory_snapshots i
+      join public.commerce_skus k on k.id = i.sku_id, slot
+     where k.catalog_id = v_catalog and i.observed_slot = slot.s;
+
+  else
+    -- Незнакомая метрика — не ошибка вызова, а честное «измерить нечем».
+    return jsonb_build_object('ok', false, 'reason', 'unknown_metric', 'metric', p_metric);
+  end if;
+
+  if v_value is null then
+    return jsonb_build_object('ok', false, 'reason', 'no_observation_after_horizon');
+  end if;
+  return jsonb_build_object('ok', true, 'value', v_value, 'observed_at', v_at, 'metric', p_metric);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Регистрация решения
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Явная, а не автоматическая при согласовании. approval_requests фиксирует разрешение, а не
+-- выполнение; учиться на разрешениях значит учиться на намерениях, включая те, что не состоялись.
+--
+-- Отказывает ГРОМКО на незнакомой метрике: лучше не зарегистрировать решение, чем зарегистрировать
+-- и через неделю получить 'unmeasurable', приняв собственную небрежность за свойство мира.
+create or replace function public.org_decision_register(
+  p_account_id uuid,
+  p_source     text,
+  p_source_id  uuid,
+  p_summary    text,
+  p_expected   jsonb,
+  p_horizon_at timestamptz,
+  p_claims     jsonb default '[]'::jsonb,
+  p_policy_ref jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id       uuid;
+  v_metric   text := p_expected->>'metric';
+  v_probe    jsonb;
+  v_link     jsonb;
+  v_primaries int := 0;
+  v_claim    record;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'account is required';
+  end if;
+
+  -- Проба наблюдателя на заведомо пустом окне: значение не нужно, нужен ответ, знает ли он метрику.
+  v_probe := public.org_observe_metric(p_account_id, v_metric, coalesce(p_expected->'params', '{}'::jsonb), now() + interval '100 years');
+  if v_probe->>'reason' = 'unknown_metric' then
+    raise exception using errcode = '22023', message = 'unknown metric: ' || coalesce(v_metric, '(null)');
+  end if;
+
+  insert into public.org_decisions (account_id, source, source_id, summary, expected, horizon_at, policy_ref)
+  values (p_account_id, p_source, p_source_id, p_summary, p_expected, p_horizon_at, coalesce(p_policy_ref, '{}'::jsonb))
+  returning id into v_id;
+
+  for v_link in select * from jsonb_array_elements(coalesce(p_claims, '[]'::jsonb))
+  loop
+    select c.id, c.confidence, c.statement into v_claim
+      from public.org_claims c
+     where c.id = (v_link->>'claim_id')::uuid and c.account_id = p_account_id;
+    if not found then
+      raise exception using errcode = '22023', message = 'claim not in account: ' || coalesce(v_link->>'claim_id', '(null)');
+    end if;
+    if coalesce(v_link->>'role', 'context') = 'primary' then
+      v_primaries := v_primaries + 1;
+    end if;
+    insert into public.org_decision_claims (
+      account_id, decision_id, claim_id, role, weight, confidence_at_decision, statement_hash
+    ) values (
+      p_account_id, v_id, v_claim.id,
+      coalesce(v_link->>'role', 'context'),
+      coalesce((v_link->>'weight')::numeric, 1.000),
+      v_claim.confidence,
+      md5(v_claim.statement)
+    );
+  end loop;
+
+  return jsonb_build_object('id', v_id, 'claims', jsonb_array_length(coalesce(p_claims, '[]'::jsonb)),
+                            'learnable', v_primaries = 1);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Резолвер
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Идемпотентность обеспечивает org_decision_resolve: переход pending → решённое и начисление
+-- свидетельства происходят одним оператором, поэтому повтор cron не начислит дважды.
+create or replace function public.org_decisions_resolve_due(p_limit int default 50)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_due       record;
+  v_obs       jsonb;
+  v_op        text;
+  v_target    numeric;
+  v_actual    numeric;
+  v_holds     boolean;
+  v_confirmed int := 0;
+  v_refuted   int := 0;
+  v_unmeasurable int := 0;
+begin
+  for v_due in
+    select d.id, d.account_id, d.expected, d.horizon_at
+      from public.org_decisions d
+     where d.outcome = 'pending' and d.horizon_at <= now()
+     order by d.horizon_at
+     limit greatest(1, least(p_limit, 500))
+     for update skip locked
+  loop
+    v_obs := public.org_observe_metric(
+      v_due.account_id, v_due.expected->>'metric',
+      coalesce(v_due.expected->'params', '{}'::jsonb), v_due.horizon_at);
+
+    if coalesce((v_obs->>'ok')::boolean, false) is not true then
+      -- Неизмеримое — полноправный исход и попадает в отчёт. Система, тихо отбрасывающая то,
+      -- что не смогла измерить, показывает растущую точность, целиком созданную отбором.
+      perform public.org_decision_resolve(v_due.id, 'unmeasurable', v_obs);
+      v_unmeasurable := v_unmeasurable + 1;
+      continue;
+    end if;
+
+    v_op     := v_due.expected->>'op';
+    v_target := (v_due.expected->>'value')::numeric;
+    v_actual := (v_obs->>'value')::numeric;
+    v_holds  := case v_op
+                  when '>='  then v_actual >= v_target
+                  when '>'   then v_actual >  v_target
+                  when '<='  then v_actual <= v_target
+                  when '<'   then v_actual <  v_target
+                  when '=='  then v_actual =  v_target
+                  when '!='  then v_actual <> v_target
+                end;
+
+    if v_holds is null then
+      perform public.org_decision_resolve(v_due.id, 'unmeasurable',
+        v_obs || jsonb_build_object('reason', 'unknown_operator', 'op', v_op));
+      v_unmeasurable := v_unmeasurable + 1;
+    elsif v_holds then
+      perform public.org_decision_resolve(v_due.id, 'confirmed', v_obs);
+      v_confirmed := v_confirmed + 1;
+    else
+      perform public.org_decision_resolve(v_due.id, 'refuted', v_obs);
+      v_refuted := v_refuted + 1;
+    end if;
+  end loop;
+
+  return jsonb_build_object('confirmed', v_confirmed, 'refuted', v_refuted, 'unmeasurable', v_unmeasurable);
+end;
+$$;
+
+-- Доля неизмеримого стоит рядом с точностью. Отдельно её никто не посмотрит, а вместе она
+-- показывает, чего измерения на самом деле стоят.
+create or replace function public.org_learning_scoreboard(p_days int default 90)
+returns table (resolved bigint, confirmed bigint, refuted bigint, unmeasurable bigint,
+               accuracy numeric, unmeasurable_share numeric)
+language sql stable security definer set search_path = ''
+as $$
+  select count(*) filter (where outcome <> 'pending'),
+         count(*) filter (where outcome = 'confirmed'),
+         count(*) filter (where outcome = 'refuted'),
+         count(*) filter (where outcome = 'unmeasurable'),
+         round(count(*) filter (where outcome = 'confirmed')::numeric
+               / nullif(count(*) filter (where outcome in ('confirmed', 'refuted')), 0), 3),
+         round(count(*) filter (where outcome = 'unmeasurable')::numeric
+               / nullif(count(*) filter (where outcome <> 'pending'), 0), 3)
+    from public.org_decisions
+   where resolved_at >= now() - make_interval(days => greatest(1, least(p_days, 365)));
+$$;
+
+revoke all on function public.org_observe_metric(uuid, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.org_observe_metric(uuid, text, jsonb, timestamptz) to service_role;
+revoke all on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) to service_role;
+revoke all on function public.org_decisions_resolve_due(int) from public, anon, authenticated;
+grant execute on function public.org_decisions_resolve_due(int) to service_role;
+revoke all on function public.org_learning_scoreboard(int) from public, anon;
+grant execute on function public.org_learning_scoreboard(int) to authenticated, service_role;
+
+comment on function public.org_observe_metric(uuid, text, jsonb, timestamptz) is
+  'Измеряет метрику ПОСЛЕ горизонта решения. Данные до решения ничего о его исходе не говорят.';
+comment on function public.org_learning_scoreboard(int) is
+  'Точность рядом с долей неизмеримого: без второго первое врёт тем сильнее, чем хуже дела.';
+
+-- ─── 20260807250000_org_decision_resolve_fix.sql ─────────────────────────────────────────────
+-- min(uuid) в Postgres не существует.
+--
+-- Строка `select count(*), min(claim_id)` лежала в org_decision_resolve с первой миграции и ни
+-- разу не выполнялась: решений не было, начислять свидетельство было нечему. Первый же настоящий
+-- прогон резолвера уронил её с 42883.
+--
+-- Схемные проверки этого поймать не могли — они доказывали, что нельзя записать неизмеримое
+-- ожидание и что исход не начисляется дважды, но ни одна не доходила до самого начисления.
+-- Путь, который никто не исполнял, сломан по умолчанию.
+create or replace function public.org_decision_resolve(
+  p_decision_id uuid,
+  p_outcome     text,
+  p_observed    jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_account uuid;
+  v_primary uuid;
+  v_primaries int;
+begin
+  if p_outcome not in ('confirmed', 'refuted', 'unmeasurable') then
+    raise exception using errcode = '22023', message = 'outcome must be confirmed, refuted or unmeasurable';
+  end if;
+
+  update public.org_decisions
+     set outcome = p_outcome, observed = coalesce(p_observed, '{}'::jsonb), resolved_at = now()
+   where id = p_decision_id and outcome = 'pending'
+  returning account_id into v_account;
+
+  if v_account is null then
+    return jsonb_build_object('applied', false, 'reason', 'already_resolved_or_missing');
+  end if;
+
+  -- array_agg вместо min: у uuid нет порядкового агрегата, а порядок здесь и не нужен —
+  -- строка ровно одна, иначе решение необучающее.
+  select count(*), (array_agg(claim_id))[1] into v_primaries, v_primary
+    from public.org_decision_claims
+   where account_id = v_account and decision_id = p_decision_id and role = 'primary';
+
+  if p_outcome = 'unmeasurable' or v_primaries <> 1 then
+    return jsonb_build_object('applied', true, 'learned', false,
+      'reason', case when p_outcome = 'unmeasurable' then 'unmeasurable' else 'no_single_primary' end);
+  end if;
+
+  update public.org_claims
+     set evidence_for     = evidence_for     + case when p_outcome = 'confirmed' then 1 else 0 end,
+         evidence_against = evidence_against + case when p_outcome = 'refuted'   then 1 else 0 end
+   where id = v_primary and account_id = v_account;
+
+  -- Снятие — не по среднему, а по накопленным свидетельствам: пять неудач подряд против одного
+  -- слабого коррелированного наблюдения не должны весить одинаково.
+  update public.org_claims
+     set status = 'retired'
+   where id = v_primary and account_id = v_account and status = 'active'
+     and evidence_against >= 5 and confidence < 0.300;
+
+  return jsonb_build_object('applied', true, 'learned', true, 'claim_id', v_primary);
+end;
+$$;
+
+revoke all on function public.org_decision_resolve(uuid, text, jsonb) from public, anon, authenticated;
+grant execute on function public.org_decision_resolve(uuid, text, jsonb) to service_role;
+
+-- ─── 20260807260000_org_memory_owner.sql ─────────────────────────────────────────────────────
+-- Экран владельца: разрешение спора и достройка векторов.
+--
+-- Память, которую нельзя исправить, хуже отсутствующей: система верит во что-то, действует по
+-- этому и не оставляет способа возразить. Отзыв у владельца уже был (org_claim_retire); не
+-- хватало двух вещей — способа разрешить спор и гарантии, что сказанное владельцем вообще будет
+-- найдено при отзыве.
+
+-- Спор — это состояние, в которое система переводит два несовместимых вывода агентов, вместо того
+-- чтобы молча выбрать один. Разрешает его человек: выбранное становится активным, а остальные
+-- утверждения того же спора снимаются — иначе «разрешение» оставляло бы противоречие на месте.
+create or replace function public.org_claim_affirm(p_claim_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_account uuid := public.current_account_id();
+  v_kind    text;
+  v_subject text;
+  v_retired int := 0;
+begin
+  if v_account is null then
+    raise exception using errcode = '42501', message = 'not authenticated';
+  end if;
+
+  update public.org_claims
+     set status = 'active',
+         source_detail = source_detail || jsonb_build_object('affirmed_by', 'owner')
+   where id = p_claim_id and account_id = v_account and status <> 'retired'
+  returning kind, subject_key into v_kind, v_subject;
+
+  if v_kind is null then
+    return jsonb_build_object('affirmed', false, 'reason', 'not_found_or_retired');
+  end if;
+
+  update public.org_claims
+     set status = 'retired',
+         source_detail = source_detail || jsonb_build_object('retired_reason', 'спор разрешён владельцем в пользу другого утверждения')
+   where account_id = v_account and id <> p_claim_id
+     and status = 'disputed' and kind = v_kind and subject_key = v_subject;
+  get diagnostics v_retired = row_count;
+
+  return jsonb_build_object('affirmed', true, 'retired_rivals', v_retired);
+end;
+$$;
+
+revoke all on function public.org_claim_affirm(uuid) from public, anon;
+grant execute on function public.org_claim_affirm(uuid) to authenticated, service_role;
+
+-- Утверждение без вектора невидимо для отзыва: match_org_claims фильтрует `embedding is not null`.
+-- Слово владельца, потерявшееся из-за недоступного Supabase.ai, — худший вид потери, поэтому оно
+-- записывается в любом случае, а вектор достраивается позже. Эта функция отдаёт очередь на
+-- достройку; сам вектор считает воркер, у которого есть рантайм.
+create or replace function public.org_claims_missing_embedding(p_limit int default 20)
+returns table (id uuid, account_id uuid, statement text)
+language sql stable security definer set search_path = ''
+as $$
+  select c.id, c.account_id, c.statement
+    from public.org_claims c
+   where c.embedding is null and c.status <> 'retired'
+   order by c.created_at
+   limit greatest(1, least(p_limit, 100));
+$$;
+
+create or replace function public.org_claim_set_embedding(p_claim_id uuid, p_embedding public.vector(384))
+returns boolean
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.org_claims set embedding = p_embedding
+   where id = p_claim_id and embedding is null
+  returning true;
+$$;
+
+revoke all on function public.org_claims_missing_embedding(int) from public, anon, authenticated;
+grant execute on function public.org_claims_missing_embedding(int) to service_role;
+revoke all on function public.org_claim_set_embedding(uuid, public.vector) from public, anon, authenticated;
+grant execute on function public.org_claim_set_embedding(uuid, public.vector) to service_role;
+
+create index if not exists org_claims_needs_embedding_idx
+  on public.org_claims (created_at) where embedding is null and status <> 'retired';
+
+comment on function public.org_claim_affirm(uuid) is
+  'Владелец разрешает спор: выбранное становится активным, соперники по тому же предмету снимаются.';
+
+-- ─── 20260807270000_commerce_decision_bridge.sql ─────────────────────────────────────────────
+-- Мостик Commerce → память: принятая рекомендация становится проверяемой гипотезой.
+--
+-- До сих пор путь обучения был декоративным: решений никто не регистрировал, резолвер каждый час
+-- честно возвращал нули, и все убеждения навсегда оставались на уверенности 0.5. Оказалось хуже —
+-- статус 'accepted' существовал в схеме, но в него не переводила ни одна строка кода: принять
+-- рекомендацию было физически нельзя.
+--
+-- Принятие и регистрация решения происходят ОДНОЙ транзакцией. Рекомендация, принятая без
+-- решения, необучаема и молчит об этом — ровно тот декоративный путь, который мы и убираем.
+
+-- Наблюдателю нужна цена: price_guard советует поднять её до минимально допустимой, и проверить
+-- это можно только измерив цену. Метрика лежала в снимках всё это время.
+create or replace function public.org_observe_metric(
+  p_account_id uuid,
+  p_metric     text,
+  p_params     jsonb,
+  p_after      timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_sku     uuid := nullif(p_params->>'sku_id', '')::uuid;
+  v_catalog uuid := nullif(p_params->>'catalog_id', '')::uuid;
+  v_value   numeric;
+  v_at      timestamptz;
+begin
+  if v_sku is not null then
+    perform 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+     where s.id = v_sku and c.account_id = p_account_id;
+    if not found then
+      return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account');
+    end if;
+  end if;
+  if v_catalog is not null then
+    perform 1 from public.commerce_catalogs c where c.id = v_catalog and c.account_id = p_account_id;
+    if not found then
+      return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account');
+    end if;
+  end if;
+
+  if p_metric = 'commerce.sku.stock_total' then
+    select i.stock_total, i.observed_at into v_value, v_at
+      from public.commerce_inventory_snapshots i
+     where i.sku_id = v_sku and i.observed_at > p_after
+     order by i.observed_at desc limit 1;
+
+  elsif p_metric = 'commerce.sku.sold_units_7d' then
+    select i.sold_units_7d, i.observed_at into v_value, v_at
+      from public.commerce_inventory_snapshots i
+     where i.sku_id = v_sku and i.observed_at > p_after
+     order by i.observed_at desc limit 1;
+
+  elsif p_metric = 'commerce.sku.price_tiyin' then
+    select i.price_tiyin, i.observed_at into v_value, v_at
+      from public.commerce_inventory_snapshots i
+     where i.sku_id = v_sku and i.observed_at > p_after
+     order by i.observed_at desc limit 1;
+
+  elsif p_metric in ('commerce.catalog.sold_units_7d', 'commerce.catalog.skus_at_zero') then
+    with slot as (
+      select max(i.observed_slot) s
+        from public.commerce_inventory_snapshots i
+        join public.commerce_skus k on k.id = i.sku_id
+       where k.catalog_id = v_catalog and i.observed_at > p_after
+    )
+    select case when p_metric = 'commerce.catalog.sold_units_7d'
+                then sum(coalesce(i.sold_units_7d, 0))
+                else count(*) filter (where coalesce(i.stock_total, 0) = 0) end,
+           max(i.observed_at)
+      into v_value, v_at
+      from public.commerce_inventory_snapshots i
+      join public.commerce_skus k on k.id = i.sku_id, slot
+     where k.catalog_id = v_catalog and i.observed_slot = slot.s;
+
+  else
+    return jsonb_build_object('ok', false, 'reason', 'unknown_metric', 'metric', p_metric);
+  end if;
+
+  if v_value is null then
+    return jsonb_build_object('ok', false, 'reason', 'no_observation_after_horizon');
+  end if;
+  return jsonb_build_object('ok', true, 'value', v_value, 'observed_at', v_at, 'metric', p_metric);
+end;
+$$;
+
+revoke all on function public.org_observe_metric(uuid, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.org_observe_metric(uuid, text, jsonb, timestamptz) to service_role;
+
+-- Гипотеза, которую проверяет каждое принятие. Одна на вид находки, а не на рекомендацию:
+-- утверждение «наш совет о пополнении работает» проверяется всеми пополнениями сразу, и
+-- свидетельства копятся на нём. Одно принятие ничего не доказывает, двадцать — доказывают.
+create or replace function public.commerce_hypothesis_for(p_account_id uuid, p_kind text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_subject   text;
+  v_statement text;
+  v_id        uuid;
+begin
+  if p_kind in ('stockout', 'reorder') then
+    v_subject := 'commerce:restock';
+    v_statement := 'Пополнение по сигналу Nemo выводит остаток из нуля к сроку поставки.';
+  elsif p_kind = 'price_guard' then
+    v_subject := 'commerce:pricing';
+    v_statement := 'Пересмотр цены по сигналу Nemo поднимает её до минимально допустимой.';
+  else
+    return null;
+  end if;
+
+  select id into v_id from public.org_claims
+   where account_id = p_account_id and subject_key = v_subject and status <> 'retired'
+   order by created_at limit 1;
+  if v_id is not null then return v_id; end if;
+
+  -- Вектор не считаем: SQL не умеет. Утверждение до достройки не найдётся отзывом, и воркер
+  -- достроит его в течение пяти минут — тот самый путь, что уже стоит для слова владельца.
+  insert into public.org_claims (account_id, statement, kind, subject, subject_key, source, source_detail)
+  values (p_account_id, v_statement, 'preference', v_subject, v_subject, 'agent',
+          jsonb_build_object('origin', 'commerce_bridge'))
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+-- Принятие рекомендации.
+--
+-- Nemo по-прежнему ничего не пишет в Uzum: «принято» означает, что владелец берётся сделать это
+-- сам. Проверяем не выполнение, а результат — остаток перестал быть нулевым, цена поднялась.
+-- Поэтому согласование и исход остаются разными вещами даже здесь.
+create or replace function public.commerce_accept_finding(p_account_id uuid, p_recommendation_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_rec       record;
+  v_lead      int;
+  v_claim     uuid;
+  v_expected  jsonb;
+  v_horizon   timestamptz;
+  v_decision  jsonb;
+begin
+  select r.id, r.kind, r.status, r.sku_id, r.calculation, s.lead_time_days, s.title, s.external_sku
+    into v_rec
+    from public.commerce_recommendations r
+    join public.commerce_skus s on s.id = r.sku_id
+    join public.commerce_catalogs c on c.id = s.catalog_id
+   where r.id = p_recommendation_id and c.account_id = p_account_id
+   for update of r;
+
+  if v_rec.id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+  if v_rec.status <> 'open' then
+    -- Повторное нажатие не создаёт второго решения: принятие идемпотентно по статусу.
+    return jsonb_build_object('ok', false, 'reason', 'already_' || v_rec.status);
+  end if;
+
+  -- Нехватка данных — не решение, а пробел. Регистрировать её как гипотезу значит засорить
+  -- леглер тем, из чего нельзя научиться.
+  if v_rec.kind = 'missing_data' then
+    return jsonb_build_object('ok', false, 'reason', 'not_actionable');
+  end if;
+
+  if v_rec.kind in ('stockout', 'reorder') then
+    -- Срок поставки плюс трое суток на то, чтобы приход отразился в снимке. Без запаса решение
+    -- измерялось бы ровно в день, когда товар ещё едет.
+    v_lead := coalesce(v_rec.lead_time_days, 14) + 3;
+    v_expected := jsonb_build_object('metric', 'commerce.sku.stock_total', 'op', '>', 'value', 0,
+                                     'params', jsonb_build_object('sku_id', v_rec.sku_id));
+  elsif v_rec.kind = 'price_guard' then
+    v_lead := 7;
+    v_expected := jsonb_build_object('metric', 'commerce.sku.price_tiyin', 'op', '>=',
+                                     'value', coalesce((v_rec.calculation->>'min_selling_price_tiyin')::numeric, 0),
+                                     'params', jsonb_build_object('sku_id', v_rec.sku_id));
+  else
+    return jsonb_build_object('ok', false, 'reason', 'unsupported_kind', 'kind', v_rec.kind);
+  end if;
+
+  v_horizon := now() + make_interval(days => v_lead);
+  v_claim := public.commerce_hypothesis_for(p_account_id, v_rec.kind);
+
+  update public.commerce_recommendations
+     set status = 'accepted', updated_at = now()
+   where id = p_recommendation_id and status = 'open';
+
+  v_decision := public.org_decision_register(
+    p_account_id, 'recommendation', p_recommendation_id,
+    left(v_rec.kind || ': ' || coalesce(v_rec.title, v_rec.external_sku, 'товар'), 400),
+    v_expected, v_horizon,
+    case when v_claim is null then '[]'::jsonb
+         else jsonb_build_array(jsonb_build_object('claim_id', v_claim, 'role', 'primary')) end,
+    jsonb_build_object('bridge', 'commerce', 'kind', v_rec.kind)
+  );
+
+  return jsonb_build_object('ok', true, 'decision', v_decision, 'horizon_at', v_horizon,
+                            'hypothesis', v_claim, 'expected', v_expected);
+end;
+$$;
+
+revoke all on function public.commerce_hypothesis_for(uuid, text) from public, anon, authenticated;
+grant execute on function public.commerce_hypothesis_for(uuid, text) to service_role;
+revoke all on function public.commerce_accept_finding(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.commerce_accept_finding(uuid, uuid) to service_role;
+
+comment on function public.commerce_accept_finding(uuid, uuid) is
+  'Принятие и регистрация решения одной транзакцией: принятая рекомендация без решения '
+  'необучаема и молчит об этом.';
+
+-- ─── 20260808160000_sync_run_counts.sql ──────────────────────────────────────────────────────
+-- Синк, который ничего не нашёл, должен сказать, что именно он видел.
+--
+-- Vita Market Plus стоит 55 часов без единого товара, при этом каждые четыре часа прогон
+-- завершается со статусом completed и пустой ошибкой. Установлено, что Uzum отвечает 200 с
+-- пустым списком: провал чтения воркер записал бы в last_sync_error и упал.
+--
+-- Дальше начиналась догадка. Строка фильтрует карточки по наличию идентификатора
+-- (`filter((row) => row.sku)`), поэтому «Uzum не дал ни одной карточки» и «карточки пришли, но ни
+-- у одной нет пригодного ключа» выглядят совершенно одинаково — ноль записанных SKU и никаких
+-- следов. Первый случай — пустой магазин, второй — наш дефект разбора, и лечатся они по-разному.
+alter table public.commerce_sync_runs
+  add column if not exists fetched_rows integer,
+  add column if not exists usable_rows  integer;
+
+comment on column public.commerce_sync_runs.fetched_rows is
+  'Сколько строк вернул Uzum до фильтрации. Отличает пустой магазин от карточек, которые мы не '
+  'смогли разобрать.';
+comment on column public.commerce_sync_runs.usable_rows is
+  'Сколько строк дошло до записи. fetched > 0 при usable = 0 — это наш дефект, а не пустой магазин.';
+
+-- ─── 20260808170000_commerce_empty_shop.sql ──────────────────────────────────────────────────
+-- Подтверждённо пустой магазин — это не авария.
+--
+-- Владелец посмотрел кабинет 125704: товаров там действительно нет. Сторож при этом честно кричал
+-- 77 часов, и был прав по своей логике — данных нет. Но «продавец ещё не завёл карточки» и
+-- «синхронизация сломалась» требуют разного: первое — вежливой подсказки один раз, второе —
+-- тревоги, пока не починят.
+--
+-- ПОЧЕМУ НЕ status = 'paused'. В воркере стоит комментарий, что статус намеренно остаётся
+-- 'active': и очередь, и claim-RPC выбирают только активные каталоги, поэтому пауза выбросила бы
+-- магазин из синхронизации НАВСЕГДА — включая тот день, когда продавец добавит первый товар.
+-- Шесть пустых вызовов в сутки стоят дешевле, чем магазин, который никогда не оживёт сам.
+-- Меняется суждение, а не наблюдение.
+alter table public.commerce_catalogs
+  add column if not exists empty_confirmed_at timestamptz,
+  add column if not exists empty_notified_at  timestamptz;
+
+comment on column public.commerce_catalogs.empty_confirmed_at is
+  'Владелец подтвердил, что в кабинете нет товаров. Снимается автоматически, когда товары '
+  'появятся: магазин, который опустел ПОСЛЕ того как торговал, — это уже новость.';
+comment on column public.commerce_catalogs.empty_notified_at is
+  'Когда владельцу один раз предложили добавить первые товары. Вторая такая подсказка — спам.';
+
+-- Отзыв свежести отдаёт то, что нужно для суждения: пустой подтверждённо, пустой ещё нет, или
+-- сломанный. Раньше все три выглядели одинаково — «данных нет».
+--
+-- Через drop, а не create or replace: набор возвращаемых колонок меняется, и Postgres такого
+-- замещения не допускает. Обе операции в одной транзакции миграции, поэтому окна без функции нет.
+drop function if exists public.commerce_catalog_freshness(uuid[]);
+
+create function public.commerce_catalog_freshness(p_account_ids uuid[])
+returns table (
+  catalog_id uuid,
+  owner_account_id uuid,
+  catalog_name text,
+  connected_at timestamptz,
+  last_synced_at timestamptz,
+  last_observed_at timestamptz,
+  last_sync_error text,
+  stale_alerted_at timestamptz,
+  empty_confirmed_at timestamptz,
+  empty_notified_at timestamptz
+)
+language sql
+stable
+set search_path = ''
+as $$
+  select
+    c.id,
+    c.account_id,
+    c.name,
+    c.created_at,
+    c.last_synced_at,
+    (select max(s.observed_at)
+       from public.commerce_inventory_snapshots s
+       join public.commerce_skus k on k.id = s.sku_id
+      where k.catalog_id = c.id),
+    c.last_sync_error,
+    c.stale_alerted_at,
+    c.empty_confirmed_at,
+    c.empty_notified_at
+  from public.commerce_catalogs c
+  where c.account_id = any(p_account_ids)
+    and c.status = 'active'
+  order by c.created_at, c.id
+$$;
+
+comment on function public.commerce_catalog_freshness(uuid[]) is
+  'Свежесть каталога для сторожа: когда данные последний раз приходили, и отличается ли пустой '
+  'магазин от сломанного.';
+
+-- Владелец подтвердил 8 августа 2026, глядя в кабинет. Тревога снимается, наблюдение — нет.
+update public.commerce_catalogs
+   set empty_confirmed_at = now(),
+       stale_alerted_at = null
+ where external_shop_id = '125704' and status = 'active' and empty_confirmed_at is null;
+
+-- ─── 20260808180000_org_metrics_registry.sql ─────────────────────────────────────────────────
+-- Реестр метрик: что система умеет измерять — и о чём честно говорит, что не умеет.
+--
+-- Наблюдатель был цепочкой if/elsif в SQL: каждая новая сфера требовала правки функции, а список
+-- измеримого нигде не existed как данные. Отсюда два следствия, оба плохие. Расширение упиралось
+-- в переписывание кода, и — важнее — нельзя было объявить метрику, не соврав: либо она есть в
+-- цепочке и считается, либо её нет и регистрация решения падает с 'unknown metric'. Третьего
+-- состояния — «знаем о такой метрике, но канала данных под ней нет» — не существовало.
+--
+-- Теперь оно есть, и это единственный способ говорить о CRM, финансах и HR, не обещая измеримости.
+create table if not exists public.org_metrics (
+  key           text primary key check (key ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
+  domain        text not null check (domain in ('commerce', 'support', 'crm', 'finance', 'marketing', 'hr')),
+  label         text not null check (char_length(label) between 3 and 120),
+  unit          text not null check (unit in ('units', 'tiyin', 'minutes', 'percent', 'count')),
+
+  -- Кого измеряем: конкретный товар, каталог, диалог или аккаунт целиком.
+  subject_kind  text check (subject_kind in ('sku', 'catalog', 'dialogue', 'account')),
+
+  -- КАК читаем. Стратегия — это форма чтения, а не метрика: «последнее значение колонки X по
+  -- субъекту», «сумма по свежему слоту». Метрика, попадающая в известную форму, добавляется одной
+  -- строкой. Метрика принципиально новой формы требует кода — и это честный предел, а не «в один
+  -- клик всё».
+  read_strategy text,
+  source_column text,   -- имя колонки, если стратегия читает колонку
+  source_value  text,   -- значение фильтра, если стратегия считает строки по признаку
+
+  -- Подключён ли реальный канал данных. Ложь здесь дороже всего: объявленная, но не подключённая
+  -- метрика превратила бы громкий отказ при регистрации в тихое 'unmeasurable' через неделю.
+  is_wired       boolean not null default false,
+  unwired_reason text,
+
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+
+  -- Подключённая метрика обязана сказать, как её читать. Неподключённая — чего не хватает.
+  -- Молчать не разрешено ни той, ни другой.
+  constraint org_metrics_wired_is_readable check (
+    (is_wired and read_strategy is not null and subject_kind is not null)
+    or (not is_wired)
+  ),
+  constraint org_metrics_unwired_explains_itself check (
+    (not is_wired and unwired_reason is not null and char_length(unwired_reason) >= 10)
+    or is_wired
+  )
+);
+
+alter table public.org_metrics enable row level security;
+
+-- Реестр одинаков для всех арендаторов: это возможности платформы, а не данные аккаунта.
+-- Владельцу его видно — иначе «система умеет измерять X» останется словами.
+drop policy if exists org_metrics_read on public.org_metrics;
+create policy org_metrics_read on public.org_metrics for select to authenticated using (true);
+revoke insert, update, delete on public.org_metrics from anon, authenticated;
+
+create index if not exists org_metrics_domain_idx on public.org_metrics (domain, is_wired);
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Наблюдатель поверх реестра
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Измеряем только по наблюдениям ПОСЛЕ горизонта: данные, собранные до решения, о его исходе
+-- ничего не говорят, а измерить ими и назвать результатом — самый дешёвый способ получить
+-- красивую точность ни о чём.
+create or replace function public.org_observe_metric(
+  p_account_id uuid,
+  p_metric     text,
+  p_params     jsonb,
+  p_after      timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  m         public.org_metrics%rowtype;
+  v_sku      uuid := nullif(p_params->>'sku_id', '')::uuid;
+  v_catalog  uuid := nullif(p_params->>'catalog_id', '')::uuid;
+  v_dialogue uuid := nullif(p_params->>'dialogue_id', '')::uuid;
+  v_value   numeric;
+  v_at      timestamptz;
+begin
+  select * into m from public.org_metrics where key = p_metric;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'unknown_metric', 'metric', p_metric);
+  end if;
+  if not m.is_wired then
+    -- Не ошибка вызова и не свойство мира: под метрикой просто нет канала данных, и мы это знаем.
+    return jsonb_build_object('ok', false, 'reason', 'metric_not_wired', 'metric', p_metric,
+                              'detail', m.unwired_reason);
+  end if;
+
+  -- Принадлежность арендаторам проверяется здесь: функция security definer, RLS её не прикрывает.
+  if v_sku is not null then
+    perform 1 from public.commerce_skus s
+      join public.commerce_catalogs c on c.id = s.catalog_id
+     where s.id = v_sku and c.account_id = p_account_id;
+    if not found then return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account'); end if;
+  end if;
+  if v_catalog is not null then
+    perform 1 from public.commerce_catalogs c where c.id = v_catalog and c.account_id = p_account_id;
+    if not found then return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account'); end if;
+  end if;
+  if v_dialogue is not null then
+    perform 1 from public.dialogues d
+      join public.agents a on a.id = d.agent_id
+     where d.id = v_dialogue and a.account_id = p_account_id;
+    if not found then return jsonb_build_object('ok', false, 'reason', 'subject_not_in_account'); end if;
+  end if;
+
+  if m.read_strategy in ('commerce_snapshot_latest', 'commerce_slot_sum', 'commerce_slot_count_zero')
+     and m.source_column is null then
+    return jsonb_build_object('ok', false, 'reason', 'metric_misconfigured', 'metric', p_metric);
+  end if;
+
+  -- Имя колонки приходит из таблицы, доступной только service_role, и всё равно проходит через
+  -- format('%I'): экранирование идентификатора стоит одну функцию, а доверие к данным — нет.
+  if m.read_strategy = 'commerce_snapshot_latest' then
+    execute format(
+      'select i.%I, i.observed_at from public.commerce_inventory_snapshots i
+        where i.sku_id = $1 and i.observed_at > $2 order by i.observed_at desc limit 1',
+      m.source_column)
+      into v_value, v_at using v_sku, p_after;
+
+  elsif m.read_strategy in ('commerce_slot_sum', 'commerce_slot_count_zero') then
+    -- По самому свежему полному слоту: смешивать соседние слоты значит складывать разные моменты
+    -- времени и выдавать сумму за состояние.
+    execute format(
+      'with slot as (
+         select max(i.observed_slot) s from public.commerce_inventory_snapshots i
+           join public.commerce_skus k on k.id = i.sku_id
+          where k.catalog_id = $1 and i.observed_at > $2)
+       select %s, max(i.observed_at)
+         from public.commerce_inventory_snapshots i
+         join public.commerce_skus k on k.id = i.sku_id, slot
+        where k.catalog_id = $1 and i.observed_slot = slot.s',
+      case when m.read_strategy = 'commerce_slot_sum'
+           then format('sum(coalesce(i.%I, 0))', m.source_column)
+           else format('count(*) filter (where coalesce(i.%I, 0) = 0)', m.source_column) end)
+      into v_value, v_at using v_catalog, p_after;
+
+  elsif m.read_strategy = 'support_first_response_minutes' then
+    -- Сколько минут прошло от первого вопроса клиента до первого ответа. Считается только по
+    -- ответам ПОСЛЕ горизонта — ответ, данный до решения, о решении ничего не говорит.
+    with asked as (
+      select min(created_at) at from public.messages
+       where dialogue_id = v_dialogue and author = 'customer'
+    )
+    select extract(epoch from (min(r.created_at) - asked.at)) / 60, min(r.created_at)
+      into v_value, v_at
+      from public.messages r, asked
+     where r.dialogue_id = v_dialogue and r.author = 'agent'
+       and r.created_at >= asked.at and r.created_at > p_after
+     group by asked.at;
+
+  elsif m.read_strategy = 'support_status_count' then
+    select count(*), max(d.updated_at) into v_value, v_at
+      from public.dialogues d
+      join public.agents a on a.id = d.agent_id
+     where a.account_id = p_account_id and d.status = m.source_value and d.updated_at > p_after;
+    -- Ноль диалогов в статусе — это измерение, а не отсутствие данных: считать его пропуском
+    -- значило бы никогда не подтвердить «очередь разобрана».
+    if v_value is not null then
+      return jsonb_build_object('ok', true, 'value', v_value,
+                                'observed_at', coalesce(v_at, now()), 'metric', p_metric);
+    end if;
+
+  else
+    return jsonb_build_object('ok', false, 'reason', 'unknown_strategy', 'strategy', m.read_strategy);
+  end if;
+
+  if v_value is null then
+    return jsonb_build_object('ok', false, 'reason', 'no_observation_after_horizon');
+  end if;
+  return jsonb_build_object('ok', true, 'value', v_value, 'observed_at', v_at, 'metric', p_metric);
+end;
+$$;
+
+revoke all on function public.org_observe_metric(uuid, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.org_observe_metric(uuid, text, jsonb, timestamptz) to service_role;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Первое наполнение
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Commerce переезжает как есть: те же пять ключей, что уже работали в цепочке if/elsif.
+insert into public.org_metrics (key, domain, label, unit, subject_kind, read_strategy, source_column, is_wired) values
+  ('commerce.sku.stock_total',        'commerce', 'Остаток товара',              'units', 'sku',     'commerce_snapshot_latest', 'stock_total',   true),
+  ('commerce.sku.sold_units_7d',      'commerce', 'Продано за 7 дней',           'units', 'sku',     'commerce_snapshot_latest', 'sold_units_7d', true),
+  ('commerce.sku.price_tiyin',        'commerce', 'Цена на витрине',             'tiyin', 'sku',     'commerce_snapshot_latest', 'price_tiyin',   true),
+  ('commerce.catalog.sold_units_7d',  'commerce', 'Продажи каталога за 7 дней',  'units', 'catalog', 'commerce_slot_sum',        'sold_units_7d', true),
+  ('commerce.catalog.skus_at_zero',   'commerce', 'Товаров с нулевым остатком',  'count', 'catalog', 'commerce_slot_count_zero', 'stock_total',   true)
+on conflict (key) do nothing;
+
+-- Поддержка — второй подключённый домен. Данные не обильные (два диалога), но канал настоящий:
+-- Telegram подключён, dialogues и messages пишутся. Это ровно то различие, ради которого реестр
+-- и заводился: «мало данных» и «нет канала» — разные вещи.
+insert into public.org_metrics (key, domain, label, unit, subject_kind, read_strategy, source_value, is_wired) values
+  ('support.dialogue.first_response_minutes', 'support', 'Время первого ответа', 'minutes', 'dialogue', 'support_first_response_minutes', null,             true),
+  ('support.account.awaiting_operator',       'support', 'Ждут оператора',       'count',   'account',  'support_status_count',            'needs_operator', true)
+on conflict (key) do nothing;
+
+-- Остальные сферы система знает по имени и честно говорит, чего не хватает. Ни одна из них не
+-- пройдёт регистрацию решения, пока причина не исчезнет.
+insert into public.org_metrics (key, domain, label, unit, is_wired, unwired_reason) values
+  ('crm.deals.closed',            'crm',       'Закрытых сделок',        'count',   false, 'Нет канала: сделки живут во внешней CRM, а коннектор только пишет наружу и не читает обратно.'),
+  ('crm.deals.conversion',        'crm',       'Конверсия в сделку',     'percent', false, 'Нет канала: воронка ведётся во внешней CRM, обратного чтения нет.'),
+  ('finance.cashflow',            'finance',   'Денежный поток',         'tiyin',   false, 'Нет канала: банковские выписки и 1С не подключены.'),
+  ('finance.unpaid_invoices_age', 'finance',   'Возраст дебиторки',      'count',   false, 'Нет канала: счета не заводятся в Nemo и не читаются извне.'),
+  ('marketing.roas',              'marketing', 'Возврат на рекламу',     'percent', false, 'Нет канала: рекламные кабинеты не подключены, расходы неизвестны.'),
+  ('marketing.cac',               'marketing', 'Стоимость привлечения',  'tiyin',   false, 'Нет канала: нужны и расходы на рекламу, и источник заявки — нет ни того, ни другого.'),
+  ('hr.time_to_hire',             'hr',        'Срок закрытия вакансии', 'count',   false, 'Нет канала: вакансии и кандидаты в Nemo не ведутся.')
+on conflict (key) do nothing;
+
+comment on table public.org_metrics is
+  'Что система умеет измерять. is_wired = false означает «знаем о метрике, канала данных нет» — '
+  'единственный способ говорить о сфере, не обещая измеримости.';
+comment on column public.org_metrics.read_strategy is
+  'Форма чтения, а не метрика. Метрика известной формы добавляется строкой; принципиально новая '
+  'форма требует кода — это честный предел расширения.';
+
+-- ─── 20260808190000_register_refuses_unwired.sql ─────────────────────────────────────────────
+-- Регистрация решения отказывает и на неподключённой метрике, не только на незнакомой.
+--
+-- Раньше проверялась одна причина — 'unknown_metric'. С появлением реестра возникла вторая:
+-- метрика объявлена, система знает её по имени, но канала данных под ней нет. Если такую
+-- пропустить, громкий отказ в момент регистрации превратится в тихое 'unmeasurable' через неделю,
+-- и небрежность будет выглядеть свойством мира. Отказ должен звучать там, где его слышно.
+create or replace function public.org_decision_register(
+  p_account_id uuid,
+  p_source     text,
+  p_source_id  uuid,
+  p_summary    text,
+  p_expected   jsonb,
+  p_horizon_at timestamptz,
+  p_claims     jsonb default '[]'::jsonb,
+  p_policy_ref jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id       uuid;
+  v_metric   text := p_expected->>'metric';
+  v_probe    jsonb;
+  v_reason   text;
+  v_link     jsonb;
+  v_primaries int := 0;
+  v_claim    record;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'account is required';
+  end if;
+
+  -- Проба на заведомо пустом окне: значение не нужно, нужен ответ, можно ли эту метрику измерить
+  -- в принципе.
+  v_probe := public.org_observe_metric(p_account_id, v_metric, coalesce(p_expected->'params', '{}'::jsonb), now() + interval '100 years');
+  v_reason := v_probe->>'reason';
+  if v_reason = 'unknown_metric' then
+    raise exception using errcode = '22023', message = 'unknown metric: ' || coalesce(v_metric, '(null)');
+  end if;
+  if v_reason = 'metric_not_wired' then
+    raise exception using errcode = '22023',
+      message = 'metric not wired: ' || coalesce(v_metric, '(null)') || ' — ' || coalesce(v_probe->>'detail', 'нет канала данных');
+  end if;
+  if v_reason = 'metric_misconfigured' or v_reason = 'unknown_strategy' then
+    raise exception using errcode = '22023',
+      message = 'metric misconfigured: ' || coalesce(v_metric, '(null)');
+  end if;
+
+  insert into public.org_decisions (account_id, source, source_id, summary, expected, horizon_at, policy_ref)
+  values (p_account_id, p_source, p_source_id, p_summary, p_expected, p_horizon_at, coalesce(p_policy_ref, '{}'::jsonb))
+  returning id into v_id;
+
+  for v_link in select * from jsonb_array_elements(coalesce(p_claims, '[]'::jsonb))
+  loop
+    select c.id, c.confidence, c.statement into v_claim
+      from public.org_claims c
+     where c.id = (v_link->>'claim_id')::uuid and c.account_id = p_account_id;
+    if not found then
+      raise exception using errcode = '22023', message = 'claim not in account: ' || coalesce(v_link->>'claim_id', '(null)');
+    end if;
+    if coalesce(v_link->>'role', 'context') = 'primary' then
+      v_primaries := v_primaries + 1;
+    end if;
+    insert into public.org_decision_claims (
+      account_id, decision_id, claim_id, role, weight, confidence_at_decision, statement_hash
+    ) values (
+      p_account_id, v_id, v_claim.id,
+      coalesce(v_link->>'role', 'context'),
+      coalesce((v_link->>'weight')::numeric, 1.000),
+      v_claim.confidence,
+      md5(v_claim.statement)
+    );
+  end loop;
+
+  return jsonb_build_object('id', v_id, 'claims', jsonb_array_length(coalesce(p_claims, '[]'::jsonb)),
+                            'learnable', v_primaries = 1);
+end;
+$$;
+
+revoke all on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) to service_role;
+
+-- ─── 20260808200000_composite_expectations.sql ───────────────────────────────────────────────
+-- Составное ожидание: пополнение засчитывается, только если товар ещё и продался.
+--
+-- Гипотеза пополнения проверялась одним условием — «остаток вышел из нуля». Ему удовлетворяет и
+-- закупка, заморозившая деньги в неликвиде: товар лежит, остаток не ноль, гипотеза confirmed,
+-- уверенность растёт. Система выучила бы, что её советы работают, не отличая выгодное пополнение
+-- от разорительного.
+--
+-- Это та же лестная точность, против которой стоит правило про unmeasurable, — только пробравшаяся
+-- с другой стороны: не через отсутствие метрики, а через её выбор. Метрика была измеримой и
+-- честной; неверным был вопрос.
+--
+-- Теперь ожидание может быть конъюнкцией: {"all": [терм, терм]}. Одиночная форма продолжает
+-- работать без изменений — цене второй вопрос не нужен.
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Форма ожидания
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+create or replace function public.org_term_well_formed(t jsonb)
+returns boolean
+language sql
+immutable
+as $$
+  select jsonb_typeof(t) = 'object'
+     and jsonb_typeof(t -> 'metric') = 'string'
+     and (t ->> 'op') in ('>=', '>', '<=', '<', '==', '!=')
+     and t ? 'value'
+$$;
+
+create or replace function public.org_expectation_well_formed(p jsonb)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when jsonb_typeof(p) <> 'object' then false
+    when p ? 'all' then
+      jsonb_typeof(p -> 'all') = 'array'
+      -- Верхняя граница не украшение: решение, зависящее от шести условий сразу, невозможно
+      -- атрибутировать — не узнаешь, какое из них подвело.
+      and jsonb_array_length(p -> 'all') between 1 and 4
+      and not exists (
+        select 1 from jsonb_array_elements(p -> 'all') t where not public.org_term_well_formed(t)
+      )
+    else public.org_term_well_formed(p)
+  end
+$$;
+
+alter table public.org_decisions drop constraint if exists org_decisions_expected_measurable;
+alter table public.org_decisions
+  add constraint org_decisions_expected_measurable check (public.org_expectation_well_formed(expected));
+
+-- Разворачивает ожидание в список термов: одиночное — сам себе список из одного.
+create or replace function public.org_expectation_terms(p jsonb)
+returns setof jsonb
+language sql
+immutable
+as $$
+  select case when p ? 'all' then t else p end
+    from jsonb_array_elements(case when p ? 'all' then p -> 'all' else jsonb_build_array(p) end) t
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Резолвер по термам
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Неизмеримый терм делает неизмеримым всё решение. Заключить «сработало» по половине условий
+-- нельзя: это и была бы та самая точность, созданная отбором.
+create or replace function public.org_decisions_resolve_due(p_limit int default 50)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_due       record;
+  v_term      jsonb;
+  v_obs       jsonb;
+  v_actual    numeric;
+  v_target    numeric;
+  v_holds     boolean;
+  v_all_hold  boolean;
+  v_blocked   jsonb;
+  v_trace     jsonb;
+  v_confirmed int := 0;
+  v_refuted   int := 0;
+  v_unmeasurable int := 0;
+begin
+  for v_due in
+    select d.id, d.account_id, d.expected, d.horizon_at
+      from public.org_decisions d
+     where d.outcome = 'pending' and d.horizon_at <= now()
+     order by d.horizon_at
+     limit greatest(1, least(p_limit, 500))
+     for update skip locked
+  loop
+    v_all_hold := true;
+    v_blocked := null;
+    v_trace := '[]'::jsonb;
+
+    for v_term in select * from public.org_expectation_terms(v_due.expected)
+    loop
+      v_obs := public.org_observe_metric(
+        v_due.account_id, v_term->>'metric',
+        coalesce(v_term->'params', '{}'::jsonb), v_due.horizon_at);
+
+      if coalesce((v_obs->>'ok')::boolean, false) is not true then
+        v_blocked := v_obs || jsonb_build_object('metric', v_term->>'metric');
+        exit;
+      end if;
+
+      v_target := (v_term->>'value')::numeric;
+      v_actual := (v_obs->>'value')::numeric;
+      v_holds := case v_term->>'op'
+                   when '>='  then v_actual >= v_target
+                   when '>'   then v_actual >  v_target
+                   when '<='  then v_actual <= v_target
+                   when '<'   then v_actual <  v_target
+                   when '=='  then v_actual =  v_target
+                   when '!='  then v_actual <> v_target
+                 end;
+      if v_holds is null then
+        v_blocked := v_obs || jsonb_build_object('reason', 'unknown_operator', 'op', v_term->>'op');
+        exit;
+      end if;
+
+      -- След по каждому терму: если решение опровергнуто, видно каким именно условием.
+      v_trace := v_trace || jsonb_build_array(jsonb_build_object(
+        'metric', v_term->>'metric', 'op', v_term->>'op',
+        'expected', v_target, 'actual', v_actual, 'holds', v_holds));
+      if not v_holds then v_all_hold := false; end if;
+    end loop;
+
+    if v_blocked is not null then
+      perform public.org_decision_resolve(v_due.id, 'unmeasurable', v_blocked || jsonb_build_object('terms', v_trace));
+      v_unmeasurable := v_unmeasurable + 1;
+    elsif v_all_hold then
+      perform public.org_decision_resolve(v_due.id, 'confirmed', jsonb_build_object('terms', v_trace));
+      v_confirmed := v_confirmed + 1;
+    else
+      perform public.org_decision_resolve(v_due.id, 'refuted', jsonb_build_object('terms', v_trace));
+      v_refuted := v_refuted + 1;
+    end if;
+  end loop;
+
+  return jsonb_build_object('confirmed', v_confirmed, 'refuted', v_refuted, 'unmeasurable', v_unmeasurable);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Регистрация проверяет КАЖДЫЙ терм
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Иначе составное ожидание стало бы лазейкой: один подключённый терм рядом с неподключённым
+-- прошёл бы регистрацию и вернулся тихим unmeasurable через неделю.
+create or replace function public.org_decision_register(
+  p_account_id uuid,
+  p_source     text,
+  p_source_id  uuid,
+  p_summary    text,
+  p_expected   jsonb,
+  p_horizon_at timestamptz,
+  p_claims     jsonb default '[]'::jsonb,
+  p_policy_ref jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id       uuid;
+  v_term     jsonb;
+  v_metric   text;
+  v_probe    jsonb;
+  v_reason   text;
+  v_link     jsonb;
+  v_primaries int := 0;
+  v_claim    record;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'account is required';
+  end if;
+
+  for v_term in select * from public.org_expectation_terms(p_expected)
+  loop
+    v_metric := v_term->>'metric';
+    v_probe := public.org_observe_metric(p_account_id, v_metric, coalesce(v_term->'params', '{}'::jsonb), now() + interval '100 years');
+    v_reason := v_probe->>'reason';
+    if v_reason = 'unknown_metric' then
+      raise exception using errcode = '22023', message = 'unknown metric: ' || coalesce(v_metric, '(null)');
+    end if;
+    if v_reason = 'metric_not_wired' then
+      raise exception using errcode = '22023',
+        message = 'metric not wired: ' || coalesce(v_metric, '(null)') || ' — ' || coalesce(v_probe->>'detail', 'нет канала данных');
+    end if;
+    if v_reason in ('metric_misconfigured', 'unknown_strategy') then
+      raise exception using errcode = '22023', message = 'metric misconfigured: ' || coalesce(v_metric, '(null)');
+    end if;
+  end loop;
+
+  insert into public.org_decisions (account_id, source, source_id, summary, expected, horizon_at, policy_ref)
+  values (p_account_id, p_source, p_source_id, p_summary, p_expected, p_horizon_at, coalesce(p_policy_ref, '{}'::jsonb))
+  returning id into v_id;
+
+  for v_link in select * from jsonb_array_elements(coalesce(p_claims, '[]'::jsonb))
+  loop
+    select c.id, c.confidence, c.statement into v_claim
+      from public.org_claims c
+     where c.id = (v_link->>'claim_id')::uuid and c.account_id = p_account_id;
+    if not found then
+      raise exception using errcode = '22023', message = 'claim not in account: ' || coalesce(v_link->>'claim_id', '(null)');
+    end if;
+    if coalesce(v_link->>'role', 'context') = 'primary' then
+      v_primaries := v_primaries + 1;
+    end if;
+    insert into public.org_decision_claims (
+      account_id, decision_id, claim_id, role, weight, confidence_at_decision, statement_hash
+    ) values (
+      p_account_id, v_id, v_claim.id,
+      coalesce(v_link->>'role', 'context'),
+      coalesce((v_link->>'weight')::numeric, 1.000),
+      v_claim.confidence,
+      md5(v_claim.statement)
+    );
+  end loop;
+
+  return jsonb_build_object('id', v_id, 'claims', jsonb_array_length(coalesce(p_claims, '[]'::jsonb)),
+                            'learnable', v_primaries = 1);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Мостик Commerce спрашивает оба вопроса
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+create or replace function public.commerce_accept_finding(p_account_id uuid, p_recommendation_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_rec       record;
+  v_lead      int;
+  v_claim     uuid;
+  v_expected  jsonb;
+  v_horizon   timestamptz;
+  v_decision  jsonb;
+begin
+  select r.id, r.kind, r.status, r.sku_id, r.calculation, s.lead_time_days, s.title, s.external_sku
+    into v_rec
+    from public.commerce_recommendations r
+    join public.commerce_skus s on s.id = r.sku_id
+    join public.commerce_catalogs c on c.id = s.catalog_id
+   where r.id = p_recommendation_id and c.account_id = p_account_id
+   for update of r;
+
+  if v_rec.id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+  if v_rec.status <> 'open' then
+    return jsonb_build_object('ok', false, 'reason', 'already_' || v_rec.status);
+  end if;
+  if v_rec.kind = 'missing_data' then
+    return jsonb_build_object('ok', false, 'reason', 'not_actionable');
+  end if;
+
+  if v_rec.kind in ('stockout', 'reorder') then
+    v_lead := coalesce(v_rec.lead_time_days, 14) + 3;
+    -- ДВА вопроса, а не один. «Остаток вышел из нуля» верно и для закупки, заморозившей деньги в
+    -- неликвиде. Совет о пополнении хорош тогда, когда товар лежит И продаётся.
+    v_expected := jsonb_build_object('all', jsonb_build_array(
+      jsonb_build_object('metric', 'commerce.sku.stock_total', 'op', '>', 'value', 0,
+                         'params', jsonb_build_object('sku_id', v_rec.sku_id)),
+      jsonb_build_object('metric', 'commerce.sku.sold_units_7d', 'op', '>', 'value', 0,
+                         'params', jsonb_build_object('sku_id', v_rec.sku_id))
+    ));
+  elsif v_rec.kind = 'price_guard' then
+    v_lead := 7;
+    -- Цене второй вопрос не нужен: поднялась до минимума или нет — это и есть весь исход.
+    v_expected := jsonb_build_object('metric', 'commerce.sku.price_tiyin', 'op', '>=',
+                                     'value', coalesce((v_rec.calculation->>'min_selling_price_tiyin')::numeric, 0),
+                                     'params', jsonb_build_object('sku_id', v_rec.sku_id));
+  else
+    return jsonb_build_object('ok', false, 'reason', 'unsupported_kind', 'kind', v_rec.kind);
+  end if;
+
+  v_horizon := now() + make_interval(days => v_lead);
+  v_claim := public.commerce_hypothesis_for(p_account_id, v_rec.kind);
+
+  update public.commerce_recommendations
+     set status = 'accepted', updated_at = now()
+   where id = p_recommendation_id and status = 'open';
+
+  v_decision := public.org_decision_register(
+    p_account_id, 'recommendation', p_recommendation_id,
+    left(v_rec.kind || ': ' || coalesce(v_rec.title, v_rec.external_sku, 'товар'), 400),
+    v_expected, v_horizon,
+    case when v_claim is null then '[]'::jsonb
+         else jsonb_build_array(jsonb_build_object('claim_id', v_claim, 'role', 'primary')) end,
+    jsonb_build_object('bridge', 'commerce', 'kind', v_rec.kind)
+  );
+
+  return jsonb_build_object('ok', true, 'decision', v_decision, 'horizon_at', v_horizon,
+                            'hypothesis', v_claim, 'expected', v_expected);
+end;
+$$;
+
+-- Формулировка гипотезы должна совпадать с тем, что теперь проверяется. Старая обещала только
+-- выход из нуля, и оставить её значило бы измерять одно, а верить в другое.
+update public.org_claims
+   set statement = 'Пополнение по сигналу Nemo выводит остаток из нуля, и товар после этого продаётся.'
+ where subject_key = 'commerce:restock' and status <> 'retired'
+   and statement = 'Пополнение по сигналу Nemo выводит остаток из нуля к сроку поставки.';
+
+create or replace function public.commerce_hypothesis_for(p_account_id uuid, p_kind text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_subject   text;
+  v_statement text;
+  v_id        uuid;
+begin
+  if p_kind in ('stockout', 'reorder') then
+    v_subject := 'commerce:restock';
+    v_statement := 'Пополнение по сигналу Nemo выводит остаток из нуля, и товар после этого продаётся.';
+  elsif p_kind = 'price_guard' then
+    v_subject := 'commerce:pricing';
+    v_statement := 'Пересмотр цены по сигналу Nemo поднимает её до минимально допустимой.';
+  else
+    return null;
+  end if;
+
+  select id into v_id from public.org_claims
+   where account_id = p_account_id and subject_key = v_subject and status <> 'retired'
+   order by created_at limit 1;
+  if v_id is not null then return v_id; end if;
+
+  insert into public.org_claims (account_id, statement, kind, subject, subject_key, source, source_detail)
+  values (p_account_id, v_statement, 'preference', v_subject, v_subject, 'agent',
+          jsonb_build_object('origin', 'commerce_bridge'))
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+revoke all on function public.org_decisions_resolve_due(int) from public, anon, authenticated;
+grant execute on function public.org_decisions_resolve_due(int) to service_role;
+revoke all on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.org_decision_register(uuid, text, uuid, text, jsonb, timestamptz, jsonb, jsonb) to service_role;
+revoke all on function public.commerce_accept_finding(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.commerce_accept_finding(uuid, uuid) to service_role;
+revoke all on function public.commerce_hypothesis_for(uuid, text) from public, anon, authenticated;
+grant execute on function public.commerce_hypothesis_for(uuid, text) to service_role;
+
+comment on function public.org_expectation_well_formed(jsonb) is
+  'Ожидание — одиночный терм либо конъюнкция до четырёх. Больше нельзя: решение, зависящее от '
+  'шести условий, невозможно атрибутировать.';
+
+-- ─── 20260809160000_ops_controller.sql ───────────────────────────────────────────────────────
+-- Операционный контролёр: закрывает то, что можно закрыть однозначно, и следит за остальным.
+--
+-- Роль задумывалась шире — «ведает учётом, чинит хвосты, будит кампанию». Проверка живой базы
+-- показала, что чинить нечего: подвисших прогонов, заданий, решений и векторов ровно ноль, а
+-- напоминание о себестоимости уже стоит в утренней сводке. Единственный настоящий пробел —
+-- просроченные предложения: два висели в pending четыре дня, потому что фонового задания на них
+-- нет вовсе.
+--
+-- Поэтому контролёр вышел узким, и это честный размер, а не урезанный. Он делает ровно две вещи:
+-- закрывает просроченное и считает остальное, чтобы «сегодня всё чисто» перестало быть
+-- предположением. Инварианты сегодня нули — но узнать об обратном было неоткуда.
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Что чинится однозначно
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Предложение с истёкшим сроком уже недействительно: apply_commerce_economics_proposal требует
+-- expires_at > now(). Статус 'pending' у него — это не состояние, а забытая метка, и она врёт
+-- владельцу в списке «ждёт вашей кнопки».
+--
+-- Ставится 'expired', а не 'rejected': владелец его не отклонял, у него вышло время. Ложный
+-- ярлык в леджере — ровно то, от чего эта система избавляется.
+create or replace function public.ops_sweep_stale()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_expired int;
+begin
+  update public.commerce_economics_proposals
+     set status = 'expired'
+   where status = 'pending' and expires_at < now();
+  get diagnostics v_expired = row_count;
+  return jsonb_build_object('proposals_expired', v_expired);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Что только считается
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- Ни одна из этих категорий не чинится автоматически, и намеренно. У прогонов и заданий есть свои
+-- лизы — вмешаться значило бы отобрать работу у живого воркера. Решение за горизонтом чинит
+-- резолвер, вектор достраивает воркер памяти. Если счётчик перестал быть нулём, сломан ТОТ
+-- механизм, и чинить надо его, а не последствие.
+--
+-- Истёкшие убеждения сюда не входят: отзыв их уже не видит, а на экране владельца они показаны
+-- отдельным состоянием — это не долг, а история.
+create or replace function public.ops_stuck_report()
+returns table (kind text, stuck bigint, oldest_hours numeric)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select 'proposals_overdue',
+         count(*), round(max(extract(epoch from (now() - p.expires_at)) / 3600)::numeric, 1)
+    from public.commerce_economics_proposals p
+   where p.status = 'pending' and p.expires_at < now()
+  union all
+  select 'sync_runs_running',
+         count(*), round(max(extract(epoch from (now() - r.claimed_at)) / 3600)::numeric, 1)
+    from public.commerce_sync_runs r
+   where r.status = 'running' and r.claimed_at < now() - interval '1 hour'
+  union all
+  select 'memory_jobs_processing',
+         count(*), round(max(extract(epoch from (now() - o.claimed_at)) / 3600)::numeric, 1)
+    from public.org_memory_outbox o
+   where o.status = 'processing' and o.claimed_at < now() - interval '1 hour'
+  union all
+  select 'decisions_past_horizon',
+         count(*), round(max(extract(epoch from (now() - d.horizon_at)) / 3600)::numeric, 1)
+    from public.org_decisions d
+   where d.outcome = 'pending' and d.horizon_at < now() - interval '2 hours'
+  union all
+  select 'claims_without_vector',
+         count(*), round(max(extract(epoch from (now() - c.created_at)) / 3600)::numeric, 1)
+    from public.org_claims c
+   where c.embedding is null and c.status <> 'retired' and c.created_at < now() - interval '1 hour'
+  union all
+  select 'findings_open_over_week',
+         count(*), round(max(extract(epoch from (now() - f.first_detected_at)) / 3600)::numeric, 1)
+    from public.commerce_recommendations f
+   where f.status = 'open' and f.first_detected_at < now() - interval '7 days';
+$$;
+
+revoke all on function public.ops_sweep_stale() from public, anon, authenticated;
+grant execute on function public.ops_sweep_stale() to service_role;
+revoke all on function public.ops_stuck_report() from public, anon, authenticated;
+grant execute on function public.ops_stuck_report() to service_role;
+
+comment on function public.ops_sweep_stale() is
+  'Закрывает просроченные предложения. Единственное, что чинится однозначно: они уже недействительны, '
+  'и pending у них — забытая метка, которая врёт владельцу.';
+comment on function public.ops_stuck_report() is
+  'Счётчики застрявшего. Ничего не чинит: у каждой категории есть свой механизм, и ненулевой '
+  'счётчик означает поломку ТОГО механизма, а не необходимость убрать последствие.';
+
+-- ─── 20260810120000_listing_description_blocks.sql ───────────────────────────────────────────
+-- Описание карточки перестало быть абзацем.
+--
+-- Продающая карточка на Uzum состоит из четырёх блоков: крючок, введение, преимущества буллетами,
+-- характеристики. Восьмисот символов на это не хватает — предел ставился под «1-3 предложения» и
+-- вместе с ними же и устарел.
+--
+-- Предел остаётся: строка без границы однажды приедет мегабайтом от сломавшейся модели. Просто он
+-- теперь описывает тот текст, который мы действительно хотим получить.
+alter table public.commerce_listing_drafts
+  drop constraint if exists commerce_listing_drafts_description_ru_check,
+  drop constraint if exists commerce_listing_drafts_description_uz_check;
+
+alter table public.commerce_listing_drafts
+  add constraint commerce_listing_drafts_description_ru_check
+    check (char_length(description_ru) <= 2200),
+  add constraint commerce_listing_drafts_description_uz_check
+    check (char_length(description_uz) <= 2200);
+
+-- ─── 20260810130000_listing_owner_stated_fees.sql ────────────────────────────────────────────
+-- Комиссия, названная владельцем, помечается как названная владельцем.
+--
+-- Полки берутся из категорий, где продавец УЖЕ торгует: там комиссию назвал сам Uzum, и она
+-- факт. Товар из новой ниши такой полки не имеет — и до сих пор это значило, что минимальной
+-- цены у него нет вовсе. Продавец, заходящий в новое направление, упирался в отказ на каждом
+-- товаре.
+--
+-- Выход один: владелец берёт комиссию из справочника Uzum и называет её сам. Но тогда число
+-- перестаёт быть фактом маркетплейса, и молчать об этом нельзя — иначе через неделю никто, включая
+-- саму систему, не отличит подтверждённую комиссию от набранной руками. Тот же приём, что и с
+-- себестоимостью: колонка провенанса рядом со значением.
+alter table public.commerce_listing_drafts
+  add column if not exists owner_stated_fields jsonb not null default '[]'::jsonb
+  check (jsonb_typeof(owner_stated_fields) = 'array');
+
+comment on column public.commerce_listing_drafts.owner_stated_fields is
+  'Поля, значение которых назвал владелец, а не Uzum. Показываются на карточке знаком ≈.';
+
+-- ─── 20260810140000_category_labels.sql ──────────────────────────────────────────────────────
+-- Категории Uzum по-русски.
+--
+-- Uzum отдаёт ОДНО имя полки, узбекское: в товарном ответе есть `category` и нет ни `categoryRu`,
+-- ни локали. Значит взять русское имя неоткуда, и «забирать оба языка при синхронизации» —
+-- не вариант реализации, а несуществующая возможность.
+--
+-- Остаётся перевод. Он делается один раз на полку и кладётся сюда: у продавца их дюжина, у
+-- платформы будут сотни, и переводить одно и то же на каждый рендер списка — трата и модели, и
+-- времени владельца.
+--
+-- КЛЮЧОМ ОСТАЁТСЯ УЗБЕКСКОЕ ИМЯ. Оно приходит от Uzum, по нему сходятся товары, по нему
+-- считается комиссия, оно лежит в черновиках. Перевод — только подпись на экране: полка,
+-- сменившая имя из-за нового перевода, разошлась бы со своими же товарами.
+create table if not exists public.commerce_category_labels (
+  category   text primary key check (char_length(category) between 1 and 160),
+  label_ru   text check (char_length(label_ru) between 1 and 160),
+  label_en   text check (char_length(label_en) between 1 and 160),
+
+  -- Кто назвал. Перевод модели можно молча заменить, слово владельца — нет.
+  source     text not null default 'model' check (source in ('model', 'owner')),
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.commerce_category_labels enable row level security;
+
+-- Справочник платформенный, а не арендаторский: полки Uzum одни и те же для всех продавцов, и
+-- перевод, купленный на одном аккаунте, не должен покупаться заново на каждом следующем.
+drop policy if exists commerce_category_labels_read on public.commerce_category_labels;
+create policy commerce_category_labels_read on public.commerce_category_labels
+  for select to authenticated using (true);
+revoke insert, update, delete on public.commerce_category_labels from anon, authenticated;
+
+-- ─── 20260810150000_commerce_deadstock.sql ───────────────────────────────────────────────────
+-- Застрявший товар: лежит, платит за хранение и не продаётся.
+--
+-- Это не «ноль продаж за неделю» — такое бывает у сезонного товара в межсезонье и у новинки,
+-- которую ещё никто не нашёл. Застой — это ДЛИТЕЛЬНОЕ отсутствие продаж при живом остатке, и
+-- отличить одно от другого можно только историей.
+--
+-- Поэтому детектор молчит, пока истории мало. Соблазн велик: за пять дней наблюдений формально
+-- «ноль продаж» верно почти у всего каталога, и отчёт вышел бы внушительный и бесполезный.
+-- Порог в 14 дней наблюдений — то, что делает вывод проверяемым, а не громким.
+alter table public.commerce_recommendations
+  drop constraint if exists commerce_recommendations_kind_check;
+alter table public.commerce_recommendations
+  add constraint commerce_recommendations_kind_check
+  check (kind in ('reorder', 'price_guard', 'missing_data', 'stockout', 'deadstock'));
+
+/*
+ * Кто лежит без движения.
+ *
+ * sold_units_7d — скользящая семидневка от Uzum. Ноль на протяжении 14 дней наблюдений значит,
+ * что продаж не было и в те семь дней, что предшествовали первому наблюдению: окно каждого
+ * снимка заглядывает назад. Возвращается именно число НАБЛЮДАВШИХСЯ дней, а не разница дат:
+ * пропущенная синхронизация не должна превращаться в «наблюдали, всё было плохо».
+ */
+create or replace function public.commerce_deadstock(
+  p_catalog_id  uuid,
+  p_window_days integer default 30,
+  p_min_days    integer default 14
+)
+returns table (
+  sku_id            uuid,
+  stock_total       integer,
+  price_tiyin       bigint,
+  days_observed     integer,
+  first_observed_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with window_rows as (
+    select
+      s.sku_id,
+      count(distinct date_trunc('day', s.observed_slot))::integer as days_observed,
+      max(s.sold_units_7d)                                        as max_sold,
+      min(s.observed_slot)                                        as first_observed_at
+    from public.commerce_inventory_snapshots s
+    join public.commerce_skus k on k.id = s.sku_id
+    where k.catalog_id = p_catalog_id
+      and s.observed_slot >= now() - make_interval(days => p_window_days)
+    group by s.sku_id
+  ),
+  latest as (
+    select distinct on (s.sku_id) s.sku_id, s.stock_total, s.price_tiyin
+    from public.commerce_inventory_snapshots s
+    join public.commerce_skus k on k.id = s.sku_id
+    where k.catalog_id = p_catalog_id
+    order by s.sku_id, s.observed_slot desc
+  )
+  select w.sku_id, l.stock_total, l.price_tiyin, w.days_observed, w.first_observed_at
+  from window_rows w
+  join latest l on l.sku_id = w.sku_id
+  -- Остаток живой, продаж нет ни в одном наблюдении, и наблюдений достаточно, чтобы это значило
+  -- застой, а не тишину коротких выходных.
+  where coalesce(l.stock_total, 0) > 0
+    and coalesce(w.max_sold, 0) = 0
+    and w.days_observed >= p_min_days;
+$$;
+
+revoke all on function public.commerce_deadstock(uuid, integer, integer) from public, anon;
+grant execute on function public.commerce_deadstock(uuid, integer, integer) to service_role;
+
+-- ─── 20260810160000_commerce_accept_price.sql ────────────────────────────────────────────────
+-- Владелец принял КОНКРЕТНУЮ цену, а не совет вообще.
+--
+-- commerce_accept_finding регистрирует «беру в работу» и ждёт, что цена станет не ниже пола.
+-- Здесь ожидание жёстче и честнее: названо число, и через неделю проверяется именно оно. Разница
+-- не косметическая — «цена выше пола» сбудется и когда владелец поставил пол, и когда он поставил
+-- ровно то, что советовали, а это разные исходы с разной прибылью.
+--
+-- ПОЛ ПРОВЕРЯЕТСЯ ЗДЕСЬ, а не только в интерфейсе и не только в кнопке. Цена приходит из
+-- callback_data или из набранного в чате числа — и то и другое владелец может изменить, а кнопку
+-- ещё и переслать. Единственное место, где проверку нельзя обойти, — база.
+create or replace function public.commerce_accept_price(
+  p_account_id        uuid,
+  p_recommendation_id uuid,
+  p_price_tiyin       bigint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_rec      record;
+  v_floor    numeric;
+  v_claim    uuid;
+  v_expected jsonb;
+  v_horizon  timestamptz;
+  v_decision jsonb;
+begin
+  select r.id, r.kind, r.status, r.sku_id, r.calculation, s.title, s.external_sku
+    into v_rec
+    from public.commerce_recommendations r
+    join public.commerce_skus s on s.id = r.sku_id
+    join public.commerce_catalogs c on c.id = s.catalog_id
+   where r.id = p_recommendation_id and c.account_id = p_account_id
+   for update of r;
+
+  if v_rec.id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+  if v_rec.status <> 'open' then
+    -- Повторное нажатие не создаёт второго решения.
+    return jsonb_build_object('ok', false, 'reason', 'already_' || v_rec.status);
+  end if;
+  if v_rec.kind not in ('price_guard', 'deadstock') then
+    return jsonb_build_object('ok', false, 'reason', 'unsupported_kind', 'kind', v_rec.kind);
+  end if;
+
+  v_floor := (v_rec.calculation->>'min_selling_price_tiyin')::numeric;
+  if v_floor is null then
+    -- Без пола принять цену нельзя: не с чем сравнивать, и «приняли» означало бы «согласились
+    -- вслепую». Пол считается из себестоимости и комиссии — если его нет, нет и их.
+    return jsonb_build_object('ok', false, 'reason', 'no_floor');
+  end if;
+  if p_price_tiyin is null or p_price_tiyin <= 0 then
+    return jsonb_build_object('ok', false, 'reason', 'invalid_price');
+  end if;
+  if p_price_tiyin < v_floor then
+    return jsonb_build_object('ok', false, 'reason', 'below_floor',
+                              'floor_tiyin', v_floor, 'price_tiyin', p_price_tiyin);
+  end if;
+
+  -- Неделя: цена меняется в кабинете в тот же день, а продажи по новой цене нужно ещё накопить.
+  v_horizon := now() + make_interval(days => 7);
+  v_expected := jsonb_build_object(
+    'metric', 'commerce.sku.price_tiyin', 'op', '>=', 'value', p_price_tiyin,
+    'params', jsonb_build_object('sku_id', v_rec.sku_id)
+  );
+  v_claim := public.commerce_hypothesis_for(p_account_id, 'price_guard');
+
+  update public.commerce_recommendations
+     set status = 'accepted', updated_at = now(),
+         suggested_action = coalesce(suggested_action, '{}'::jsonb)
+                            || jsonb_build_object('accepted_price_tiyin', p_price_tiyin)
+   where id = p_recommendation_id and status = 'open';
+
+  v_decision := public.org_decision_register(
+    p_account_id, 'recommendation', p_recommendation_id,
+    left('price: ' || coalesce(v_rec.title, v_rec.external_sku, 'товар')
+         || ' → ' || round(p_price_tiyin / 100) || ' сум', 400),
+    v_expected, v_horizon,
+    case when v_claim is null then '[]'::jsonb
+         else jsonb_build_array(jsonb_build_object('claim_id', v_claim, 'role', 'primary')) end,
+    jsonb_build_object('bridge', 'commerce', 'kind', v_rec.kind, 'price_tiyin', p_price_tiyin)
+  );
+
+  return jsonb_build_object('ok', true, 'decision', v_decision, 'horizon_at', v_horizon,
+                            'hypothesis', v_claim, 'price_tiyin', p_price_tiyin);
+end;
+$$;
+
+revoke all on function public.commerce_accept_price(uuid, uuid, bigint) from public, anon, authenticated;
+grant execute on function public.commerce_accept_price(uuid, uuid, bigint) to service_role;
+
+-- ─── 20260810170000_price_advice_sent.sql ────────────────────────────────────────────────────
+-- Ценовой совет с кнопками уходит ОДИН раз, а не каждое утро.
+--
+-- Своей отметки у него быть обязано: digest_sent_at ставится всей утренней сводке разом, а
+-- alerted_at принадлежит критическим авариям. Без третьей отметки владелец получал бы одну и ту
+-- же кнопку «Принять 58 750» каждый день, включая дни после того, как он её нажал.
+alter table public.commerce_recommendations
+  add column if not exists advice_sent_at timestamptz;
+
+create index if not exists commerce_recommendations_advice_idx
+  on public.commerce_recommendations (status, advice_sent_at)
+  where advice_sent_at is null;
+
+-- ─── 20260811120000_billing_subscriptions.sql ────────────────────────────────────────────────
+-- Состояние доступа аккаунта. ТОЛЬКО состояние: ни платежей, ни провайдеров здесь нет.
+--
+-- Таблица транзакций и вебхуки Payme/Click ждут ревью Codex по правилу CLAUDE.md — на платёжном
+-- контуре ошибка стоит денег клиента. Замку они не нужны: он спрашивает «оплачено ли», а не «чем
+-- и когда заплатили».
+create table if not exists public.billing_subscriptions (
+  account_id     uuid primary key references public.accounts(id) on delete cascade,
+  status         text not null default 'trial' check (status in ('trial', 'active', 'past_due', 'cancelled')),
+  plan_code      text,
+  trial_ends_at  timestamptz,
+  paid_until     timestamptz,
+  -- Кто именно заплатил. Заполнится, когда появится платёжный модуль; пока служит тем, что
+  -- фиксирует: провайдер будет не один.
+  provider       text check (provider in ('payme', 'click')),
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+
+alter table public.billing_subscriptions enable row level security;
+
+-- Владелец видит свой срок — иначе «истекло» станет для него новостью в момент отказа.
+drop policy if exists billing_subscriptions_read on public.billing_subscriptions;
+create policy billing_subscriptions_read on public.billing_subscriptions for select to authenticated
+  using (account_id = (select u.account_id from public.users u where u.id = auth.uid()));
+
+-- Писать может только сервер. Продлить себе подписку из браузера нельзя.
+revoke insert, update, delete on public.billing_subscriptions from anon, authenticated;
+
+-- Существующие аккаунты получают триал от даты СВОЕГО создания, а не от сегодняшнего дня. Иначе
+-- выкат биллинга подарил бы три свежих дня всем, включая тех, кто зарегистрировался в июле.
+insert into public.billing_subscriptions (account_id, status, trial_ends_at)
+select a.id, 'trial', a.created_at + interval '3 days'
+from public.accounts a
+on conflict (account_id) do nothing;
+
+-- ─── 20260811130000_listing_images_bucket.sql ────────────────────────────────────────────────
+-- Приватный бакет для фотографий товара.
+--
+-- Приватный, а не публичный: фото нового товара — коммерческая тайна продавца до публикации, и
+-- ссылка, которую можно угадать перебором, отдала бы его ассортимент кому угодно. Модель ходит за
+-- картинкой по подписанному адресу, живущему минуты.
+--
+-- ВРЕМЕННЫЙ по смыслу: файл нужен ровно на время одной генерации. Уборка живёт отдельной задачей
+-- (см. commerce_purge_listing_images ниже) — бакет, из которого никто не выносит мусор, растёт
+-- молча и обнаруживается счётом за хранение.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'listing-temp-images',
+  'listing-temp-images',
+  false,
+  -- Восемь мегабайт: снимок с телефона проходит, а видео и сканы каталогов — нет.
+  8 * 1024 * 1024,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+-- Путь начинается с account_id — это и есть граница между арендаторами. Заголовок политики
+-- сравнивает первый сегмент пути с аккаунтом пользователя, поэтому чужую папку не прочитать и
+-- не пополнить, даже зная имя файла.
+drop policy if exists listing_images_insert on storage.objects;
+create policy listing_images_insert on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'listing-temp-images'
+    and (storage.foldername(name))[1] = (select u.account_id::text from public.users u where u.id = auth.uid())
+  );
+
+drop policy if exists listing_images_read on storage.objects;
+create policy listing_images_read on storage.objects for select to authenticated
+  using (
+    bucket_id = 'listing-temp-images'
+    and (storage.foldername(name))[1] = (select u.account_id::text from public.users u where u.id = auth.uid())
+  );
+
+drop policy if exists listing_images_delete on storage.objects;
+create policy listing_images_delete on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'listing-temp-images'
+    and (storage.foldername(name))[1] = (select u.account_id::text from public.users u where u.id = auth.uid())
+  );
+
+/*
+ * Уборка. Файл переживает генерацию на сутки — на случай повторной попытки — и удаляется.
+ *
+ * Сутки, а не час: владелец, у которого не получилось с первого раза, переделывает черновик в тот
+ * же день, и заставлять его загружать фото заново значит наказывать за нашу же неудачу.
+ */
+create or replace function public.commerce_purge_listing_images(p_older_than interval default interval '1 day')
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_removed integer;
+begin
+  with gone as (
+    delete from storage.objects
+    where bucket_id = 'listing-temp-images'
+      and created_at < now() - p_older_than
+    returning 1
+  )
+  select count(*) into v_removed from gone;
+  return v_removed;
+end;
+$$;
+
+revoke all on function public.commerce_purge_listing_images(interval) from public, anon, authenticated;
+grant execute on function public.commerce_purge_listing_images(interval) to service_role;
+
+-- ─── 20260812100000_telegram_inbound_log.sql ─────────────────────────────────────────────────
+-- Что вообще приходит в вебхук. Форма сообщения, а не содержимое.
+--
+-- Три дня подряд фотография «не доходила», и отличить «Telegram не доставил» от «мы отбросили
+-- раньше ветки» было нечем: tg_updates пишется только в очередной ветке, после нескольких ранних
+-- выходов, а логи аналитики отстают на минуты и однажды уже заставили меня пять раз подряд
+-- сказать владельцу неправду.
+--
+-- Эта таблица пишется ПЕРВЫМ действием после проверки подписи — до дедупа, до кнопок, до
+-- очереди. Если строки нет, значит запроса не было. Другого толкования у пустоты здесь не
+-- останется.
+--
+-- Содержимое не хранится: только флаги формы. Переписка владельца с ботом — его дело, и
+-- диагностике достаточно знать, что пришло фото с подписью, а не что на нём написано.
+create table if not exists public.tg_inbound_log (
+  id          bigint generated always as identity primary key,
+  channel_id  uuid not null references public.channels(id) on delete cascade,
+  update_id   bigint,
+  kind        text not null,
+  has_photo   boolean not null default false,
+  has_document boolean not null default false,
+  has_voice   boolean not null default false,
+  has_text    boolean not null default false,
+  has_caption boolean not null default false,
+  chat_id     text,
+  received_at timestamptz not null default now()
+);
+
+create index if not exists tg_inbound_log_recent_idx on public.tg_inbound_log (received_at desc);
+
+alter table public.tg_inbound_log enable row level security;
+revoke all on public.tg_inbound_log from anon, authenticated;
+
+-- Неделя. Диагностика, живущая вечно, превращается в свалку, а вопрос «дошло ли вчера» дольше
+-- недели никто не задаёт.
+create or replace function public.tg_inbound_log_purge(p_older_than interval default interval '7 days')
+returns integer
+language sql
+security definer
+set search_path = ''
+as $$
+  with gone as (
+    delete from public.tg_inbound_log where received_at < pg_catalog.now() - p_older_than returning 1
+  )
+  select count(*)::integer from gone;
+$$;
+
+revoke all on function public.tg_inbound_log_purge(interval) from public, anon, authenticated;
+grant execute on function public.tg_inbound_log_purge(interval) to service_role;
+
+-- ─── 20260812110000_billing_invoices.sql ─────────────────────────────────────────────────────
+-- Счёт — то, за что заплатили. Транзакция — то, чем заплатили. Это разные вещи.
+--
+-- Первый вариант схемы обходился одной таблицей транзакций с уникальностью
+-- (provider, provider_transaction_id). Codex показал, чего она не защищает, и это не теория:
+--
+--   • Две попытки оплаты в Click дают РАЗНЫЕ click_trans_id при одном merchant_trans_id. Обе
+--     проходят уникальность, обе завершаются, обе продлевают подписку. Один платёж — два периода.
+--   • Тот же счёт можно оплатить дважды: один раз через Payme, другой через Click. Уникальность,
+--     заведённая внутри провайдера, о втором провайдере не знает ничего.
+--   • Два ретрая одного PerformTransaction оба увидят «строка уже есть, значит успех» и оба
+--     продлят срок. Идемпотентность СТРОКИ не есть идемпотентность НАЧИСЛЕНИЯ.
+--
+-- Поэтому появляется счёт: единица того, что куплено. Начисление привязано к нему и случается
+-- ровно один раз, чем бы и сколько раз за него ни платили.
+create table if not exists public.billing_invoices (
+  id            uuid primary key default gen_random_uuid(),
+  account_id    uuid not null references public.accounts(id) on delete cascade,
+
+  -- СНИМОК УСЛОВИЙ на момент выставления. Не ссылка на прайс: цена в справочнике завтра
+  -- изменится, а покупатель заплатил по сегодняшней. Проверять сумму платежа надо против того,
+  -- что он видел, а не против того, что стало.
+  plan_code     text not null check (char_length(plan_code) between 1 and 40),
+  amount_tiyin  bigint not null check (amount_tiyin > 0),
+  currency      text not null default 'UZS' check (currency = 'UZS'),
+  duration_days integer not null check (duration_days between 1 and 400),
+
+  status        text not null default 'pending' check (status in ('pending', 'paid', 'cancelled', 'expired')),
+
+  -- Единственная защита от двойного начисления. Не «признак оплаты», а отметка о том, что права
+  -- УЖЕ выданы: только запрос, переводящий её из null, продлевает срок.
+  entitlement_applied_at timestamptz,
+  -- Что именно выдали. Без этого «продлили на месяц» — слова: при разборе спора нужно знать, до
+  -- какой даты довели и от какой считали.
+  applied_paid_until     timestamptz,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- Счёт, за который не заплатили, не должен ждать вечно: провайдер тоже закрывает свои.
+  expires_at timestamptz not null default now() + interval '2 days',
+
+  -- Выдали права — обязаны сказать, до какой даты. Одно без другого означает потерянную улику.
+  constraint billing_invoices_applied_is_explained
+    check ((entitlement_applied_at is null) = (applied_paid_until is null))
+);
+
+create index if not exists billing_invoices_account_idx on public.billing_invoices (account_id, created_at desc);
+create index if not exists billing_invoices_open_idx on public.billing_invoices (status, expires_at) where status = 'pending';
+
+alter table public.billing_invoices enable row level security;
+
+-- Владелец видит свои счета: срок, сумма и статус — то, что он вправе проверить сам.
+drop policy if exists billing_invoices_read on public.billing_invoices;
+create policy billing_invoices_read on public.billing_invoices for select to authenticated
+  using (account_id = (select u.account_id from public.users u where u.id = auth.uid()));
+revoke insert, update, delete on public.billing_invoices from anon, authenticated;
+
+/*
+ * Условия счёта неизменны после выставления.
+ *
+ * Иначе защита по сумме бессмысленна: достаточно поправить amount_tiyin под пришедший платёж, и
+ * проверка «сумма совпала» совпадёт с чем угодно. Менять разрешено только статус и отметки о
+ * начислении — то есть ход исполнения, а не сам договор.
+ */
+create or replace function public.billing_invoices_freeze_terms()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.account_id is distinct from old.account_id
+     or new.plan_code is distinct from old.plan_code
+     or new.amount_tiyin is distinct from old.amount_tiyin
+     or new.currency is distinct from old.currency
+     or new.duration_days is distinct from old.duration_days
+  then
+    raise exception 'invoice terms are immutable once issued (invoice %)', old.id;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists billing_invoices_freeze on public.billing_invoices;
+create trigger billing_invoices_freeze before update on public.billing_invoices
+  for each row execute function public.billing_invoices_freeze_terms();
+
+/*
+ * Начисление прав по счёту. Ровно один раз, чем бы за него ни платили.
+ *
+ * Вся работа — в одной транзакции с блокировкой строки счёта. Два одновременных вызова: первый
+ * берёт блокировку и переводит entitlement_applied_at из null, второй ждёт, видит уже
+ * проставленную отметку и возвращает ТОТ ЖЕ результат, ничего не продлевая. Повтор — не ошибка:
+ * провайдеры ретраят по протоколу, и ответ на ретрай обязан совпадать с ответом на оригинал.
+ *
+ * Арифметика срока:
+ *   greatest(coalesce(paid_until, now()), now()) + N дней
+ *
+ * От now() всегда — крадёт остаток у того, кто продлил заранее: двадцать оставшихся дней плюс
+ * тридцать купленных дали бы тридцать. От paid_until всегда — продлевает в прошлое тому, кто
+ * вернулся после перерыва: платёж прошёл, а замок не открылся.
+ */
+create or replace function public.apply_invoice_entitlement(p_invoice_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_invoice public.billing_invoices%rowtype;
+  v_base    timestamptz;
+  v_until   timestamptz;
+begin
+  select * into v_invoice from public.billing_invoices where id = p_invoice_id for update;
+
+  if v_invoice.id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+
+  -- Уже начислено: возвращаем прежний ответ, не трогая срок. Это и есть точка, где ретрай
+  -- перестаёт быть вторым платежом.
+  if v_invoice.entitlement_applied_at is not null then
+    return jsonb_build_object('ok', true, 'already_applied', true,
+                              'paid_until', v_invoice.applied_paid_until,
+                              'invoice_id', v_invoice.id);
+  end if;
+
+  if v_invoice.status = 'cancelled' or v_invoice.status = 'expired' then
+    return jsonb_build_object('ok', false, 'reason', 'invoice_' || v_invoice.status);
+  end if;
+
+  -- Подписка блокируется тоже: два счёта одного аккаунта, начисляемые одновременно, иначе
+  -- прочитали бы одно и то же paid_until и один затёр бы другой.
+  insert into public.billing_subscriptions (account_id, status)
+  values (v_invoice.account_id, 'trial')
+  on conflict (account_id) do nothing;
+
+  select greatest(coalesce(paid_until, pg_catalog.now()), pg_catalog.now())
+    into v_base
+    from public.billing_subscriptions
+   where account_id = v_invoice.account_id
+     for update;
+
+  v_until := v_base + pg_catalog.make_interval(days => v_invoice.duration_days);
+
+  update public.billing_subscriptions
+     set status = 'active',
+         paid_until = v_until,
+         plan_code = v_invoice.plan_code,
+         updated_at = pg_catalog.now()
+   where account_id = v_invoice.account_id;
+
+  update public.billing_invoices
+     set status = 'paid',
+         entitlement_applied_at = pg_catalog.now(),
+         applied_paid_until = v_until
+   where id = v_invoice.id and entitlement_applied_at is null;
+
+  return jsonb_build_object('ok', true, 'already_applied', false,
+                            'paid_until', v_until, 'invoice_id', v_invoice.id,
+                            'granted_days', v_invoice.duration_days);
+end;
+$$;
+
+revoke all on function public.apply_invoice_entitlement(uuid) from public, anon, authenticated;
+grant execute on function public.apply_invoice_entitlement(uuid) to service_role;
+
+/*
+ * Право на пробный период — за магазином, а не за почтой.
+ *
+ * Триал, привязанный к созданию аккаунта, обходится заведением новой почты каждые три дня: это
+ * стоит ноль и повторяется бесконечно. Привязка к магазину Uzum поднимает цену обхода с «новый
+ * ящик» до «другой настоящий магазин» и при этом не мешает никому из честных: свой магазин у
+ * продавца один и тот же, под какой бы почтой он ни вошёл.
+ */
+create table if not exists public.billing_trial_claims (
+  shop_id    text primary key check (char_length(shop_id) between 1 and 120),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  claimed_at timestamptz not null default now()
+);
+
+create index if not exists billing_trial_claims_account_idx on public.billing_trial_claims (account_id);
+
+alter table public.billing_trial_claims enable row level security;
+revoke all on public.billing_trial_claims from anon, authenticated;
+
+/*
+ * Закрепляет магазин за аккаунтом. Первый успевший владеет им.
+ *
+ * Возвращает true, если магазин теперь за этим аккаунтом (и в том числе если был за ним раньше),
+ * false — если он уже занят другим. Отказ здесь НЕ должен ломать подключение каталога: продавец
+ * может подключать второй магазин, и это законно. Отказ означает лишь, что нового пробного
+ * периода за этот магазин не будет.
+ */
+create or replace function public.claim_shop_trial(p_account_id uuid, p_shop_id text)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_owner uuid;
+begin
+  if p_account_id is null or coalesce(p_shop_id, '') = '' then
+    return false;
+  end if;
+  insert into public.billing_trial_claims (shop_id, account_id)
+  values (p_shop_id, p_account_id)
+  on conflict (shop_id) do nothing;
+
+  select account_id into v_owner from public.billing_trial_claims where shop_id = p_shop_id;
+  return v_owner = p_account_id;
+end;
+$$;
+
+/*
+ * Заслужил ли аккаунт пробный период.
+ *
+ * Аккаунт БЕЗ подключённого магазина триал получает: иначе новый продавец не смог бы даже
+ * посмотреть продукт до подключения Uzum, а это первый экран онбординга.
+ *
+ * Аккаунт с магазином получает триал, только если магазин закреплён за ним. Магазин, уже
+ * отработавший триал под другим аккаунтом, второго не даёт.
+ */
+create or replace function public.trial_allowed_for_account(p_account_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (
+    select 1
+      from public.commerce_catalogs c
+      join public.billing_trial_claims t on t.shop_id = c.external_shop_id
+     where c.account_id = p_account_id
+       and t.account_id <> p_account_id
+  );
+$$;
+
+revoke all on function public.claim_shop_trial(uuid, text) from public, anon, authenticated;
+revoke all on function public.trial_allowed_for_account(uuid) from public, anon;
+grant execute on function public.claim_shop_trial(uuid, text) to service_role;
+grant execute on function public.trial_allowed_for_account(uuid) to service_role, authenticated;
+
+-- Уже подключённые магазины закрепляются за своими аккаунтами: иначе первый же чужой аккаунт,
+-- подключивший тот же магазин, отобрал бы у них право на триал.
+insert into public.billing_trial_claims (shop_id, account_id, claimed_at)
+select distinct on (c.external_shop_id) c.external_shop_id, c.account_id, c.created_at
+from public.commerce_catalogs c
+where coalesce(c.external_shop_id, '') <> ''
+order by c.external_shop_id, c.created_at
+on conflict (shop_id) do nothing;
+
+-- ─── 20260812120000_invoice_sets_plan.sql ────────────────────────────────────────────────────
+-- Оплата счёта должна давать и права, и квоты.
+--
+-- Замок на ИИ-функции читает billing_subscriptions, а лимиты по токенам и медиа — accounts.plan.
+-- Это две разные оси, и до сих пор их заполняли разные системы: план ставил Stripe, подписку —
+-- ничто. После Payme и Click получилось бы худшее из двух: замок открыт, а квоты остались
+-- бесплатного тарифа, и клиент, заплативший вчера, упирается в лимит сегодня.
+--
+-- Счёт несёт plan_code с момента выставления, поэтому источник один и тот же — снимок условий.
+create or replace function public.apply_invoice_entitlement(p_invoice_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_invoice public.billing_invoices%rowtype;
+  v_base    timestamptz;
+  v_until   timestamptz;
+begin
+  select * into v_invoice from public.billing_invoices where id = p_invoice_id for update;
+
+  if v_invoice.id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+
+  if v_invoice.entitlement_applied_at is not null then
+    return jsonb_build_object('ok', true, 'already_applied', true,
+                              'paid_until', v_invoice.applied_paid_until,
+                              'invoice_id', v_invoice.id);
+  end if;
+
+  if v_invoice.status = 'cancelled' or v_invoice.status = 'expired' then
+    return jsonb_build_object('ok', false, 'reason', 'invoice_' || v_invoice.status);
+  end if;
+
+  insert into public.billing_subscriptions (account_id, status)
+  values (v_invoice.account_id, 'trial')
+  on conflict (account_id) do nothing;
+
+  select greatest(coalesce(paid_until, pg_catalog.now()), pg_catalog.now())
+    into v_base
+    from public.billing_subscriptions
+   where account_id = v_invoice.account_id
+     for update;
+
+  v_until := v_base + pg_catalog.make_interval(days => v_invoice.duration_days);
+
+  update public.billing_subscriptions
+     set status = 'active',
+         paid_until = v_until,
+         plan_code = v_invoice.plan_code,
+         updated_at = pg_catalog.now()
+   where account_id = v_invoice.account_id;
+
+  -- Квоты идут за подпиской. Тот же снимок, та же транзакция: план и срок не должны расходиться.
+  update public.accounts
+     set plan = v_invoice.plan_code
+   where id = v_invoice.account_id;
+
+  update public.billing_invoices
+     set status = 'paid',
+         entitlement_applied_at = pg_catalog.now(),
+         applied_paid_until = v_until
+   where id = v_invoice.id and entitlement_applied_at is null;
+
+  return jsonb_build_object('ok', true, 'already_applied', false,
+                            'paid_until', v_until, 'invoice_id', v_invoice.id,
+                            'plan_code', v_invoice.plan_code,
+                            'granted_days', v_invoice.duration_days);
+end;
+$$;
+
+-- ─── 20260812130000_billing_transactions.sql ─────────────────────────────────────────────────
+-- Транзакция — то, ЧЕМ заплатили. Счёт — то, ЗА ЧТО. Одна строка на попытку провайдера.
+--
+-- Начисление привязано к счёту и защищено там (entitlement_applied_at). Эта таблица нужна для
+-- другого: помнить состояние конкретной попытки, чтобы отвечать провайдеру одинаково на повтор и
+-- не создавать вторую транзакцию под тем же номером.
+create table if not exists public.billing_transactions (
+  id            uuid primary key default gen_random_uuid(),
+  provider      text not null check (provider in ('payme', 'click')),
+
+  -- Идентификатор ПРОВАЙДЕРА, не наш. У Payme это params.id, у Click — click_trans_id.
+  provider_transaction_id text not null check (char_length(provider_transaction_id) between 1 and 120),
+
+  invoice_id    uuid not null references public.billing_invoices(id) on delete restrict,
+  account_id    uuid not null references public.accounts(id) on delete cascade,
+
+  -- Сумма попытки. Хранится, чтобы повтор с изменившейся суммой был виден как чужая транзакция
+  -- под знакомым номером, а не принят по старому успешному ответу.
+  amount_tiyin  bigint not null check (amount_tiyin > 0),
+
+  -- Состояния Payme: 1 создана, 2 выполнена, -1 отменена, -2 отменена после выполнения.
+  -- Click живёт теми же числами: 1 после Prepare, 2 после Complete.
+  state         integer not null default 1 check (state in (1, 2, -1, -2)),
+
+  -- Своя часть Click: merchant_prepare_id, которым Complete связывается со своим Prepare.
+  merchant_prepare_id text,
+
+  cancel_reason integer,
+  created_at    timestamptz not null default now(),
+  performed_at  timestamptz,
+  cancelled_at  timestamptz,
+
+  -- Повтор запроса не создаёт вторую строку. Это ответ на ретраи провайдера, а НЕ защита от
+  -- двойного начисления: двойное начисление ловится на счёте, потому что двух разных транзакций
+  -- на один счёт эта уникальность не запрещает.
+  unique (provider, provider_transaction_id)
+);
+
+create index if not exists billing_transactions_invoice_idx on public.billing_transactions (invoice_id);
+create index if not exists billing_transactions_account_idx on public.billing_transactions (account_id, created_at desc);
+
+-- ОДИН СЧЁТ — ОДНА ВЫПОЛНЕННАЯ ТРАНЗАКЦИЯ.
+--
+-- Вот та защита, которой уникальность по провайдеру не даёт: две попытки Click с разными
+-- click_trans_id по одному счёту, или оплата одного счёта и через Payme, и через Click. Частичный
+-- уникальный индекс делает вторую выполненную транзакцию невозможной на уровне базы.
+create unique index if not exists billing_transactions_one_performed_per_invoice
+  on public.billing_transactions (invoice_id) where state = 2;
+
+alter table public.billing_transactions enable row level security;
+
+-- Владелец видит свои платежи: сумму, дату и состояние. Это его деньги.
+drop policy if exists billing_transactions_read on public.billing_transactions;
+create policy billing_transactions_read on public.billing_transactions for select to authenticated
+  using (account_id = (select u.account_id from public.users u where u.id = auth.uid()));
+revoke insert, update, delete on public.billing_transactions from anon, authenticated;
+
+-- ─── 20260813090000_billing_numeric_ids.sql ──────────────────────────────────────────────────
+-- Номер счёта и номер платежа — числами.
+--
+-- Не косметика. Click в своём протоколе работает целыми числами: merchant_trans_id он кладёт в
+-- поле заказа, а merchant_prepare_id и merchant_confirm_id возвращает себе в журнал и сверяет как
+-- числа. Uuid туда проходит по формату строки, но сертификацию не проходит, и на боевом контуре
+-- это означает не «некрасиво», а «касса не подключится».
+--
+-- Второе, ради чего это стоит делать даже без Click: номер счёта видит человек. «Оплатите счёт
+-- 100042» произносится по телефону и сверяется в выписке, а
+-- «9329393e-b5ab-4f20-8b8f-ead0ad466148» — нет.
+--
+-- Uuid остаётся первичным ключом и внутренней ссылкой: он не угадывается перебором, и по нему
+-- по-прежнему связаны все внешние ключи. Номер — вторая, публичная координата той же строки.
+
+-- Начинаем с шестизначного: номера 1, 2, 3 выглядят как тестовые и в разговоре с покупателем
+-- звучат так же.
+create sequence if not exists public.billing_invoice_no_seq start with 100000;
+create sequence if not exists public.billing_transaction_no_seq start with 100000;
+
+alter table public.billing_invoices  add column if not exists invoice_no     bigint;
+alter table public.billing_transactions add column if not exists transaction_no bigint;
+
+alter table public.billing_invoices     alter column invoice_no     set default nextval('public.billing_invoice_no_seq');
+alter table public.billing_transactions alter column transaction_no set default nextval('public.billing_transaction_no_seq');
+
+alter sequence public.billing_invoice_no_seq     owned by public.billing_invoices.invoice_no;
+alter sequence public.billing_transaction_no_seq owned by public.billing_transactions.transaction_no;
+
+-- Строки, выставленные до этой миграции, получают номера тем же счётчиком. Пропуск оставил бы
+-- счета без публичной координаты, и поиск по номеру молча не находил бы половину.
+update public.billing_invoices     set invoice_no     = nextval('public.billing_invoice_no_seq')     where invoice_no is null;
+update public.billing_transactions set transaction_no = nextval('public.billing_transaction_no_seq') where transaction_no is null;
+
+alter table public.billing_invoices     alter column invoice_no     set not null;
+alter table public.billing_transactions alter column transaction_no set not null;
+
+-- Уникальность обязательна: номер — то, по чему касса находит счёт. Два счёта под одним номером
+-- означают платёж, зачисленный не туда.
+create unique index if not exists billing_invoices_no_key     on public.billing_invoices (invoice_no);
+create unique index if not exists billing_transactions_no_key on public.billing_transactions (transaction_no);
+
+/*
+ * merchant_prepare_id больше не выдумывается отдельно.
+ *
+ * Раньше на Prepare генерировался случайный uuid и клался в merchant_prepare_id — то есть у
+ * транзакции было два идентификатора, ни один из которых Click не принимает как число. Теперь
+ * подготовку связывает с завершением сам номер транзакции: он уже уникален, уже числовой и уже
+ * принадлежит ровно этой строке.
+ *
+ * Колонка остаётся ради истории: удалять то, чем отвечали провайдеру, значит терять улику в споре.
+ */
+comment on column public.billing_transactions.merchant_prepare_id is
+  'Историческое поле. С 13.08.2026 подготовку с завершением связывает transaction_no.';
+
+-- ─── 20260813120000_commerce_sales_trend.sql ─────────────────────────────────────────────────
+-- Находка нового вида: спрос упал или остановился.
+--
+-- Одно окно продаж не отличает медленный товар от умирающего. Два окна отличают, и это разные
+-- дни для владельца: в первом случае делать нечего, во втором деньги лежат на складе, а покупатель
+-- ушёл к соседу.
+alter table public.commerce_recommendations
+  drop constraint if exists commerce_recommendations_kind_check;
+
+alter table public.commerce_recommendations
+  add constraint commerce_recommendations_kind_check
+  check (kind in ('reorder', 'price_guard', 'missing_data', 'stockout', 'deadstock', 'sales_trend'));
+
+comment on constraint commerce_recommendations_kind_check on public.commerce_recommendations is
+  'sales_trend — падение или остановка продаж по сравнению с предыдущей неделей. Считается '
+  'вычитанием двух окон (7 и 14 дней) и НЕ выставляется, когда любое из окон обрезано '
+  'постраничной выборкой: разность двух неполных чисел выглядит как обвал.';
+
+-- ─── 20260813140000_listing_submissions.sql ──────────────────────────────────────────────────
+-- Отправка карточки в Uzum: выключатель и журнал попыток.
+--
+-- Отправки пока нет — внешние адреса создания товара Uzum закрывает 403 для ключа продавца
+-- (проверено: 200 на рабочих маршрутах чтения, 403 на девяти адресах создания). Всё, что здесь
+-- заводится, — контур ВОКРУГ отправки: чем она включается, что о каждой попытке остаётся и что
+-- владелец прочитает вместо «ошибка».
+--
+-- Заводится это до самой отправки намеренно. Журнал, дописанный после того, как отправка
+-- заработала, не помнит первых попыток — а именно первые и разбирают, когда карточка не доехала.
+
+-- Режим отправки живёт у пилота: это уже строка на аккаунт, где хранится состояние коммерции.
+alter table public.commerce_pilots
+  add column if not exists auto_submit_to_moderation boolean not null default true;
+
+comment on column public.commerce_pilots.auto_submit_to_moderation is
+  'true — «Полная автономия»: готовая карточка уходит на модерацию сама. false — «Ручной '
+  'контроль»: владелец подтверждает каждую в один клик. Значение по умолчанию true выбрано '
+  'владельцем продукта; оно показывается при первом запуске, а не обнаруживается постфактум.';
+
+/*
+ * Журнал попыток отправки.
+ *
+ * Одна строка на попытку, а не на черновик: попыток бывает несколько, и разбирать спор
+ * «почему товар не появился» приходится именно по ним. Ответ площадки хранится ЦЕЛИКОМ в том
+ * виде, в каком пришёл, — пересказ ответа своими словами теряет ровно ту деталь, ради которой
+ * в журнал и заглядывают.
+ */
+create table if not exists public.commerce_listing_submissions (
+  id uuid primary key default gen_random_uuid(),
+  draft_id uuid not null references public.commerce_listing_drafts(id) on delete cascade,
+  account_id uuid not null references public.accounts(id) on delete cascade,
+
+  -- Кто решил отправлять: тумблер или человек. Без этого нельзя отличить «автономия отправила
+  -- не то» от «владелец отправил не то», а это разные разговоры.
+  mode text not null check (mode in ('auto', 'manual')),
+  -- Чем отправляли. Пока только официальный API; расширение появится здесь же, когда появится.
+  transport text not null check (transport in ('uzum_api', 'extension')),
+
+  -- refused — до площадки не дошли (не хватило данных, нет прав, замок подписки);
+  -- failed — дошли, площадка отказала; sent — площадка приняла.
+  status text not null check (status in ('refused', 'failed', 'sent')),
+  http_status integer,
+  -- Причина машинным словом: по ней считается статистика, не разбирая текст.
+  reason text check (char_length(reason) <= 60),
+  -- Ответ площадки как есть, обрезанный по длине, а не по смыслу.
+  provider_response text check (char_length(provider_response) <= 4000),
+  -- Что владелец увидел на экране. Хранится, чтобы через месяц не гадать, какими словами
+  -- ему объяснили отказ.
+  owner_message text check (char_length(owner_message) <= 600),
+
+  external_product_id text check (char_length(external_product_id) <= 120),
+  attempted_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists commerce_listing_submissions_draft_idx
+  on public.commerce_listing_submissions(draft_id, created_at desc);
+create index if not exists commerce_listing_submissions_account_idx
+  on public.commerce_listing_submissions(account_id, created_at desc);
+
+alter table public.commerce_listing_submissions enable row level security;
+
+-- Владелец видит свои попытки: это его товар и его отказы.
+drop policy if exists commerce_listing_submissions_read on public.commerce_listing_submissions;
+create policy commerce_listing_submissions_read on public.commerce_listing_submissions
+  for select to authenticated
+  using (account_id = (select u.account_id from public.users u where u.id = auth.uid()));
+revoke insert, update, delete on public.commerce_listing_submissions from anon, authenticated;
+
+/*
+ * Отправленный черновик — отдельное состояние.
+ *
+ * 'ready' означает «владелец одобрил», и это не то же самое, что «ушло на модерацию»: между ними
+ * стоит площадка, которая может и отказать. Одно состояние на оба смысла привело бы к повторным
+ * отправкам одной карточки — она же «ready».
+ */
+alter table public.commerce_listing_drafts
+  drop constraint if exists commerce_listing_drafts_status_check;
+alter table public.commerce_listing_drafts
+  add constraint commerce_listing_drafts_status_check
+  check (status in ('draft', 'ready', 'discarded', 'submitted'));
+
+alter table public.commerce_listing_drafts
+  add column if not exists submitted_at timestamptz;
+
+-- Прежнее правило говорило «ready ровно тогда, когда есть approved_at». Отправленная карточка
+-- тоже одобрена — иначе её бы не отправили, — поэтому правило переписано на оба состояния.
+alter table public.commerce_listing_drafts
+  drop constraint if exists commerce_listing_drafts_check;
+alter table public.commerce_listing_drafts
+  add constraint commerce_listing_drafts_approved_is_explained
+  check ((status in ('ready', 'submitted')) = (approved_at is not null));
+
+-- ─── 20260813160000_extension_submit.sql ─────────────────────────────────────────────────────
+-- Перенос карточки через расширение браузера: свой тумблер и свои причины отказа.
+--
+-- Тумблер ОТДЕЛЬНЫЙ от auto_submit_to_moderation намеренно. Это разные способы с разным риском:
+-- официальный API живёт по договору с площадкой, расширение работает вашей сессией в кабинете и,
+-- скорее всего, противоречит правилам продавца. Один переключатель на оба означал бы, что человек,
+-- включивший автономию по API, незаметно для себя включил и автоматизацию кабинета.
+alter table public.commerce_pilots
+  add column if not exists auto_extension_submit boolean not null default false;
+
+comment on column public.commerce_pilots.auto_extension_submit is
+  'Перенос карточек в кабинет Uzum через расширение браузера. По умолчанию ВЫКЛЮЧЕН: способ '
+  'вероятно нарушает правила продавца Uzum, и включать его человек должен сам, а не обнаружить '
+  'включённым. Не путать с auto_submit_to_moderation — это официальный API.';
+
+/*
+ * Причины, с которыми возвращается расширение.
+ *
+ * human_needed — увидели капчу или незнакомый экран и остановились. Это ОТКАЗ, а не поломка:
+ *   карточка цела, решение за владельцем.
+ * form_changed — разметка кабинета разошлась с нашей: поле или кнопка не найдены.
+ * selectors_missing — разметка ещё не заполнена вовсе.
+ *
+ * Хранятся в том же журнале, что и попытки через API. Две таблицы дали бы две несходящиеся
+ * статистики «сколько карточек доехало», и складывать их пришлось бы руками.
+ */
+comment on column public.commerce_listing_submissions.reason is
+  'Причина машинным словом. От API: no_write_access, provider_rejected, provider_unavailable, '
+  'incomplete, not_ready, already_submitted, subscription_locked, no_key, not_owner. '
+  'От расширения: human_needed, form_changed, selectors_missing.';
+
+-- ─── 20260817120000_sdr_leads.sql ────────────────────────────────────────────────────────────
+-- Хранилище лидов SDR-пайплайна (agent-hub/sdr-run.mjs).
+--
+-- Внутренний инструмент продаж Ustudy IT, а не данные арендатора платформы: доступ только
+-- сервисным ключом из доверенного CLI-скрипта. RLS включён БЕЗ единой политики для anon/
+-- authenticated намеренно — как и у прочих инфраструктурных таблиц этого проекта (worker lease
+-- и подобные): нет политики значит нет доступа никому, кроме service_role.
+
+create table if not exists public.sdr_leads (
+  id uuid primary key default gen_random_uuid(),
+  place_id text not null,
+  dedupe_key text not null unique,
+  name text not null,
+  normalized_name text not null,
+  city text not null,
+  address text,
+  phone text,
+  website text,
+  rating numeric,
+  reviews integer,
+  operational boolean not null default true,
+  enrichment jsonb not null default '{}'::jsonb,
+  score jsonb,
+  found_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists sdr_leads_dedupe_key_idx on public.sdr_leads (dedupe_key);
+-- Статус лежит внутри score (jsonb), а не отдельной колонкой: он выводится из числа на стороне
+-- кода (schemas.ts:statusFor), и хранить его дважды означало бы держать два источника истины.
+create index if not exists sdr_leads_status_idx on public.sdr_leads (((score ->> 'status')));
+create index if not exists sdr_leads_city_idx on public.sdr_leads (city);
+
+alter table public.sdr_leads enable row level security;
+
+create or replace function public.sdr_leads_touch_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists sdr_leads_set_updated_at on public.sdr_leads;
+create trigger sdr_leads_set_updated_at
+  before update on public.sdr_leads
+  for each row execute function public.sdr_leads_touch_updated_at();
+
+-- ─── 20260817180000_nemo_api_tokens_sdr_jobs.sql ─────────────────────────────────────────────
+-- Платформенные токены Nemo и очередь задач SDR.
+--
+-- Здесь появляется ВТОРОЙ класс учётных данных рядом с сессией Supabase, и это главный риск всей
+-- затеи: долгоживущий ключ, который машина носит с собой. Поэтому три решения приняты жёстко и
+-- проверяются кодом, а не соглашением:
+--
+--   1. DENY BY DEFAULT. Токен не «принадлежит аккаунту и потому может всё» — он может РОВНО то, что
+--      перечислено в allowed_actions. Пустой массив означает «ничего», а не «всё».
+--   2. Токен НЕ ХРАНИТСЯ. В базе лежит HMAC-SHA256 от него с серверным перцем; сам токен виден
+--      один раз при создании. Утечка дампа базы не даёт действующих ключей.
+--   3. Собственный лимит частоты у КАЖДОГО токена, поверх подписки аккаунта. Подписка отвечает на
+--      «вправе ли этот аккаунт», лимит токена — на «сколько может утёкший ключ до того, как его
+--      заметят». Это разные вопросы, и одного ответа на оба недостаточно.
+--
+-- Все три таблицы — инфраструктура: RLS включён БЕЗ единой политики, доступ только service_role.
+
+create table if not exists public.nemo_api_tokens (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  -- HMAC-SHA256 в hex. Уникален: два токена не могут дать один отпечаток, а поиск по нему —
+  -- одно обращение по индексу, а не перебор таблицы на каждом запросе.
+  token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  name text not null check (length(btrim(name)) between 1 and 120),
+  -- Строгий белый список. Пустой массив = токен не может ничего: так безопаснее, чем «не указано
+  -- значит всё», и позволяет отключить токен, не удаляя историю.
+  allowed_actions text[] not null default '{}'::text[],
+  rate_limit_per_minute integer not null default 30 check (rate_limit_per_minute between 1 and 600),
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz,
+  -- Для ревокации по признаку «этим ключом давно не пользовались» и для аудита.
+  last_used_at timestamptz
+);
+
+create index if not exists nemo_api_tokens_account_idx on public.nemo_api_tokens (account_id);
+
+alter table public.nemo_api_tokens enable row level security;
+
+-- Счётчик частоты. Отдельная таблица, а не поле в токене: минутные ведра позволяют считать
+-- атомарно одним INSERT ... ON CONFLICT, без блокировки строки токена на каждый запрос.
+create table if not exists public.nemo_api_token_usage (
+  token_id uuid not null references public.nemo_api_tokens(id) on delete cascade,
+  minute_bucket timestamptz not null,
+  request_count integer not null default 0,
+  primary key (token_id, minute_bucket)
+);
+
+alter table public.nemo_api_token_usage enable row level security;
+
+/*
+ * Атомарный расход лимита частоты.
+ *
+ * INSERT ... ON CONFLICT DO UPDATE ... RETURNING — единственная форма, которая одновременно
+ * увеличивает счётчик и возвращает новое значение без гонки. Прочитать-потом-записать здесь
+ * означало бы, что десять одновременных вызовов Edge Function увидят одно и то же число и все
+ * решат, что лимит не исчерпан.
+ */
+create or replace function public.nemo_token_consume_rate(p_token_id uuid, p_limit integer)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_bucket timestamptz := date_trunc('minute', now());
+  v_count integer;
+begin
+  insert into public.nemo_api_token_usage as u (token_id, minute_bucket, request_count)
+  values (p_token_id, v_bucket, 1)
+  on conflict (token_id, minute_bucket)
+    do update set request_count = u.request_count + 1
+  returning u.request_count into v_count;
+
+  return v_count <= p_limit;
+end
+$$;
+
+-- Ведра старше суток не нужны никому: лимит минутный, а история расхода живёт в аудите задач.
+create or replace function public.nemo_token_usage_gc()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_deleted integer;
+begin
+  delete from public.nemo_api_token_usage where minute_bucket < now() - interval '1 day';
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end
+$$;
+
+-- ─────────────────────────────  Очередь задач SDR  ─────────────────────────────
+--
+-- Синхронный прогон здесь невозможен по существу, а не по неудобству: 30–50 лидов это запрос к
+-- Overpass, N загрузок чужих сайтов и N вызовов модели — минуты работы, за которые Edge Function
+-- успевает быть убитой по времени. Клиент получает job_id сразу, воркер работает отдельно.
+
+create table if not exists public.sdr_jobs (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  -- Каким токеном заведена задача. Нужно для аудита: по утёкшему ключу видно, что он успел создать.
+  token_id uuid references public.nemo_api_tokens(id) on delete set null,
+  status text not null default 'queued' check (status in ('queued', 'running', 'completed', 'failed')),
+  params jsonb not null,
+  -- Сколько кредитов списано при постановке. Хранится, чтобы вернуть РОВНО столько при провале.
+  reserved_tokens bigint not null default 0,
+  claim_token uuid,
+  claimed_at timestamptz,
+  -- Срок аренды: воркер, упавший молча, не должен держать задачу навсегда.
+  lease_expires_at timestamptz,
+  attempts integer not null default 0,
+  stats jsonb,
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create index if not exists sdr_jobs_account_idx on public.sdr_jobs (account_id, created_at desc);
+create index if not exists sdr_jobs_queue_idx on public.sdr_jobs (status, created_at)
+  where status in ('queued', 'running');
+
+alter table public.sdr_jobs enable row level security;
+
+-- Лиды, найденные задачей, привязываются к ней: иначе «прогон прошёл» и «вот его лиды» — два
+-- несвязанных факта, и по job_id нельзя отдать результат.
+alter table public.sdr_leads add column if not exists job_id uuid references public.sdr_jobs(id) on delete set null;
+create index if not exists sdr_leads_job_idx on public.sdr_leads (job_id);
+
+/*
+ * Постановка задачи и списание кредитов ОДНОЙ транзакцией.
+ *
+ * Раздельно это две ошибки сразу: списали и не поставили — деньги за ничего; поставили и не
+ * списали — бесплатный прогон в обход тарифа. Баланс аккаунта берётся FOR UPDATE, поэтому два
+ * одновременных вызова не могут оба увидеть достаточный остаток.
+ */
+create or replace function public.enqueue_sdr_job(
+  p_account_id uuid,
+  p_token_id uuid,
+  p_params jsonb,
+  p_cost bigint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_balance bigint;
+  v_job_id uuid;
+begin
+  if p_cost < 0 then raise exception 'invalid cost'; end if;
+
+  select token_balance into v_balance from public.accounts where id = p_account_id for update;
+  if not found then return jsonb_build_object('ok', false, 'error', 'account_not_found'); end if;
+
+  if v_balance < p_cost then
+    return jsonb_build_object('ok', false, 'error', 'insufficient_credits',
+                              'balance', v_balance, 'required', p_cost);
+  end if;
+
+  update public.accounts set token_balance = token_balance - p_cost where id = p_account_id;
+
+  insert into public.sdr_jobs (account_id, token_id, params, reserved_tokens)
+  values (p_account_id, p_token_id, p_params, p_cost)
+  returning id into v_job_id;
+
+  return jsonb_build_object('ok', true, 'job_id', v_job_id, 'reserved', p_cost);
+end
+$$;
+
+/*
+ * Взять задачу в работу.
+ *
+ * FOR UPDATE SKIP LOCKED — тот же приём, что у остальных воркеров этого проекта: два воркера,
+ * запущенные одновременно, разберут РАЗНЫЕ задачи, а не подерутся за одну. Задача с истёкшей
+ * арендой возвращается в оборот: воркер мог быть убит между «взял» и «закончил».
+ */
+create or replace function public.claim_sdr_job(p_lease_seconds integer default 900)
+returns setof public.sdr_jobs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  claimed public.sdr_jobs;
+  v_lease integer := greatest(60, least(coalesce(p_lease_seconds, 900), 3600));
+begin
+  with candidate as (
+    select id
+    from public.sdr_jobs
+    where attempts < 3
+      and (
+        status = 'queued'
+        or (status = 'running' and lease_expires_at < now())
+      )
+    order by created_at
+    for update skip locked
+    limit 1
+  )
+  update public.sdr_jobs j
+  set status = 'running',
+      claim_token = gen_random_uuid(),
+      claimed_at = now(),
+      lease_expires_at = now() + make_interval(secs => v_lease),
+      attempts = j.attempts + 1,
+      updated_at = now()
+  from candidate
+  where j.id = candidate.id
+  returning j.* into claimed;
+
+  if claimed.id is not null then return next claimed; end if;
+end
+$$;
+
+/** Продление аренды. Долгий прогон не должен выглядеть как умерший воркер. */
+create or replace function public.heartbeat_sdr_job(
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_lease_seconds integer default 900
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_lease integer := greatest(60, least(coalesce(p_lease_seconds, 900), 3600));
+begin
+  update public.sdr_jobs
+  set lease_expires_at = now() + make_interval(secs => v_lease), updated_at = now()
+  where id = p_job_id and claim_token = p_claim_token and status = 'running';
+  return found;
+end
+$$;
+
+/*
+ * Завершение задачи. Кредиты за ПРОВАЛ возвращаются.
+ *
+ * Аренда проверяется по claim_token: воркер, у которого задачу уже отобрали по истечении срока,
+ * не должен дописать свой результат поверх работы того, кто взял её после него.
+ */
+create or replace function public.finish_sdr_job(
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_status text,
+  p_stats jsonb default null,
+  p_error text default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_job public.sdr_jobs;
+begin
+  if p_status not in ('completed', 'failed', 'queued') then raise exception 'invalid status'; end if;
+
+  select * into v_job from public.sdr_jobs
+  where id = p_job_id and claim_token = p_claim_token and status = 'running'
+  for update;
+  if not found then return false; end if;
+
+  -- Возврат только при окончательном провале. Возврат на каждой неудачной попытке означал бы, что
+  -- три повтора списывают один раз, а возвращают трижды.
+  if p_status = 'failed' and v_job.reserved_tokens > 0 then
+    update public.accounts set token_balance = token_balance + v_job.reserved_tokens
+    where id = v_job.account_id;
+  end if;
+
+  update public.sdr_jobs
+  set status = p_status,
+      stats = coalesce(p_stats, stats),
+      error = p_error,
+      claim_token = case when p_status = 'queued' then null else claim_token end,
+      lease_expires_at = case when p_status = 'queued' then null else lease_expires_at end,
+      finished_at = case when p_status in ('completed', 'failed') then now() else null end,
+      updated_at = now()
+  where id = p_job_id;
+
+  return true;
+end
+$$;
+
+create or replace function public.sdr_jobs_touch_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists sdr_jobs_set_updated_at on public.sdr_jobs;
+create trigger sdr_jobs_set_updated_at
+  before update on public.sdr_jobs
+  for each row execute function public.sdr_jobs_touch_updated_at();
+
+-- ─── 20260817200000_sdr_leads_crm_sync.sql ───────────────────────────────────────────────────
+-- Отметка об отправке лида во внешнюю CRM.
+--
+-- Отдельная колонка, а не запись в журнал: журнал воркера живёт до перезапуска, а вопрос «этот лид
+-- уже уехал в CRM или мы его теряли?» задают через неделю. Без отметки на это нечем ответить, и
+-- единственный способ убедиться — отправить второй раз, то есть создать дубль у клиента.
+--
+-- Время, а не boolean: «отправлен» отвечает на меньше вопросов, чем «отправлен тогда-то», а места
+-- занимает столько же.
+
+alter table public.sdr_leads add column if not exists crm_synced_at timestamptz;
+
+-- Индекс по НЕотправленным: именно их выбирают, чтобы дослать после падения приёмника. Частичный,
+-- потому что отправленные со временем составят почти всю таблицу и в этом индексе не нужны.
+create index if not exists sdr_leads_crm_pending_idx
+  on public.sdr_leads (created_at)
+  where crm_synced_at is null;
+
+-- ─── 20260817220000_v5_core_schema.sql ───────────────────────────────────────────────────────
+-- Ядро схемы V5: собственная телефония и двусторонняя связь с CRM.
+--
+-- Соответствует §5 спецификации «Nemo AI V5 (Full Production Edition)» с ОДНИМ обязательным
+-- отступлением, о котором надо знать заранее.
+--
+-- ОТСТУПЛЕНИЕ ОТ ТЗ: `references tenants(id)` заменено на `references public.accounts(id)`.
+-- Таблицы `tenants` в этой базе НЕТ и никогда не было: тенантом здесь служит `public.accounts`, на
+-- неё указывают 63 внешних ключа во всех существующих миграциях. Написать `references tenants(id)`
+-- буквально — значит получить отказ применения миграции на первой же строке. ИМЕНА КОЛОНОК при этом
+-- сохранены как в ТЗ (`tenant_id`), чтобы Zod-контракты V5 и SQL совпадали поле в поле и между ними
+-- не понадобился переходник.
+--
+-- ЧТО ЗДЕСЬ ХРАНЯТ СЕКРЕТЫ. `telephony_trunks.auth_password_encrypted` и
+-- `crm_integrations.credentials_encrypted` — это пароль SIP-регистрации и токены доступа к чужой CRM.
+-- Оба поля называются *_encrypted, и это ТРЕБОВАНИЕ, а не пожелание: колонка обязана получать уже
+-- зашифрованное значение. База сама шифровать не умеет и проверить не может, поэтому ответственность
+-- на том, кто пишет. Утечка первого даёт возможность звонить за счёт владельца, утечка второго — читать
+-- и менять его сделки.
+--
+-- ИЗОЛЯЦИЯ ТЕНАНТОВ. У всех четырёх таблиц RLS включён, и у каждой есть политика по
+-- `public.current_account_id()`. Это отличается от таблиц-очередей (`sdr_jobs`, `nemo_api_tokens`), где
+-- RLS включён БЕЗ политик и доступ только у service_role: там данные принадлежат платформе, здесь —
+-- владельцу аккаунта, и он должен видеть свои звонки в интерфейсе.
+--
+-- ЖУРНАЛ ЗВОНКОВ ПИШЕТ ТОЛЬКО СЕРВЕР. `telephony_calls` и `crm_sync_logs` доступны владельцу на
+-- ЧТЕНИЕ и недоступны на запись: это аудит. Клиент, способный переписать длительность звонка или
+-- статус синхронизации, превращает аудит в декорацию.
+
+-- ── 1. SIP-транки ────────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.telephony_trunks (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.accounts(id) on delete cascade,
+  -- CUSTOM_SIP — транк владельца (BYON), NEMO_RENTED — номер, арендованный у платформы. Разница не
+  -- косметическая: за второй платит и отвечает платформа, и правила отключения у них разные.
+  trunk_type varchar(20) not null check (trunk_type in ('CUSTOM_SIP', 'NEMO_RENTED')),
+  name varchar(64) not null check (length(btrim(name)) between 2 and 64),
+  sip_host varchar(255) not null check (length(btrim(sip_host)) > 0),
+  sip_port int not null default 5060 check (sip_port between 1 and 65535),
+  auth_username varchar(128) not null,
+  -- Уже зашифрованное значение. Базе нечем это проверить — см. заголовок файла.
+  auth_password_encrypted text not null,
+  -- E.164. Регексп тот же, что в SIPTrunkConfigSchema: номер, не прошедший его, не примет ни один
+  -- оператор, и узнать об этом на первом же исходящем звонке дороже, чем на вставке строки.
+  caller_id varchar(32) not null check (caller_id ~ '^\+?[1-9][0-9]{1,14}$'),
+  -- Сколько одновременных разговоров разрешено. Превышение у оператора стоит денег или блокировки
+  -- транка целиком, поэтому предел хранится рядом с транком, а не в настройках приложения.
+  max_channels int not null default 5 check (max_channels between 1 and 1000),
+  status varchar(20) not null default 'ACTIVE'
+    check (status in ('ACTIVE', 'REGISTRATION_FAILED', 'DISABLED')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- Два транка с одинаковым именем у одного владельца — гарантированная путаница в интерфейсе выбора
+  -- транка для звонка. Между разными владельцами имена не конфликтуют.
+  constraint telephony_trunks_name_unique unique (tenant_id, name)
+);
+
+create index if not exists telephony_trunks_tenant_idx on public.telephony_trunks (tenant_id);
+-- Частичный индекс: планировщик исходящих звонков ищет только годные транки, и держать в индексе
+-- отключённые незачем.
+create index if not exists telephony_trunks_active_idx
+  on public.telephony_trunks (tenant_id) where status = 'ACTIVE';
+
+alter table public.telephony_trunks enable row level security;
+
+drop policy if exists telephony_trunks_tenant on public.telephony_trunks;
+create policy telephony_trunks_tenant on public.telephony_trunks for all
+  using (tenant_id = public.current_account_id())
+  with check (tenant_id = public.current_account_id());
+
+-- ── 2. Журнал звонков ────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.telephony_calls (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.accounts(id) on delete cascade,
+  -- ON DELETE RESTRICT, а не CASCADE: удаление транка НЕ должно уносить историю звонков по нему.
+  -- Записи звонков — основание для счетов и для разбора жалоб, и терять их вместе с настройкой
+  -- подключения нельзя.
+  trunk_id uuid not null references public.telephony_trunks(id) on delete restrict,
+  direction varchar(10) not null check (direction in ('INBOUND', 'OUTBOUND')),
+  customer_phone varchar(32) not null,
+  caller_id varchar(32) not null,
+  duration_seconds int not null default 0 check (duration_seconds >= 0),
+  -- Причина завершения от SIP (NORMAL_CLEARING, USER_BUSY, NO_ANSWER…). Единственный способ отличить
+  -- «не взяли трубку» от «оператор отклонил» — без неё оба выглядят как звонок нулевой длины.
+  sip_hangup_cause varchar(64),
+  recording_url text,
+  -- Полная расшифровка репликами. JSONB, а не текст: по ней ищут и её разбирают по ролям.
+  full_transcript jsonb,
+  -- Разбор звонка по CallAnalyticsSchema. Валидность структуры обеспечивает Zod ДО записи; база
+  -- хранит проверенный документ и не дублирует проверку — иначе они разойдутся при первой правке схемы.
+  analytics jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists telephony_calls_tenant_created_idx
+  on public.telephony_calls (tenant_id, created_at desc);
+create index if not exists telephony_calls_trunk_idx on public.telephony_calls (trunk_id);
+-- Поиск истории по номеру клиента: «о чём мы с ним говорили в прошлый раз» — первый вопрос менеджера
+-- перед повторным звонком.
+create index if not exists telephony_calls_phone_idx
+  on public.telephony_calls (tenant_id, customer_phone);
+
+alter table public.telephony_calls enable row level security;
+
+-- ТОЛЬКО ЧТЕНИЕ для владельца. Журнал звонков — аудит и основание для счёта; клиент, способный
+-- переписать длительность или подменить расшифровку, обесценивает и то, и другое. Пишет service_role.
+drop policy if exists telephony_calls_tenant_read on public.telephony_calls;
+create policy telephony_calls_tenant_read on public.telephony_calls for select
+  using (tenant_id = public.current_account_id());
+
+-- ── 3. Интеграции с CRM ──────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.crm_integrations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.accounts(id) on delete cascade,
+  provider varchar(20) not null check (provider in ('AMOCRM', 'HUBSPOT')),
+  account_domain varchar(255) not null check (length(btrim(account_domain)) > 0),
+  -- Токены доступа к чужой CRM, уже зашифрованные. JSONB, потому что у amoCRM и HubSpot разный набор
+  -- полей (у первой long-lived token и subdomain, у второй access/refresh и portal id).
+  credentials_encrypted jsonb not null,
+  -- Соответствие «наш статус лида» → «стадия воронки в их CRM». Без него синхронизация складывает
+  -- все сделки в первую попавшуюся стадию, и владелец видит кашу вместо воронки.
+  stage_mappings jsonb not null default '{}'::jsonb,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- Одна интеграция на провайдера у владельца: две записи для amoCRM означают два конкурирующих
+  -- набора токенов, и какой из них применится — вопрос порядка строк.
+  constraint unique_tenant_crm unique (tenant_id, provider)
+);
+
+create index if not exists crm_integrations_tenant_idx on public.crm_integrations (tenant_id);
+
+alter table public.crm_integrations enable row level security;
+
+drop policy if exists crm_integrations_tenant on public.crm_integrations;
+create policy crm_integrations_tenant on public.crm_integrations for all
+  using (tenant_id = public.current_account_id())
+  with check (tenant_id = public.current_account_id());
+
+-- ── 4. Аудит синхронизации ───────────────────────────────────────────────────────────────────────
+
+create table if not exists public.crm_sync_logs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.accounts(id) on delete cascade,
+  /*
+   * КЛЮЧ ИДЕМПОТЕНТНОСТИ — главное в этой таблице, и UNIQUE здесь несёт логику, а не гигиену.
+   *
+   * Вебхуки CRM приходят повторно: amoCRM переспрашивает при таймауте, HubSpot дублирует при
+   * повторной доставке, а наш исходящий вызов повторяется при сетевом сбое. Без уникального ключа
+   * повторная доставка создаёт ВТОРУЮ сделку по тому же звонку — и менеджер звонит одному человеку
+   * дважды. Уникальность на уровне базы — единственная защита, которая работает при нескольких
+   * воркерах одновременно: проверка «а нет ли уже такой записи» перед вставкой проигрывает гонку.
+   */
+  idempotency_key varchar(128) not null unique check (length(btrim(idempotency_key)) > 0),
+  provider varchar(20) not null check (provider in ('AMOCRM', 'HUBSPOT')),
+  -- INBOUND — событие пришло от CRM, OUTBOUND — мы отправили в CRM. Одна таблица на оба направления
+  -- намеренно: разбираются они всегда вместе, по одной сделке и в одном порядке времени.
+  direction varchar(10) not null check (direction in ('INBOUND', 'OUTBOUND')),
+  payload jsonb not null,
+  status varchar(20) not null default 'PROCESSED'
+    check (status in ('PROCESSED', 'FAILED', 'RETRYING')),
+  error_message text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists crm_sync_logs_tenant_created_idx
+  on public.crm_sync_logs (tenant_id, created_at desc);
+-- Частичный индекс под разбор незавершённого: строк со статусом RETRYING всегда мало, и держать в
+-- индексе успешные (то есть почти все) незачем.
+create index if not exists crm_sync_logs_retry_idx
+  on public.crm_sync_logs (created_at) where status = 'RETRYING';
+
+alter table public.crm_sync_logs enable row level security;
+
+-- Аудит: владельцу видно, менять нельзя. Пишет service_role.
+drop policy if exists crm_sync_logs_tenant_read on public.crm_sync_logs;
+create policy crm_sync_logs_tenant_read on public.crm_sync_logs for select
+  using (tenant_id = public.current_account_id());
+
+-- ── Автоматическое updated_at ────────────────────────────────────────────────────────────────────
+--
+-- Триггером, а не значением по умолчанию: default срабатывает только на вставке, и строка, изменённая
+-- через год, продолжала бы показывать дату создания. По этому полю решают, когда перепроверять
+-- регистрацию транка.
+
+create or replace function public.v5_touch_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists telephony_trunks_set_updated_at on public.telephony_trunks;
+create trigger telephony_trunks_set_updated_at
+  before update on public.telephony_trunks
+  for each row execute function public.v5_touch_updated_at();
+
+drop trigger if exists crm_integrations_set_updated_at on public.crm_integrations;
+create trigger crm_integrations_set_updated_at
+  before update on public.crm_integrations
+  for each row execute function public.v5_touch_updated_at();
+
+commit;

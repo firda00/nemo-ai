@@ -43,6 +43,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { INTEGRATIONS, INT_CATEGORIES, INT_REGIONS, type IntCategory, type IntRegion } from '../../data/integrations'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
 import { cn } from '../../lib/cn'
+import { widgetSnippet, widgetHostConfigured } from '../../lib/widget'
 
 type ConnectMethod = 'token' | 'oauth' | 'widget'
 interface FieldDef {
@@ -59,8 +60,6 @@ interface IntegrationDef {
   fields?: FieldDef[]
 }
 
-const widgetSnippet = (channelId: string) => `<script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="${channelId}" async></script>`
-
 const statusStyle: Record<IntegrationStatus, string> = {
   connected: 'bg-teal/10 text-teal',
   disconnected: 'bg-infoblue text-midnight',
@@ -72,7 +71,7 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
     <button
       onClick={onClick}
       className={cn(
-        'rounded-pill border px-3 py-1.5 text-xs font-medium transition',
+        'shrink-0 whitespace-nowrap rounded-pill border px-3 py-1.5 text-xs font-medium transition',
         on ? 'border-violet/60 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:border-ice/25',
       )}
     >
@@ -161,6 +160,7 @@ export default function IntegrationsPage() {
   const [query, setQuery] = useState('')
   const [cat, setCat] = useState<IntCategory | 'all'>('all')
   const [region, setRegion] = useState<IntRegion | 'all'>('all')
+  const [onlyMine, setOnlyMine] = useState(false)
   const [limit, setLimit] = useState(48) // paginate the big catalog so it stays snappy
 
   // catalog stats for the header
@@ -198,18 +198,24 @@ export default function IntegrationsPage() {
     uzum: { id: 'uzum', name: 'Uzum Market', icon: ShoppingBag, color: '#7C3AED', method: 'token', fields: [{ key: 'token', label: 'API-ключ Uzum', placeholder: 'Вставьте ключ из кабинета Uzum Seller' }] },
   }
 
+  // «Мои интеграции» — подключённые. Считается по тому же признаку, что и бейдж на карточке, иначе
+  // счётчик у фильтра и вид каталога разъехались бы.
+  const isConnected = (id: string) => (status[id] ?? 'disconnected') === 'connected'
+  const mineCount = INTEGRATIONS.filter((it) => it.status !== 'soon' && isConnected(it.id)).length
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return INTEGRATIONS.filter(
       (it) =>
         (cat === 'all' || it.category === cat) &&
         (region === 'all' || it.regions.includes(region)) &&
+        (!onlyMine || (it.status !== 'soon' && (status[it.id] ?? 'disconnected') === 'connected')) &&
         (!q || it.name.toLowerCase().includes(q)),
     )
-  }, [query, cat, region])
+  }, [query, cat, region, onlyMine, status])
 
   // reset pagination when the filter set changes (adjust state during render — no effect needed)
-  const filterKey = `${query}|${cat}|${region}`
+  const filterKey = `${query}|${cat}|${region}|${onlyMine}`
   const [prevKey, setPrevKey] = useState(filterKey)
   if (filterKey !== prevKey) { setPrevKey(filterKey); setLimit(48) }
   const visible = filtered.slice(0, limit)
@@ -328,7 +334,9 @@ export default function IntegrationsPage() {
 
   const copySnippet = () => {
     if (!connResult?.channel_id) return
-    navigator.clipboard?.writeText(widgetSnippet(connResult.channel_id))
+    const snippet = widgetSnippet(connResult.channel_id)
+    if (!snippet) { toast(t('platform.integrations.widgetHostMissing')); return }
+    navigator.clipboard?.writeText(snippet)
     setCopied(true)
     toast(t('platform.integrations.copied'))
   }
@@ -441,40 +449,63 @@ export default function IntegrationsPage() {
         </div>}
       </section>
 
-      {/* sticky filter bar */}
-      <div className="sticky top-16 z-10 mt-6 space-y-3 rounded-2xl border border-white/[0.07] bg-panel/95 p-3 shadow-lg shadow-black/20 backdrop-blur">
-        <div className="glass flex items-center gap-2 rounded-xl px-3 py-2.5 focus-within:border-violet/50 focus-within:shadow-glow">
-          <Search size={16} className="shrink-0 text-muted" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('platform.integrations.searchPh')}
-            className="w-full bg-transparent text-sm text-text outline-none placeholder:text-fog"
-          />
-          {query && (
-            <button onClick={() => setQuery('')} className="rounded-md p-1 text-muted hover:text-text" aria-label={t('common.close')}>
-              <X size={15} />
-            </button>
-          )}
+      {/*
+        ФИЛЬТРЫ: ОДНА ПОЛОСА ЧИПОВ, ОСТАЛЬНОЕ — КОМПАКТНЫМИ КОНТРОЛАМИ.
+
+        Здесь было два ряда одинаковых чипов подряд: 14 категорий и 8 регионов, оба с переносом. Они
+        читаются как один задвоенный список — разного в них только подписи, а на узком экране это
+        четыре-пять строк кнопок над каталогом.
+
+        Регионы не удалены, а свёрнуты в селект: это рабочий фильтр, и выкинуть его значило бы чинить
+        вид ценой возможности. Чипы остались у одной сущности — категорий, — и уехали в
+        горизонтальную прокрутку вместо переноса, чтобы полоса всегда была ровно одной строкой.
+      */}
+      <div className="sticky top-16 z-10 mt-6 space-y-2.5 rounded-2xl border border-white/[0.07] bg-panel/95 p-3 shadow-lg shadow-black/20 backdrop-blur">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="glass flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 focus-within:border-violet/60 focus-within:shadow-glow">
+            <Search size={15} className="shrink-0 text-muted" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('platform.integrations.searchPh')}
+              className="w-full bg-transparent text-sm text-text outline-none placeholder:text-fog"
+            />
+            {query && (
+              <button onClick={() => setQuery('')} className="rounded-md p-1 text-muted hover:text-text" aria-label={t('common.close')}>
+                <X size={15} />
+              </button>
+            )}
+          </div>
+          <select
+            value={region}
+            onChange={(e) => setRegion(e.target.value as IntRegion | 'all')}
+            className="glass shrink-0 rounded-xl px-3 py-2 text-xs text-muted outline-none focus:border-violet/60 sm:w-44"
+          >
+            <option value="all">{t('platform.integrations.allRegions')}</option>
+            {INT_REGIONS.map((r) => (
+              <option key={r} value={r}>{t(`platform.integrations.region.${r}`)}</option>
+            ))}
+          </select>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Chip on={cat === 'all'} onClick={() => setCat('all')}>{t('platform.integrations.allCats')}</Chip>
+        <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-0.5">
+          <Chip on={cat === 'all' && !onlyMine} onClick={() => { setCat('all'); setOnlyMine(false) }}>
+            {t('platform.integrations.allCats')}
+          </Chip>
+          <Chip on={onlyMine} onClick={() => setOnlyMine((v) => !v)}>
+            <span className="inline-flex items-center gap-1.5">
+              {t('platform.integrations.mine')}
+              <span className="text-[10px] text-fog">{mineCount}</span>
+            </span>
+          </Chip>
           {INT_CATEGORIES.map((c) => (
-            <Chip key={c} on={cat === c} onClick={() => setCat(c)}>
+            <Chip key={c} on={cat === c} onClick={() => setCat(cat === c ? 'all' : c)}>
               <span className="inline-flex items-center gap-1.5">
                 <CatIcon category={c} />
                 {t(`platform.integrations.cat.${c}`)}
                 <span className="text-[10px] text-fog">{catCount.get(c) ?? 0}</span>
               </span>
             </Chip>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Chip on={region === 'all'} onClick={() => setRegion('all')}>{t('platform.integrations.allRegions')}</Chip>
-          {INT_REGIONS.map((r) => (
-            <Chip key={r} on={region === r} onClick={() => setRegion(r)}>{t(`platform.integrations.region.${r}`)}</Chip>
           ))}
         </div>
       </div>
@@ -591,7 +622,7 @@ export default function IntegrationsPage() {
       {active && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setActive(null)} />
-          <div className="card relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
+          <div className="modal-panel relative w-full max-w-md rounded-2xl p-6 animate-fadeInUp">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: `${active.color}22`, color: active.color }}>
@@ -673,8 +704,8 @@ export default function IntegrationsPage() {
                   <p className="text-xs text-muted">{t('platform.integrations.widgetNote')}</p>
                   {connResult?.channel_id && (
                     <>
-                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet(connResult.channel_id)}</pre>
-                      <button onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
+                      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/30 p-3 text-[12px] leading-relaxed text-cyan">{widgetSnippet(connResult.channel_id) ?? t('platform.integrations.widgetHostMissing')}</pre>
+                      <button disabled={!widgetHostConfigured} onClick={copySnippet} className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
                         {copied ? <Check size={14} className="text-teal" /> : <Copy size={14} />} {copied ? t('platform.integrations.copied') : t('platform.integrations.copy')}
                       </button>
                     </>

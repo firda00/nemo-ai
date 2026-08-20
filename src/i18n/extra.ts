@@ -722,7 +722,8 @@ export const extraUz = {
     "start": "Boshlash"
   },
   "channelsManager": {
-    "widgetConnected": "Vidjet ulandi. Ushbu kodni saytingizga yopuvchi </body> tegidan oldin joylashtiring — sahifada shu agent bilan chat paydo bo‘ladi."
+    "widgetConnected": "Vidjet ulandi. Ushbu kodni saytingizga yopuvchi </body> tegidan oldin joylashtiring — sahifada shu agent bilan chat paydo bo‘ladi.",
+    "widgetHostMissing": "Vidjet manzili sozlanmagan — VITE_API_GATEWAY_URL ni toʻldiring"
   },
   "companyBrainPage": {
     "aboutLabel": "Kompaniya haqida (kim siz, nima bilan ajralib turasiz)",
@@ -1739,7 +1740,7 @@ export const extraUz = {
   "videoRenderPanel": {
     "assembleBtn": "Videoni yig‘ish",
     "brandLabel": "Brend (imzo)",
-    "brandPh": "Masalan: Ustudy",
+    "brandPh": "Masalan: Nemo AI",
     "breakBtn": "Kadrlarga bo‘lish",
     "breakingBtn": "Kadrlarga bo‘linmoqda…",
     "done": "Tayyor!",
@@ -2492,7 +2493,8 @@ export const extraRu = {
     "start": "Начать"
   },
   "channelsManager": {
-    "widgetConnected": "Виджет подключён. Вставьте этот код на свой сайт перед закрывающим тегом </body> — на странице появится чат с этим агентом."
+    "widgetConnected": "Виджет подключён. Вставьте этот код на свой сайт перед закрывающим тегом </body> — на странице появится чат с этим агентом.",
+    "widgetHostMissing": "Адрес виджета не настроен — заполните VITE_API_GATEWAY_URL"
   },
   "companyBrainPage": {
     "aboutLabel": "О компании (кто вы, чем отличаетесь)",
@@ -3509,7 +3511,7 @@ export const extraRu = {
   "videoRenderPanel": {
     "assembleBtn": "Собрать видео",
     "brandLabel": "Бренд (подпись)",
-    "brandPh": "Напр.: Ustudy",
+    "brandPh": "Напр.: Nemo AI",
     "breakBtn": "Разобрать на кадры",
     "breakingBtn": "Раскадровка…",
     "done": "Готово!",
@@ -4262,7 +4264,8 @@ export const extraEn = {
     "start": "Get started"
   },
   "channelsManager": {
-    "widgetConnected": "The widget is connected. Paste this code on your site before the closing </body> tag — a chat with this agent will appear on the page."
+    "widgetConnected": "The widget is connected. Paste this code on your site before the closing </body> tag — a chat with this agent will appear on the page.",
+    "widgetHostMissing": "Widget host is not configured — set VITE_API_GATEWAY_URL"
   },
   "companyBrainPage": {
     "aboutLabel": "About the company (who you are, what sets you apart)",
@@ -5279,7 +5282,7 @@ export const extraEn = {
   "videoRenderPanel": {
     "assembleBtn": "Assemble video",
     "brandLabel": "Brand (caption)",
-    "brandPh": "E.g.: Ustudy",
+    "brandPh": "E.g.: Nemo AI",
     "breakBtn": "Break into frames",
     "breakingBtn": "Storyboarding…",
     "done": "Done!",

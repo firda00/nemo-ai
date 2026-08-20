@@ -50,7 +50,7 @@ try {
   source = readFileSync(new URL('../src/lib/industryTeams.ts', import.meta.url), 'utf8')
   marketplaceSource = readFileSync(new URL('../src/pages/app/MarketplacePage.tsx', import.meta.url), 'utf8')
   teamDetailSource = readFileSync(new URL('../src/pages/app/TeamDetailPage.tsx', import.meta.url), 'utf8')
-  persistenceSource = readFileSync(new URL('../src/lib/ustudyTeam.ts', import.meta.url), 'utf8')
+  persistenceSource = readFileSync(new URL('../src/lib/dynamicTeams.ts', import.meta.url), 'utf8')
   connectTelegramSource = readFileSync(new URL('../supabase/functions/connect-telegram/index.ts', import.meta.url), 'utf8')
   connectChannelSource = readFileSync(new URL('../supabase/functions/connect-channel/index.ts', import.meta.url), 'utf8')
   setupTelegramSource = readFileSync(new URL('../supabase/functions/setup-telegram/index.ts', import.meta.url), 'utf8')

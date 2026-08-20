@@ -1,0 +1,56 @@
+# Голосовой воркер: WebSocket-приёмник аудиопотока FreeSWITCH.
+#
+# ОТДЕЛЬНЫЙ ОБРАЗ от шлюза и от воркера SDR, и причина не в удобстве. Этот процесс работает в РЕАЛЬНОМ
+# ВРЕМЕНИ: он обязан отдавать кадр каждые двадцать миллисекунд, и любая пауза слышна в трубке как
+# заикание. Делить процесс с воркером SDR, который на минуты уходит в загрузку чужих сайтов и вызовы
+# модели, значит гарантированно получить эти паузы.
+#
+# ЧТО НЕ ПРОВЕРЕНО: сборка не запускалась — docker в среде разработки отсутствует. Код воркера проверен
+# настоящим WebSocket-клиентом под Node 24: полный звонок от ANSWER до разбора после HANGUP.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1
+# onnxruntime-node лежит в optionalDependencies: он нативный и собирается не везде. Отказ его сборки
+# НЕ должен ронять образ — детектор речи в таком случае работает энергетическим методом, о чём воркер
+# честно пишет в журнал при старте.
+RUN npm ci --omit=dev --ignore-scripts
+
+FROM node:22-alpine AS runtime
+RUN apk add --no-cache tini
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    VOICE_PORT=8080 \
+    SILERO_MODEL_PATH=/app/models/silero_vad.onnx
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY agent-hub/telephony ./agent-hub/telephony
+COPY agent-hub/contracts ./agent-hub/contracts
+COPY agent-hub/telegram ./agent-hub/telegram
+
+# Модель Silero скачивается НА ЭТАПЕ СБОРКИ и проверяется по контрольной сумме.
+#
+# Не при первом звонке: докачивать модель, когда человек уже снял трубку, значит подарить ему секунды
+# тишины. И не из репозитория: двоичный файл на два мегабайта в git — это то, что потом никто не
+# обновит. Несовпадение суммы останавливает сборку: битая модель не падает, она молча выдаёт мусорные
+# вероятности, и выглядит это как «VAD плохо работает».
+RUN mkdir -p /app/models && \
+    wget -q -O /app/models/silero_vad.onnx \
+      https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx && \
+    echo "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3  /app/models/silero_vad.onnx" \
+      | sha256sum -c - && \
+    chown -R node:node /app/models
+
+USER node
+
+RUN node --experimental-strip-types --input-type=module \
+    -e "import('./agent-hub/telephony/voice-worker.ts').then((m) => { if (typeof m.startVoiceWorker !== 'function') { console.error('voice-worker.ts не экспортирует startVoiceWorker'); process.exit(1) } console.log('проверка запуска: модули голосового воркера загружаются') })"
+
+EXPOSE 8080
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--experimental-strip-types", "agent-hub/telephony/main.ts"]

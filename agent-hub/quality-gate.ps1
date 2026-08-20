@@ -7,7 +7,9 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $steps = @(
   @{ Name = 'TypeScript and ESLint'; Command = { npm run test } },
-  @{ Name = 'Production build'; Command = { npm run build } },
+  # Сборка здесь — проверка компиляции, а не выкладываемый артефакт: обход проверки переменных
+  # ставится явно. Настоящая выкладка идёт без него и остановится, если переменные не заданы.
+  @{ Name = 'Production build'; Command = { $env:NEMO_ALLOW_DEMO_BUILD = '1'; npm run build } },
   @{ Name = 'Agent capability contracts'; Command = { npm run test:contracts } },
   @{ Name = 'Autopost and funnel contracts'; Command = { npm run test:autopost } },
   @{ Name = 'Commerce and logistics contracts'; Command = { npm run test:commerce } },
@@ -36,6 +38,21 @@ $steps = @(
   @{ Name = 'SDR keyless discovery (OpenStreetMap)'; Command = { npm run test:sdr-overpass } },
   @{ Name = 'Local env key loading'; Command = { npm run test:local-env } },
   @{ Name = 'Interactive TUI'; Command = { npm run test:tui } },
+  @{ Name = 'Natural query parsing + TUI layout'; Command = { npm run test:query-parse } },
+  @{ Name = 'Agent tool registry, MCP and browser'; Command = { npm run test:tools } },
+  @{ Name = 'V5 contracts and Telegram lead card'; Command = { npm run test:v5 } },
+  @{ Name = 'V5 schema and agent-tool contracts'; Command = { npm run test:v5-contracts } },
+  @{ Name = 'Agent loop contracts'; Command = { npm run test:agent-loop } },
+  @{ Name = 'Agent loop behaviour'; Command = { npm run test:agent } },
+  @{ Name = 'CLI slash commands and roles'; Command = { npm run test:cli-commands } },
+  @{ Name = 'QA runner and site audit'; Command = { npm run test:qa } },
+    @{ Name = 'HUD and terminal layout'; Command = { npm run test:hud } },
+  @{ Name = 'Legal pages, consent and host split'; Command = { npm run test:legal } },
+@{ Name = 'Render suites under a TTY'; Command = { npm run test:tty } },
+  @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
+  @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
+  @{ Name = 'Voice pipeline: codec, VAD, barge-in, analytics'; Command = { npm run test:voice } },
+  @{ Name = 'Media pipeline: .ass subtitles and FFmpeg graph'; Command = { npm run test:media } },
   @{ Name = 'CRM webhook sync'; Command = { npm run test:crm-sync } },
   @{ Name = 'Telegram HOT-lead alerts'; Command = { npm run test:telegram-alert } },
   @{ Name = 'Lead console report'; Command = { npm run test:lead-report } },
@@ -85,7 +102,8 @@ $steps = @(
   @{ Name = 'Visual RAG pilot limits and isolation'; Command = { npm run test:visual-rag } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
-  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } }
+  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
+  @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } }
 )
 
 Push-Location $root

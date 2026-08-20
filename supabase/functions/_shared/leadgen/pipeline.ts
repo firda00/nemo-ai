@@ -48,7 +48,7 @@ export interface PipelineDeps {
 const TOTAL_PHASES = 3
 
 const EMPTY_ENRICHMENT: Enrichment = {
-  description: null, emails: [], socials: { linkedin: null, instagram: null, telegram: null, facebook: null },
+  description: null, emails: [], socials: { linkedin: null, instagram: null, telegram: null, facebook: null, whatsapp: null },
   people: [], failed: ['enrich_threw'],
 }
 

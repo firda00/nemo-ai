@@ -25,7 +25,7 @@ const agentTypes: { label: string; value: AgentKind; role: string; tasks: string
 
 const pilotTemplates = [
   {
-    id: 'ustudy-course-consultant',
+    id: 'course-consultant',
     name: 'Sales Consultant',
     type: 'qualifier' as AgentKind,
     role: 'AI Sales Consultant',

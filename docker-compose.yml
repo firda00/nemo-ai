@@ -1,0 +1,160 @@
+# Окружение Nemo AI: DragonflyDB, API Gateway и воркер SDR.
+#
+# Соответствует §6 спецификации V5 с двумя отличиями, о которых надо знать заранее.
+#
+# 1. ВЕРСИИ ОБРАЗОВ ЗАКРЕПЛЕНЫ. В спецификации `dragonflydb/dragonfly` без тега, то есть latest.
+#    Latest означает, что пересборка через полгода поднимет другую версию базы, и выяснится это в
+#    production. Тег закреплён; обновлять — осознанным изменением этой строки.
+#
+# 2. ПОРТ DRAGONFLY СЛУШАЕТ ТОЛЬКО ПЕТЛЮ (127.0.0.1:6379). В спецификации '6379:6379', что на сервере
+#    с публичным адресом означает Dragonfly, открытый всему интернету БЕЗ ПАРОЛЯ — Redis-совместимые
+#    базы без аутентификации по умолчанию, и такие находят сканерами за часы. Шлюзу и воркеру наружный
+#    порт не нужен вовсе: они ходят через внутреннюю сеть по имени `dragonfly`. Публикация оставлена
+#    только для отладки с той же машины.
+#
+# ЧТО НЕ ПРОВЕРЕНО: этот файл не запускался. Docker в среде разработки не установлен, поэтому
+# синтаксис YAML и ссылки между сервисами сверены разбором и контрактами, а `docker compose up` —
+# нет. Первый запуск стоит сделать руками.
+
+name: nemo
+
+networks:
+  nemo_net:
+    driver: bridge
+
+volumes:
+  dragonfly_data:
+  media_storage:
+
+services:
+  dragonfly:
+    image: 'docker.dragonflydb.io/dragonflydb/dragonfly:v1.23.2'
+    container_name: nemo_dragonfly
+    restart: unless-stopped
+    # Только петля — см. пояснение в заголовке файла.
+    ports:
+      - '127.0.0.1:6379:6379'
+    # Снапшот раз в пять минут в /data. Очередь у нас сигнальная, и её потеря не теряет задач (они в
+    # Postgres), но перезапуск без сохранения дал бы всплеск опроса базы всеми воркерами разом.
+    command: >
+      --logtostderr
+      --dir /data
+      --snapshot_cron "*/5 * * * *"
+      --maxmemory ${DRAGONFLY_MAXMEMORY:-1gb}
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      - nemo_net
+    # ulimit memlock обязателен: Dragonfly блокирует память и без снятого предела не стартует на
+    # части хостов, падая с невнятным сообщением про mlock.
+    ulimits:
+      memlock: -1
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-p', '6379', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  nemo-api-gateway:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.api
+    container_name: nemo_api_gateway
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Имя сервиса, а не localhost: внутри своей сети контейнер видит соседа по имени, а 127.0.0.1
+      # указывал бы на него самого.
+      - REDIS_URL=redis://dragonfly:6379
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Перец отпечатка токенов. Без него шлюз отвечает 503 на каждый запрос и не стартует вовсе —
+      # см. requireEnv в main.ts. Тот же перец обязан стоять у Edge Function sdr-api, иначе один и тот
+      # же токен пускают в одну дверь и не пускают в другую.
+      - NEMO_TOKEN_PEPPER=${NEMO_TOKEN_PEPPER}
+      # Общий секрет приёмника вебхуков CRM. Не задан — приём выключен (503), а не открыт.
+      - NEMO_CRM_WEBHOOK_SECRET=${NEMO_CRM_WEBHOOK_SECRET:-}
+    ports:
+      - '${GATEWAY_PORT:-3000}:3000'
+    networks:
+      - nemo_net
+    depends_on:
+      dragonfly:
+        # service_healthy, а не просто depends_on: без этого шлюз стартует раньше готовности Dragonfly,
+        # получает отказ соединения и уходит в режим опроса на весь свой срок жизни.
+        condition: service_healthy
+
+  voice-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.voice
+    container_name: nemo_voice_worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - VOICE_PORT=8080
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # Распознавание и синтез: без этих ключей воркер поднимется, но звонки принимать не сможет —
+      # он честно напишет об этом в журнал при старте, а не будет молчать в трубку.
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
+      - SDR_TELEGRAM_BOT_TOKEN=${SDR_TELEGRAM_BOT_TOKEN:-}
+      - VOICE_MANAGER_CHAT_ID=${VOICE_MANAGER_CHAT_ID:-}
+      - CRM_WEBHOOK_URL=${CRM_WEBHOOK_URL:-}
+    ports:
+      # Порт слушает FreeSWITCH, который в этом compose НЕ поднимается: у него собственный SIP-стек и
+      # транк у оператора. Публикуется на петлю — коммутатор ставится рядом и ходит через неё.
+      - '127.0.0.1:${VOICE_PORT:-8080}:8080'
+    networks:
+      - nemo_net
+  media-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.ffmpeg
+    container_name: nemo_render_worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://dragonfly:6379
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - RENDER_WORK_DIR=/tmp/renders
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    volumes:
+      # Готовые ролики переживают перезапуск контейнера: без тома они лежат в его файловой системе и
+      # исчезают вместе с ней, а вебхук к этому моменту уже сообщил путь к файлу.
+      - media_storage:/tmp/renders
+    networks:
+      - nemo_net
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+  sdr-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.worker
+    container_name: nemo_sdr_worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://dragonfly:6379
+      - SUPABASE_PROJECT_REF=${SUPABASE_PROJECT_REF}
+      - SUPABASE_SECRET_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - SDR_TELEGRAM_BOT_TOKEN=${SDR_TELEGRAM_BOT_TOKEN:-}
+      - SDR_TELEGRAM_CHAT_ID=${SDR_TELEGRAM_CHAT_ID:-}
+      - CRM_WEBHOOK_URL=${CRM_WEBHOOK_URL:-}
+      # Разбор браузером по умолчанию ВЫКЛЮЧЕН и здесь: включение требует образа с Chromium, который
+      # весит больше остального вместе взятого. Включать — вместе с Dockerfile.worker.browser.
+      - SDR_BROWSER=${SDR_BROWSER:-0}
+    networks:
+      - nemo_net
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    # Воркер не слушает портов и не имеет healthcheck: живость видна по строкам журнала и по
+    # heartbeat в таблице sdr_jobs, а не по HTTP.

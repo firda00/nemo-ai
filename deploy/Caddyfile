@@ -1,0 +1,86 @@
+# Обратный прокси и сертификаты Let's Encrypt.
+#
+# Caddy выпускает и продлевает сертификаты сам, без cron и certbot: достаточно, чтобы домен
+# указывал на этот сервер, а порты 80 и 443 были открыты. Порт 80 нужен НЕ для сайта, а для
+# проверки владения доменом (ACME HTTP-01) — закрыв его «ради безопасности», вы отключите
+# продление, и сайт умрёт через 90 дней без единого предупреждения.
+
+{
+	email {$ACME_EMAIL}
+	# Логи в stdout — их собирает docker. Файл внутри контейнера пришлось бы ротировать вручную.
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Общие заголовки: то же, что отдаёт vercel.json, чтобы поведение не расходилось между
+# площадками. Расхождение здесь — это дыра, которая есть ровно на одном из двух развёртываний.
+(security) {
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Caddy сообщает о себе версией в Server: убираем — это бесплатная подсказка сканеру.
+		-Server
+	}
+}
+
+# Один и тот же бандл на обоих доменах. Разделение промо и кабинета делает САМО ПРИЛОЖЕНИЕ по
+# window.location.hostname (src/lib/host.ts). Раздавать разные сборки было бы ошибкой: они
+# разъедутся по версиям, и половина пользователей окажется на старом коде.
+(spa) {
+	import security
+	root * /srv/nemo
+	encode zstd gzip
+
+	# Хешированные ассеты живут вечно: имя меняется при каждой сборке.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# index.html НЕ кешируем: иначе браузер продолжит грузить старый бандл после выкладки и будет
+	# просить ассеты, которых на диске уже нет — белая страница без единой ошибки в журнале.
+	@html path / /index.html
+	header @html Cache-Control "no-cache"
+
+	# Клиентская маршрутизация: /terms, /privacy, /auth, /app/* отдаются index.html. try_files
+	# сначала ищет настоящий файл — favicon и widget.js под правило не попадают.
+	try_files {path} /index.html
+	file_server
+}
+
+{$SITE_ROOT_DOMAIN} {
+	import spa
+}
+
+{$SITE_APP_DOMAIN} {
+	import spa
+}
+
+{$SITE_API_DOMAIN} {
+	import security
+	# Шлюз слушает внутри контура; наружу он доступен только отсюда и только по HTTPS.
+	reverse_proxy gateway:3000 {
+		# Без этого шлюз видит адрес Caddy вместо адреса клиента — и ограничение по частоте
+		# запросов начинает считать всех за одного.
+		header_up X-Real-IP {remote_host}
+		health_uri /health
+		health_interval 30s
+	}
+}
+
+# ── Supabase контура ────────────────────────────────────────────────────────────────────────
+#
+# ОТДЕЛЬНЫЙ ДОМЕН, А НЕ ПУТЬ НА api.nemoai.uz. Клиент supabase-js получает ОДИН адрес и сам
+# достраивает /auth/v1, /rest/v1, /functions/v1 от его корня. Спрятав Supabase под префикс,
+# пришлось бы переписывать пути на лету — и однажды один из них не совпал бы, причём молча.
+#
+# Этот адрес идёт в VITE_SUPABASE_URL и попадает в браузер: сюда ходит сам фронтенд.
+{$SITE_SUPABASE_DOMAIN} {
+	import security
+	reverse_proxy kong:8000 {
+		header_up X-Real-IP {remote_host}
+	}
+}

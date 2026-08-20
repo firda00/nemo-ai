@@ -1,6 +1,6 @@
 // Границы SDR-пайплайна, записанные проверками.
 //
-// Модуль ходит в четыре чужих сервиса и пишет в боевую таблицу продаж Ustudy IT. Здесь — то, что
+// Модуль ходит в четыре чужих сервиса и пишет в боевую таблицу продаж. Здесь — то, что
 // легко нарушить одной строкой и не заметить: статус лида, источник кнопок в Telegram, доступ к
 // таблице.
 
@@ -34,6 +34,7 @@ const worker = read('agent-hub/sdr-worker.mjs')
 const sdrRun = read('agent-hub/sdr-run.mjs')
 const leadReport = read('agent-hub/lead-report.mjs')
 const tui = read('agent-hub/tui.mjs')
+const queryParse = read('agent-hub/query-parse.mjs')
 const leadExport = read('agent-hub/lead-export.mjs')
 const crmSync = read('agent-hub/crm-sync.ts')
 const crmMigration = read('supabase/migrations/20260817200000_sdr_leads_crm_sync.sql')
@@ -263,8 +264,84 @@ const cases = [
   ['phases are reported as events, not parsed out of log text',
     pipeline.includes('onPhase?: (event: PhaseEvent) => void')
     && pipeline.includes("phase({ phase: 'search'")
-    && sdrRun.includes('onPhase: spinner')
+    && sdrRun.includes('spinner.update(phaseLine(event, request.city))')
     && !sdrRun.includes("message.includes('найдено сырых')")],
+
+  // ── Спиннер и приглашение ввода не делят строку ───────────────────────────────────────────────
+  // Баг возвращался ДВАЖДЫ: спиннер, забытый включённым, каждые 80 мс перезаписывает строку, в
+  // которой readline уже ждёт ввод, и набранный текст расползается по экрану. Гарантия должна жить
+  // в примитиве, а не в дисциплине вызывающего кода: ветки ошибок забывали про останов оба раза.
+  ['every prompt kills the running spinner inside the primitive itself',
+    tui.includes('export function stopActiveSpinner()')
+    && tui.split('  async line(prompt) {')[1]?.trimStart().startsWith('stopActiveSpinner()')
+    && tui.split('  async select(question, options, defaultIndex = 0) {')[1]?.trimStart().startsWith('stopActiveSpinner()')],
+
+  // Ни одна ветка выхода из прогона не оставляет анимацию живой — включая отказы до старта поиска.
+  // Якорь привязан к САМОЙ функции, а не к первому попавшемуся `} finally {`. Блоков finally в файле
+  // стало несколько (браузер закрывается своим), и проверка «в первом finally есть stopActiveSpinner»
+  // начала смотреть не туда — сломалась на верном коде.
+  ['no failure path leaves the animation running',
+    sdrRun.includes('spinner?.silence()')
+    && sdrRun.includes('spinner.fail(c.red(outcome.error))')
+    && sdrRun.split('async function runInteractive() {')[1]?.split('} finally {')[1]?.includes('stopActiveSpinner()')],
+
+  // Повторный итог молчит: путь через платформу отчитывается сам, и вызывающий код добавлял вторую
+  // строку под первой.
+  ['a settled spinner never prints a second summary line',
+    tui.includes('if (this.settled) return this')],
+
+  // ── Первый экран ─────────────────────────────────────────────────────────────────────────────
+  // Служебные строки про ключи и источники — за --debug. Человек открывает CLI за лидами, а не за
+  // отчётом о конфигурации; в режиме флагов они остаются, там это журнал прогона.
+  ['the interactive screen starts clean: no key inventory unless --debug',
+    sdrRun.includes("const debug = process.argv.includes('--debug')")
+    && sdrRun.includes('if (debug) { printEnvNotice(); printCapabilities()')
+    && sdrRun.split('async function runFromFlags() {')[1]?.trimStart().startsWith('printEnvNotice()')
+    // Позиция важна: console.clear() встречается ещё и в ветке команды /clear, поэтому просто
+    // «есть в функции» проверяет не то. Экран должен чиститься ПЕРВЫМ делом, до панели состояния.
+    && /^\s*(\/\/[^\n]*\n\s*)*console\.clear\(\)\s*\n[^]*?await renderDashboard\(\)/
+      .test(sdrRun.split('async function runInteractive() {')[1] ?? '')],
+
+  // Рамка панели считает ширину БЕЗ escape-последовательностей: с .length правая стенка уезжает на
+  // восемь позиций за каждый цвет, и панель превращается в лестницу.
+  //
+  // Проверка была прибита к ТОЧНОМУ тексту строки `width - visibleWidth(text)` и упала на
+  // переименовании переменной — при полностью исправном поведении. Ловить надо подмену меры, а не
+  // выбор имени: значение имеет то, что ширина берётся visibleWidth, а не .length.
+  // Саму ровность рамки теперь проверяет tui-behavior, отрисовкой панели с ячейками шире колонки.
+  ['the dashboard measures visible width, not byte length',
+    tui.includes('export function visibleWidth(text)')
+    && /const gap = Math\.max\(0, width - visibleWidth\(/.test(tui)
+    && !/const gap = Math\.max\(0, width - [A-Za-z.]*\.length/.test(tui)
+    && tui.includes('const topFill = ') && tui.includes('inner - visibleWidth(titleText)')],
+
+  // Управляющий байт ESC в исходнике уже дважды пропадал при правке, унося за собой цвета и меру
+  // ширины. Он должен собираться из кода символа — и в примитивах, и в их проверках.
+  ['no literal escape bytes live in the TUI sources',
+    tui.includes("const ESC = String.fromCharCode(27)")
+    && !tui.includes(String.fromCharCode(27))
+    && !read('agent-hub/query-parse-behavior.mjs').includes(String.fromCharCode(27))],
+
+  // ── Разбор фразы ─────────────────────────────────────────────────────────────────────────────
+  // Разбор НЕ УГАДЫВАЕТ. Неверно угаданный город уводит прогон в другую страну, тратит кредиты и
+  // возвращает «ничего не найдено» без объяснения — спросить дешевле в любом случае.
+  ['the phrase parser asks instead of guessing',
+    queryParse.includes('export function parseNaturalQuery(text)')
+    && queryParse.includes("if (!raw) return { query: null, city: null, limit: null, rest: '' }")
+    && queryParse.includes('const preposition = [...working.matchAll(PREPOSITION_RE)].at(-1)')
+    && queryParse.includes('if (parsed >= MIN_LIMIT && parsed <= MAX_LIMIT) {')],
+
+  // Значение по умолчанию — решение ИНТЕРФЕЙСА, а не разбора: подставь его разбор, и человек уже не
+  // отличит «я сказал Ташкент» от «за меня решили».
+  ['defaults belong to the prompt, not to the parser',
+    !queryParse.includes("city = 'Ташкент'")
+    && sdrRun.includes("fallback: previous?.city ?? 'Ташкент'")],
+
+  // Вопрос задаётся ТОЛЬКО о том, чего в строке не было — иначе разбор фразы бессмыслен.
+  ['already-parsed values are never asked again',
+    sdrRun.includes('const query = parsed.query\n    ?? await ask.text(')
+    && sdrRun.includes('const city = parsed.city\n    ?? await ask.text(')
+    && sdrRun.includes('const limit = parsed.limit ?? (await ask.select(')],
 
   // Выгрузка открывается в Excel. BOM и CRLF — не украшение: без них русский текст читается как
   // ANSI, а перевод строки внутри питча рвёт запись на две.
@@ -291,10 +368,16 @@ const cases = [
   // Один форматтер на ВСЕ пути вывода: по флагам через платформу, по флагам локально и в
   // интерактиве. Раньше платформенный путь печатал свою строку, местный не печатал ничего, и эти
   // выводы разошлись бы при первой правке. Интерактив добавил третий — он тоже идёт через него.
-  ['every CLI path renders leads through the same formatter',
-    (sdrRun.match(/renderLeadReport\(/g) ?? []).length === 3
-    && sdrRun.includes('renderLeadReport(outcome.leads, { details: true })')
-    && !sdrRun.includes("lead.score?.status === 'HOT' ? '🔥' : '  '")],
+  // Два вида вывода (журнал по флагам и карточки интерактива) — но оба живут в lead-report.mjs, и
+  // ни одна строка лида не собирается прямо в sdr-run.mjs. Иначе они разойдутся при первой правке:
+  // платформенный путь однажды печатал свою строку, местный — ничего.
+  ['every CLI path renders leads through lead-report.mjs, never inline',
+    (sdrRun.match(/renderLeadReport\(/g) ?? []).length === 2
+    && (sdrRun.match(/renderLeadCards\(/g) ?? []).length === 1
+    && leadReport.includes('export function renderLeadCards(leads)')
+    && leadReport.includes('export function leadCard(lead, index)')
+    && !sdrRun.includes("lead.score?.status === 'HOT' ? '🔥' : '  '")
+    && !sdrRun.includes('icebreaker_pitch}`)')],
 
   // Питч копируют целиком и отправляют живому человеку. Наш значок внутри строки уедет вместе с ним.
   ['the icebreaker line carries no decoration of ours',

@@ -1,0 +1,43 @@
+# Воркер SDR: разбирает очередь задач и выполняет пайплайн.
+#
+# Отдельный образ от шлюза, хотя половина зависимостей общая. Причина в разной форме нагрузки: шлюз
+# отвечает за миллисекунды и масштабируется числом экземпляров, воркер держит задачу минутами и
+# масштабируется по-другому. Один образ на двоих означал бы, что перезапуск шлюза ради правки
+# маршрута перезапускает и воркеров, бросая начатые прогоны.
+#
+# БРАУЗЕРА ЗДЕСЬ НЕТ. Playwright и Chromium добавили бы к образу больше полугигабайта, а разбор
+# браузером выключен по умолчанию (SDR_BROWSER). Кому он нужен — собирает свой слой поверх этого,
+# добавляя `RUN npx playwright install --with-deps chromium`; тогда же образ вырастет, и это будет
+# видно, а не случится незаметно.
+#
+# НЕ ПРОВЕРЕНО: сборка не запускалась, docker в среде разработки отсутствует.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1
+RUN npm ci --omit=dev --ignore-scripts
+
+FROM node:22-alpine AS runtime
+RUN apk add --no-cache tini
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY agent-hub ./agent-hub
+COPY supabase/functions/_shared ./supabase/functions/_shared
+
+USER node
+
+# Проверка загрузки модулей на этапе сборки — та же причина, что в Dockerfile.api: несовместимость
+# снятия типов должна обнаружиться при build, а не через минуту после выкатки.
+RUN node --experimental-strip-types --input-type=module \
+    -e "import('./agent-hub/server/queue.ts').then((m) => { if (typeof m.connectConsumer !== 'function') { console.error('queue.ts не экспортирует connectConsumer'); process.exit(1) } console.log('проверка запуска: модули воркера загружаются') })"
+
+ENTRYPOINT ["/sbin/tini", "--"]
+# --loop: непрерывный режим. Без него воркер разберёт одну задачу и выйдет, а restart: unless-stopped
+# превратит это в бесконечный цикл перезапусков.
+CMD ["node", "--experimental-strip-types", "agent-hub/sdr-worker.mjs", "--loop"]

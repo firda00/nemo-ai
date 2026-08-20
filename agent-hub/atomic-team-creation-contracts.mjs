@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 const migration = read('supabase/migrations/20260803140000_atomic_agent_teams.sql')
-const persistence = read('src/lib/ustudyTeam.ts')
+const persistence = read('src/lib/dynamicTeams.ts')
 const factory = read('src/pages/OnboardingPage.tsx')
 const deploy = read('deploy.ps1')
 const repair = read('supabase/migrations/20260804160000_team_draft_and_usage_aggregate.sql')

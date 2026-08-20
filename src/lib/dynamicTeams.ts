@@ -90,7 +90,7 @@ export interface SeedResult {
  * `agents`) plus a department (`departments`) with the 6 specialist `sub_agents`.
  * Returns the ids so the caller can open the team hub at /app/teams/<agentId>.
  */
-export async function createUstudyOperationsTeam(
+export async function createOperationsTeam(
   addAgent: (a: PlatformAgent) => Promise<{ id?: string; error?: string }>,
   deleteAgent?: DeleteAgent,
 ): Promise<SeedResult> {

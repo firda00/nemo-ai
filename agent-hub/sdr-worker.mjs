@@ -18,6 +18,8 @@ import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { loadLocalEnv } from './load-local-env.mjs'
 import { syncHotLeadsToCrm } from './crm-sync.ts'
+import { createBrowserBridge } from './tools/enrich-browser.ts'
+import { connectConsumer, BLOCK_SECONDS } from './server/queue.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
 loadLocalEnv(repoRoot)
@@ -32,13 +34,26 @@ const LEASE_SECONDS = 900
 const HEARTBEAT_MS = 240_000
 const IDLE_PAUSE_MS = 15_000
 
+/*
+ * АДРЕС БЕРЁТСЯ ЦЕЛИКОМ, ЕСЛИ ОН ЗАДАН, И ТОЛЬКО ПОТОМ СТРОИТСЯ ИЗ REF.
+ *
+ * Здесь стояло `https://${ref}.supabase.co` без вариантов — то есть воркер умел работать ТОЛЬКО с
+ * облаком. В контуре на своём сервере (docker-compose.prod.yml) Supabase живёт за собственным Kong,
+ * и такой воркер поднялся бы, отчитался о готовности и продолжил разбирать очередь ОБЛАКА, пока
+ * всё остальное работает локально. Две базы, один воркер, задвоенная рассылка — и ни одной ошибки
+ * в журнале.
+ *
+ * Порядок тот же, что в agent-hub/server/env.ts и agent-hub/media/main.ts: приём в репозитории уже
+ * есть, и заводить рядом второй было бы хуже, чем повторить существующий.
+ */
+const serviceKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
 const ref = process.env.SUPABASE_PROJECT_REF
-const serviceKey = process.env.SUPABASE_SECRET_KEY
-if (!ref || !serviceKey) {
-  console.error('[worker] нужны SUPABASE_PROJECT_REF и SUPABASE_SECRET_KEY (подхватываются из .secrets.local)')
+const url = process.env.SUPABASE_URL ?? (ref ? `https://${ref}.supabase.co` : '')
+if (!url || !serviceKey) {
+  console.error('[worker] нужны SUPABASE_URL (или SUPABASE_PROJECT_REF) и SUPABASE_SECRET_KEY (подхватываются из .secrets.local)')
   process.exit(1)
 }
-const admin = createClient(`https://${ref}.supabase.co`, serviceKey)
+const admin = createClient(url, serviceKey)
 
 /** Лиды задачи пишутся здесь, а не общим store из notifier.ts: нужна привязка job_id. */
 async function saveLeads(job, leads) {
@@ -141,6 +156,10 @@ async function runOne() {
     }).then(({ error }) => { if (error) console.warn(`[worker] сердцебиение не прошло: ${error.message}`) })
   }, HEARTBEAT_MS)
 
+  // Браузер — ОДИН на задачу и закрывается в finally ниже. Воркер живёт часами и берёт задачу за
+  // задачей: браузер, оставленный открытым хотя бы в одной ветке, к вечеру превратится в десяток
+  // процессов Chromium, и машина уйдёт в свап на ровном месте.
+  const browser = createBrowserBridge()
   try {
     const search = resolvePlacesSearch()
     const result = await runSdrPipeline(
@@ -152,7 +171,7 @@ async function runOne() {
       },
       {
         search,
-        enrich: new WebEnricher(),
+        enrich: new WebEnricher(process.env, fetch, browser.fallback),
         score: resolveScorer(),
         // Запись делаем сами — с job_id, которого общий store не знает.
         store: null,
@@ -186,6 +205,9 @@ async function runOne() {
       crm_failed: crm.failed,
       crm_skipped: crm.skipped,
       crm_errors: crm.errors.slice(0, 10),
+      // Сколько раз понадобился браузер — цена задачи в секундах и памяти. Без этой цифры непонятно,
+      // почему одна задача считалась десять секунд, а вторая — минуту.
+      browser: browser.stats(),
       failures: result.failures.slice(0, 20),
     }
 
@@ -224,6 +246,10 @@ async function runOne() {
     return job.id
   } finally {
     clearInterval(heartbeat)
+    // Браузер закрывается ПОСЛЕ фиксации задачи и в обеих ветках. Порядок именно такой: сначала
+    // задача перестаёт считаться выполняемой, потом освобождаются ресурсы — если закрытие браузера
+    // само упадёт, задача уже зафиксирована и второй раз кредиты не спишет.
+    await browser.close()
   }
 }
 
@@ -234,7 +260,12 @@ if (!loop) {
   process.exit(0)
 }
 
-console.log('[worker] непрерывный режим; Ctrl+C для остановки')
+// ОТДЕЛЬНОЕ соединение под ожидание: BLPOP блокирует весь клиент, и публиковать что-либо по нему
+// одновременно нельзя. Воркер только слушает, поэтому одного соединения ему достаточно.
+const queue = await connectConsumer()
+console.log(`[worker] непрерывный режим; Ctrl+C для остановки; очередь: ${
+  queue.enabled ? `Dragonfly, ожидание до ${BLOCK_SECONDS} с` : `опрос раз в ${IDLE_PAUSE_MS / 1000} с`}`)
+
 let stop = false
 process.on('SIGINT', () => { console.log('\n[worker] останавливаюсь после текущей задачи'); stop = true })
 while (!stop) {
@@ -244,7 +275,23 @@ while (!stop) {
   } catch (error) {
     console.error(`[worker] ошибка обхода очереди: ${String(error?.message ?? error)}`)
   }
-  // Пауза только когда делать нечего: очередь с задачами разбирается без задержек.
-  if (!handled) await new Promise((resolve) => setTimeout(resolve, IDLE_PAUSE_MS))
+  // Делать нечего — ЖДЁМ СИГНАЛА, а не спим вслепую.
+  //
+  // Раньше здесь стояла глухая пауза на пятнадцать секунд: воркер спрашивал claim_sdr_job снова и
+  // снова, всегда, даже при пустой очереди. Четыре воркера — шестнадцать запросов в минуту
+  // круглосуточно и ни одной полезной строки в ответ. Теперь воркер висит на Dragonfly и просыпается
+  // в момент постановки задачи.
+  //
+  // Сигнал НЕ обязателен и его содержимое НЕ используется: пришёл — идём в базу за задачей, не
+  // пришёл за отведённое время — идём всё равно. Брать задачу по идентификатору из сигнала было бы
+  // ошибкой: право на неё выдаёт claim_sdr_job с арендой, и в обход него два воркера получили бы одну
+  // задачу. Dragonfly здесь будильник, а не источник правды.
+  if (!handled) {
+    if (queue.enabled) await queue.waitForJob(BLOCK_SECONDS)
+    else await new Promise((resolve) => setTimeout(resolve, IDLE_PAUSE_MS))
+  }
 }
+// Соединение с Dragonfly закрывается до выхода: незакрытый сокет держит процесс живым, и воркер,
+// остановленный по Ctrl+C, не завершается — выглядит это как зависание при остановке.
+await queue.close()
 process.exit(0)

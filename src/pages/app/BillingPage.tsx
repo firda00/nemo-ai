@@ -184,7 +184,7 @@ export default function BillingPage() {
       {invoice && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setInvoice(null)} />
-          <div className="card relative w-full max-w-sm rounded-2xl p-6 animate-fadeInUp">
+          <div className="modal-panel relative w-full max-w-sm rounded-2xl p-6 animate-fadeInUp">
             <h3 className="text-lg font-semibold text-text">{t('billingPagePay.payTitle')}</h3>
             <p className="mt-1 text-sm text-muted">
               {t('billingPagePay.paySubtitle', { amount: invoice.amountUzs.toLocaleString('ru-RU') })}

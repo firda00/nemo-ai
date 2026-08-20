@@ -20,7 +20,8 @@ nginx exposes it only under `https://nemo.185.8.213.144.sslip.io/render-api/` be
 
 ```bash
 cd /opt/nemo-render
-npm install --omit=dev
+npm ci --omit=dev
+node ensure-browser.mjs
 cp .env.example .env && $EDITOR .env        # set RENDER_SECRET + SUPABASE_SERVICE_ROLE_KEY
 node smoke.mjs                              # offline render check -> /tmp/nemo-smoke.mp4
 cp deploy/nemo-render.service /etc/systemd/system/

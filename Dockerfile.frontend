@@ -1,0 +1,34 @@
+# Фронтенд: собранный Vite-бандл внутри Caddy.
+#
+# ОДНА СБОРКА НА ДВА ДОМЕНА. Лендинг и кабинет — это ОДНО приложение: разделение идёт по хосту в
+# src/lib/host.ts (`app.*` → кабинет, остальное → промо). Собирать два бандла было бы ошибкой —
+# разъехались бы версии, и посетитель промо и клиент в кабинете видели бы разный код.
+#
+# Переменные VITE_ попадают в код страницы НА ЭТАПЕ СБОРКИ. Подставить их в готовый образ нельзя,
+# поэтому они приходят аргументами сборки, а не переменными среды выполнения.
+
+FROM node:22-slim AS build
+WORKDIR /app
+
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_API_GATEWAY_URL
+ARG VITE_NEMO_EXTENSION_ID=""
+ARG VITE_SENTRY_DSN=""
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
+    VITE_API_GATEWAY_URL=$VITE_API_GATEWAY_URL \
+    VITE_NEMO_EXTENSION_ID=$VITE_NEMO_EXTENSION_ID \
+    VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+# Обхода проверки переменных здесь НЕТ намеренно: сборка без VITE_SUPABASE_URL молча уходит в
+# демо-режим и выглядит рабочей. Пусть падает здесь, а не обманывает на боевом домене.
+RUN npm run build
+
+FROM caddy:2-alpine
+COPY --from=build /app/dist /srv/nemo
+COPY deploy/Caddyfile /etc/caddy/Caddyfile

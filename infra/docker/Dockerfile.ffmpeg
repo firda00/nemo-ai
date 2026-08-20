@@ -1,0 +1,64 @@
+# Медиа-воркер: сборка вертикальных роликов нативным FFmpeg.
+#
+# ПОЧЕМУ НЕ REMOTION, на котором работает render-worker этого же проекта. Причина экономическая и
+# названа в §2 спецификации V5: нативный FFmpeg не требует лицензионных отчислений. Технически Remotion
+# делает то же самое и даже удобнее, но его лицензия платная для компаний выше порога по размеру, и
+# каждый собранный ролик в этом смысле стоит денег. Здесь — ноль.
+#
+# ПОЛНАЯ СБОРКА FFMPEG ОБЯЗАТЕЛЬНА, и это не перестраховка. Бинарник, который поставляется внутри
+# Remotion в этом же дереве, собран с `--disable-filters` и белым списком: в нём НЕТ ни ass, ни xfade,
+# ни sidechaincompress, ни даже fps и setpts. Проверено запуском: граф, рассчитанный на них, падает с
+# «No option name near '30'», и сообщение описывает не отсутствие фильтра, а поломку разбора всего
+# графа. Пакет ffmpeg из репозитория Alpine собран полностью и такой проблемы не создаёт.
+#
+# ЧТО НЕ ПРОВЕРЕНО: сборка образа не запускалась — docker в среде разработки отсутствует. Сам код
+# рендера проверен настоящим рендером на урезанном бинарнике: два PNG разного размера сведены в
+# 1080x1920 H.264 + AAC длительностью ровно 4 с, что подтверждено ffprobe.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1
+RUN npm ci --omit=dev --ignore-scripts
+
+FROM node:22-alpine AS runtime
+
+# ffmpeg с фильтрами и шрифты. Шрифты нужны фильтру ass: без них субтитры либо не отрисуются вовсе,
+# либо подменятся на первый попавшийся шрифт — молча, и увидеть это можно только на готовом файле.
+# ttf-dejavu содержит кириллицу, что для этого проекта обязательно.
+RUN apk add --no-cache tini ffmpeg fontconfig ttf-dejavu && fc-cache -f
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    RENDER_WORK_DIR=/tmp/renders
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY agent-hub/media ./agent-hub/media
+COPY agent-hub/contracts ./agent-hub/contracts
+COPY agent-hub/server ./agent-hub/server
+
+# Каталог временных файлов создаётся заранее и принадлежит непривилегированному пользователю: воркер
+# работает не от root, а создать /tmp/renders на лету он тогда не сможет.
+RUN mkdir -p /tmp/renders && chown -R node:node /tmp/renders
+
+USER node
+
+# Проверка НА ЭТАПЕ СБОРКИ, что установленный ffmpeg действительно содержит нужные фильтры.
+#
+# Именно здесь, а не при первом рендере: пакет мог поменяться между версиями базового образа, и узнать
+# об этом через минуту после выкатки — значит потерять очередь роликов.
+RUN /usr/bin/ffmpeg -hide_banner -filters | awk '{print $2}' > /tmp/filters.txt && \
+    for f in ass xfade sidechaincompress loudnorm amix scale crop concat fps setpts setsar asplit; do \
+      grep -qx "$f" /tmp/filters.txt || { echo "в ffmpeg нет фильтра $f"; exit 1; }; \
+    done && \
+    echo "проверка сборки: все нужные фильтры на месте" && rm /tmp/filters.txt
+
+RUN node --experimental-strip-types --input-type=module \
+    -e "import('./agent-hub/media/render-worker.ts').then((m) => { if (typeof m.processOnce !== 'function') { console.error('render-worker.ts не экспортирует processOnce'); process.exit(1) } console.log('проверка запуска: модули медиа-воркера загружаются') })"
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--experimental-strip-types", "agent-hub/media/main.ts"]

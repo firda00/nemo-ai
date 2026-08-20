@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { rootRedirectFor } from './lib/host'
 import type { ReactNode } from 'react'
 import { useAuth } from './context/AuthContext'
 import { AppLayout } from './components/layout/AppLayout'
@@ -66,10 +67,22 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <MfaChallengeGate>{children}</MfaChallengeGate>
 }
 
+/**
+ * Корень сайта зависит от хоста.
+ *
+ * На app.* человек идёт работать, а не читать про продукт: показывать ему промо-страницу того, чем
+ * он уже пользуется, невежливо. На всех прочих хостах — включая localhost и адреса проверок —
+ * поведение прежнее, промо-страница.
+ */
+function RootRoute() {
+  const target = typeof window === 'undefined' ? null : rootRedirectFor(window.location.hostname)
+  return target ? <Navigate to={target} replace /> : <LandingPage />
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
+      <Route path="/" element={<RootRoute />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pitch" element={<PitchPage />} />
       <Route path="/demo" element={<DemoPage />} />

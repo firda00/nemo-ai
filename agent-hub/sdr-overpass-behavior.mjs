@@ -99,7 +99,7 @@ assert.ok(buildOverpassQuery('фирма "Ромашка"', [1, 2, 3, 4]).includ
   const fakeFetch = async (url) => {
     const href = String(url)
     if (href.includes('nominatim')) {
-      return { ok: true, json: async () => [{ boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
+      return { ok: true, json: async () => [{ class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
     }
     return { ok: true, text: async () => JSON.stringify({ elements }) }
   }
@@ -114,7 +114,7 @@ assert.ok(buildOverpassQuery('фирма "Ромашка"', [1, 2, 3, 4]).includ
 // exhausted считается по ВСЕЙ выдаче, а не по обрезанному куску.
 {
   const fakeFetch = async (url) => String(url).includes('nominatim')
-    ? { ok: true, json: async () => [{ boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
+    ? { ok: true, json: async () => [{ class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
     : { ok: true, text: async () => JSON.stringify({ elements: [{ type: 'node', id: 1, tags: { name: 'Одна' } }] }) }
   const search = new OverpassPlacesSearch(fakeFetch, 'https://overpass.test/api')
   const { stats } = await search.search({ query: 'q', city: 'Ташкент', limit: 50 })
@@ -132,7 +132,7 @@ assert.ok(buildOverpassQuery('фирма "Ромашка"', [1, 2, 3, 4]).includ
     + ' The server is probably too busy to handle your request. </p></body></html>'
   const fakeFetch = async (url) => {
     if (String(url).includes('nominatim')) {
-      return { ok: true, json: async () => [{ boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
+      return { ok: true, json: async () => [{ class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['41.1', '41.4', '69.1', '69.5'] }] }
     }
     attempts += 1
     // Первые две попытки — «занято» под видом успешного ответа, третья отдаёт данные.
@@ -158,12 +158,53 @@ assert.ok(buildOverpassQuery('фирма "Ромашка"', [1, 2, 3, 4]).includ
 
 // Рамка города разбирается из строк, как их отдаёт Nominatim (проверено на живой службе).
 {
-  const fakeFetch = async () => ({ ok: true, json: async () => [{ boundingbox: ['41.1577334', '41.4224955', '69.1217970', '69.5259080'] }] })
+  const fakeFetch = async () => ({ ok: true, json: async () => [{ class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['41.1577334', '41.4224955', '69.1217970', '69.5259080'] }] })
   assert.deepEqual(await resolveCityBBox('Ташкент', fakeFetch), [41.1577334, 41.4224955, 69.1217970, 69.5259080])
 }
 {
-  const fakeFetch = async () => ({ ok: true, json: async () => [{ boundingbox: ['мусор', 'x', 'y', 'z'] }] })
+  const fakeFetch = async () => ({ ok: true, json: async () => [{ class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['мусор', 'x', 'y', 'z'] }] })
   assert.equal(await resolveCityBBox('Ташкент', fakeFetch), null, 'нечисловая рамка — не рамка')
+}
+
+// --- Рамка берётся только у НАСЕЛЁННОГО ПУНКТА -----------------------------------------------------
+//
+// На живой службе «Ташкенте» (местный падеж) первой строкой отдавало КАФЕ с таким названием в Москве,
+// и прогон уходил искать стоматологии по рамке одного заведения. Первая строка выдачи ≠ город.
+
+{
+  const cafeThenCity = [
+    { class: 'amenity', type: 'cafe', addresstype: 'amenity', boundingbox: ['55.7', '55.8', '37.6', '37.7'] },
+    { class: 'boundary', type: 'administrative', addresstype: 'city', boundingbox: ['41.1', '41.4', '69.1', '69.5'] },
+  ]
+  const fakeFetch = async () => ({ ok: true, json: async () => cafeThenCity })
+  assert.deepEqual(await resolveCityBBox('Ташкент', fakeFetch), [41.1, 41.4, 69.1, 69.5],
+    'кафе с названием города пропускается, берётся сам город')
+}
+
+// Одно кафе и ничего больше — это НЕ город. Лучше честный отказ, чем прогон по рамке заведения:
+// поиск вернёт «ничего не найдено» и потратит кредиты, не сказав, почему.
+{
+  const onlyCafe = [{ class: 'amenity', type: 'cafe', addresstype: 'amenity', boundingbox: ['55.7', '55.8', '37.6', '37.7'] }]
+  const fakeFetch = async () => ({ ok: true, json: async () => onlyCafe })
+  assert.equal(await resolveCityBBox('Однажды в Ташкенте', fakeFetch), null,
+    'населённого пункта в выдаче нет — рамки нет')
+}
+
+// Падеж снимается: «в Бухаре» из живой речи должно доходить до Bukhara. Проверяется тем, что запрос
+// к службе уходит НЕ ТОЛЬКО в исходной форме — иначе Nominatim отвечает пустотой.
+{
+  const asked = []
+  const fakeFetch = async (url) => {
+    asked.push(decodeURIComponent(String(url)))
+    // Отвечаем городом только на форму без падежа — как настоящая служба.
+    const isBase = asked.at(-1).includes('q=Бухара')
+    // Без addresstype: живая выдача такие строки отдаёт, и на одном списке типов запись терялась бы.
+    // Административная граница — это населённый пункт, даже когда служба не подписала его тип.
+    return { ok: true, json: async () => (isBase ? [{ class: 'boundary', type: 'administrative', boundingbox: ['39.7', '39.8', '64.3', '64.5'] }] : []) }
+  }
+  assert.deepEqual(await resolveCityBBox('в Бухаре', fakeFetch), [39.7, 39.8, 64.3, 64.5])
+  assert.ok(asked.length > 1, 'одной формы недостаточно — перебираются варианты написания')
+  assert.equal(asked.some((one) => one.includes('q=в ')), false, 'предлог в запрос к службе не уезжает')
 }
 
 // --- Запуск «из коробки»: без единого ключа источник обязан найтись, а не бросить исключение --------
@@ -173,4 +214,4 @@ assert.ok(resolvePlacesSearch({}) instanceof OverpassPlacesSearch,
 assert.ok(!(resolvePlacesSearch({ GOOGLE_PLACES_API_KEY: 'k' }) instanceof OverpassPlacesSearch),
   'оплаченный Google важнее общего справочника: у него полнота контактов выше')
 
-console.log('[OK] SDR Overpass behaviour: 30 assertions')
+console.log('[OK] SDR Overpass behaviour: 35 assertions')
