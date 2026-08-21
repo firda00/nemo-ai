@@ -105,6 +105,7 @@ $steps = @(
   @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
   @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } },
   @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } },
+  @{ Name = 'Pricing readability'; Command = { npm run test:pricing-contrast } },
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
   @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },

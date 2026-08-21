@@ -717,8 +717,9 @@ export const extraUz = {
     "yourPlan": "Sizning tarifingiz"
   },
   "pricingPage": {
-    "heroTitle": "Tariflar va limitlar",
-    "heroSubtitle": "Har bir tarifda aniq limitlar: tokenlar, AI-jamoalar, media, brauzer vazifalari va video. Yashirin cheklovlar yo‘q.",
+    "heroBadge": "Tariflar va shaffof narxlar",
+    "heroTitle": "Natijaga sarmoya kiriting, rutinaga emas",
+    "heroSubtitle": "AI-agentlaringizni kengaytirish uchun mos rejani tanlang. Yashirin toʻlovlarsiz: har bir tarifda aniq limitlar — tokenlar, jamoalar, media, brauzer vazifalari va video.",
     "start": "Boshlash"
   },
   "channelsManager": {
@@ -2488,8 +2489,9 @@ export const extraRu = {
     "yourPlan": "Ваш тариф"
   },
   "pricingPage": {
-    "heroTitle": "Тарифы и лимиты",
-    "heroSubtitle": "У каждого тарифа конкретные лимиты: токены, AI-команды, медиа, браузер-задачи и видео. Без скрытых ограничений.",
+    "heroBadge": "Тарифы и прозрачные цены",
+    "heroTitle": "Инвестируйте в результат, а не в рутину",
+    "heroSubtitle": "Выберите подходящий план для масштабирования ваших AI-агентов. Без скрытых платежей: у каждого тарифа конкретные лимиты — токены, команды, медиа, браузер-задачи и видео.",
     "start": "Начать"
   },
   "channelsManager": {
@@ -4259,8 +4261,9 @@ export const extraEn = {
     "yourPlan": "Your plan"
   },
   "pricingPage": {
-    "heroTitle": "Pricing and limits",
-    "heroSubtitle": "Every plan has concrete limits: tokens, AI teams, media, browser tasks and video. No hidden caps.",
+    "heroBadge": "Pricing, stated plainly",
+    "heroTitle": "Invest in results, not in routine",
+    "heroSubtitle": "Pick the plan that fits how far you want to scale your AI agents. No hidden fees: every plan states its limits — tokens, teams, media, browser tasks and video.",
     "start": "Get started"
   },
   "channelsManager": {

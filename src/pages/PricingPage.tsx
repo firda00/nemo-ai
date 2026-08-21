@@ -24,11 +24,28 @@ export default function PricingPage() {
         : String(n)
 
   return (
-    <div className="min-h-screen bg-[#060b14]">
+    /*
+     * theme-dark-scope ОБЯЗАТЕЛЕН РЯДОМ С ТЁМНЫМ ФОНОМ.
+     *
+     * Здесь фон задавался константой #060b14, а класса не было. Цвета текста при этом брались из
+     * ТОКЕНОВ, а токены следуют теме посетителя: у человека со светлой темой text-text — тёмно-синий,
+     * то есть тёмный текст на почти чёрном фоне.
+     *
+     * Измерено: контраст названий тарифов и цен в светлой теме 1.17 при норме 4.5 (единица означает
+     * «цвет текста совпал с фоном»). В тёмной теме все 113 элементов страницы проходили — поэтому
+     * дефект и не был виден тому, кто его сделал.
+     *
+     * Класс переводит ВСЮ страницу на тёмную палитру независимо от темы системы, и фон берётся
+     * тем же токеном, что и цвета: одна причина вместо двух несогласованных.
+     */
+    <div className="theme-dark-scope min-h-screen bg-bg">
       <MarketingHeader />
       <main className="container-page max-w-6xl pb-16 pt-10">
         <div className="mx-auto max-w-2xl text-center">
-          <h1 className="text-3xl font-semibold tracking-tight text-text sm:text-4xl">{t('pricingPage.heroTitle')}</h1>
+          <span className="inline-flex items-center gap-2 rounded-pill border border-ice/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-widest text-cyan">
+            <Sparkles size={12} /> {t('pricingPage.heroBadge')}
+          </span>
+          <h1 className="mt-5 text-3xl font-bold tracking-tight text-text sm:text-4xl">{t('pricingPage.heroTitle')}</h1>
           <p className="mt-3 text-sm leading-relaxed text-muted sm:text-base">{t('pricingPage.heroSubtitle')}</p>
         </div>
 
