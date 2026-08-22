@@ -191,6 +191,38 @@ assert.match(uzumSql, /\^\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-
   'order_id as UUID must be matched by exact shape')
 
 /*
+ * ПРОКСИРОВАНИЕ КАССЫ ЧЕРЕЗ VERCEL.
+ *
+ * Здесь, а не комментарием в vercel.json: у него строгая схема, и лишний ключ — даже «//» —
+ * отвергается при выкладке с «Invalid vercel.json». Проверено собственным неудачным деплоем.
+ *
+ * Порядок правил решает всё: они применяются сверху вниз, а правило SPA перехватывает любой путь
+ * без расширения — включая /api/uzum/check. Стоя вторым, правило кассы не сработает никогда, и
+ * банк будет получать HTML главной страницы вместо ответа протокола.
+ */
+{
+  const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'))
+  const rewrites = vercel.rewrites ?? []
+  const uzumAt = rewrites.findIndex((one) => String(one.source).startsWith('/api/uzum'))
+  const spaAt = rewrites.findIndex((one) => String(one.destination) === '/index.html')
+
+  assert.ok(uzumAt >= 0, 'проксирование кассы Uzum исчезло из vercel.json')
+  assert.ok(spaAt >= 0, 'правило SPA исчезло из vercel.json')
+  assert.ok(uzumAt < spaAt, 'правило кассы стоит после SPA — банк получит HTML вместо ответа протокола')
+
+  // Ручки перечислены поимённо: произвольный :action открыл бы наружу любой путь функции.
+  assert.match(String(rewrites[uzumAt].source), /\(check\|create\|confirm\|reverse\|status\)/,
+    'путь кассы открыт шаблоном — наружу уйдёт любой путь функции')
+  // SPA обязана пропускать api/, иначе она снова перехватит запросы банка.
+  assert.match(String(rewrites[spaAt].source), /\?!api\//, 'правило SPA снова перехватывает /api/')
+  // Схема Vercel не терпит посторонних ключей — ни в одном правиле.
+  for (const rule of rewrites) {
+    assert.deepEqual(Object.keys(rule).sort(), ['destination', 'source'],
+      'в правиле vercel.json лишний ключ — выкладка упадёт на проверке схемы')
+  }
+}
+
+/*
  * ОШИБКА БАЗЫ — ИСКЛЮЧЕНИЕ, А НЕ ПУСТОЙ ОТВЕТ.
  *
  * Обоих обращений к базе это касается одинаково: и вызова RPC, и чтения транзакции для /status.
