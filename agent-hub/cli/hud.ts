@@ -17,6 +17,7 @@
 //    короче, вывод чище. Тогда неудавшийся вызов исчезает бесследно, и человек считает, что всё прошло.
 
 import { c as defaultColors, stripAnsi, visibleWidth } from '../tui.mjs'
+import { PALETTE, theme as defaultTheme, type Theme } from './theme.ts'
 
 type Palette = typeof defaultColors
 
@@ -315,6 +316,118 @@ export const INPUT_PROMPT = '› '
 /** Подсказки под строкой ввода. Названы только те клавиши, которые действительно работают. */
 export function footerHints(palette: Palette = defaultColors): string {
   return palette.dim('/help · Tab: команды · Ctrl+C: выход · Enter: отправить')
+}
+
+
+// ─── Реплика человека плашкой ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Реплика человека ПЛАШКОЙ НА ВСЮ ШИРИНУ: `› текст` на подложке #1E222B.
+ *
+ * Чем это лучше прежней строки с чертой под ней. В длинной ленте — где вперемешку идут ответ
+ * модели, бейджи вызовов и вывод инструментов — тонкая черта теряется, и глаз не находит, откуда
+ * начался текущий ход. Сплошная подложка находится с одного взгляда, потому что это единственное
+ * цветное поле на экране.
+ *
+ * Многострочная вставка остаётся ОДНИМ блоком: каждая строка получает свою плашку, поэтому
+ * тридцать вставленных строк выглядят как один прямоугольник, а не как первая строка и сироты.
+ */
+export function userBar(text: string, at: Date, width = 80, palette: Palette = defaultColors, ui: Theme = defaultTheme): string {
+  const stamp = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const lines = String(text).split('\n')
+
+  return lines.map((line, index) => {
+    const marker = index === 0 ? ui.hex(PALETTE.violet, '›') : ' '
+    const body = `${marker} ${ui.hex(PALETTE.text, line)}`
+    // Отметка времени — только на первой строке и только если для неё есть место. Втиснутая в
+    // узкое окно, она съела бы текст, ради которого строка и печатается.
+    const head = visibleWidth(body)
+    const room = width - head - stamp.length - 2
+    const withStamp = index === 0 && room > 0
+      ? `${body}${' '.repeat(room)}${ui.hex(PALETTE.muted, stamp)}  `
+      : body
+    return ui.bar(PALETTE.inputBg, withStamp, width)
+  }).join('\n')
+}
+
+// ─── Дерево выполнения ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ветка дерева подзадач: `├ текст` или `└ текст` для последней.
+ *
+ * Дерево, а не список с дефисами, потому что у шагов есть ВЛОЖЕННОСТЬ: загрузка навыков, проверка
+ * базы и вызовы инструментов принадлежат текущему ходу, а не ленте целиком. Дефисы этого не
+ * показывают, и вывод читается как поток несвязанных сообщений.
+ */
+export function treeLine(text: string, options: {
+  last?: boolean
+  depth?: number
+  tone?: 'muted' | 'ok' | 'warn' | 'fail'
+} = {}, ui: Theme = defaultTheme): string {
+  const branch = options.last ? '└' : '├'
+  // Отступ рисуется вертикалями, а не пробелами: без них вложенные ветки повисают в воздухе и
+  // непонятно, к чему они относятся.
+  const indent = '│ '.repeat(Math.max(0, options.depth ?? 0))
+  const colors = { muted: PALETTE.muted, ok: PALETTE.green, warn: PALETTE.amber, fail: PALETTE.red }
+  const tone = colors[options.tone ?? 'muted']
+  return `${ui.hex(PALETTE.muted, indent + branch)} ${ui.hex(tone, text)}`
+}
+
+/** Несколько веток разом: последняя получает «└» автоматически. */
+export function treeBlock(items: readonly string[], ui: Theme = defaultTheme, depth = 0): string[] {
+  return items.map((text, index) => treeLine(text, { last: index === items.length - 1, depth }, ui))
+}
+
+// ─── Строка размышления ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `✳ Reasoning... (2.4s · temperature 0.2)` — живая строка, пока модель думает.
+ *
+ * Секунды показываются С ОДНИМ ЗНАКОМ и растут на глазах: неподвижная строка «думаю» через двадцать
+ * секунд неотличима от зависшего процесса, и человек жмёт Ctrl+C ровно перед тем, как придёт ответ.
+ *
+ * temperature печатается ТОЛЬКО когда задана. Подставлять умолчание значит показывать число,
+ * которого никто не выбирал, — а по нему потом объясняют, почему модель ответила именно так.
+ */
+export function reasoningLine(state: {
+  elapsedMs: number
+  temperature?: number | null
+  label?: string
+}, ui: Theme = defaultTheme): string {
+  const seconds = `${(Math.max(0, state.elapsedMs) / 1000).toFixed(1)}s`
+  const parts = [seconds]
+  if (state.temperature !== null && state.temperature !== undefined) {
+    parts.push(`temperature ${state.temperature}`)
+  }
+  return [
+    ui.hex(PALETTE.violet, '✳'),
+    ui.hex(PALETTE.text, `${state.label ?? 'Reasoning'}...`),
+    ui.hex(PALETTE.muted, `(${parts.join(' · ')})`),
+  ].join(' ')
+}
+
+// ─── Разделитель и подстрочник ────────────────────────────────────────────────────────────────────
+
+/** Черта во всю ширину перед полем ввода: отделяет прошедший ход от следующего. */
+export function divider(width = 80, ui: Theme = defaultTheme): string {
+  return ui.hex(PALETTE.muted, '─'.repeat(Math.max(1, width)))
+}
+
+/**
+ * Подстрочник под вводом: `▸▸ sdr mode · esc to cancel · /agent to switch · /skills`.
+ *
+ * Названы ТОЛЬКО работающие клавиши и команды. Подсказка про клавишу, которой нет, — это не мелочь:
+ * человек нажимает, ничего не происходит, и дальше он не верит ни одной подсказке.
+ */
+export function statusBar(state: { role: string; busy?: boolean }, ui: Theme = defaultTheme): string {
+  const hints = [
+    `${state.role} mode`,
+    // «esc to cancel» показывается только когда есть что отменять.
+    ...(state.busy ? ['esc to cancel'] : []),
+    '/agent to switch',
+    '/skills',
+  ]
+  return `${ui.hex(PALETTE.violet, '▸▸')} ${ui.hex(PALETTE.muted, hints.join(' · '))}`
 }
 
 export { stripAnsi }

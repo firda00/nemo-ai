@@ -13,7 +13,7 @@
 // закрыть при раннем выходе.
 
 import { c, stopActiveSpinner, visibleWidth, Spinner } from './tui.mjs'
-import { agentBadge, groupSummary, thoughtBadge, toolBadge, shortUrl, GROUP_THRESHOLD } from './cli/hud.ts'
+import { agentBadge, groupSummary, reasoningLine, thoughtBadge, toolBadge, shortUrl, GROUP_THRESHOLD } from './cli/hud.ts'
 
 // Байт ESC собирается из кода намеренно: литеральный символ escape в исходнике невидим, и его уже
 // трижды теряли при правках — строка молча переставала стирать, а бегущий текст оставался на экране.
@@ -98,6 +98,7 @@ export function createRenderer(
   let turnRole = null
   let calls = []
   let spinner = null
+  let thinkingTimer = null
   let pendingArgs = new Map()
 
   /**
@@ -109,6 +110,7 @@ export function createRenderer(
    */
   const takeLine = () => {
     silenceSpinner()
+    if (thinkingTimer) { clearInterval(thinkingTimer); thinkingTimer = null }
     if (spinner) { spinner.silence(); spinner = null }
     if (textFlowing) { write('\n'); textFlowing = false }
     write(CLEAR_LINE)
@@ -133,18 +135,56 @@ export function createRenderer(
      * был написан, покрыт тестами через прямой вызов beginTurn и при этом не появлялся в терминале
      * ни разу: тест звал метод, а живой цикл — нет. Контракт на связку добавлен в agent-loop.
      */
-    beginTurn(roleName = null) {
+    beginTurn(roleName = null, options = {}) {
       turnStartedAt = Date.now()
       thoughtShown = false
       badgeShown = false
       turnRole = roleName
       calls = []
       pendingArgs = new Map()
+
+      /*
+       * БЕГУЩАЯ СТРОКА РАЗМЫШЛЕНИЯ ЗАВОДИТСЯ ЗДЕСЬ, А НЕ ПРИ ПЕРВОМ ТЕКСТЕ.
+       *
+       * Ждать первого фрагмента значило бы молчать ровно то время, ради которого строка и нужна:
+       * между отправкой запроса и первым токеном проходят секунды, и неподвижный экран в этот
+       * момент неотличим от зависшего процесса. Человек жмёт Ctrl+C за миг до ответа.
+       *
+       * Строка транзитная: её стирает takeLine, как только появляется что печатать.
+       */
+      spinner = makeSpinner(reasoningLine({ elapsedMs: 0, temperature: options.temperature ?? null }))
+      thinkingTimer = setInterval(() => {
+        if (!spinner || turnStartedAt === null) return
+        /*
+         * ТИКАЕМ ТОЛЬКО В ЖИВОМ ТЕРМИНАЛЕ.
+         *
+         * Spinner.update в не-анимированном режиме печатает НОВУЮ строку, а не переписывает
+         * текущую. Десять раз в секунду это две тысячи строк «✳ Reasoning…» в журнале за минуту
+         * работы — и настоящий вывод в нём уже не найти.
+         */
+        if (spinner.animated === false) return
+        spinner.update?.(reasoningLine({
+          elapsedMs: Date.now() - turnStartedAt,
+          temperature: options.temperature ?? null,
+        }))
+      }, 100)
+      // unref: висящий таймер держит процесс живым, и CLI, закончивший работу, не выходит —
+      // человек видит зависший терминал вместо приглашения. Эта беда здесь уже случалась.
+      thinkingTimer.unref?.()
     },
 
     onEvent(event) {
       if (event.type === 'text') {
         if (!textFlowing) {
+          /*
+           * СТРОКУ РАЗМЫШЛЕНИЯ НАДО ПОГАСИТЬ ПЕРЕД ПЕРВЫМ ТЕКСТОМ.
+           *
+           * Раньше здесь ничего не гасилось, и это было верно: спиннер жил только во время вызова
+           * инструмента, а его закрывал tool_end. Теперь спиннер заводится в начале хода — и без
+           * этой строки он продолжает переписывать ту же строку терминала, по которой уже течёт
+           * ответ модели. На экране получается каша из ответа и «✳ Reasoning…» поверх него.
+           */
+          takeLine()
           showThought()
           // Бейдж отделяет голос агента от реплики человека: без него ответ начинался голым текстом
           // вплотную к вводу, и в длинной ленте два голоса читались как один.
@@ -198,6 +238,7 @@ export function createRenderer(
      * появляется от трёх, где список начинает просить, чтобы его свернули.
      */
     finishTurn() {
+      if (thinkingTimer) { clearInterval(thinkingTimer); thinkingTimer = null }
       if (spinner) { spinner.silence(); spinner = null }
       if (textFlowing) { write('\n'); textFlowing = false }
       const summary = groupSummary(calls)

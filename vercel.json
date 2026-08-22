@@ -2,7 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
-      "source": "/((?!assets/|.*\\.[a-zA-Z0-9]+$).*)",
+      "//": "Касса Uzum Bank. СТОИТ ПЕРВОЙ: правила применяются по порядку, а следующее ниже правило SPA перехватывает всё без расширения — включая /api/uzum/check. Ручки перечислены поимённо, а не :action, чтобы наружу не открылся произвольный путь функции.",
+      "source": "/api/uzum/:action(check|create|confirm|reverse|status)",
+      "destination": "https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/uzum-merchant/:action"
+    },
+    {
+      "source": "/((?!api/|assets/|.*\\.[a-zA-Z0-9]+$).*)",
       "destination": "/index.html"
     }
   ],

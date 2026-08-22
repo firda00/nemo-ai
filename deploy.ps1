@@ -126,6 +126,10 @@ Apply-Migration .\supabase\migrations\20260813090000_billing_numeric_ids.sql
 Apply-Migration .\supabase\migrations\20260813120000_commerce_sales_trend.sql
 Apply-Migration .\supabase\migrations\20260813140000_listing_submissions.sql
 Apply-Migration .\supabase\migrations\20260813160000_extension_submit.sql
+# Касса Uzum Bank: журнал протокола, отзыв начисления и переходы состояний.
+# Без этой строки функция задеплоится, а таблиц и RPC на сервере не будет — и первый же запрос
+# банка получит 99999 вместо оплаты. Функция в манифесте есть, миграция сама туда не попадает.
+Apply-Migration .\supabase\migrations\20260822140000_uzum_merchant.sql
 
 $schemaCheckSql = @'
 select

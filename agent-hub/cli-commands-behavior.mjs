@@ -997,11 +997,21 @@ check(() => {
   renderer.onEvent({ type: 'text', delta: 'Сейчас поищу.' })
   renderer.onEvent({ type: 'tool_start', name: 'x', args: {}, step: 1 })
   renderer.onEvent({ type: 'tool_end', name: 'x', step: 1, outcome: { ok: true, name: 'x', result: {}, durationMs: 1 } })
-  const newlineAt = out.indexOf('\n')
-  const clearedAt = out.indexOf(CLEAR_LINE)
-  assert.ok(newlineAt >= 0 && clearedAt >= 0, 'ни перевода строки, ни очистки')
+  /*
+   * ПОРЯДОК СЧИТАЕТСЯ ОТ САМОГО ТЕКСТА, А НЕ ОТ НАЧАЛА ВЫВОДА.
+   *
+   * Опасна не всякая очистка, а та, что случается, ПОКА на строке лежит незакрытый ответ модели.
+   * Очистка до текста законна и теперь есть всегда: ею гасится строка размышления, заведённая в
+   * начале хода. Меряя первое вхождение по всему выводу, проверка ловила бы именно её — то есть
+   * падала бы на правильном поведении и молчала бы о неправильном, случись оно позже.
+   */
+  const textAt = out.indexOf('Сейчас поищу.')
+  assert.ok(textAt >= 0, 'текст пропал')
+  const after = out.slice(textAt)
+  const newlineAt = after.indexOf('\n')
+  const clearedAt = after.indexOf(CLEAR_LINE)
+  assert.ok(newlineAt >= 0 && clearedAt >= 0, 'ни перевода строки, ни очистки после текста')
   assert.ok(newlineAt < clearedAt, 'строка стёрта раньше, чем текст модели закрыт — текст исчезнет с экрана')
-  assert.ok(out.includes('Сейчас поищу.'), 'текст пропал')
 })
 
 // Очистка — это возврат каретки И стирание. Один возврат каретки оставляет хвост прежней, более

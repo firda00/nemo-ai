@@ -709,4 +709,62 @@ await checkAsync(async () => {
   }, /401.*no credits/s)
 })
 
+// ─── Строка размышления ───────────────────────────────────────────────────────────────────────────
+
+/*
+ * СПИННЕР ЗАВОДИТСЯ СРАЗУ И ГАСНЕТ ВМЕСТЕ С ТАЙМЕРОМ.
+ *
+ * Между отправкой запроса и первым токеном проходят секунды. Неподвижный экран в этот момент
+ * неотличим от зависшего процесса, и человек жмёт Ctrl+C за миг до ответа — поэтому строка
+ * заводится в beginTurn, а не при первом тексте.
+ *
+ * Гасить её обязаны ОБА пути: takeLine (появился свой вывод) и finishTurn (ход кончился). Забытый
+ * setInterval продолжает переписывать строку, которую уже занял чужой текст, и вдобавок держит
+ * процесс живым: терминал не возвращает приглашение. Эта беда в файле уже случалась с таймером
+ * спиннера, поэтому проверяется отдельно.
+ */
+check(() => {
+  const labels = []
+  let silenced = 0
+  const spinner = { animated: true, silence() { silenced += 1; return this }, update(text) { labels.push(text) } }
+  const renderer = createRenderer(() => {}, () => {}, (label) => { labels.push(label); return spinner })
+
+  renderer.beginTurn('sdr', { temperature: 0.2 })
+  assert.equal(labels.length, 1, 'строка размышления не заведена при начале хода')
+  assert.match(labels[0], /Reasoning\.\.\./)
+  assert.match(labels[0], /temperature 0\.2/)
+
+  // Пришёл текст — строка обязана погаснуть, а не остаться поверх ответа.
+  renderer.onEvent({ type: 'text', delta: 'Готово.' })
+  assert.equal(silenced, 1, 'строка размышления не погашена при первом тексте')
+})
+
+check(() => {
+  let silenced = 0
+  const spinner = { animated: true, silence() { silenced += 1; return this }, update() {} }
+  const renderer = createRenderer(() => {}, () => {}, () => spinner)
+
+  renderer.beginTurn('sdr')
+  renderer.finishTurn()
+  assert.equal(silenced, 1, 'строка размышления пережила конец хода')
+
+  // Второй ход заводит её заново: иначе после первого ответа экран снова молчит.
+  renderer.beginTurn('sdr')
+  renderer.finishTurn()
+  assert.equal(silenced, 2)
+})
+
+// Без temperature строка не выдумывает значение: число, которого никто не выбирал, потом объясняет
+// поведение модели — и объяснение будет неверным.
+check(() => {
+  const labels = []
+  const renderer = createRenderer(() => {}, () => {}, (label) => {
+    labels.push(label)
+    return { animated: true, silence() { return this }, update() {} }
+  })
+  renderer.beginTurn('sdr')
+  assert.equal(/temperature/.test(labels[0]), false)
+  renderer.finishTurn()
+})
+
 console.log(`[OK] Agent runtime behaviour: ${checks} assertions`)

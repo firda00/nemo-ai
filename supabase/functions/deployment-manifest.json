@@ -27,6 +27,8 @@
     "support-sla",
     "task-reminders",
     "telegram-webhook",
+    "uzum-merchant",
+    "waitlist",
     "watch-sources",
     "weekly-report",
     "whatsapp-webhook",

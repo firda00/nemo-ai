@@ -9,10 +9,11 @@
 // cron и в скриптах, и менять его поведение ради нового интерфейса значило бы сломать то, что уже
 // работает у людей. Агент — отдельная точка входа.
 
+import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { loadLocalEnv } from './load-local-env.mjs'
-import { Ask, Spinner, c, dashboard, isInteractiveTerminal, stopActiveSpinner } from './tui.mjs'
+import { Ask, Spinner, c, isInteractiveTerminal, stopActiveSpinner } from './tui.mjs'
 import {
   AgentSession, buildAgentSystemPrompt, createOpenRouterStream, DEFAULT_AGENT_MODEL, MAX_STEPS,
   setSessionRegistry,
@@ -26,7 +27,12 @@ import {
 } from './cli/commands.ts'
 import { missionFor } from './cli/roles.ts'
 import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
-import { INPUT_PROMPT, estimateHistoryTokens, footerHints, hudLine, userLine } from './cli/hud.ts'
+import {
+  INPUT_PROMPT, divider, estimateHistoryTokens, hudLine, plural, reasoningLine, shortModel,
+  statusBar, treeBlock, userBar,
+} from './cli/hud.ts'
+import { theme } from './cli/theme.ts'
+import { header, shortenPath } from './cli/banner.ts'
 import { ensureSession, logout, readSession, writeSession } from './cli/login.ts'
 import { ask as askLine, askHidden } from './cli/prompt.ts'
 import { loadSkills, skillPromptBlock } from './cli/skills.ts'
@@ -34,6 +40,14 @@ import { loadSkills, skillPromptBlock } from './cli/skills.ts'
 const repoRoot = path.resolve(import.meta.dirname, '..')
 const localEnv = loadLocalEnv(repoRoot)
 const debug = process.argv.includes('--debug')
+
+/*
+ * Версия берётся из package.json, а не из строки в коде.
+ *
+ * Зашитая «v1.0.0» разошлась бы с настоящей при первом же выпуске, и человек в переписке
+ * называл бы версию, которой у него нет. Пусто — значит пусто: выдумывать номер нельзя.
+ */
+const CLI_VERSION = JSON.parse(await fs.readFile(path.join(repoRoot, 'package.json'), 'utf8')).version || '0.0.0'
 
 if (!isInteractiveTerminal()) {
   // Агент — диалоговый режим. В конвейере он повис бы на первом же вопросе, и выглядело бы это как
@@ -124,7 +138,7 @@ try {
   dialer = buildDialer(process.env)
 } catch (error) {
   // Печатать ЗДЕСЬ нельзя: ниже идёт console.clear(), и предупреждение стёрлось бы, не успев
-  // попасться на глаза. Сообщение откладывается и выводится после экрана.
+  // попасться на глаза. Сообщение откладывается и уходит в шапку, где у него своя рамка слева.
   dialerProblem = error instanceof Error ? error.message : String(error)
 }
 
@@ -441,6 +455,17 @@ const commandDeps = {
 
 // ── Экран ────────────────────────────────────────────────────────────────────────────────────────
 
+/*
+ * Предупреждения собираются В ШАПКУ, а не печатаются по ходу.
+ *
+ * Выведенное до console.clear() стирается, не успев попасться на глаза; выведенное после — тонет
+ * под деревом готовности. В шапке у предупреждения своя рамка слева, и пропустить его нельзя.
+ */
+const startupNotices = [
+  ...(dialerProblem ? [`Автодозвон отключён: ${dialerProblem}`] : []),
+  ...(localModel ? ['Локальная модель: расход не считается, ключ не нужен'] : []),
+]
+
 console.clear()
 if (debug) {
   if (localEnv.loaded.length) console.log(`[nemo] ключи из ${localEnv.files.join(', ')}: ${localEnv.loaded.join(', ')}`)
@@ -448,37 +473,42 @@ if (debug) {
   for (const one of mcp.failures) console.log(`[nemo] MCP ${one.server}: ${one.error}`)
 }
 
-console.log(dashboard({
-  title: c.bold('Nemo — агент'),
-  left: [
-    c.magenta('NEMO AGENT'),
-    `Модель: ${model}`,
-    `Роль:   ${role.name} (${role.title})`,
-    // Что ЕСТЬ, а не чего нет: список «недоступно: …» при старте читается как пять поломок и
-    // заставляет искать причину там, где её нет. Чего нет — покажет /health по запросу.
-    `Инструменты: ${toolBadges(activeRegistry.names())}`,
-  ],
-  right: [
-    c.bold('Просто напишите, что нужно'),
-    c.dim('найди 10 клиник в Ташкенте'),
-    c.dim('/browse https://example.com'),
-    '',
-    c.dim('/help — команды, Tab — подсказка'),
-  ],
-}))
+/*
+ * ШАПКА: ЛОГОТИП, СТРОКА СОСТОЯНИЯ, ДЕРЕВО ГОТОВНОСТИ.
+ *
+ * Прежде здесь стоял двухколоночный короб. Он честно показывал те же данные, но читался как форма:
+ * взгляд обходил рамку, искал заголовки колонок и только потом добирался до содержимого. Логотип с
+ * одной строкой состояния под ним узнаётся мгновенно, а остальное уходит в дерево — там видно и
+ * порядок шагов, и их итог.
+ */
+for (const line of header({
+  version: CLI_VERSION,
+  model: shortModel(model),
+  plan: role.name,
+  cwd: shortenPath(process.cwd(), os.homedir()),
+}, theme, { width: width(), notices: startupNotices })) console.log(line)
 
 /*
- * Негодная настройка автодозвона — ОШИБКА, а не «просто не подключено».
+ * Дерево готовности. Именно ЧТО ЕСТЬ, а не чего нет.
  *
- * Поэтому она печатается всегда, а не только в --debug, и после экрана, а не до: человек задал
- * NEMO_DIALER_HOURS и вправе думать, что обзвон настроен. Молчание здесь означало бы, что он узнает
- * об опечатке в тот момент, когда обзвон не состоится.
+ * Список «недоступно: …» при старте читался как пять поломок и заставлял искать причину там, где её
+ * нет: браузер выключен настройкой, ffmpeg не нужен для поиска клиентов. Чего нет — покажет /health
+ * по запросу.
  */
-if (dialerProblem) console.log(`\n  ${c.yellow('Автодозвон отключён:')} ${dialerProblem}`)
+for (const line of treeBlock([
+  `${skills.length} ${plural(skills.length, 'навык', 'навыка', 'навыков')} загружено`,
+  `Инструменты: ${toolBadges(activeRegistry.names())}`,
+  `Роль: ${role.name} — ${role.title}`,
+], theme)) console.log(line)
+
+// Негодная настройка автодозвона — ОШИБКА, а не «просто не подключено», и печатается она всегда, а
+// не только в --debug. Место у неё теперь в шапке, среди startupNotices: там левая черта отделяет
+// то, что человек обязан заметить, от того, что он может пролистать.
 
 console.log('')
 printHud()
-console.log(footerHints())
+console.log(divider(width()))
+console.log(statusBar({ role: role.name }))
 console.log('')
 
 for (;;) {
@@ -520,7 +550,7 @@ for (;;) {
     continue
   }
 
-  console.log('')
+  console.log(userBar(input, new Date(), width()))
   await runTurn(input)
 }
 

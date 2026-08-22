@@ -346,11 +346,29 @@ check(
   check('публичные вебхуки объявлены в манифесте', selfVerified.every((n) => declaredPublic.has(n)),
     `без записи verify_jwt = false: ${selfVerified.filter((n) => !declaredPublic.has(n)).join(', ') || '—'}`)
 
+  /*
+   * Проверка идёт ПО ИСХОДНИКУ ФУНКЦИИ ПЛЮС ПО ТОМУ, ЧТО ОНА ИМПОРТИРУЕТ ИЗ _shared.
+   *
+   * Тонкий переходник, вынесший всю проверку подлинности в общий модуль ради проверяемости, по
+   * своему тексту выглядит как ручка вообще без авторизации. Это ровно тот случай, когда контракт
+   * наказывает за правильную структуру: касса Uzum держит checkUzumAuth в _shared/uzumHandler.ts,
+   * потому что там её можно выполнить под Node, а в index.ts выполнить нельзя.
+   *
+   * Импорты берутся ТОЛЬКО из _shared и ТОЛЬКО на один уровень: рекурсия по всему дереву рано или
+   * поздно подтянет модуль со словом «token» в комментарии и объявит проверенной любую ручку.
+   */
+  const authEvidence = /secret|signature|hmac|token|verify|checkUzumAuth|checkPaymeAuth|constantTimeEqual/i
   for (const name of declaredPublic) {
     if (!names.includes(name)) continue // запись есть, папки нет — отдельный случай, ниже
     const source = fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8')
-    const verifies = /secret|signature|hmac|token|verify/i.test(source)
-    check(`${name}: открыта наружу и проверяет подлинность сама`, verifies,
+
+    let evidence = source
+    for (const found of source.matchAll(/from '\.\.\/_shared\/([A-Za-z0-9_.-]+)'/g)) {
+      const shared = path.join(dir, '_shared', found[1])
+      if (fs.existsSync(shared)) evidence += fs.readFileSync(shared, 'utf8')
+    }
+
+    check(`${name}: открыта наружу и проверяет подлинность сама`, authEvidence.test(evidence),
       'verify_jwt = false без собственной проверки подписи — ручка со служебным ключом открыта всем')
   }
 

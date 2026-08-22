@@ -21,6 +21,16 @@ verify_jwt = false
 [functions.setup-telegram]
 verify_jwt = false
 
+# Публичная форма заявок (/waitlist, экран входа): посетитель ещё не залогинен, JWT нет.
+# Защита внутри функции: honeypot, лимит 5/час на IP (HMAC c WAITLIST_IP_PEPPER), дедуп.
+[functions.waitlist]
+verify_jwt = false
+
+# Касса Uzum Bank: банк присылает Basic, а не JWT Supabase. Проверка своя и до базы —
+# checkUzumAuth постоянным временем, затем serviceId; оба обязаны быть настроены.
+[functions.uzum-merchant]
+verify_jwt = false
+
 # Authenticated (called from the panel with the user's session JWT).
 [functions.connect-telegram]
 verify_jwt = true
