@@ -1045,8 +1045,16 @@ check(() => {
     assert.ok(!role.tools.includes('search_leads'), `роль ${name} снова умеет искать компании`)
     assert.ok(!role.tools.includes('telegram_send_lead'), `роль ${name} снова умеет слать карточки`)
     assert.ok(!role.tools.includes('crm_sync_lead'), `роль ${name} снова умеет писать в CRM`)
+    assert.ok(!role.tools.includes('dialer_queue_lead'), `роль ${name} снова умеет ставить лиды на обзвон`)
   }
 })
+
+// Автодозвон и разбор звонка видны в строке состояния своими именами, а не сырым идентификатором:
+// человек должен понимать по одной строке, что агент сейчас способен позвонить живому человеку.
+check(() => assert.equal(
+  toolBadges(['dialer_queue_lead', 'dialer_status', 'analyze_sales_call']),
+  '3 активны [Дозвон, Разбор звонков]',
+))
 check(() => {
   /*
    * Специализация роли названа ПЕРВОЙ строкой её промпта.
@@ -1064,12 +1072,12 @@ check(() => {
 
 check(() => assert.deepEqual(AGENT_ROLES.sdr.tools, [
   'search_leads', 'browser_navigate_and_extract', 'browser_screenshot',
-  'telegram_send_lead', 'crm_sync_lead', 'fs_export',
+  'telegram_send_lead', 'crm_sync_lead', 'dialer_queue_lead', 'dialer_status', 'fs_export',
 ]))
 check(() => assert.deepEqual(AGENT_ROLES.media.tools, ['render_video_pitch', 'fs_export']))
 check(() => assert.deepEqual(AGENT_ROLES.dev.tools, ['fs_export', 'browser_navigate_and_extract', 'mcp__*']))
 check(() => assert.deepEqual(AGENT_ROLES.qa.tools, [
-  'browser_navigate_and_extract', 'browser_screenshot', 'run_qa_audit', 'fs_export',
+  'browser_navigate_and_extract', 'browser_screenshot', 'run_qa_audit', 'analyze_sales_call', 'fs_export',
 ]))
 check(() => assert.equal(AGENT_ROLES.general.tools, null, 'универсальная роль перестала видеть всё'))
 

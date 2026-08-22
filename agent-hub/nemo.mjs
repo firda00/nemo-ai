@@ -18,6 +18,7 @@ import {
   setSessionRegistry,
 } from './agent-runtime.ts'
 import { buildPlatformRegistry } from './tools/platform.ts'
+import { buildDialer } from './modules/dialer/from-env.ts'
 import { restrictRegistry } from './tools/registry.ts'
 import { createRenderer, confirmationPrompt } from './nemo-ui.mjs'
 import {
@@ -109,6 +110,24 @@ const cards = resolveLeadCardConfig()
 const { PlaywrightQaProbe } = await import('./tools/qa-probe.ts')
 const qaProbe = browser.engine ? new PlaywrightQaProbe() : null
 
+/*
+ * Автодозвон собирается ДО реестра и в try — потому что настройки могут быть негодными.
+ *
+ * Негодная настройка не должна ронять весь терминал: человек пришёл писать код или искать клиентов,
+ * а не звонить, и остаться совсем без агента из-за опечатки в NEMO_DIALER_HOURS — плохой обмен.
+ * Но и промолчать нельзя: он вправе думать, что обзвон настроен. Поэтому ошибка называется вслух, а
+ * автодозвона в этот запуск нет — то есть инструмент не регистрируется и модель его не видит.
+ */
+let dialer = null
+let dialerProblem = null
+try {
+  dialer = buildDialer(process.env)
+} catch (error) {
+  // Печатать ЗДЕСЬ нельзя: ниже идёт console.clear(), и предупреждение стёрлось бы, не успев
+  // попасться на глаза. Сообщение откладывается и выводится после экрана.
+  dialerProblem = error instanceof Error ? error.message : String(error)
+}
+
 const { registry: fullRegistry, skipped } = buildPlatformRegistry({
   runPipeline: async ({ query, city, limit, icp }) => {
     const result = await runSdrPipeline({ query, city, limit, icp }, {
@@ -169,6 +188,28 @@ const { registry: fullRegistry, skipped } = buildPlatformRegistry({
       return { ok: outcome.sent > 0, error: outcome.errors[0] }
     }
     : undefined,
+  /*
+   * Разбор звонка спрашивает модель ОТДЕЛЬНЫМ вызовом, а не внутри общего диалога.
+   *
+   * Расшифровка часового разговора — это десятки тысяч знаков. Положить её в историю значило бы
+   * вытеснить оттуда всё остальное и платить за неё в каждом следующем сообщении. Здесь она уходит
+   * одним запросом, обратно приходит отчёт, а в историю попадает только он.
+   */
+  askModel: process.env.OPENROUTER_API_KEY
+    ? async (prompt, signal) => {
+      // Сигнал приходит СВОЙ, от реестра: истёкший таймаут инструмента обязан оборвать и запрос к
+      // модели, иначе он продолжает идти и тратить деньги за ответ, которого никто не ждёт.
+      const own = signal ? null : new AbortController()
+      let text = ''
+      for await (const chunk of buildStream()([{ role: 'user', content: prompt }], [], signal ?? own.signal)) {
+        if (chunk.kind === 'text') text += chunk.delta
+      }
+      return text
+    }
+    : undefined,
+  // Автодозвон — только когда задана соль для отпечатков. Без неё белый список пришлось бы хранить
+  // открытыми номерами, а это перечень людей, которым собираются звонить.
+  dialer: dialer ?? undefined,
   exportDirectory: process.cwd(),
 })
 
@@ -425,6 +466,15 @@ console.log(dashboard({
     c.dim('/help — команды, Tab — подсказка'),
   ],
 }))
+
+/*
+ * Негодная настройка автодозвона — ОШИБКА, а не «просто не подключено».
+ *
+ * Поэтому она печатается всегда, а не только в --debug, и после экрана, а не до: человек задал
+ * NEMO_DIALER_HOURS и вправе думать, что обзвон настроен. Молчание здесь означало бы, что он узнает
+ * об опечатке в тот момент, когда обзвон не состоится.
+ */
+if (dialerProblem) console.log(`\n  ${c.yellow('Автодозвон отключён:')} ${dialerProblem}`)
 
 console.log('')
 printHud()

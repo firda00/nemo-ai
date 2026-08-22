@@ -228,12 +228,29 @@ export class ToolRegistry {
       return { ok: false, name, code: 'aborted', error: 'вызов отменён до начала', durationMs: spent() }
     }
 
+    /*
+     * ИСТЁКШИЙ СРОК ОБЯЗАН ОТМЕНИТЬ САМУ РАБОТУ, А НЕ ТОЛЬКО ОЖИДАНИЕ.
+     *
+     * Раньше withTimeout просто переставал ждать: обещание оставалось жить, запрос продолжал идти.
+     * Для быстрых инструментов это мелочь, для обращения к модели — нет. Разбор звонка отправляет
+     * расшифровку на сотню тысяч знаков; брошенный запрос дойдёт до конца и будет оплачен полностью
+     * за ответ, который никто уже не прочтёт.
+     *
+     * Контроллер СВОЙ и связан с внешним сигналом: снаружи отменяют сеанс целиком, здесь — один
+     * вызов по сроку. Смешивать нельзя ни в ту, ни в другую сторону.
+     */
+    const guard = new AbortController()
+    const relay = () => guard.abort()
+    context.signal?.addEventListener('abort', relay, { once: true })
+    const scoped: ToolContext = { ...context, signal: guard.signal }
+
     try {
       const result = await withTimeout(
-        tool.execute(parsed.data, context),
+        tool.execute(parsed.data, scoped),
         tool.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         name,
         context.signal,
+        guard,
       )
       return { ok: true, name, result, durationMs: spent() }
     } catch (error) {
@@ -242,6 +259,10 @@ export class ToolRegistry {
         ? 'timeout'
         : (context.signal?.aborted ? 'aborted' : 'execution_failed')
       return { ok: false, name, code, error: message, durationMs: spent() }
+    } finally {
+      // Слушатель снимается ВСЕГДА: внешний сигнал живёт весь сеанс, и по слушателю на каждый вызов
+      // инструмента — это утечка, растущая ровно с активностью агента.
+      context.signal?.removeEventListener('abort', relay)
     }
   }
 }
@@ -259,6 +280,13 @@ export async function withTimeout<T>(
   timeoutMs: number,
   label: string,
   signal?: AbortSignal,
+  /**
+   * Кого прервать по истечении срока.
+   *
+   * Необязателен: у части вызовов прерывать нечего. Но там, где работа идёт по сети, отказаться
+   * ЖДАТЬ мало — надо отказаться и платить. Обещание, брошенное без отмены, доходит до конца.
+   */
+  onTimeout?: AbortController,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
@@ -267,7 +295,10 @@ export async function withTimeout<T>(
       promise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`tool_timeout: «${label}» не ответил за ${timeoutMs} мс`)),
+          () => {
+            onTimeout?.abort()
+            reject(new Error(`tool_timeout: «${label}» не ответил за ${timeoutMs} мс`))
+          },
           timeoutMs,
         )
         if (signal) {

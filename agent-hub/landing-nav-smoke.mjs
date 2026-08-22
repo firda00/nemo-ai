@@ -87,21 +87,47 @@ try {
     const result = await page.evaluate(async (anchorId) => {
       const target = document.getElementById(anchorId)
       if (!target) return { missing: true }
-      window.scrollTo(0, 0)
-      await new Promise((r) => setTimeout(r, 100))
-      location.hash = ''
-      location.hash = anchorId
+      // Инстант-сброс гасит хвост ПРЕДЫДУЩЕЙ плавной прокрутки, пауза даёт ему завершиться:
+      // без этого хвост доезжал уже после замера следующего якоря, и «переехавшей» объявлялась
+      // исправная ссылка.
+      window.scrollTo({ top: 0, behavior: 'instant' })
+      await new Promise((r) => setTimeout(r, 300))
+
+      // Нужна ли прокрутка вообще. Секция, и так стоящая под шапкой, никуда не поедет, и ждать её
+      // движения — значит ждать восемь секунд впустую на каждом прогоне.
+      const needsScroll = target.getBoundingClientRect().top > 4
+
       /*
        * Ждём ОСТАНОВКИ прокрутки, а не фиксированный срок.
        *
        * Плавная прокрутка длится тем дольше, чем дальше секция. С паузой в 900 мс ближние якоря
        * успевали, дальние — нет, и проверка объявляла исправную ссылку сломанной. Хуже того, зависел
        * бы результат от скорости машины: на своей зелено, в CI красно.
+       *
+       * Три поправки той же природы (все пойманы на занятой машине, где кадры редкие):
+       * 1) сначала дождаться СТАРТА — под нагрузкой headless начинает прокрутку позже 100 мс,
+       *    и сравнение «scrollY не изменился» срабатывало ДО первого сдвига;
+       * 2) остановкой считать 5 одинаковых замеров подряд — одиночная пауза между кадрами
+       *    длиннее шага опроса выглядела как финиш на полпути;
+       * 3) ПОВТОРИТЬ переход, если прокрутка так и не началась. Под нагрузкой смена hash иногда
+       *    не доезжает до обработчика вовсе: страница остаётся на месте, ожидание истекает, и три
+       *    исправные ссылки объявляются сломанными — ровно то, что случилось в полном прогоне
+       *    гейта, притом что по отдельности набор проходил. Повтор не ослабляет проверку: место,
+       *    куда встала секция, сверяется всё так же строго.
        */
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        location.hash = ''
+        location.hash = anchorId
+        for (let i = 0; i < 30 && window.scrollY === 0; i += 1) await new Promise((r) => setTimeout(r, 100))
+        if (!needsScroll || window.scrollY > 0) break
+      }
+
       let last = -1
-      for (let i = 0; i < 60 && last !== window.scrollY; i += 1) {
+      let stable = 0
+      for (let i = 0; i < 100 && stable < 5; i += 1) {
+        stable = window.scrollY === last ? stable + 1 : 0
         last = window.scrollY
-        await new Promise((r) => setTimeout(r, 100))
+        await new Promise((r) => setTimeout(r, 80))
       }
       const head = document.querySelector('header').getBoundingClientRect()
       const heading = target.querySelector('h1,h2,h3') ?? target

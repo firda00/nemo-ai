@@ -28,6 +28,9 @@ import path from 'node:path'
 import { z } from 'zod'
 import { defineTool, type ToolDefinition } from './registry.ts'
 import { ToolRegistry } from './registry.ts'
+import { buildAnalyzeCallTool, buildDialerQueueTool, buildDialerStatusTool, type AskModel } from './sales-tools.ts'
+import type { Dialer } from '../modules/dialer/queue.ts'
+import type { PlaybookCatalog } from '../modules/sales-qa/playbook.ts'
 import { buildNavigateAndExtractTool, buildScreenshotTool, type BrowserEngine } from './browser.ts'
 import { buildQaAuditTool, type QaProbe } from './qa-runner.ts'
 
@@ -280,6 +283,11 @@ export interface PlatformToolDeps {
   render?: Parameters<typeof buildRenderVideoTool>[0]['render']
   /** Зонд аудита. Отдельно от browserEngine: аудиту нужны консоль и сеть, которых нет у движка. */
   qaProbe?: QaProbe
+  /** Кто спрашивает модель для разбора звонка. Нет — инструмент не регистрируется. */
+  askModel?: AskModel
+  playbooks?: PlaybookCatalog
+  /** Автодозвон. Нет — ни очереди, ни состояния: инструмента, которому некуда звонить, быть не должно. */
+  dialer?: Dialer
   qaScreenshotDir?: string
   qaWriteFile?: (path: string, data: Uint8Array) => Promise<void>
   exportDirectory?: string
@@ -323,6 +331,22 @@ export function buildPlatformRegistry(deps: PlatformToolDeps): { registry: ToolR
       writeFile: deps.qaWriteFile,
     }))
   } else skipped.push('run_qa_audit (нет браузера для аудита)')
+
+  // Разбор звонка не требует браузера — только модель. Поэтому он не привязан к qaProbe.
+  if (deps.askModel) registry.register(buildAnalyzeCallTool({ ask: deps.askModel, catalog: deps.playbooks }))
+  else skipped.push('analyze_sales_call (некому спросить модель)')
+
+  /*
+   * Автодозвон регистрируется ТОЛЬКО когда он передан.
+   *
+   * Инструмент постановки в очередь без самой очереди — худший вид заглушки: модель отчитается
+   * человеку, что лиды поставлены на обзвон, а не поставлено ничего, и узнают об этом по
+   * несостоявшимся продажам.
+   */
+  if (deps.dialer) {
+    registry.register(buildDialerQueueTool({ dialer: deps.dialer }))
+    registry.register(buildDialerStatusTool({ dialer: deps.dialer }))
+  } else skipped.push('dialer_queue_lead (автодозвон не подключён)')
 
   registry.register(buildFsExportTool({ directory: deps.exportDirectory ?? process.cwd() }))
 

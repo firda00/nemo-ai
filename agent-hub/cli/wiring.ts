@@ -12,6 +12,10 @@ const TOOL_BADGES: Array<{ match: RegExp; badge: string }> = [
   { match: /^telegram_/, badge: 'Telegram' },
   { match: /^crm_/, badge: 'CRM' },
   { match: /^render_/, badge: 'FFmpeg' },
+  // Автодозвон в строке состояния назван прямо. Человек должен видеть, что у агента есть возможность
+  // звонить, ещё до первого поручения, — а не узнать об этом из журнала звонков.
+  { match: /^dialer_/, badge: 'Дозвон' },
+  { match: /^analyze_sales_call$/, badge: 'Разбор звонков' },
   { match: /^fs_/, badge: 'FS' },
   { match: /^mcp__/, badge: 'MCP' },
 ]

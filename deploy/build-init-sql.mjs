@@ -19,10 +19,22 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import process from 'node:process'
 
 const root = path.resolve(import.meta.dirname, '..')
-const migrations = path.join(root, 'supabase/migrations')
-const out = path.join(root, 'deploy/init-supabase.sql')
+
+/*
+ * Оба пути можно задать снаружи, и оба нужны по делу.
+ *
+ * Вывод — контрактам: они собирают схему во временный файл и сверяют с тем, что лежит в репозитории.
+ * Без этого «артефакт устарел» проходило бы как «всё хорошо».
+ *
+ * Источник — на случай, когда в рабочем дереве лежат миграции, которых ещё нет в репозитории: чужая
+ * незавершённая работа, свой черновик, ветка соседа. Собрав из них, мы положили бы в раздаваемую
+ * схему то, чего в истории нет, и она перестала бы соответствовать самой себе.
+ */
+const out = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, 'deploy/init-supabase.sql')
+const migrations = process.argv[3] ? path.resolve(process.argv[3]) : path.join(root, 'supabase/migrations')
 
 // Порядок — по имени файла: миграции Supabase именуются меткой времени, и лексикографический
 // порядок совпадает с хронологическим. Сортировка обязательна: readdirSync порядок не гарантирует.
@@ -49,14 +61,87 @@ const header = [
   '',
 ].join('\n')
 
-const body = files.map((name) => [
-  `-- ─── ${name} ${'─'.repeat(Math.max(0, 88 - name.length))}`,
-  fs.readFileSync(path.join(migrations, name), 'utf8').trimEnd(),
+/*
+ * ЛИЧНЫЕ АДРЕСА В РАЗДАВАЕМОЙ СХЕМЕ ЗАМЕНЯЮТСЯ.
+ *
+ * В истории миграций остались разовые «сделать администратором вот этот e-mail» — так выдавалась
+ * первая админка до того, как появилась public.claim_platform_admin. Переписывать УЖЕ ПРИМЕНЁННЫЕ
+ * миграции нельзя: на боевой базе они отработали, и правка сделает историю расходящейся с фактом.
+ *
+ * Но этот файл — не история, а дистрибутив: его вставляют в чистый проект. Личный адрес владельца
+ * в базе каждого, кто развернул Nemo у себя, не нужен никому и ничего там не делает — на пустой
+ * базе такой update задевает ноль строк.
+ *
+ * Замена на домен .invalid (RFC 2606), который не может существовать: подставить сюда чужой
+ * работающий адрес было бы хуже исходной беды.
+ *
+ * ФАКТ ЗАМЕНЫ ПЕЧАТАЕТСЯ — числом и именами файлов, но БЕЗ самих адресов: журнал сборки уходит в CI
+ * и хранится там, а мы тут как раз убираем личные данные из того, что хранится. Тихая же правка
+ * собранной схемы сделала бы этот файл вторым источником правды, ради борьбы с которым генератор и
+ * написан, — поэтому молчать нельзя тоже.
+ */
+const EMAIL_LITERAL = /'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'/g
+const REDACTED = "'redacted@invalid'"
+
+/*
+ * ЗАМЕНЯЕТСЯ ТОЛЬКО ИЗВЕСТНОЕ.
+ *
+ * Замена «любого адреса» была бы удобнее и опаснее: завтра кто-нибудь добавит миграцию, где адрес
+ * нужен по делу — отправитель писем, служебная учётка, значение по умолчанию, — и собранная схема
+ * молча разойдётся с применённой. Ровно тот второй источник правды, ради борьбы с которым написан
+ * этот генератор.
+ *
+ * Поэтому список закрытый, а незнакомый адрес — ОСТАНОВКА сборки с объяснением. Человек решает:
+ * это личные данные (внести сюда) или адрес по делу (оставить как есть).
+ */
+const REDACTABLE = new Set([
+  // Разовые «сделать администратором вот этот e-mail» из истории. Их поведение заменено на
+  // public.claim_platform_admin, а на чистой базе они и раньше задевали ноль строк.
+  "'ustudyit1@gmail.com'",
+  "'firdavsbahtiyorov505@gmail.com'",
+])
+
+const redactions = []
+const unexpected = []
+
+const body = files.map((name) => {
+  const source = fs.readFileSync(path.join(migrations, name), 'utf8').trimEnd()
+  const cleaned = source.replace(EMAIL_LITERAL, (found) => {
+    if (!REDACTABLE.has(found)) { unexpected.push(`${name}:${found}`); return found }
+    redactions.push(name)
+    return REDACTED
+  })
+  return [`-- ─── ${name} ${'─'.repeat(Math.max(0, 88 - name.length))}`, cleaned, ''].join('\n')
+}).join('\n')
+
+if (unexpected.length) {
+  // Сам адрес в сообщение НЕ попадает: сообщение уедет в журнал сборки, а мы тут как раз убираем
+  // личные данные из того, что раздаётся и хранится.
+  const where = [...new Set(unexpected.map((one) => one.split(':')[0]))].join(', ')
+  throw new Error(
+    `в миграциях появился незнакомый e-mail (${unexpected.length} шт.): ${where}. `
+    + 'Если это личные данные — внесите литерал в REDACTABLE в deploy/build-init-sql.mjs; '
+    + 'если адрес нужен по делу — так и оставьте, но тогда добавьте исключение осознанно.',
+  )
+}
+
+const notice = redactions.length ? [
+  '-- ЛИЧНЫЕ АДРЕСА ЗАМЕНЕНЫ НА redacted@invalid.',
+  '--',
+  '-- В истории миграций есть разовые «сделать администратором вот этот e-mail». На чистой базе они',
+  '-- задевают ноль строк, а адрес владельца исходной установки в вашей базе не нужен. Первая админка',
+  '-- выдаётся так: зарегистрируйтесь, подтвердите почту, затем от роли, которой прогонялись миграции',
+  '-- (в Supabase это postgres), выполните',
+  "--     select * from public.claim_platform_admin('<uuid пользователя>');",
   '',
-].join('\n')).join('\n')
+].join('\n') : ''
 
 fs.mkdirSync(path.dirname(out), { recursive: true })
-fs.writeFileSync(out, `${header}${body}\ncommit;\n`)
+fs.writeFileSync(out, `${header}${notice}${body}\ncommit;\n`)
 
 const lines = fs.readFileSync(out, 'utf8').split('\n').length
-console.log(`deploy/init-supabase.sql собран: ${files.length} миграций, ${lines} строк`)
+console.log(`${path.relative(root, out).split(path.sep).join('/')} собран: ${files.length} миграций, ${lines} строк`)
+if (redactions.length) {
+  // Печатается ЧИСЛО И ФАЙЛЫ, а не сами адреса: журнал сборки уходит в CI и хранится.
+  console.log(`заменено личных адресов: ${redactions.length} в ${[...new Set(redactions)].join(', ')}`)
+}

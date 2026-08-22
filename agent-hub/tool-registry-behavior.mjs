@@ -166,6 +166,44 @@ await checkAsync(async () => {
   assert.match(outcome.error, /не ответил/)
 })
 
+/*
+ * ИСТЁКШИЙ СРОК ОТМЕНЯЕТ САМУ РАБОТУ, А НЕ ТОЛЬКО ОЖИДАНИЕ.
+ *
+ * Раньше вызывающая сторона просто переставала ждать: обещание жило дальше, запрос шёл. Для быстрых
+ * инструментов это мелочь. Для обращения к модели — нет: брошенный запрос с расшифровкой на сотню
+ * тысяч знаков дойдёт до конца и будет оплачен целиком за ответ, который никто не прочтёт.
+ */
+await checkAsync(async () => {
+  let aborted = false
+  const reg = new ToolRegistry().register(defineTool({
+    name: 'slow_network', description: 'Долгий сетевой', permission: 'read_only', timeoutMs: 60,
+    parameters: z.object({}),
+    execute: async (_args, context) => new Promise((resolve) => {
+      context.signal?.addEventListener('abort', () => { aborted = true; resolve('прервано') }, { once: true })
+      setTimeout(() => resolve('доработал'), 5_000)
+    }),
+  }))
+  const outcome = await reg.call('slow_network', {})
+  assert.equal(outcome.code, 'timeout')
+  assert.equal(aborted, true, 'по истечении срока работа инструмента не отменена — запрос продолжает идти')
+})
+
+// Отмена снаружи доходит до инструмента: сеанс сняли — обращения обязаны прекратиться.
+await checkAsync(async () => {
+  const controller = new AbortController()
+  let aborted = false
+  const reg = new ToolRegistry().register(defineTool({
+    name: 'watch_signal', description: 'Слушает сигнал', permission: 'read_only', timeoutMs: 5_000,
+    parameters: z.object({}),
+    execute: async (_args, context) => new Promise((resolve) => {
+      context.signal?.addEventListener('abort', () => { aborted = true; resolve('прервано') }, { once: true })
+      setTimeout(() => controller.abort(), 20)
+    }),
+  }))
+  await reg.call('watch_signal', {}, { signal: controller.signal })
+  assert.equal(aborted, true, 'внешняя отмена не дошла до инструмента')
+})
+
 // Таймер снимается и на УСПЕШНОМ пути. Иначе висящий setTimeout держит процесс живым, и CLI,
 // закончивший работу, не выходит — человек видит зависший терминал вместо приглашения.
 await checkAsync(async () => {

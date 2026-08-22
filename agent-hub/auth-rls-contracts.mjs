@@ -19,7 +19,9 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import process from 'node:process'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -354,6 +356,145 @@ check(
 
   const orphaned = [...declaredPublic].filter((n) => !names.includes(n))
   check('в манифесте нет публичных записей без функции', orphaned.length === 0, orphaned.join(', '))
+}
+
+// ---------- E. Первая админка не выдаётся по зашитому адресу ----------
+//
+// Так было раньше: триггер регистрации сравнивал new.email с адресом владельца и выдавал is_admin.
+// Три беды в одной строке — чужой личный адрес в каждой копии схемы; сравнение по НЕПОДТВЕРЖДЁННОЙ
+// почте (на установке без проверки писем достаточно назваться этим адресом); и выдача прав молча,
+// внутри триггера, где её не ищут.
+//
+// Проверяется КОНЕЧНОЕ состояние, воспроизведённое по всем миграциям по порядку, а не текст
+// последней: тело функции переопределялось четыре раза, и вернуть старое поведение может любая
+// следующая миграция.
+{
+  const dir = path.join(root, 'supabase/migrations')
+  const files = fs.readdirSync(dir).filter((one) => one.endsWith('.sql')).sort()
+
+  // Последнее по порядку определение handle_new_user — то, что реально стоит в базе.
+  let finalBody = ''
+  let definedIn = ''
+  for (const name of files) {
+    const source = fs.readFileSync(path.join(dir, name), 'utf8')
+    const all = [...source.matchAll(/create or replace function public\.handle_new_user\(\)[\s\S]*?\n\$\$;/g)]
+    if (all.length) { finalBody = all[all.length - 1][0]; definedIn = name }
+  }
+
+  check('handle_new_user найдена в миграциях', Boolean(finalBody), 'функция регистрации исчезла из схемы')
+  check('регистрация не выдаёт админку по e-mail',
+    Boolean(finalBody) && !/@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(finalBody),
+    `в ${definedIn} снова зашит адрес`)
+  check('регистрация ставит is_admin явным false',
+    /is_admin\)\s*\r?\n?\s*values \([^)]*, false\)/.test(finalBody) || /new\.email, false\)/.test(finalBody),
+    `в ${definedIn} is_admin считается выражением, а не задан явно`)
+
+  /*
+   * Начальная выдача админки — тоже КОНЕЧНОЕ СОСТОЯНИЕ, а не «где-то в истории есть нужные строки».
+   *
+   * Склейка всех миграций, содержащих имя функции, была бы проверкой ни о чём: поздний
+   * `grant execute … to authenticated`, небезопасный `create or replace` или `drop function`
+   * прошли бы незамеченными — старые безопасные строки остаются в склейке навсегда.
+   *
+   * Поэтому grant/revoke/create/drop проигрываются по порядку, и проверяется, что получилось.
+   */
+  const FN = 'public.claim_platform_admin'
+  let fnBody = ''
+  let fnDefinedIn = ''
+  let fnExists = false
+  // Роли с правом на вызов. Новая функция получает execute у PUBLIC — так делает Postgres, и это
+  // ровно та дыра, которую снимает revoke ниже по файлу.
+  let executors = new Set()
+
+  const roleList = (text) => text.split(',').map((one) => one.trim().replace(/;$/, '')).filter(Boolean)
+
+  /*
+   * Разбор на операторы с учётом $$-кавычек.
+   *
+   * Наивный split(';') рвёт ТЕЛО функции: внутри $$ … $$ точек с запятой десяток, и до сравнения
+   * доходит первая строчка объявления вместо всего тела. Проверки при этом продолжают выглядеть
+   * работающими — просто ищут в огрызке.
+   */
+  const statements = (source) => {
+    const out = []
+    let buffer = ''
+    let tag = null
+    for (let i = 0; i < source.length; i += 1) {
+      const dollar = source.startsWith('$', i) ? source.slice(i).match(/^\$[A-Za-z_]*\$/) : null
+      if (dollar) {
+        if (tag === null) tag = dollar[0]
+        else if (tag === dollar[0]) tag = null
+        buffer += dollar[0]
+        i += dollar[0].length - 1
+        continue
+      }
+      if (source[i] === ';' && tag === null) { out.push(buffer); buffer = ''; continue }
+      buffer += source[i]
+    }
+    if (buffer.trim()) out.push(buffer)
+    return out
+  }
+
+  for (const name of files) {
+    const source = fs.readFileSync(path.join(dir, name), 'utf8')
+    // Порядок операторов внутри файла важен: revoke стоит ПОСЛЕ create, и наоборот бывает.
+    for (const stmt of statements(source)) {
+      if (new RegExp(`create or replace function ${FN.replace('.', '\\.')}\\(`, 'i').test(stmt)) {
+        if (!fnExists) executors = new Set(['public']) // первое создание: execute у всех
+        fnExists = true
+        fnBody = stmt
+        fnDefinedIn = name
+        continue
+      }
+      if (new RegExp(`drop function( if exists)? ${FN.replace('.', '\\.')}`, 'i').test(stmt)) {
+        fnExists = false; fnBody = ''; executors = new Set()
+        continue
+      }
+      const granted = stmt.match(new RegExp(`grant [\\s\\S]*?on function ${FN.replace('.', '\\.')}\\(uuid\\) to ([\\s\\S]*)`, 'i'))
+      if (granted) { for (const role of roleList(granted[1])) executors.add(role.toLowerCase()); continue }
+      const revoked = stmt.match(new RegExp(`revoke [\\s\\S]*?on function ${FN.replace('.', '\\.')}\\(uuid\\) from ([\\s\\S]*)`, 'i'))
+      if (revoked) { for (const role of roleList(revoked[1])) executors.delete(role.toLowerCase()) }
+    }
+  }
+
+  check('есть отдельная процедура первой админки', fnExists, 'claim_platform_admin отсутствует в конечном состоянии')
+  // PUBLIC — самый важный из четырёх: право по умолчанию, о котором забывают, и оно включает anon.
+  const open = ['public', 'anon', 'authenticated', 'service_role'].filter((one) => executors.has(one))
+  check('первую админку нельзя вызвать из прикладных ролей', open.length === 0,
+    `право на вызов осталось у: ${open.join(', ')}`)
+  check('первая админка требует подтверждённой почты', /email_confirmed_at is null/.test(fnBody), fnDefinedIn)
+  check('первая админка работает только пока администраторов нет',
+    /count\(\*\) into existing from public\.users where is_admin/.test(fnBody) && /if existing > 0 then/.test(fnBody),
+    fnDefinedIn)
+  // Проверка и выдача должны быть под одним замком: без него два одновременных вызова оба увидят
+  // «администраторов нет».
+  check('первая админка берёт замок до подсчёта', /pg_advisory_xact_lock/.test(fnBody), fnDefinedIn)
+
+  /*
+   * Раздаваемая схема: собирается ЗАНОВО и сверяется с тем, что лежит в репозитории.
+   *
+   * Проверять только готовый файл мало: сломанный генератор рядом с устаревшим, но чистым артефактом
+   * прошёл бы. А устаревший артефакт — это схема, которая на новом проекте поднимется не той.
+   */
+  const fresh = path.join(os.tmpdir(), `nemo-init-check-${process.pid}.sql`)
+  let built = ''
+  try {
+    execFileSync(process.execPath, [path.join(root, 'deploy/build-init-sql.mjs'), fresh], { cwd: root, stdio: 'pipe' })
+    built = fs.readFileSync(fresh, 'utf8')
+    check('deploy/init-supabase.sql собран из текущих миграций',
+      built.replace(/\r\n/g, '\n') === read('deploy/init-supabase.sql').replace(/\r\n/g, '\n'),
+      'артефакт устарел — выполните node deploy/build-init-sql.mjs')
+  } catch (error) {
+    check('deploy/init-supabase.sql собирается', false, String(error?.message ?? error).split('\n')[0])
+  } finally {
+    fs.rmSync(fresh, { force: true })
+  }
+
+  // Личных адресов в дистрибутиве быть не должно: его вставляют в чистый проект, где такие update
+  // задевают ноль строк, — зато адрес остаётся у всех, кто развернул Nemo у себя.
+  const leaked = [...new Set(built.match(/'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'/g) ?? [])]
+    .filter((one) => !one.endsWith(".invalid'"))
+  check('в собранной схеме нет личных адресов', Boolean(built) && leaked.length === 0, leaked.join(', '))
 }
 
 if (failed) {
