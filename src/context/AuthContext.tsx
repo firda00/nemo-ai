@@ -50,6 +50,15 @@ interface AuthContextValue {
   loginWithGoogle: () => Promise<AuthResult>
   logout: () => Promise<void>
   updateUser: (patch: Partial<User>) => void
+  /** Send a password-reset email (link lands on /auth/reset). */
+  resetPassword: (email: string) => Promise<AuthResult>
+  /** Set a new password for the current (recovery) session. */
+  updatePassword: (password: string) => Promise<AuthResult>
+  /**
+   * True only after Supabase fired PASSWORD_RECOVERY for this tab. The reset screen must not
+   * trust the URL alone: an already-logged-in user opening /auth/reset by hand is not recovering.
+   */
+  recoveryReady: boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -108,6 +117,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const live = isSupabaseEnabled
   const [user, setUser] = useState<User | null>(() => (live ? null : loadUser()))
   const [loading, setLoading] = useState<boolean>(live)
+  const [recoveryReady, setRecoveryReady] = useState(false)
+  // Ref-дубль recoveryReady: updatePassword проверяет его САМ, не полагаясь на дисциплину UI,
+  // и не ловит устаревшее значение из замыкания.
+  const recoveryRef = useRef(false)
+  const setRecovery = useCallback((v: boolean) => {
+    recoveryRef.current = v
+    setRecoveryReady(v)
+  }, [])
   const profileSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingMetadata = useRef<Record<string, string | boolean>>({})
 
@@ -126,7 +143,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(data.session ? userFromSession(data.session.user) : null)
       setLoading(false)
     })
-    const { data: sub } = client.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true)
+      if (event === 'SIGNED_OUT') setRecovery(false)
       bindLocalDataToAccount(session?.user.id ?? null)
       setUser(session ? userFromSession(session.user) : null)
       setLoading(false)
@@ -135,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false
       sub.subscription.unsubscribe()
     }
-  }, [live])
+  }, [live, setRecovery])
 
   // --- demo persistence ---
   const persist = useCallback(
@@ -150,24 +169,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const login = useCallback(
-    async (email: string, password?: string): Promise<AuthResult> => {
+    async (email: string, password = ''): Promise<AuthResult> => {
+      setRecovery(false) // обычный вход заменяет recovery-сессию — право смены пароля сгорает
       if (live && supabase) {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password: password ?? '' })
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (!error && data.session) setUser(userFromSession(data.session.user))
         return error ? { error: error.message } : {}
       }
       persist(makeUser(email))
       return {}
     },
-    [live, persist],
+    [live, persist, setRecovery],
   )
 
   const signup = useCallback(
-    async (name: string, email: string, password?: string, ref?: string): Promise<AuthResult> => {
+    async (name: string, email: string, password = '', ref?: string): Promise<AuthResult> => {
+      setRecovery(false)
       if (live && supabase) {
         const { data, error } = await supabase.auth.signUp({
           email,
-          password: password ?? '',
+          password,
           options: { data: { name, ...(ref?.trim() ? { ref: ref.trim() } : {}) } },
         })
         if (!error && data.session) setUser(userFromSession(data.session.user))
@@ -176,10 +197,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       persist(makeUser(email, name))
       return {}
     },
-    [live, persist],
+    [live, persist, setRecovery],
   )
 
   const loginWithGoogle = useCallback(async (): Promise<AuthResult> => {
+    setRecovery(false)
     if (live && supabase) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -189,9 +211,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     persist(makeUser('demo.user@gmail.com', 'Demo User'))
     return {}
-  }, [live, persist])
+  }, [live, persist, setRecovery])
+
+  const resetPassword = useCallback(
+    async (email: string): Promise<AuthResult> => {
+      if (live && supabase) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin + '/auth/reset',
+        })
+        // Не отдаём наружу текст ошибки Supabase: экран показывает одинаковый «успех» независимо
+        // от существования аккаунта, а сюда попадают только rate-limit / сетевые сбои.
+        return error ? { error: 'rate_limited_or_network' } : {}
+      }
+      return {} // демо: экран сам объясняет, что письмо не отправляется
+    },
+    [live],
+  )
+
+  const updatePassword = useCallback(
+    async (password: string): Promise<AuthResult> => {
+      if (live && supabase) {
+        // Смена пароля разрешена ТОЛЬКО из recovery-сессии, и это проверяется здесь, а не в UI.
+        if (!recoveryRef.current) return { error: 'no_recovery' }
+        const { error } = await supabase.auth.updateUser({ password })
+        if (!error) setRecovery(false)
+        return error ? { error: error.message } : {}
+      }
+      return { error: 'demo' }
+    },
+    [live, setRecovery],
+  )
 
   const logout = useCallback(async () => {
+    setRecovery(false)
     bindLocalDataToAccount(null)
     if (live && supabase) {
       // Explicitly revoke refresh tokens on every device. Supabase currently
@@ -202,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     persist(null)
-  }, [live, persist])
+  }, [live, persist, setRecovery])
 
   const updateUser = useCallback((patch: Partial<User>) => {
     setUser((prev) => {
@@ -240,8 +292,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithGoogle,
       logout,
       updateUser,
+      resetPassword,
+      updatePassword,
+      recoveryReady,
     }),
-    [user, loading, live, login, signup, loginWithGoogle, logout, updateUser],
+    [user, loading, live, login, signup, loginWithGoogle, logout, updateUser, resetPassword, updatePassword, recoveryReady],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

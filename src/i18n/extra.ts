@@ -518,6 +518,15 @@ export const extraUz = {
     "showSidebar": "Panelni ko‘rsatish",
     "resizeSidebar": "Kengligini o‘zgartirish uchun torting"
   },
+  "waitlistPage": {
+    "replyNote": "Bir ish kuni ichida javob beramiz.",
+    "demoNote": "Demo shakl. Soxta integratsiyalar yo‘q.",
+    "receivedTitle": "So‘rov qabul qilindi",
+    "demoTitle": "Demo shakl to‘ldirildi",
+    "receivedNote": "So‘rovingizni saqladik va tez orada bog‘lanamiz.",
+    "demoSavedNote": "Demo kontaktlaringizni saqlamaydi va yubormaydi.",
+    "error": "So‘rov yuborilmadi. Bir daqiqadan so‘ng qayta urinib ko‘ring."
+  },
   "approvals": {
     "title": "Egasi tasdiqlashi kerak",
     "subtitle": "Bu yerda egasining qarorini kutayotgan tashqi amallar va AI-jamoa natijalari jamlangan. Tasdiqlash faqat so‘rov yoki hisobot holatini o‘zgartiradi, tashqi amalni avtomatik bajarmaydi.",
@@ -2290,6 +2299,15 @@ export const extraRu = {
     "showSidebar": "Показать панель",
     "resizeSidebar": "Потяните, чтобы изменить ширину"
   },
+  "waitlistPage": {
+    "replyNote": "Отвечаем в течение одного рабочего дня.",
+    "demoNote": "Демо-форма. Никаких фейковых интеграций.",
+    "receivedTitle": "Заявка получена",
+    "demoTitle": "Демо-форма отправлена",
+    "receivedNote": "Мы сохранили вашу заявку и скоро свяжемся с вами.",
+    "demoSavedNote": "Демо не сохраняет и не отправляет ваши контакты.",
+    "error": "Не удалось отправить заявку. Попробуйте через минуту."
+  },
   "approvals": {
     "title": "Подтверждения владельца",
     "subtitle": "Здесь собраны внешние действия и результаты AI-команд, которым нужно решение владельца. Одобрение меняет только статус запроса или отчёта и не запускает внешнее действие автоматически.",
@@ -4061,6 +4079,15 @@ export const extraEn = {
     "hideSidebar": "Hide sidebar",
     "showSidebar": "Show sidebar",
     "resizeSidebar": "Drag to resize"
+  },
+  "waitlistPage": {
+    "replyNote": "We reply within one business day.",
+    "demoNote": "Demo-mode form. No fake integrations.",
+    "receivedTitle": "Request received",
+    "demoTitle": "Demo form completed",
+    "receivedNote": "We saved your request and will contact you shortly.",
+    "demoSavedNote": "This demo does not store or send your contact details.",
+    "error": "Could not send your request. Please try again in a minute."
   },
   "approvals": {
     "title": "Owner approvals",

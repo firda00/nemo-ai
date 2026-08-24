@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { ArrowLeft, Check, Mail, Sparkles, Users, ShieldCheck } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useAuth } from '../context/AuthContext'
+import { submitWaitlist } from '../lib/waitlist'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
 import { LanguageToggle } from '../components/ui/LanguageToggle'
@@ -22,7 +23,7 @@ type View = 'auth' | 'waitlist' | 'forgot'
 
 export default function AuthPage() {
   const { t } = useI18n()
-  const { login, signup, loginWithGoogle, live } = useAuth()
+  const { login, signup, loginWithGoogle, live, loading, resetPassword, updatePassword, recoveryReady } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [params] = useSearchParams()
@@ -32,6 +33,13 @@ export default function AuthPage() {
   const [view, setView] = useState<View>('auth')
   const [sent, setSent] = useState(false)
   const [subEmail, setSubEmail] = useState('')
+  const [subErr, setSubErr] = useState('')
+  // Honeypot: невидимое поле формы. Человек его не заполняет, бот — заполняет.
+  const [website, setWebsite] = useState('')
+  const [pw, setPw] = useState({ next: '', confirm: '' })
+  // Экран нового пароля определяется МАРШРУТОМ, а не одноразовой инициализацией state:
+  // React Router переиспользует компонент между /auth и /auth/reset.
+  const isResetRoute = location.pathname.endsWith('/reset')
   const [form, setForm] = useState({ name: '', email: '', password: '', invite: (params.get('ref') ?? '').toUpperCase() })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -81,6 +89,48 @@ export default function AuthPage() {
     setView('auth')
     setSent(false)
     setSubEmail('')
+    setSubErr('')
+  }
+
+  // waitlist → Edge Function `waitlist`; forgot → письмо со ссылкой на /auth/reset
+  const submitSub = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    setSubErr('')
+    setBusy(true)
+    const ok =
+      view === 'forgot'
+        ? !(await resetPassword(subEmail)).error
+        : await submitWaitlist({ email: subEmail, source: 'auth', website })
+    setBusy(false)
+    if (!ok) {
+      setSubErr(t('auth.submitError'))
+      return
+    }
+    setSent(true)
+  }
+
+  const submitReset = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    setErr('')
+    if (pw.next.length < 8) {
+      setErr(t('auth.resetShort'))
+      return
+    }
+    if (pw.next !== pw.confirm) {
+      setErr(t('auth.resetMismatch'))
+      return
+    }
+    setBusy(true)
+    const res = await updatePassword(pw.next)
+    setBusy(false)
+    if (res.error) {
+      // Текст ошибки Supabase наружу не показываем — общий ответ и совет запросить новую ссылку.
+      setErr(t('auth.submitError'))
+      return
+    }
+    navigate('/app')
   }
 
   const perks = [
@@ -149,7 +199,53 @@ export default function AuthPage() {
               <Logo />
             </div>
 
-            {view !== 'auth' ? (
+            {isResetRoute ? (
+              <div className="animate-fadeInUp">
+                <h1 className="text-2xl font-normal text-text">{t('auth.resetTitle')}</h1>
+                <p className="mt-2 text-sm text-muted">{t('auth.resetDesc')}</p>
+                {!live ? (
+                  <p className="mt-6 rounded-lg bg-amber/10 px-3 py-2 text-center text-xs text-amber">{t('auth.resetDemo')}</p>
+                ) : loading ? (
+                  <p className="mt-6 text-center text-sm text-muted">…</p>
+                ) : !recoveryReady ? (
+                  // Сессия восстановления не подтверждена событием PASSWORD_RECOVERY — URL сам по
+                  // себе ничего не доказывает (открытая вручную страница, устаревшая ссылка).
+                  <p className="mt-6 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{t('auth.resetNoSession')}</p>
+                ) : (
+                  <form onSubmit={submitReset} className="mt-6 space-y-3">
+                    <Field
+                      label={t('auth.newPassword')}
+                      type="password"
+                      required
+                      value={pw.next}
+                      onChange={(v) => setPw((p) => ({ ...p, next: v }))}
+                      placeholder={t('auth.passwordPlaceholder')}
+                    />
+                    <Field
+                      label={t('auth.confirmPassword')}
+                      type="password"
+                      required
+                      value={pw.confirm}
+                      onChange={(v) => setPw((p) => ({ ...p, confirm: v }))}
+                      placeholder={t('auth.passwordPlaceholder')}
+                    />
+                    {err && <p className="rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{err}</p>}
+                    <Button type="submit" fullWidth disabled={busy}>
+                      {busy ? '…' : t('auth.resetButton')}
+                    </Button>
+                  </form>
+                )}
+                <button
+                  onClick={() => {
+                    setView(live && !recoveryReady ? 'forgot' : 'auth')
+                    navigate('/auth')
+                  }}
+                  className="mt-5 inline-flex items-center gap-1.5 text-sm font-normal text-violet hover:underline"
+                >
+                  <ArrowLeft size={15} /> {t('auth.backToLogin')}
+                </button>
+              </div>
+            ) : view !== 'auth' ? (
               <div className="animate-fadeInUp">
                 <h1 className="text-2xl font-normal text-text">{sub.title}</h1>
                 <p className="mt-2 text-sm text-muted">{sub.desc}</p>
@@ -158,16 +254,12 @@ export default function AuthPage() {
                     <span className="flex h-9 w-9 items-center justify-center rounded-full bg-teal text-bg">
                       <Check size={18} />
                     </span>
-                    <p className="text-sm font-medium text-text">{sub.success}</p>
+                    <p className="text-sm font-medium text-text">
+                      {!live ? (view === 'forgot' ? t('auth.forgotDemo') : t('auth.waitlistDemo')) : sub.success}
+                    </p>
                   </div>
                 ) : (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      setSent(true)
-                    }}
-                    className="mt-6 space-y-3"
-                  >
+                  <form onSubmit={submitSub} className="mt-6 space-y-3">
                     <Field
                       label={t('auth.email')}
                       type="email"
@@ -177,8 +269,20 @@ export default function AuthPage() {
                       placeholder={t('auth.emailPlaceholder')}
                       icon={<Mail size={16} />}
                     />
-                    <Button type="submit" fullWidth>
-                      {sub.button}
+                    {/* Honeypot: скрыт от людей (и от скринридеров), боты заполняют его сами. */}
+                    <input
+                      type="text"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      name="website"
+                      autoComplete="off"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      className="absolute -left-[9999px] h-0 w-0 opacity-0"
+                    />
+                    {subErr && <p className="rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{subErr}</p>}
+                    <Button type="submit" fullWidth disabled={busy}>
+                      {busy ? '…' : sub.button}
                     </Button>
                   </form>
                 )}

@@ -2,14 +2,31 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { CalendarDays, CheckCircle2, Building2, Mail, Phone, Send, User } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
+import { submitWaitlist } from '../../lib/waitlist'
+import { isSupabaseEnabled } from '../../lib/supabase'
+import { useI18n } from '../../i18n'
 
 const fieldCls = 'w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-muted focus:border-violet/50'
 
 export default function WaitlistPage() {
+  const { t } = useI18n()
   const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', leads: '100-300/month', note: '' })
   const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+  // Honeypot: невидимое поле, которое заполняют только боты.
+  const [website, setWebsite] = useState('')
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return
+    setError(false)
+    setBusy(true)
+    const ok = await submitWaitlist({ ...form, source: 'waitlist', website })
+    setBusy(false)
+    if (!ok) {
+      setError(true)
+      return
+    }
     setSaved(true)
   }
 
@@ -41,8 +58,10 @@ export default function WaitlistPage() {
             <div className="grid min-h-[460px] place-items-center text-center">
               <div>
                 <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal/15 text-teal"><CheckCircle2 size={28} /></span>
-                <h2 className="mt-5 text-2xl font-bold text-text">Demo form completed</h2>
-                <p className="mt-2 max-w-md text-sm text-muted">This demo does not store or send your contact details.</p>
+                <h2 className="mt-5 text-2xl font-bold text-text">{isSupabaseEnabled ? t('waitlistPage.receivedTitle') : t('waitlistPage.demoTitle')}</h2>
+                <p className="mt-2 max-w-md text-sm text-muted">
+                  {isSupabaseEnabled ? t('waitlistPage.receivedNote') : t('waitlistPage.demoSavedNote')}
+                </p>
                 <div className="mt-6 flex justify-center gap-3"><Button to="/app/create-team">Back to demo</Button><Button to="/app/results" variant="outline">View results</Button></div>
               </div>
             </div>
@@ -50,7 +69,7 @@ export default function WaitlistPage() {
             <>
               <div className="flex items-center gap-3">
                 <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand text-white"><CalendarDays size={20} /></span>
-                <div><h2 className="text-xl font-bold text-text">Request pilot access</h2><p className="text-xs text-muted">Demo-mode form. No fake integrations.</p></div>
+                <div><h2 className="text-xl font-bold text-text">Request pilot access</h2><p className="text-xs text-muted">{isSupabaseEnabled ? t('waitlistPage.replyNote') : t('waitlistPage.demoNote')}</p></div>
               </div>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 <Field icon={User} label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldCls} placeholder="Founder / manager" /></Field>
@@ -62,7 +81,19 @@ export default function WaitlistPage() {
                 <label className="block space-y-1.5"><span className="text-xs text-muted">Monthly leads</span><select value={form.leads} onChange={(e) => setForm({ ...form, leads: e.target.value })} className={fieldCls}><option>0-100/month</option><option>100-300/month</option><option>300-1000/month</option><option>1000+/month</option></select></label>
                 <label className="block space-y-1.5"><span className="text-xs text-muted">Biggest problem</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={fieldCls} placeholder="Follow-up, CRM, reporting..." /></label>
               </div>
-              <Button onClick={submit} disabled={!form.email.trim() || !form.company.trim()} fullWidth className="mt-5"><Send size={16} /> Book demo</Button>
+              {/* Honeypot: вне экрана, недоступно людям — боты заполняют его сами. */}
+              <input
+                type="text"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                name="website"
+                autoComplete="off"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="absolute -left-[9999px] h-0 w-0 opacity-0"
+              />
+              {error && <p className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{t('waitlistPage.error')}</p>}
+              <Button onClick={submit} disabled={busy || !form.email.trim() || !form.company.trim()} fullWidth className="mt-5"><Send size={16} /> {busy ? '…' : 'Book demo'}</Button>
             </>
           )}
         </div>
