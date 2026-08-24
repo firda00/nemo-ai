@@ -62,6 +62,9 @@ npx supabase db push
 ```powershell
 npx supabase secrets set OPENROUTER_API_KEY=sk-or-ВАШ_КЛЮЧ
 npx supabase secrets set SETUP_SECRET=придумайте-длинную-случайную-строку
+# Обязателен для публичных форм /waitlist и «Запросить доступ»: минимум 32 случайных символа.
+# Не ставьте сюда NEMO_TOKEN_PEPPER и не добавляйте это значение в VITE_* или .env.production.example.
+npx supabase secrets set WAITLIST_IP_PEPPER="$(openssl rand -hex 32)"
 ```
 
 > `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` Supabase подставляет в функции автоматически — их задавать НЕ нужно.

@@ -41,6 +41,18 @@ if ($cronLine) {
   )
   Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/secrets" -Method Post -Headers $hdr -Body $cronSecretBody | Out-Null
 }
+$waitlistPepperLine = Get-Content .secrets.local | Select-String '^WAITLIST_IP_PEPPER='
+if (-not $waitlistPepperLine) {
+  throw 'WAITLIST_IP_PEPPER отсутствует в .secrets.local. Задайте отдельный случайный секрет длиной не менее 32 символов: публичная waitlist без него намеренно отвечает 503.'
+}
+$waitlistPepper = $waitlistPepperLine.ToString().Split('=', 2)[1].Trim()
+if ($waitlistPepper.Length -lt 32) {
+  throw "WAITLIST_IP_PEPPER имеет длину $($waitlistPepper.Length); нужно не менее 32 символов."
+}
+Write-Host '0/3  Setting WAITLIST_IP_PEPPER secret...' -ForegroundColor Cyan
+$waitlistSecretBody = ConvertTo-Json @(@{ name = 'WAITLIST_IP_PEPPER'; value = $waitlistPepper })
+Invoke-RestMethod -Uri "https://api.supabase.com/v1/projects/$ref/secrets" -Method Post -Headers $hdr -Body $waitlistSecretBody | Out-Null
+Write-Host '     Waitlist IP pepper set.' -ForegroundColor Green
 
 Write-Host "1/3  Applying DB migrations..." -ForegroundColor Cyan
 # Historical migrations are already applied and some are intentionally not

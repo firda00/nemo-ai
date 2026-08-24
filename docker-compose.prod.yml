@@ -217,6 +217,9 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       NEMO_TOKEN_PEPPER: ${NEMO_TOKEN_PEPPER}
+      # Public waitlist hashes source IPs with this independent HMAC secret. Refuse to start
+      # instead of silently serving a public form that fails closed on every submission.
+      WAITLIST_IP_PEPPER: ${WAITLIST_IP_PEPPER:?задайте отдельный HMAC-перец (не короче 32 символов) для публичной waitlist}
     volumes:
       - ./supabase/functions:/home/deno/functions:ro
     command: ['start', '--main-service', '/home/deno/functions']
