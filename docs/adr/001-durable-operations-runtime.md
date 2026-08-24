@@ -538,6 +538,13 @@ Replay по умолчанию:
 - Secrets, access tokens и service credentials никогда не входят в transitions или audit.
 - Нормализованный payload содержит только данные, нужные workflow.
 - Для inbox, transitions, audit, dead letters и evidence определяются отдельные retention policies.
+- Pilot baseline для inbox/workflow/transitions — 30 дней hot retention с обязательным
+  archive-first manifest. Phase 1 не выполняет физический `DELETE`: удаление разрешается только
+  отдельному maintenance-контуру после подтверждённого экспорта в cold storage и audit evidence.
+- Audit events и незакрытые dead letters не удаляются автоматической retention-задачей.
+- Таблицы первой версии не партиционируются преждевременно. Для inbox, transitions и audit при
+  достижении 1 000 000 строк запускается review monthly range partitioning; смена физической модели
+  требует теста FK/index/query plans и отдельной миграции.
 - Cross-tenant обучение по raw payload запрещено.
 - Обезличенные паттерны могут использоваться только по утверждённой политике и с необходимым
   согласием.
@@ -638,6 +645,14 @@ format сохраняются рядом с hash, чтобы последующ�
 Логи и метрики не содержат raw PII. Correlation ID позволяет связать технические записи с
 защищённым audit trail.
 
+## Kill switch и maintenance controls
+
+Закрытая singleton-таблица `runtime.system_controls` хранит независимые признаки остановки claim и
+ingestion, глобальный kill switch, монотонную эпоху, причину, автора и время активации. Phase 2 RPC
+обязан проверять controls в той же транзакции до выбора работы. Активный kill switch всегда означает
+`claims_paused`; отключение ingestion не удаляет уже принятые Inbox events. Изменение controls
+доступно только привилегированному, аудируемому maintenance RPC.
+
 ## План внедрения
 
 ### Phase 0 — ADR и инварианты
@@ -651,6 +666,10 @@ format сохраняются рядом с hash, чтобы последующ�
 - Создать schema/tables/constraints/indexes.
 - В той же миграции закрыть схему, таблицы и default privileges.
 - Расширить `public.approval_requests` nullable-полями.
+- Зафиксировать exact transition pairs, shadow-only `simulated`, approval-before-outbox и
+  сквозную identity `policy version + canonicalization version + action hash`.
+- Добавить kill switch, circuit state, archive-first retention policies и archive manifest без
+  физического удаления runtime/audit history.
 - Не предоставлять consumer grants и не переключать production traffic.
 
 ### Phase 2 — security-definer RPC
@@ -759,7 +778,8 @@ policy, approvals, audit и integration contracts Nemo. Сначала нужн�
 - Где хранится encrypted evidence и как выполняется per-tenant key rotation?
 - Как версионируются workflow definitions и policy rulesets?
 - Какие действия могут быть auto-allowed в первом canary?
-- При каком объёме audit/inbox потребуется partitioning?
+- Подтверждают ли реальные query plans необходимость monthly range partitioning после порога
+  1 000 000 строк?
 - Какой операторский интерфейс нужен для dead-letter и reconciliation?
 - Какие SLO и error budgets утверждаются для первого пилота?
 - Какая tenant/legal policy заменяет 30-дневный технический baseline после shadow-пилота?
