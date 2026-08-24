@@ -39,6 +39,7 @@ const HASH = await hashToken(TOKEN, PEPPER)
 function makeAdmin(options = {}) {
   const calls = []
   const inserted = []
+  const runtimeEvents = new Set()
   const tokenRow = options.tokenRow === undefined
     ? {
       id: 'tok-1', account_id: ACCOUNT, allowed_actions: ['sdr:trigger', 'sdr:read'],
@@ -95,6 +96,20 @@ function makeAdmin(options = {}) {
         if (options.enqueueError) return { data: null, error: { message: 'boom' } }
         if (options.insufficientCredits) return { data: { ok: false, error: 'insufficient_credits' }, error: null }
         return { data: { ok: true, job_id: JOB, reserved: args.p_cost }, error: null }
+      }
+      if (name === 'runtime_ingest_event') {
+        if (options.runtimeError) return { data: null, error: options.runtimeError }
+        const key = `${args.p_account_id}:${args.p_provider}:${args.p_external_event_id}`
+        const duplicate = runtimeEvents.has(key)
+        runtimeEvents.add(key)
+        return {
+          data: {
+            status: duplicate ? 'duplicate' : 'created',
+            workflow_id: '91111111-2222-4333-8444-555555555555',
+            inbox_event_id: '92222222-3333-4444-8555-666666666666',
+          },
+          error: null,
+        }
       }
       return { data: null, error: null }
     },
@@ -468,6 +483,9 @@ await checkAsync(async () => {
   assert.equal(admin.inserted[0].direction, 'INBOUND')
   assert.equal(admin.inserted[0].tenant_id, ACCOUNT)
   assert.equal(admin.inserted[0].status, 'PROCESSED')
+  assert.equal(response.body.runtime_shadow.ok, true)
+  assert.equal(response.body.runtime_shadow.status, 'created')
+  assert.ok(admin.calls.includes('rpc:runtime_ingest_event'))
 })
 
 /*
@@ -486,6 +504,7 @@ await checkAsync(async () => {
   assert.equal(second.body.duplicate, true)
   assert.equal(second.body.idempotency_key, first.body.idempotency_key)
   assert.equal(admin.inserted.length, 1, 'вторая записи в журнале быть не должно')
+  assert.equal(second.body.runtime_shadow.status, 'duplicate')
 })
 
 // Разные события — разные ключи, иначе второе молча потерялось бы как «дубль».
@@ -518,6 +537,31 @@ await checkAsync(async () => {
   const response = await handleCrmWebhook(deps({ admin }), 'crm-secret-abc123', EVENT)
   assert.equal(response.status, 500)
   assert.equal(response.body.error, 'sync_log_failed')
+})
+
+// Shadow-контур наблюдает, а не управляет подтверждением webhook: его сбой не заставляет amoCRM
+// повторять уже принятую legacy-запись и не раскрывает наружу текст ошибки Postgres.
+await checkAsync(async () => {
+  const admin = makeAdmin({ runtimeError: { code: '55000', message: 'sensitive database detail' } })
+  const response = await handleCrmWebhook(deps({ admin }), 'crm-secret-abc123', EVENT)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.duplicate, false)
+  assert.deepEqual(response.body.runtime_shadow, { ok: false, error_code: '55000' })
+  assert.equal(JSON.stringify(response.body).includes('sensitive database detail'), false)
+})
+
+// Первый утверждённый shadow-коннектор — только amoCRM. HubSpot продолжает legacy-путь и не должен
+// тихо попасть в новый рантайм до отдельного контракта идентичности и replay.
+await checkAsync(async () => {
+  const admin = makeAdmin()
+  const response = await handleCrmWebhook(
+    deps({ admin }),
+    'crm-secret-abc123',
+    { ...EVENT, provider: 'HUBSPOT', externalDealId: 'hubspot-42' },
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.runtime_shadow, { ok: true, status: 'skipped_provider' })
+  assert.equal(admin.calls.includes('rpc:runtime_ingest_event'), false)
 })
 
 // ─── GET /health ──────────────────────────────────────────────────────────────────────────────────

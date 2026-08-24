@@ -114,6 +114,7 @@
     "test:v5": "node --experimental-strip-types agent-hub/v5-contracts-behavior.mjs",
     "test:v5-contracts": "node agent-hub/v5-contracts.mjs",
     "test:gateway": "node --experimental-strip-types agent-hub/gateway-behavior.mjs",
+    "test:runtime-client": "node --experimental-strip-types agent-hub/runtime-client-behavior.mjs",
     "test:infra": "node agent-hub/infra-contracts.mjs",
     "gateway": "node --experimental-strip-types agent-hub/server/main.ts",
     "test:voice": "node --experimental-strip-types agent-hub/voice-behavior.mjs",

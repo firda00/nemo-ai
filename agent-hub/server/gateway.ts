@@ -27,6 +27,8 @@ import {
   type TokenRefusal,
   type TokenRow,
 } from '../../supabase/functions/_shared/apiTokens.ts'
+import { createRuntimeClient, RuntimeRpcError } from '../../supabase/functions/_shared/runtime.ts'
+import { ingestCrmEventInShadow } from '../../supabase/functions/_shared/runtimeCrm.ts'
 import { UnifiedCRMEventSchema, crmIdempotencyKey, parseContract } from '../contracts/v5.ts'
 import { disabledQueue, type JobQueue } from './queue.ts'
 
@@ -302,16 +304,56 @@ export async function handleCrmWebhook(
     status: 'PROCESSED',
   })
 
+  let duplicate = false
   if (error) {
     // 23505 — нарушение уникального ключа, то есть ровно повторная доставка. Именно ради этого случая
     // ключ и существует; отвечаем 200 и говорим прямо, что событие уже было.
     if (error.code === '23505') {
-      return { status: 200, body: { ok: true, duplicate: true, idempotency_key: idempotencyKey } }
+      duplicate = true
+    } else {
+      return { status: 500, body: { error: 'sync_log_failed' } }
     }
-    return { status: 500, body: { error: 'sync_log_failed' } }
   }
 
-  return { status: 200, body: { ok: true, duplicate: false, idempotency_key: idempotencyKey } }
+  /*
+   * SHADOW DUAL-WRITE NEVER BREAKS THE LEGACY ACK.
+   *
+   * By this point the legacy audit row is durable (or was already present). Returning a non-2xx
+   * because the experimental runtime path failed would make amoCRM redeliver an event that legacy
+   * already accepted. The runtime error is returned as a bounded code for metrics; no raw database
+   * message or payload is reflected to the caller.
+   */
+  let runtimeShadow: Record<string, unknown>
+  if (event.provider !== 'AMOCRM') {
+    // ADR 001 explicitly names amoCRM as the first shadow connector. HubSpot stays legacy-only
+    // until its own identity, replay and comparison contracts are approved.
+    runtimeShadow = { ok: true, status: 'skipped_provider' }
+  } else {
+    try {
+      const ingested = await ingestCrmEventInShadow(createRuntimeClient(deps.admin), {
+        event,
+        idempotencyKey,
+      })
+      runtimeShadow = {
+        ok: true,
+        status: ingested.status,
+        workflow_id: ingested.workflow_id,
+        inbox_event_id: ingested.inbox_event_id,
+      }
+    } catch (runtimeError) {
+      runtimeShadow = {
+        ok: false,
+        error_code: runtimeError instanceof RuntimeRpcError
+          ? runtimeError.code
+          : 'RUNTIME_SHADOW_UNEXPECTED',
+      }
+    }
+  }
+
+  return {
+    status: 200,
+    body: { ok: true, duplicate, idempotency_key: idempotencyKey, runtime_shadow: runtimeShadow },
+  }
 }
 
 // ── GET /health ───────────────────────────────────────────────────────────────────────────────────
