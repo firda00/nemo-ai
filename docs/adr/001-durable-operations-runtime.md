@@ -85,6 +85,129 @@ Nemo использует **at-least-once delivery** событий и зада�
 называет действие exactly-once. Такое действие требует более строгой policy, approval или ручного
 разбора после неопределённого результата.
 
+## Первый shadow connector: amoCRM
+
+Первым shadow connector выбран **amoCRM**. Решение принято потому, что у Nemo уже есть единый CRM
+контракт, детерминированный idempotency key, gateway-приём событий и журнал `crm_sync_logs`, а у
+первого пилота есть наблюдаемый бизнес-процесс: лиды, задачи и просроченные follow-ups.
+
+Цель shadow-этапа — проверить ingestion, дедупликацию, tenant integrity, state transitions, policy
+и наблюдаемость Durable Runtime на реальном потоке без изменения данных amoCRM и без влияния на
+ответ старого обработчика.
+
+### Реальная граница текущего CRM-контракта
+
+Текущий `UnifiedCRMEventSchema` поддерживает только:
+
+- `DEAL_STAGE_CHANGED`;
+- `NEW_CONTACT_CREATED`;
+- `TASK_COMPLETED`.
+
+Поэтому первый shadow-релиз принимает только эти события. Пропущенные звонки, создание входящей
+задачи и другие события со скриншота не объявляются поддержанными до отдельного расширения контракта,
+fixtures и provider-specific tests. Нормализатор не угадывает отсутствующий event type по тексту или
+произвольным custom fields.
+
+Текущий gateway защищён общим `x-nemo-crm-secret`, но не проверяет нативную подпись amoCRM. Прямой
+provider adapter допускается только после реализации и проверки официальной схемы подписи, replay
+window и key rotation. До этого shadow получает события через контролируемый внутренний адаптер.
+
+`account_id` нельзя брать из непроверенного webhook body. Адаптер выводит tenant из найденного
+`crm_integrations`/endpoint credential и передаёт подтверждённый account в runtime отдельно от
+payload. Переданный в старом unified body `tenantId` считается legacy-полем и обязан совпасть с
+подтверждённой интеграцией либо событие отклоняется.
+
+`externalDealId` не является event ID: одна сделка законно меняется много раз. В первом shadow
+релизе `external_event_id` строится из существующей детерминированной identity
+`crmIdempotencyKey(provider, INBOUND, eventType, externalDealId, occurredAt)`. Использовать один
+`externalDealId` в inbox UNIQUE запрещено — это молча потеряло бы второе настоящее изменение той же
+сделки. После появления нативного provider event/delivery ID контракт мигрирует на него с явной
+версией identity algorithm.
+
+### Shadow execution mode
+
+Shadow и live являются режимами исполнения, а не одним смешанным статусом очереди. Предлагаемое
+действие сохраняется в outbox со следующими независимыми атрибутами:
+
+- `execution_mode = 'shadow'`;
+- `status = 'simulated'` после успешного расчёта;
+- полный action payload не выдаётся live connector worker;
+- hash, policy decision, причины и сравнимый результат сохраняются для оценки.
+
+Значение `shadow_simulated` не добавляется в общий status: смешивание режима и жизненного состояния
+делает claim-условия хрупкими. DB constraint и claim RPC обязаны гарантировать, что строка с
+`execution_mode = 'shadow'` никогда не переходит в `pending`/`processing` и не выбирается live
+воркером. У shadow-консьюмера нет egress credentials amoCRM. Feature flag/kill switch отключает
+shadow ingestion без изменения legacy traffic.
+
+### Первый shadow flow
+
+1. Gateway проверяет внутренний секрет, contract и подтверждённую привязку integration → account.
+2. Legacy handler продолжает существующее поведение и остаётся production source of truth.
+3. Копия нормализованного поддерживаемого события передаётся в `runtime_ingest_event`.
+4. Inbox атомарно создаёт событие либо возвращает существующее по
+   `(account_id, provider, external_event_id)`.
+5. Создаётся/возвращается workflow в `received`; его contract/version фиксируется.
+6. Runtime классифицирует событие, строит policy decision и предлагаемое действие.
+7. Предлагаемое действие сохраняется только как shadow/simulated; внешний API не вызывается.
+8. Comparator связывает legacy outcome и shadow outcome по correlation/idempotency key.
+9. Расхождение, latency, дубликат, отказ нормализации и redaction failure попадают в защищённый
+   audit/metrics контур.
+
+Ошибка shadow runtime не меняет HTTP-ответ, который получил бы legacy handler, но обязана создавать
+метрику и alert. До canary отсутствие shadow-записи не должно вызывать повтор webhook провайдером и
+тем самым менять production-нагрузку.
+
+Текущий gateway legacy path фиксирует accepted/duplicate/rejected событие в `crm_sync_logs`, но сам
+не формирует бизнес-решение уровня «создать задачу менеджеру». Поэтому первая доступная parity —
+ingestion/dedup/status. Decision parity считается только там, где legacy consumer сохраняет
+структурированный outcome. Отсутствующий legacy outcome маркируется `no_baseline`, а не выдумывается
+из текста лога.
+
+### Метрики допуска к canary
+
+- accepted/duplicate/rejected события по типу и account;
+- доля событий, для которых создан ровно один ожидаемый workflow;
+- decision parity и матрица расхождений с legacy: same, shadow-only, legacy-only, conflict;
+- false positive/false negative для просроченных задач и необработанных лидов на размеченной выборке;
+- ingest-to-decision latency p50/p95/p99;
+- shadow processing failures, lease recoveries и stale-fence rejections;
+- число потенциальных side effects и подтверждение, что реально выполнено **ноль**;
+- PII/redaction violations и oversized payload rejections;
+- возраст самой старой необработанной shadow-записи.
+
+Пороговые SLO и размер canary cohort утверждаются до включения canary, а не подбираются после
+просмотра результатов.
+
+### Pilot payload, PII и retention baseline
+
+Лимиты считаются по UTF-8 байтам канонического JSON, а не по числу JavaScript-символов:
+
+- нормализованный `inbox_events.payload`: не более 64 KiB;
+- `workflow_runs` operational context: не более 64 KiB;
+- один transition/policy/audit details payload: не более 16 KiB;
+- сохранённый error detail: не более 2 KiB и без stack trace/secret;
+- большие тела, файлы и документы хранятся как private encrypted evidence objects; runtime хранит
+  только reference, media type, byte size, hash и retention class.
+
+Полный телефон/email допускается только в минимальном operational/evidence-контуре, если он нужен
+для утверждённой задачи. Audit, metrics и обычные логи содержат mask/token/hash. Маска не считается
+анонимизацией и не используется как разрешение на cross-tenant обучение. Secrets, access tokens и
+provider credentials запрещены во всех payload.
+
+Baseline shadow pilot:
+
+- raw evidence и нормализованный inbox payload — 30 дней hot retention;
+- operational context успешно завершённого workflow — 30 дней;
+- audit metadata без raw PII хранится дольше по отдельной tenant/legal policy;
+- failed/dead-letter данные не удаляются обычным success-cleanup, но получают отдельный срок и
+  операторскую процедуру разрешения;
+- удаление/архивирование выполняется audited retention job и не реализуется каскадным удалением
+  workflow.
+
+Эти сроки являются пилотным техническим baseline, а не универсальным юридическим обещанием. Перед
+canary они сверяются с договором клиента, требованиями региона и процедурой data subject deletion.
+
 ## Архитектурные границы
 
 ```text
@@ -211,8 +334,9 @@ Append-only журнал переходов:
 - tenant-safe связь с workflow, transition и policy decision;
 - connector, action type, ограниченный payload/reference и payload hash;
 - `UNIQUE (account_id, connector_id, idempotency_key)`;
+- независимый `execution_mode` со значениями `shadow` и `live`; shadow нельзя claim для egress;
 - статусы `pending`, `processing`, `retry_scheduled`, `completed`, `failed`, `dead_letter`,
-  `cancelled`;
+  `cancelled`, а также терминальный `simulated` только для shadow;
 - собственные `claim_token`, `lease_epoch`, `claimed_at`, `lease_until`;
 - attempts, max attempts, next attempt, provider result/reference и last error code.
 
@@ -357,11 +481,11 @@ Replay по умолчанию:
 Hash вычисляется по документированному каноническому представлению. Алгоритм и версия canonical
 format сохраняются рядом с hash, чтобы последующее изменение сериализации не разрушило проверку.
 
-## Первый production loop
+## Первый production loop после shadow/canary
 
 Первый вертикальный сценарий:
 
-1. принять подписанное событие amoCRM/Facebook либо пропущенного звонка;
+1. принять поддерживаемое и аутентифицированное событие amoCRM;
 2. нормализовать и атомарно дедуплицировать событие;
 3. создать или вернуть связанный workflow;
 4. классифицировать обращение и определить следующий безопасный шаг;
@@ -418,8 +542,9 @@ format сохраняются рядом с hash, чтобы последующ�
 
 ### Phase 4 — shadow mode
 
-- Копировать один тип CRM-события в runtime без side effects.
-- Сравнивать решения со старым контуром.
+- Копировать поддерживаемые amoCRM-события в runtime без side effects.
+- Начать с `DEAL_STAGE_CHANGED`, затем включать `NEW_CONTACT_CREATED` и `TASK_COMPLETED` отдельно.
+- Сравнивать решения со старым контуром по общей correlation/idempotency identity.
 - Измерять дубликаты, latency, recovery и расхождения.
 
 ### Phase 5 — canary
@@ -505,14 +630,13 @@ policy, approvals, audit и integration contracts Nemo. Сначала нужн�
 
 ## Открытые вопросы
 
-- Какой provider становится первым shadow connector: amoCRM, Facebook Leads или телефония?
-- Каковы лимиты payload и retention для каждого класса событий?
 - Где хранится encrypted evidence и как выполняется per-tenant key rotation?
 - Как версионируются workflow definitions и policy rulesets?
 - Какие действия могут быть auto-allowed в первом canary?
 - При каком объёме audit/inbox потребуется partitioning?
 - Какой операторский интерфейс нужен для dead-letter и reconciliation?
 - Какие SLO и error budgets утверждаются для первого пилота?
+- Какая tenant/legal policy заменяет 30-дневный технический baseline после shadow-пилота?
 
 ## Условия перевода ADR в Accepted
 
@@ -520,8 +644,7 @@ ADR получает статус `Accepted`, когда:
 
 - architecture и security reviewers согласовали инварианты;
 - утверждены state transition matrix и threat model;
-- выбран первый shadow connector;
-- согласованы payload limits, retention и PII policy;
+- выбор amoCRM и pilot payload/PII/retention baseline подтверждены владельцем пилота;
 - подготовлен план Phase 1/2 миграций без промежуточно открытого состояния;
 - подготовлены конкурентные и tenant-negative тесты;
 - назначены владельцы runtime, incident response и rollback;
