@@ -17,7 +17,7 @@
 // N загрузок чужих сайтов и N вызовов модели, то есть минуты; HTTP-запрос столько не живёт. Шлюз ставит
 // задачу и отдаёт 202, работу делает воркер.
 
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import {
   REFUSAL_STATUS,
   authorizeAction,
@@ -30,6 +30,11 @@ import {
 import { createRuntimeClient, RuntimeRpcError } from '../../supabase/functions/_shared/runtime.ts'
 import { ingestCrmEventInShadow } from '../../supabase/functions/_shared/runtimeCrm.ts'
 import { UnifiedCRMEventSchema, crmIdempotencyKey, parseContract } from '../contracts/v5.ts'
+import {
+  AmoWebhookParseError,
+  ingestNativeAmoWebhook,
+  parseNativeAmoWebhook,
+} from './amocrm-native.ts'
 import { disabledQueue, type JobQueue } from './queue.ts'
 
 /** Столько же, сколько в Edge Function. Расхождение означало бы разную цену за один и тот же прогон. */
@@ -356,6 +361,94 @@ export async function handleCrmWebhook(
   }
 }
 
+// ── POST /v1/crm/amocrm/webhook/:secret ─────────────────────────────────────────────────────────
+
+interface AmoIntegrationResolution {
+  account_id: string
+  integration_id: string
+  account_domain: string
+}
+
+/**
+ * Native amoCRM webhook receiver.
+ *
+ * Regular amoCRM CRM webhooks are form-urlencoded and do not carry a documented provider
+ * signature. The destination therefore contains a per-integration high-entropy secret. Only its
+ * SHA-256 digest is stored, and the body subdomain must match the same integration row. The raw,
+ * bounded event enters Runtime first; contact/lead enrichment happens asynchronously after claim.
+ */
+export async function handleNativeAmoWebhook(
+  deps: GatewayDeps,
+  routeSecret: string | null | undefined,
+  body: unknown,
+): Promise<GatewayResponse> {
+  const secret = String(routeSecret ?? '')
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(secret)) {
+    return { status: 401, body: { error: 'invalid_amocrm_webhook' } }
+  }
+  if (typeof body !== 'string') {
+    return { status: 415, body: { error: 'expected_form_urlencoded' } }
+  }
+
+  let parsed
+  try {
+    parsed = parseNativeAmoWebhook(body)
+  } catch (error) {
+    return {
+      status: 400,
+      body: {
+        error: 'invalid_amocrm_webhook',
+        reason: error instanceof AmoWebhookParseError ? error.code : 'invalid_form',
+      },
+    }
+  }
+
+  const secretHash = createHash('sha256').update(secret, 'utf8').digest('hex')
+  const { data, error } = await deps.admin.rpc('resolve_amocrm_webhook', {
+    p_secret_hash: secretHash,
+    p_account_domain: parsed.accountSubdomain,
+  })
+  if (error) return { status: 503, body: { error: 'amocrm_identity_unavailable' } }
+
+  const matches = Array.isArray(data) ? data as AmoIntegrationResolution[] : []
+  if (matches.length !== 1 || !matches[0]?.account_id) {
+    // Deliberately identical for an unknown secret and a mismatched subdomain: the endpoint must not
+    // become an oracle that reveals which customer domains are connected.
+    return { status: 401, body: { error: 'invalid_amocrm_webhook' } }
+  }
+
+  try {
+    const results = await ingestNativeAmoWebhook(
+      createRuntimeClient(deps.admin),
+      matches[0].account_id,
+      parsed,
+    )
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        accepted: results.length,
+        created: results.filter((result) => result.status === 'created').length,
+        duplicate: results.filter((result) => result.status === 'duplicate').length,
+        mode: 'shadow',
+        enrichment: 'queued',
+      },
+    }
+  } catch (runtimeError) {
+    // A transient Runtime failure must produce a retryable status. Successfully ingested siblings
+    // are harmless on replay because Inbox identity is enforced by PostgreSQL.
+    return {
+      status: 503,
+      body: {
+        error: 'amocrm_runtime_ingest_failed',
+        error_code: runtimeError instanceof RuntimeRpcError
+          ? runtimeError.code
+          : 'RUNTIME_SHADOW_UNEXPECTED',
+      },
+    }
+  }
+}
+
 // ── GET /health ───────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -418,6 +511,14 @@ export async function buildGateway(deps: GatewayDeps, options: { logger?: boolea
     trustProxy: true,
   })
 
+  // Fastify core intentionally does not parse HTML forms. Keep the raw string so our bounded parser
+  // can reject duplicate/ambiguous PHP-style bracket paths instead of silently choosing one value.
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => done(null, body),
+  )
+
   const send = (reply: { code: (n: number) => { send: (b: unknown) => unknown } }, response: GatewayResponse) =>
     reply.code(response.status).send(response.body)
 
@@ -429,6 +530,13 @@ export async function buildGateway(deps: GatewayDeps, options: { logger?: boolea
 
   app.post('/v1/crm/webhook', async (request, reply) =>
     send(reply, await handleCrmWebhook(deps, request.headers['x-nemo-crm-secret'] as string | undefined, request.body)))
+
+  app.post('/v1/crm/amocrm/webhook/:secret', { logLevel: 'silent' }, async (request, reply) =>
+    send(reply, await handleNativeAmoWebhook(
+      deps,
+      (request.params as { secret: string }).secret,
+      request.body,
+    )))
 
   app.get('/health', async (request, reply) => send(reply, await handleHealth(deps)))
 

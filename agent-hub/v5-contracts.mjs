@@ -30,7 +30,10 @@ const code = (text) => text
   .replace(/(^|\s)--[^\n]*/g, '$1')
 
 const migration = read('supabase/migrations/20260817220000_v5_core_schema.sql')
+const amoWebhookMigration = read('supabase/migrations/20260824160000_amocrm_native_webhook_identity.sql')
 const v5 = read('agent-hub/contracts/v5.ts')
+const amoNative = read('agent-hub/server/amocrm-native.ts')
+const gateway = read('agent-hub/server/gateway.ts')
 const bot = read('agent-hub/telegram/bot-service.ts')
 const bridge = read('agent-hub/telegram/lead-card-bridge.ts')
 const registry = read('agent-hub/tools/registry.ts')
@@ -107,6 +110,23 @@ const cases = [
     // дефект на исправной миграции — сразу после `git checkout`, когда git нормализует окончания.
     && /create trigger telephony_trunks_set_updated_at\r?\n\s*before update on public\.telephony_trunks/.test(migration)
     && /create trigger crm_integrations_set_updated_at\r?\n\s*before update on public\.crm_integrations/.test(migration)],
+
+  ['native amoCRM webhook identity is hashed, unique and service-role only',
+    amoWebhookMigration.includes('inbound_webhook_secret_hash text')
+    && amoWebhookMigration.includes('crm_integrations_webhook_secret_hash_unique')
+    && amoWebhookMigration.includes("inbound_webhook_secret_hash ~ '^[0-9a-f]{64}$'")
+    && amoWebhookMigration.includes('security definer')
+    && amoWebhookMigration.includes("set search_path = ''")
+    && amoWebhookMigration.includes('revoke all on function public.resolve_amocrm_webhook(text, text) from public, anon, authenticated')
+    && amoWebhookMigration.includes('grant execute on function public.resolve_amocrm_webhook(text, text) to service_role')],
+
+  ['native amoCRM form ingestion is bounded, tenant-bound and shadow-only',
+    amoNative.includes("FORBIDDEN_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor'])")
+    && amoNative.includes('MAX_RUNTIME_PAYLOAD_BYTES = 60 * 1024')
+    && amoNative.includes("workflowType: 'amocrm_native_enrichment'")
+    && amoNative.includes("executionMode: 'shadow'")
+    && gateway.includes("p_account_domain: parsed.accountSubdomain")
+    && gateway.includes("app.addContentTypeParser(\n    'application/x-www-form-urlencoded'")],
 
   // ── Согласие CHECK-ограничений и Zod ─────────────────────────────────────────────────────────
   //

@@ -55,6 +55,8 @@ $steps = @(
   @{ Name = 'Legal pages, consent and host split'; Command = { npm run test:legal } },
 @{ Name = 'Render suites under a TTY'; Command = { npm run test:tty } },
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
+  @{ Name = 'Typed Durable Runtime client'; Command = { npm run test:runtime-client } },
+  @{ Name = 'Native amoCRM webhook parser'; Command = { npm run test:amocrm-native } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },
   @{ Name = 'Voice pipeline: codec, VAD, barge-in, analytics'; Command = { npm run test:voice } },
   @{ Name = 'Media pipeline: .ass subtitles and FFmpeg graph'; Command = { npm run test:media } },

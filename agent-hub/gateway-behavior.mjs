@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import {
   JOB_ID_SHAPE, authenticate, buildGateway, handleCreateJob, handleCrmWebhook, handleGetJob,
-  handleHealth, parseJobRequest, secretsMatch,
+  handleHealth, handleNativeAmoWebhook, parseJobRequest, secretsMatch,
 } from './server/gateway.ts'
 import {
   BLOCK_SECONDS, JOB_SIGNAL_KEY, connectQueue, createQueue, disabledQueue, resolveRedisUrl,
@@ -91,6 +91,17 @@ function makeAdmin(options = {}) {
     },
     async rpc(name, args) {
       calls.push(`rpc:${name}`)
+      if (name === 'resolve_amocrm_webhook') {
+        if (options.amoResolveError) return { data: null, error: options.amoResolveError }
+        return {
+          data: options.amoResolution === null ? [] : [options.amoResolution ?? {
+            account_id: ACCOUNT,
+            integration_id: '93333333-4444-4555-8666-777777777777',
+            account_domain: 'nemo-test',
+          }],
+          error: null,
+        }
+      }
       if (name === 'nemo_token_consume_rate') return { data: options.rateAllowed ?? true, error: null }
       if (name === 'enqueue_sdr_job') {
         if (options.enqueueError) return { data: null, error: { message: 'boom' } }
@@ -564,6 +575,49 @@ await checkAsync(async () => {
   assert.equal(admin.calls.includes('rpc:runtime_ingest_event'), false)
 })
 
+// ─── Native amoCRM form webhook ──────────────────────────────────────────────────────────────────
+
+const AMO_SECRET = 'amo_native_secret_1234567890abcdef'
+const AMO_FORM = new URLSearchParams({
+  'account[subdomain]': 'nemo-test',
+  'account[id]': '7001',
+  'leads[status][0][id]': '42',
+  'leads[status][0][pipeline_id]': '7',
+  'leads[status][0][status_id]': '13',
+  'leads[status][0][last_modified]': '1787565600',
+}).toString()
+
+await checkAsync(async () => {
+  const admin = makeAdmin()
+  const response = await handleNativeAmoWebhook(deps({ admin }), AMO_SECRET, AMO_FORM)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.created, 1)
+  assert.equal(response.body.enrichment, 'queued')
+  assert.ok(admin.calls.includes('rpc:resolve_amocrm_webhook'))
+  assert.ok(admin.calls.includes('rpc:runtime_ingest_event'))
+})
+
+await checkAsync(async () => {
+  const admin = makeAdmin({ amoResolution: null })
+  const response = await handleNativeAmoWebhook(deps({ admin }), AMO_SECRET, AMO_FORM)
+  assert.equal(response.status, 401)
+  assert.equal(response.body.error, 'invalid_amocrm_webhook')
+  assert.equal(admin.calls.includes('rpc:runtime_ingest_event'), false)
+})
+
+await checkAsync(async () => {
+  const response = await handleNativeAmoWebhook(deps(), 'short', AMO_FORM)
+  assert.equal(response.status, 401)
+})
+
+await checkAsync(async () => {
+  const admin = makeAdmin({ runtimeError: { code: '55000', message: 'private database detail' } })
+  const response = await handleNativeAmoWebhook(deps({ admin }), AMO_SECRET, AMO_FORM)
+  assert.equal(response.status, 503, 'runtime failure must ask amoCRM for a retry')
+  assert.equal(response.body.error_code, '55000')
+  assert.equal(JSON.stringify(response.body).includes('private database detail'), false)
+})
+
 // ─── GET /health ──────────────────────────────────────────────────────────────────────────────────
 
 await checkAsync(async () => {
@@ -630,6 +684,15 @@ await checkAsync(async () => {
     return { status: res.status, body: await res.json().catch(() => null) }
   }
 
+  const callForm = async (path, body) => {
+    const res = await fetch(base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    })
+    return { status: res.status, body: await res.json().catch(() => null) }
+  }
+
   try {
     const health = await call('GET', '/health')
     assert.equal(health.status, 200)
@@ -655,6 +718,10 @@ await checkAsync(async () => {
     assert.equal(noHeader.status, 401, 'заголовок секрета обязан читаться из запроса')
     const wrongHeader = await call('POST', '/v1/crm/webhook', { secret: 'crm-secret-guess1', body: { ...EVENT, externalDealId: '78' } })
     assert.equal(wrongHeader.status, 401)
+
+    const nativeHook = await callForm(`/v1/crm/amocrm/webhook/${AMO_SECRET}`, AMO_FORM)
+    assert.equal(nativeHook.status, 200)
+    assert.equal(nativeHook.body.enrichment, 'queued')
 
     // Неизвестный путь отвечает ИМЕНЕМ пути: клиент, перепутавший версию, должен это увидеть, а не
     // получить пустой ответ Fastify.
