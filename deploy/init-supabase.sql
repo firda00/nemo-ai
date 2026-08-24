@@ -1104,6 +1104,12 @@ revoke all on function public.ops_usage_today() from public;
 -- Per-account daily digest aggregate for the founder pulse agent. For every account that set
 -- an operator/owner Telegram (business_profiles.notify_chat_id), returns yesterday's dialogues,
 -- new leads and tokens burned — all computed in the DB (no row fetch) so it scales.
+--
+-- Keep the column creation in this migration: the function below references it, while the
+-- following review-fixes migration only hardens the same column idempotently. A clean database
+-- reset must therefore establish the dependency before PostgreSQL parses the function body.
+alter table public.business_profiles add column if not exists notify_chat_id text;
+
 create or replace function public.ops_daily_digest()
 returns table (account_id uuid, notify_chat_id text, dialogues bigint, leads bigint, tokens bigint)
 language sql
