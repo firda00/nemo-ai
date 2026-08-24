@@ -365,8 +365,8 @@ export async function handleCrmWebhook(
 
 interface AmoIntegrationResolution {
   account_id: string
-  integration_id: string
-  account_domain: string
+  identity_id: string
+  subdomain: string
 }
 
 /**
@@ -405,8 +405,8 @@ export async function handleNativeAmoWebhook(
 
   const secretHash = createHash('sha256').update(secret, 'utf8').digest('hex')
   const { data, error } = await deps.admin.rpc('resolve_amocrm_webhook', {
+    p_subdomain: parsed.accountSubdomain,
     p_secret_hash: secretHash,
-    p_account_domain: parsed.accountSubdomain,
   })
   if (error) return { status: 503, body: { error: 'amocrm_identity_unavailable' } }
 

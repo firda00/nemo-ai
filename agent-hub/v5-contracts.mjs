@@ -125,7 +125,7 @@ const cases = [
     && amoNative.includes('MAX_RUNTIME_PAYLOAD_BYTES = 60 * 1024')
     && amoNative.includes("workflowType: 'amocrm_native_enrichment'")
     && amoNative.includes("executionMode: 'shadow'")
-    && gateway.includes("p_account_domain: parsed.accountSubdomain")
+    && gateway.includes("p_subdomain: parsed.accountSubdomain")
     && gateway.includes("app.addContentTypeParser(\n    'application/x-www-form-urlencoded'")],
 
   // ── Согласие CHECK-ограничений и Zod ─────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@
     "admin-api",
     "agent-evals",
     "agent-tool",
+    "amocrm-webhook-secret",
     "analyze-content",
     "approval-queue",
     "automations",

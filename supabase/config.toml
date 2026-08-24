@@ -194,6 +194,10 @@ verify_jwt = false
 [functions.admin-api]
 verify_jwt = true
 
+# Owner/admin-only lifecycle for native amoCRM webhook secrets.
+[functions.amocrm-webhook-secret]
+verify_jwt = true
+
 # Redeem a gift code (any authenticated user).
 [functions.redeem-gift]
 verify_jwt = true
