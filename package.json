@@ -118,6 +118,8 @@
     "test:sandbox": "node --experimental-strip-types tests/sandbox_wasi_runner.test.ts",
     "test:document-worker": "node --experimental-strip-types tests/document_worker.test.ts",
     "worker:documents": "node --experimental-strip-types agent-hub/workers/document-worker.ts",
+    "test:media-worker": "node --experimental-strip-types tests/media_worker.test.ts",
+    "worker:media": "node --max-old-space-size=1024 --experimental-strip-types agent-hub/workers/media-worker.ts",
     "test:amocrm-native": "node --experimental-strip-types agent-hub/amocrm-native-behavior.mjs",
     "test:amocrm-webhook-secret": "node --experimental-strip-types agent-hub/amocrm-webhook-secret-behavior.mjs",
     "amocrm:worker": "node --experimental-strip-types agent-hub/workers/amocrm-enrichment.ts",

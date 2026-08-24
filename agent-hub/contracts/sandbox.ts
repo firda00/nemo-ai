@@ -45,6 +45,7 @@ const ArtifactEntrySchema = z.object({
   name: z.string().min(1).max(160).regex(/^[A-Za-z0-9._-]+$/),
   mime_type: z.string().min(3).max(120).regex(/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i),
   size_bytes: z.number().int().nonnegative().max(1_073_741_824),
+  duration_seconds: z.number().finite().positive().max(3_600).optional(),
   sha256: z.string().regex(SHA256),
   storage_path: z.string().max(512).regex(STORAGE_PATH),
 }).strict()

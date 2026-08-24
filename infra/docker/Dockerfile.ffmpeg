@@ -40,6 +40,8 @@ COPY package.json ./
 COPY agent-hub/media ./agent-hub/media
 COPY agent-hub/contracts ./agent-hub/contracts
 COPY agent-hub/server ./agent-hub/server
+COPY agent-hub/workers/media-worker.ts ./agent-hub/workers/media-worker.ts
+COPY agent-hub/load-local-env.mjs ./agent-hub/load-local-env.mjs
 
 # Каталог временных файлов создаётся заранее и принадлежит непривилегированному пользователю: воркер
 # работает не от root, а создать /tmp/renders на лету он тогда не сможет.

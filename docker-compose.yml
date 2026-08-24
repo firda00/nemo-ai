@@ -133,6 +133,28 @@ services:
     depends_on:
       dragonfly:
         condition: service_healthy
+  compute-media-worker:
+    build:
+      context: .
+      dockerfile: ./infra/docker/Dockerfile.ffmpeg
+    container_name: nemo_compute_media_worker
+    restart: unless-stopped
+    command: ['node', '--max-old-space-size=1024', '--experimental-strip-types', 'agent-hub/workers/media-worker.ts']
+    mem_limit: 1g
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp/nemo-media:rw,noexec,nosuid,nodev,size=805306368
+    environment:
+      - NODE_ENV=production
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - FFPROBE_PATH=/usr/bin/ffprobe
+      - MEDIA_WORK_ROOT=/tmp/nemo-media
+      - MEDIA_STORAGE_HOST_ALLOWLIST=${MEDIA_STORAGE_HOST_ALLOWLIST:?configure exact Object Storage hosts}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    networks:
+      - nemo_net
   sdr-worker:
     build:
       context: .
