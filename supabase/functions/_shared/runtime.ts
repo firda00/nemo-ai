@@ -65,6 +65,7 @@ export interface WorkflowClaim {
   lease_epoch: number
   lease_until: string
   attempt_count: number
+  max_attempts: number
   context: JsonObject
   event_type: string
   payload: JsonObject

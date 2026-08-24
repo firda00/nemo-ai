@@ -59,7 +59,14 @@ function makeAdmin(options = {}) {
               maybeSingle: async () => {
                 calls.push(`select:${table}:${column}=${value}&${column2}=${value2}`)
                 const mine = table === 'sdr_jobs' && value === ACCOUNT && value2 === JOB
-                return { data: mine ? { id: JOB, status: 'queued', params: {} } : null }
+                if (mine) return { data: { id: JOB, status: 'queued', params: {} }, error: null }
+                if (table === 'crm_integrations' && value === ACCOUNT && value2 === 'AMOCRM') {
+                  if (options.crmIntegrationError) return { data: null, error: { code: '08006' } }
+                  return options.crmIntegrationActive === false
+                    ? { data: null, error: null }
+                    : { data: { id: 'crm-integration-1', is_active: true }, error: null }
+                }
+                return { data: null, error: null }
               },
             }),
             maybeSingle: async () => {
@@ -497,6 +504,7 @@ await checkAsync(async () => {
   assert.equal(response.body.runtime_shadow.ok, true)
   assert.equal(response.body.runtime_shadow.status, 'created')
   assert.ok(admin.calls.includes('rpc:runtime_ingest_event'))
+  assert.ok(admin.calls.some((one) => one.startsWith('select:crm_integrations:tenant_id=')))
 })
 
 /*
@@ -595,6 +603,24 @@ await checkAsync(async () => {
   assert.equal(response.body.enrichment, 'queued')
   assert.ok(admin.calls.includes('rpc:resolve_amocrm_webhook'))
   assert.ok(admin.calls.includes('rpc:runtime_ingest_event'))
+})
+
+await checkAsync(async () => {
+  const admin = makeAdmin({ crmIntegrationActive: false })
+  const response = await handleCrmWebhook(deps({ admin }), 'crm-secret-abc123', EVENT)
+  assert.equal(response.status, 200, 'legacy ACK is preserved when shadow tenant binding is absent')
+  assert.deepEqual(response.body.runtime_shadow, { ok: true, status: 'skipped_unverified_tenant' })
+  assert.equal(admin.calls.includes('rpc:runtime_ingest_event'), false)
+})
+
+await checkAsync(async () => {
+  const admin = makeAdmin({ crmIntegrationError: true })
+  const response = await handleCrmWebhook(deps({ admin }), 'crm-secret-abc123', EVENT)
+  assert.equal(response.status, 200, 'legacy ACK is preserved when verification storage is unavailable')
+  assert.deepEqual(response.body.runtime_shadow, {
+    ok: false, error_code: 'TENANT_INTEGRATION_VERIFICATION_FAILED',
+  })
+  assert.equal(admin.calls.includes('rpc:runtime_ingest_event'), false)
 })
 
 await checkAsync(async () => {

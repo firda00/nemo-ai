@@ -5,7 +5,7 @@ import {
   parseAmoCredential,
 } from './amocrm/enrichment-client.ts'
 import { normalizeDealStageChanged } from './amocrm/normalizer.ts'
-import { processAmoClaim } from './workers/amocrm-enrichment.ts'
+import { processAmoClaim, runEnrichmentBatch } from './workers/amocrm-enrichment.ts'
 import {
   providerSecretContext,
   sealSecret,
@@ -67,6 +67,7 @@ function claim(overrides = {}) {
     execution_mode: 'shadow', correlation_id: '33333333-4444-4555-8666-777777777777',
     claim_token: '44444444-5555-4666-8777-888888888888', lease_epoch: 1,
     lease_until: new Date(Date.now() + 60_000).toISOString(), attempt_count: 1,
+    max_attempts: 5,
     context: {}, event_type: 'DEAL_STAGE_CHANGED',
     payload: { external_entity_id: '42' },
     ...overrides,
@@ -111,5 +112,76 @@ transitions.length = 0
 const unsupported = await processAmoClaim(claim({ event_type: 'NEW_CONTACT_CREATED' }), { runtime, keyStore })
 assert.equal(unsupported, 'dead_letter')
 assert.equal(transitions[0][1].terminalReasonCode, 'UNSUPPORTED_EVENT_TYPE')
+
+transitions.length = 0
+const openRuntime = {
+  ...runtime,
+  async acquireConnectorPermit() {
+    return { allowed: false, state: 'open', retry_at: '2026-08-24T10:01:00.000Z' }
+  },
+}
+const exhausted = await processAmoClaim(claim({ attempt_count: 3, max_attempts: 3 }), {
+  runtime: openRuntime,
+  keyStore,
+  now: () => new Date('2026-08-24T10:00:00.000Z'),
+  jitter: () => 0.5,
+})
+assert.equal(exhausted, 'dead_letter')
+assert.equal(transitions[0][1].terminalReasonCode, 'CIRCUIT_BREAKER_EXHAUSTED')
+
+transitions.length = 0
+const retrying = await processAmoClaim(claim({ attempt_count: 2, max_attempts: 3 }), {
+  runtime: openRuntime,
+  keyStore,
+  now: () => new Date('2026-08-24T10:00:00.000Z'),
+  jitter: () => 0.5,
+})
+assert.equal(retrying, 'retry_scheduled')
+assert.equal(transitions[0][1].nextAttemptAt, '2026-08-24T10:01:00.000Z')
+
+let isolatedTransitions = 0
+let isolatedErrors = 0
+const isolatedRuntime = {
+  async claimWorkflows() {
+    return [
+      claim({ workflow_id: '51111111-2222-4333-8444-555555555555', event_type: 'NEW_CONTACT_CREATED' }),
+      claim({ workflow_id: '61111111-2222-4333-8444-555555555555', event_type: 'NEW_CONTACT_CREATED' }),
+    ]
+  },
+  async transitionWorkflow() {
+    isolatedTransitions += 1
+    if (isolatedTransitions === 1) throw new Error('isolated rpc failure')
+    return {}
+  },
+}
+const processed = await runEnrichmentBatch({
+  runtime: isolatedRuntime,
+  keyStore,
+  onClaimError: () => { isolatedErrors += 1 },
+})
+assert.equal(processed, 2)
+assert.equal(isolatedErrors, 1)
+assert.equal(isolatedTransitions, 2, 'second claim must run after the first claim fails')
+
+let failureRecords = 0
+const checkpointFailureRuntime = {
+  ...runtime,
+  async recordConnectorSuccess() { return {} },
+  async recordConnectorFailure() { failureRecords += 1; return {} },
+  async checkpointAndTransition() { throw new Error('checkpoint unavailable') },
+}
+await assert.rejects(() => processAmoClaim(claim(), {
+  runtime: checkpointFailureRuntime,
+  keyStore,
+  clientFactory: () => ({
+    async getLead() {
+      return { id: 42, pipeline_id: 7, status_id: 13, updated_at: 1_787_488_000, _embedded: { contacts: [{ id: 9 }] } }
+    },
+    async getContact() {
+      return { id: 9, custom_fields_values: [{ field_code: 'PHONE', values: [{ value: '+998901112233' }] }] }
+    },
+  }),
+}), /checkpoint unavailable/)
+assert.equal(failureRecords, 0, 'confirmed permits must never be spent again as failures')
 
 console.log('amoCRM enrichment behavior passed: allowlist, redirect block, 429 jitter, normalization, and shadow fencing.')

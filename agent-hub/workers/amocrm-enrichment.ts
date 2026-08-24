@@ -28,10 +28,28 @@ export interface EnrichmentDependencies {
   keyStore: ProviderKeyStore
   clientFactory?: (credential: ReturnType<typeof parseAmoCredential>) => AmoEnrichmentClient
   now?: () => Date
+  jitter?: () => number
+  onClaimError?: (claim: WorkflowClaim, error: unknown) => void
 }
 
 function retryAt(delayMs: number, now: () => Date): string {
   return new Date(now().getTime() + Math.max(1_000, Math.min(300_000, delayMs))).toISOString()
+}
+
+function exponentialBackoffMs(attemptCount: number, jitter: () => number): number {
+  const base = Math.min(300_000, 1_000 * (2 ** Math.max(0, attemptCount - 1)))
+  return Math.min(300_000, base + Math.floor(jitter() * Math.min(base, 5_000)))
+}
+
+function circuitRetryAt(
+  upstreamRetryAt: string | null | undefined,
+  attemptCount: number,
+  now: () => Date,
+  jitter: () => number,
+): string {
+  const local = now().getTime() + exponentialBackoffMs(attemptCount, jitter)
+  const upstream = upstreamRetryAt ? Date.parse(upstreamRetryAt) : Number.NaN
+  return new Date(Math.max(local, Number.isFinite(upstream) ? upstream : 0)).toISOString()
 }
 
 async function transitionToDeadLetter(
@@ -88,6 +106,7 @@ export async function processAmoClaim(
   dependencies: EnrichmentDependencies,
 ): Promise<'checkpointed' | 'retry_scheduled' | 'dead_letter'> {
   const now = dependencies.now ?? (() => new Date())
+  const jitter = dependencies.jitter ?? Math.random
   if (claim.execution_mode !== 'shadow' || claim.workflow_type !== WORKFLOW_TYPE) {
     await transitionToDeadLetter(dependencies.runtime, claim, 'INVALID_ENRICHMENT_WORKFLOW')
     return 'dead_letter'
@@ -115,25 +134,32 @@ export async function processAmoClaim(
 
   const permit = await acquireAmoPermit(dependencies.runtime, claim.account_id)
   if (!permit.allowed || !permit.permit_token) {
+    if (claim.attempt_count >= claim.max_attempts) {
+      await transitionToDeadLetter(dependencies.runtime, claim, 'CIRCUIT_BREAKER_EXHAUSTED')
+      return 'dead_letter'
+    }
     await scheduleRetry(
       dependencies.runtime,
       claim,
       'AMOCRM_CIRCUIT_OPEN',
-      permit.retry_at ?? retryAt(30_000, now),
+      circuitRetryAt(permit.retry_at, claim.attempt_count, now, jitter),
     )
     return 'retry_scheduled'
   }
 
   const client = dependencies.clientFactory?.(credential) ?? new AmoEnrichmentClient(credential)
+  let permitConfirmed = false
   try {
     const lead = await client.getLead(externalDealId)
     const contactId = lead._embedded?.contacts?.[0]?.id
     if (!Number.isSafeInteger(contactId) || Number(contactId) <= 0) {
       await recordAmoSuccess(dependencies.runtime, claim.account_id, permit.permit_token)
+      permitConfirmed = true
       throw new AmoDataQualityError('AMOCRM_CONTACT_MISSING')
     }
     const contact = await client.getContact(Number(contactId))
     await recordAmoSuccess(dependencies.runtime, claim.account_id, permit.permit_token)
+    permitConfirmed = true
     const event = normalizeDealStageChanged({
       accountId: claim.account_id,
       eventType: claim.event_type,
@@ -156,8 +182,9 @@ export async function processAmoClaim(
       return 'dead_letter'
     }
     const apiError = error instanceof AmoApiError ? error : new AmoApiError('AMOCRM_ENRICHMENT_FAILED')
+    if (permitConfirmed) throw error
     await recordAmoFailure(dependencies.runtime, claim.account_id, permit.permit_token, apiError.code)
-    if (claim.attempt_count >= 5) {
+    if (claim.attempt_count >= claim.max_attempts) {
       await transitionToDeadLetter(dependencies.runtime, claim, 'AMOCRM_RETRY_EXHAUSTED')
       return 'dead_letter'
     }
@@ -165,7 +192,7 @@ export async function processAmoClaim(
       dependencies.runtime,
       claim,
       apiError.code,
-      retryAt(apiError.retryAfterMs ?? Math.min(300_000, 1_000 * (2 ** claim.attempt_count)), now),
+      retryAt(apiError.retryAfterMs ?? exponentialBackoffMs(claim.attempt_count, jitter), now),
     )
     return 'retry_scheduled'
   }
@@ -179,7 +206,13 @@ export async function runEnrichmentBatch(dependencies: EnrichmentDependencies, l
     executionMode: 'shadow',
     workflowType: WORKFLOW_TYPE,
   })
-  for (const claim of claims) await processAmoClaim(claim, dependencies)
+  for (const claim of claims) {
+    try {
+      await processAmoClaim(claim, dependencies)
+    } catch (error) {
+      dependencies.onClaimError?.(claim, error)
+    }
+  }
   return claims.length
 }
 
@@ -194,8 +227,21 @@ async function main(): Promise<void> {
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const runtime = new RuntimeClient(admin as unknown as RuntimeRpcTransport)
   for (;;) {
-    const count = await runEnrichmentBatch({ runtime, keyStore: admin as unknown as ProviderKeyStore })
-    if (!count) await new Promise((resolve) => setTimeout(resolve, 2_000))
+    try {
+      const count = await runEnrichmentBatch({
+        runtime,
+        keyStore: admin as unknown as ProviderKeyStore,
+        onClaimError: (claim, error) => {
+          const code = error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+          console.error(`[amocrm-enrichment] claim ${claim.workflow_id} failed: ${code}`)
+        },
+      })
+      if (!count) await new Promise((resolve) => setTimeout(resolve, 2_000))
+    } catch (error) {
+      const code = error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+      console.error(`[amocrm-enrichment] poll failed: ${code}`)
+      await new Promise((resolve) => setTimeout(resolve, 2_000))
+    }
   }
 }
 

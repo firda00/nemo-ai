@@ -130,4 +130,48 @@ begin
 end
 $$;
 
+do $$
+declare
+  v_account uuid;
+  v_permit jsonb;
+  v_probe jsonb;
+  v_recovered jsonb;
+  v_replacement jsonb;
+begin
+  select id into v_account from public.accounts order by created_at limit 1;
+  v_permit := public.runtime_acquire_connector_permit(v_account, 'amocrm-expired-probe', 'read_lead', 30);
+  update runtime.connector_health
+  set failure_threshold = 1
+  where account_id = v_account and connector_id = 'amocrm-expired-probe' and operation = 'read_lead';
+  perform public.runtime_record_connector_failure(
+    v_account, 'amocrm-expired-probe', 'read_lead',
+    (v_permit->>'permit_token')::uuid, 'UPSTREAM_TIMEOUT'
+  );
+  update runtime.connector_health set opened_until = clock_timestamp() - interval '1 second'
+  where account_id = v_account and connector_id = 'amocrm-expired-probe' and operation = 'read_lead';
+  v_probe := public.runtime_acquire_connector_permit(v_account, 'amocrm-expired-probe', 'read_lead', 30);
+
+  update runtime.connector_permits
+  set created_at = clock_timestamp() - interval '10 seconds',
+      expires_at = clock_timestamp() - interval '1 second'
+  where permit_token = (v_probe->>'probe_token')::uuid;
+
+  v_recovered := public.runtime_acquire_connector_permit(v_account, 'amocrm-expired-probe', 'read_lead', 30);
+  if coalesce((v_recovered->>'allowed')::boolean, true)
+    or v_recovered->>'state' <> 'open'
+    or not coalesce((v_recovered->>'recovered_abandoned_probe')::boolean, false) then
+    raise exception 'expired half-open probe did not self-heal to open: %', v_recovered;
+  end if;
+
+  update runtime.connector_health set opened_until = clock_timestamp() - interval '1 second'
+  where account_id = v_account and connector_id = 'amocrm-expired-probe' and operation = 'read_lead';
+  v_replacement := public.runtime_acquire_connector_permit(v_account, 'amocrm-expired-probe', 'read_lead', 30);
+  if not coalesce((v_replacement->>'allowed')::boolean, false)
+    or v_replacement->>'probe_token' is null
+    or v_replacement->>'probe_token' = v_probe->>'probe_token' then
+    raise exception 'recovered breaker did not issue a fresh fenced probe: %', v_replacement;
+  end if;
+end
+$$;
+
 rollback;

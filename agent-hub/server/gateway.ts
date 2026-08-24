@@ -48,8 +48,10 @@ export interface SupabaseLike {
   from(table: string): {
     select: (columns: string) => {
       eq: (column: string, value: unknown) => {
-        eq?: (column: string, value: unknown) => { maybeSingle: () => Promise<{ data: unknown }> }
-        maybeSingle: () => Promise<{ data: unknown }>
+        eq: (column: string, value: unknown) => {
+          maybeSingle: () => Promise<{ data: unknown; error?: { code?: string } | null }>
+        }
+        maybeSingle: () => Promise<{ data: unknown; error?: { code?: string } | null }>
         order: (column: string, options: { ascending: boolean }) => Promise<{ data: unknown[] | null }>
       }
       limit?: (n: number) => Promise<{ data: unknown[] | null; error: unknown }>
@@ -335,15 +337,27 @@ export async function handleCrmWebhook(
     runtimeShadow = { ok: true, status: 'skipped_provider' }
   } else {
     try {
-      const ingested = await ingestCrmEventInShadow(createRuntimeClient(deps.admin), {
-        event,
-        idempotencyKey,
-      })
-      runtimeShadow = {
-        ok: true,
-        status: ingested.status,
-        workflow_id: ingested.workflow_id,
-        inbox_event_id: ingested.inbox_event_id,
+      const integrationLookup = await deps.admin.from('crm_integrations')
+        .select('id,is_active')
+        .eq('tenant_id', event.tenantId)
+        .eq('provider', event.provider)
+        .maybeSingle()
+      const integration = integrationLookup?.data as { id?: string; is_active?: boolean } | null
+      if (integrationLookup?.error) {
+        runtimeShadow = { ok: false, error_code: 'TENANT_INTEGRATION_VERIFICATION_FAILED' }
+      } else if (!integration?.id || integration.is_active !== true) {
+        runtimeShadow = { ok: true, status: 'skipped_unverified_tenant' }
+      } else {
+        const ingested = await ingestCrmEventInShadow(createRuntimeClient(deps.admin), {
+          event,
+          idempotencyKey,
+        })
+        runtimeShadow = {
+          ok: true,
+          status: ingested.status,
+          workflow_id: ingested.workflow_id,
+          inbox_event_id: ingested.inbox_event_id,
+        }
       }
     } catch (runtimeError) {
       runtimeShadow = {
