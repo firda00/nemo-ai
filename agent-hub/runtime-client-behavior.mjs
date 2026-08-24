@@ -46,10 +46,47 @@ await checkAsync(async () => {
   const wire = transport(async (name) => name === 'runtime_claim_workflow'
     ? { data: [], error: null }
     : { data: null, error: null })
-  const rows = await new RuntimeClient(wire).claimWorkflows({ workerId: 'worker-1', limit: 10 })
+  const rows = await new RuntimeClient(wire).claimWorkflows({
+    workerId: 'worker-1', limit: 10, executionMode: 'shadow', workflowType: 'amocrm_native_enrichment',
+  })
   assert.deepEqual(rows, [])
   assert.equal(wire.calls[0].args.p_lease_duration_seconds, 300)
-  assert.equal(wire.calls[0].args.p_execution_mode, null)
+  assert.equal(wire.calls[0].args.p_execution_mode, 'shadow')
+  assert.equal(wire.calls[0].args.p_workflow_type, 'amocrm_native_enrichment')
+})
+
+await checkAsync(async () => {
+  const wire = transport(async (name) => ({
+    data: name === 'runtime_acquire_connector_permit'
+      ? { allowed: true, state: 'closed', permit_token: 'permit-1' }
+      : { status: 'recorded', state: 'closed' },
+    error: null,
+  }))
+  const client = new RuntimeClient(wire)
+  const permit = await client.acquireConnectorPermit({
+    accountId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    connectorId: 'amocrm', operation: 'read_lead',
+  })
+  assert.equal(permit.permit_token, 'permit-1')
+  await client.recordConnectorSuccess({
+    accountId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    connectorId: 'amocrm', operation: 'read_lead', permitToken: 'permit-1',
+  })
+  assert.equal(wire.calls[1].args.p_permit_token, 'permit-1')
+})
+
+await checkAsync(async () => {
+  const wire = transport(async () => ({
+    data: { status: 'checkpointed', state: 'waiting_for_policy' }, error: null,
+  }))
+  await new RuntimeClient(wire).checkpointAndTransition({
+    accountId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    workflowId: '11111111-2222-4333-8444-555555555555',
+    expectedEpoch: 2,
+    claimToken: '22222222-3333-4444-8555-666666666666',
+    contextPatch: { enriched: true }, actorId: 'enrichment-worker',
+  })
+  assert.deepEqual(wire.calls[0].args.p_context_patch, { enriched: true })
 })
 
 await checkAsync(async () => {

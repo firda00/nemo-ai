@@ -273,11 +273,11 @@ begin
   raise notice 'PASS [audit coverage: % events]', v_count;
 
   if has_function_privilege('anon',
-      'public.runtime_claim_workflow(text,integer,integer,text)', 'EXECUTE')
+      'public.runtime_claim_workflow(text,integer,integer,text,text)', 'EXECUTE')
     or has_function_privilege('authenticated',
-      'public.runtime_claim_workflow(text,integer,integer,text)', 'EXECUTE')
+      'public.runtime_claim_workflow(text,integer,integer,text,text)', 'EXECUTE')
     or not has_function_privilege('service_role',
-      'public.runtime_claim_workflow(text,integer,integer,text)', 'EXECUTE') then
+      'public.runtime_claim_workflow(text,integer,integer,text,text)', 'EXECUTE') then
     raise exception 'TEST_FAILURE [RPC grants]';
   end if;
   raise notice 'PASS [service-role-only RPC grants]';

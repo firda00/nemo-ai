@@ -86,6 +86,24 @@ export interface WorkflowTransitionInput {
   terminalReasonCode?: string | null
 }
 
+export interface WorkflowCheckpointInput {
+  accountId: string
+  workflowId: string
+  expectedEpoch: number
+  claimToken: string
+  contextPatch: JsonObject
+  actorId: string
+}
+
+export interface ConnectorPermit {
+  allowed: boolean
+  state: 'closed' | 'open' | 'half_open'
+  permit_token?: string
+  probe_token?: string | null
+  expires_at?: string
+  retry_at?: string | null
+}
+
 export interface PolicyDecisionInput {
   accountId: string
   workflowId: string
@@ -207,6 +225,7 @@ export class RuntimeClient {
     leaseDurationSeconds?: number
     limit?: number
     executionMode?: 'shadow' | 'live' | null
+    workflowType?: string | null
   }): Promise<WorkflowClaim[]> {
     const rpc = 'runtime_claim_workflow'
     const data = await this.call(rpc, {
@@ -214,8 +233,72 @@ export class RuntimeClient {
       p_lease_duration_seconds: input.leaseDurationSeconds ?? 300,
       p_limit: input.limit ?? 1,
       p_execution_mode: input.executionMode ?? null,
+      p_workflow_type: input.workflowType ?? null,
     })
     return rowsResult<WorkflowClaim>(rpc, data)
+  }
+
+  async checkpointAndTransition(input: WorkflowCheckpointInput): Promise<JsonObject> {
+    const rpc = 'runtime_checkpoint_and_transition'
+    const data = await this.call(rpc, {
+      p_account_id: input.accountId,
+      p_workflow_id: input.workflowId,
+      p_expected_epoch: input.expectedEpoch,
+      p_claim_token: input.claimToken,
+      p_context_patch: input.contextPatch,
+      p_actor_id: input.actorId,
+    })
+    return objectResult<JsonObject>(rpc, data)
+  }
+
+  async acquireConnectorPermit(input: {
+    accountId: string
+    connectorId: string
+    operation: string
+    permitTtlSeconds?: number
+  }): Promise<ConnectorPermit> {
+    const rpc = 'runtime_acquire_connector_permit'
+    const data = await this.call(rpc, {
+      p_account_id: input.accountId,
+      p_connector_id: input.connectorId,
+      p_operation: input.operation,
+      p_permit_ttl_seconds: input.permitTtlSeconds ?? 30,
+    })
+    return objectResult<ConnectorPermit>(rpc, data)
+  }
+
+  async recordConnectorSuccess(input: {
+    accountId: string
+    connectorId: string
+    operation: string
+    permitToken: string
+  }): Promise<JsonObject> {
+    const rpc = 'runtime_record_connector_success'
+    const data = await this.call(rpc, {
+      p_account_id: input.accountId,
+      p_connector_id: input.connectorId,
+      p_operation: input.operation,
+      p_permit_token: input.permitToken,
+    })
+    return objectResult<JsonObject>(rpc, data)
+  }
+
+  async recordConnectorFailure(input: {
+    accountId: string
+    connectorId: string
+    operation: string
+    permitToken: string
+    errorCode: string
+  }): Promise<JsonObject> {
+    const rpc = 'runtime_record_connector_failure'
+    const data = await this.call(rpc, {
+      p_account_id: input.accountId,
+      p_connector_id: input.connectorId,
+      p_operation: input.operation,
+      p_permit_token: input.permitToken,
+      p_error_code: input.errorCode,
+    })
+    return objectResult<JsonObject>(rpc, data)
   }
 
   async transitionWorkflow(input: WorkflowTransitionInput): Promise<JsonObject> {
