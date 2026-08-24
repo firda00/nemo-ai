@@ -1,6 +1,5 @@
 const V1_PREFIX = 'enc:v1:'
 const V2_PREFIX = 'enc:v2:'
-let cachedKey: Promise<CryptoKey> | null = null
 
 function decodeBase64(value: string): Uint8Array {
   const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/'))
@@ -13,17 +12,22 @@ function encodeBase64(value: Uint8Array): string {
   return btoa(raw)
 }
 
-async function encryptionKey(): Promise<CryptoKey> {
-  if (!cachedKey) {
-    cachedKey = (async () => {
-      const configured = Deno.env.get('CREDENTIAL_ENCRYPTION_KEY') ?? ''
-      if (!configured) throw new Error('CREDENTIAL_ENCRYPTION_KEY is not configured')
-      const bytes = decodeBase64(configured)
-      if (bytes.length !== 32) throw new Error('CREDENTIAL_ENCRYPTION_KEY must be 32 bytes')
-      return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
-    })()
+function configuredEncryptionKey(): string {
+  const runtime = globalThis as typeof globalThis & {
+    Deno?: { env?: { get?: (name: string) => string | undefined } }
+    process?: { env?: Record<string, string | undefined> }
   }
-  return cachedKey
+  return runtime.Deno?.env?.get?.('CREDENTIAL_ENCRYPTION_KEY')
+    ?? runtime.process?.env?.CREDENTIAL_ENCRYPTION_KEY
+    ?? ''
+}
+
+async function encryptionKey(): Promise<CryptoKey> {
+  const configured = configuredEncryptionKey()
+  if (!configured) throw new Error('CREDENTIAL_ENCRYPTION_KEY is not configured')
+  const bytes = decodeBase64(configured)
+  if (bytes.length !== 32) throw new Error('CREDENTIAL_ENCRYPTION_KEY must be 32 bytes')
+  return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
 export function providerSecretContext(accountId: string, provider: string): string {

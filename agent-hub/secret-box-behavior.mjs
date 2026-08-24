@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 const key = Buffer.alloc(32, 7).toString('base64')
 globalThis.Deno = { env: { get: (name) => name === 'CREDENTIAL_ENCRYPTION_KEY' ? key : undefined } }
+delete process.env.CREDENTIAL_ENCRYPTION_KEY
 
 const {
   openSecret,
@@ -12,7 +13,14 @@ const {
 const context = providerSecretContext('account-a', 'uzum')
 const sealed = await sealSecret('seller-token-value', context)
 assert.match(sealed, /^enc:v2:/)
+process.env.CREDENTIAL_ENCRYPTION_KEY = key
+delete globalThis.Deno
 assert.equal(await openSecret(sealed, context), 'seller-token-value')
+
+const nodeSealed = await sealSecret('node-to-deno-token', context)
+delete process.env.CREDENTIAL_ENCRYPTION_KEY
+globalThis.Deno = { env: { get: (name) => name === 'CREDENTIAL_ENCRYPTION_KEY' ? key : undefined } }
+assert.equal(await openSecret(nodeSealed, context), 'node-to-deno-token')
 
 const prefixLookingInput = 'enc:v2:not-a-real-iv:not-a-real-ciphertext'
 const resealedPrefixInput = await sealSecret(prefixLookingInput, context)

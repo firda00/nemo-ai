@@ -56,6 +56,7 @@ $steps = @(
 @{ Name = 'Render suites under a TTY'; Command = { npm run test:tty } },
   @{ Name = 'API Gateway and Dragonfly queue'; Command = { npm run test:gateway } },
   @{ Name = 'Typed Durable Runtime client'; Command = { npm run test:runtime-client } },
+  @{ Name = 'amoCRM shadow enrichment worker'; Command = { npm run test:amocrm-enrichment } },
   @{ Name = 'Native amoCRM webhook parser'; Command = { npm run test:amocrm-native } },
   @{ Name = 'amoCRM webhook secret lifecycle'; Command = { npm run test:amocrm-webhook-secret } },
   @{ Name = 'Docker compose and image contracts'; Command = { npm run test:infra } },

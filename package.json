@@ -117,6 +117,8 @@
     "test:runtime-client": "node --experimental-strip-types agent-hub/runtime-client-behavior.mjs",
     "test:amocrm-native": "node --experimental-strip-types agent-hub/amocrm-native-behavior.mjs",
     "test:amocrm-webhook-secret": "node --experimental-strip-types agent-hub/amocrm-webhook-secret-behavior.mjs",
+    "amocrm:worker": "node --experimental-strip-types agent-hub/workers/amocrm-enrichment.ts",
+    "test:amocrm-enrichment": "npm run test:secret-box && node --experimental-strip-types agent-hub/amocrm-enrichment-behavior.mjs",
     "test:infra": "node agent-hub/infra-contracts.mjs",
     "gateway": "node --experimental-strip-types agent-hub/server/main.ts",
     "test:voice": "node --experimental-strip-types agent-hub/voice-behavior.mjs",
