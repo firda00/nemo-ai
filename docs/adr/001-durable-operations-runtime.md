@@ -298,13 +298,77 @@ account membership и роль, а затем вызывает закрытый 
 - `running`;
 - `waiting_for_policy`;
 - `waiting_for_approval`;
+- `waiting_for_action`;
 - `retry_scheduled`;
 - `completed`;
 - `failed`;
+- `denied`;
 - `dead_letter`;
 - `cancelled`.
 
 `classified` и `checkpointed` являются типами переходов, а не долгоживущими статусами.
+
+## State Transition Matrix
+
+Статус workflow описывает устойчивое состояние, в котором процесс может пережить остановку любого
+воркера. Кратковременные факты `classified`, `planned`, `checkpoint_saved` и `duplicate` не становятся
+статусами:
+
+- `duplicate` является результатом Inbox ingest; для дубля возвращается существующее событие и новый
+  workflow не создаётся;
+- `classified`, `planned` и `checkpoint_saved` записываются как append-only transition types;
+- состояние меняется только через `runtime_transition_workflow` либо специализированный RPC с теми
+  же проверками;
+- отсутствие строки в таблице ниже означает запрещённый переход.
+
+| From | Допустимый To | Кто/условие | Обязательная атомарная запись |
+|---|---|---|---|
+| `received` | `queued` | Ingest завершён; событие валидно и готово к обработке | `ingested`/`classified` transition |
+| `received` | `waiting_for_policy` | Нормализация сразу породила конкретное потенциальное действие | plan hash + `policy_requested` transition |
+| `received` | `retry_scheduled` | Временный внутренний сбой после durable ingest | error code + bounded backoff |
+| `received` | `failed` | Детерминированно неустранимая ошибка уже принятого события | terminal reason; raw SQL detail запрещён |
+| `received` | `cancelled` | Административный kill switch до начала работы | actor + reason + audit |
+| `queued` | `running` | Успешный claim через `FOR UPDATE SKIP LOCKED` | новый `claim_token`, увеличенный `lease_epoch`, `lease_until` |
+| `queued` | `cancelled` | Отмена до claim | actor + reason + audit |
+| `queued` | `dead_letter` | Работа не может быть выдана после исчерпания допустимых попыток/возраста | один dead-letter + terminal transition |
+| `running` | `queued` | Pure-compute шаг/checkpoint успешен, остались следующие шаги | state snapshot/hash + актуальный fencing token |
+| `running` | `waiting_for_policy` | Построено новое потенциальное side effect | immutable action hash + policy input/version |
+| `running` | `retry_scheduled` | Определённый временный внутренний сбой | классифицированная ошибка + next attempt |
+| `running` | `completed` | Все шаги закончены и нет ожидающего side effect | final result reference + audit |
+| `running` | `failed` | Детерминированная терминальная ошибка | terminal reason + audit |
+| `running` | `dead_letter` | Неоднозначный исход или исчерпаны попытки | evidence reference + operator reason |
+| `running` | `cancelled` | Кооперативная отмена до начала внешнего действия | current claim/fence + actor/reason |
+| `waiting_for_policy` | `waiting_for_action` | Policy вернул `allow`; outbox action создан атомарно | policy decision + outbox row с тем же action hash |
+| `waiting_for_policy` | `waiting_for_approval` | Policy вернул `require_approval` | policy decision + существующий `approval_requests` |
+| `waiting_for_policy` | `denied` | Policy вернул `deny` | immutable policy decision + terminal audit |
+| `waiting_for_policy` | `retry_scheduled` | Policy service/definition временно недоступны; fail closed | error code + bounded backoff; side effect отсутствует |
+| `waiting_for_policy` | `failed` | Policy input/definition детерминированно некорректны | terminal reason; side effect отсутствует |
+| `waiting_for_policy` | `cancelled` | Владелец отменил workflow до решения | actor + reason + audit |
+| `waiting_for_approval` | `waiting_for_action` | Approval `approved`, payload hash и policy version не изменились | decision + доступность outbox action одной транзакцией |
+| `waiting_for_approval` | `denied` | Approval `rejected` или истёк по утверждённой policy | decision actor/reason/expiry + audit |
+| `waiting_for_approval` | `waiting_for_policy` | Предложенное действие изменилось; прежний approval отменён | новый action hash; новая policy evaluation обязательна |
+| `waiting_for_approval` | `cancelled` | Workflow отменён владельцем | approval cancellation + workflow audit |
+| `waiting_for_action` | `queued` | Outbox action завершён, workflow имеет следующий шаг | provider result reference + next checkpoint |
+| `waiting_for_action` | `completed` | Финальное outbox action завершено | provider result reference + final audit |
+| `waiting_for_action` | `retry_scheduled` | Получен определённый временный отказ/timeout с безопасной retry-семантикой | attempt/error/backoff + reconciliation state |
+| `waiting_for_action` | `failed` | Получен определённый постоянный отказ без эффекта | provider evidence + terminal reason |
+| `waiting_for_action` | `dead_letter` | Исход неоднозначен либо retries исчерпаны | один dead-letter; автоматический повтор запрещён |
+| `waiting_for_action` | `cancelled` | Outbox ещё `pending` и атомарно отменён до claim | outbox + workflow cancellation одной транзакцией |
+| `retry_scheduled` | `queued` | Наступил `next_attempt_at`, лимиты не исчерпаны | retry-ready transition; claim произойдёт отдельно |
+| `retry_scheduled` | `dead_letter` | Исчерпаны attempts/age/error budget | один dead-letter + terminal transition |
+| `retry_scheduled` | `cancelled` | Владелец отменил до следующей попытки | actor + reason + audit |
+
+Терминальные статусы `completed`, `failed`, `denied`, `dead_letter` и `cancelled` не имеют исходящих
+переходов. Ручной разбор, исправление или replay создаёт **новый** workflow с `causation_id` на
+терминальный исходный workflow; история старого не переписывается.
+
+Переход `waiting_for_action → cancelled` допустим только пока outbox action не claimed. После начала
+внешнего запроса отмена не может доказывать отсутствие эффекта: результат обязан пройти finish либо
+reconciliation/dead-letter.
+
+Shadow использует ту же матрицу. Разница задаётся `execution_mode`: вместо egress outbox немедленно
+фиксирует терминальный `simulated`, после чего workflow может перейти из `waiting_for_action` в
+`queued`/`completed`. Live claim RPC структурно исключает shadow rows.
 
 ### `runtime.workflow_transitions`
 
@@ -480,6 +544,68 @@ Replay по умолчанию:
 
 Hash вычисляется по документированному каноническому представлению. Алгоритм и версия canonical
 format сохраняются рядом с hash, чтобы последующее изменение сериализации не разрушило проверку.
+
+## Threat Model
+
+### Защищаемые активы
+
+- tenant data, PII, документы и organizational memory;
+- полномочия на внешние действия, connector credentials и approvals;
+- целостность workflow state, policy decisions, billing и provider results;
+- неизменность audit/causal chain;
+- доступность ingestion, очередей и операторского восстановления;
+- конфиденциальность системных prompts, policies и runtime internals.
+
+### Trust boundaries и допущения
+
+- Внешний provider считается недоверенным транспортом: события могут повторяться, задерживаться,
+  приходить не по порядку или быть подделаны.
+- Webhook gateway, runtime RPC, worker, Policy Engine, approval API, outbox connector и Object
+  Storage являются отдельными trust boundaries.
+- LLM output, custom fields, документы и tool arguments всегда недоверенны.
+- Воркер может упасть, зависнуть, повториться или продолжить работу после потери lease.
+- Компрометация PostgreSQL superuser/cloud control plane находится за границей прикладной модели;
+  для неё требуются инфраструктурные backup, KMS, access audit и incident response.
+- Компрометация `service_role` имеет высокий blast radius; RLS не защищает от неё.
+- Сетевой ответ `timeout` не доказывает, что внешний side effect не произошёл.
+
+### Реестр угроз и контролей
+
+| ID | Угроза / вектор | Обязательные контроли | Проверка |
+|---|---|---|---|
+| T01 | Cross-tenant IDOR/confused deputy: подмена `account_id`, workflow/action UUID | Tenant выводится из проверенной identity/integration; составные FK; закрытая schema; RPC не доверяет payload tenant; service methods фильтруют account | Negative RPC tests и FK mismatch tests |
+| T02 | Поддельный webhook или украденный общий секрет | Provider-native signature, constant-time verification, timestamp/replay window, key rotation; до этого только контролируемый внутренний adapter | Valid/invalid signature fixtures; stale timestamp rejection |
+| T03 | Replay/повтор/переупорядочивание webhook | Inbox UNIQUE на tenant/provider/event identity; versioned identity algorithm; ответ 2xx на штатный дубль; occurred/event version handling | 10 параллельных повторов → одна inbox row; out-of-order fixture |
+| T04 | Idempotency collision и потеря реального изменения сделки | Не использовать `externalDealId` как event ID; длинные keys хэшируются, не обрезаются; collision-safe DB constraint | Два длинных различных ID и два события одной сделки сохраняются независимо |
+| T05 | Два claim или zombie worker перезаписывает новое состояние | `SKIP LOCKED`, bounded lease, UUID claim token, monotonic epoch, conditional finish/renew | Реальные конкурентные транзакции; stale epoch всегда отклонён |
+| T06 | Обход state machine прямым UPDATE или невалидный переход | Нет table grants; только allowlisted RPC; from-state/fence/action hash проверяются в одной транзакции | anon/authenticated/direct write denied; transition matrix negative suite |
+| T07 | Обход Policy Engine (`running → action`) | Единственный путь к outbox проходит через immutable policy decision; DB/RPC запрещает action без policy linkage | Попытка enqueue без policy/allow/approval отклоняется |
+| T08 | Подмена payload после approval | Canonical action hash + policy version связаны с approval и outbox; любое изменение требует новой policy/approval | Approve hash A, execute hash B → отказ |
+| T09 | Повтор внешнего side effect после потерянного ответа | Scoped idempotency key, provider idempotency, provider result ref, reconciliation; ambiguous outcome → dead-letter, не blind retry | Timeout-after-accept fixture не создаёт второй эффект |
+| T10 | Shadow action случайно ушло в production | Отдельный execution mode; CHECK; live claim исключает shadow; shadow worker без egress credentials; kill switch | Claim shadow row live RPC → пусто/отказ; egress count = 0 |
+| T11 | Компрометация `service_role` или чрезмерный worker | Разные минимальные service identities где возможно; secrets manager/KMS; network allowlist; короткая ротация; worker не получает ненужные connector keys | Secret inventory, rotation drill, egress policy test |
+| T12 | SQL injection/search-path hijack в `SECURITY DEFINER` | Typed params, no dynamic SQL либо строгий allowlist; `search_path=''`; fully-qualified objects; revoke PUBLIC execute | Static contract + malicious identifier tests |
+| T13 | Audit tampering или удаление причинной цепочки | Append-only grants/trigger; no cascade; audited retention procedure; external backup/hash chain при необходимости | UPDATE/DELETE denied; retention creates audit evidence |
+| T14 | PII/secret exfiltration через payload, logs, metrics или error | Byte limits, normalization allowlist, redaction/tokenization, encrypted evidence refs, structured error codes, log scanning | Seeded phone/token не появляется в ordinary logs/metrics |
+| T15 | Payload/ZIP/decompression bomb и storage exhaustion | Request/content-length limits, JSON byte checks, file count/size/compression-ratio quotas, object lifecycle, tenant quotas | Oversized/bomb fixtures rejected before expensive parsing |
+| T16 | Queue flood, retry storm или provider outage | Per-tenant/provider rate limit, bounded attempts/backoff+jitter, circuit breaker, queue quotas, fair scheduling | Load test не вытесняет соседний tenant; breaker opens predictably |
+| T17 | SSRF/egress exfiltration через connector/tool arguments | Connector-specific fixed hosts, URL allowlist, DNS/private-IP checks, no arbitrary redirects, egress firewall | Loopback/link-local/DNS-rebind/redirect tests |
+| T18 | Prompt injection заставляет модель вызвать опасный tool | LLM output — предложение; schema validation, capability scope, policy, approval и outbox остаются обязательными | Adversarial prompt не создаёт action без policy/approval |
+| T19 | Clock skew ломает lease, replay window или retention | DB time является authoritative; bounded drift monitoring; клиентское время не определяет lease | Искусственно неверный worker timestamp не влияет на claim |
+| T20 | Ошибка retention уничтожает active/dead-letter/evidence | Status-aware retention, legal hold, dry-run manifest, bounded batch, audited deletion и backup | Active/dead-letter rows переживают success cleanup |
+| T21 | Привилегированный оператор злоупотребляет manual recovery | Раздельные роли, MFA, reason/evidence, four-eyes для критических действий, неизменяемый admin audit | Recovery без роли/MFA/reason отклоняется |
+| T22 | Supply-chain/config drift открывает schema или ломает RPC | Pinned dependencies/images, generated init-schema parity, migration/manifest contracts, secret scan, deploy gate | Clean install + schema drift + permission snapshot tests |
+
+### Residual risk и fail-closed правила
+
+- Если подпись/tenant mapping/policy/approval нельзя доказать, side effect не выполняется.
+- Неоднозначный внешний результат не повторяется автоматически без reconciliation.
+- Недоступный Policy Engine не означает `allow`; workflow переходит в bounded retry/dead-letter.
+- Недоступный shadow runtime не ломает legacy response, но создаёт alert и измеримый coverage gap.
+- Отсутствие raw PII в audit ограничивает расследование; нужные доказательства остаются в отдельном
+  encrypted evidence с контролируемым доступом и retention.
+- Ни один набор прикладных контролей не устраняет риск кражи cloud/admin credentials; это отдельный
+  инфраструктурный threat model и incident-response контур.
 
 ## Первый production loop после shadow/canary
 
