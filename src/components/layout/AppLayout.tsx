@@ -27,6 +27,12 @@ import {
   Mail,
   Database,
   Brain,
+  MessageSquare,
+  LineChart,
+  FlaskConical,
+  Megaphone,
+  Send,
+  Repeat,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -110,12 +116,16 @@ export function AppLayout() {
   const navGroups: { title: string; items: NavItem[] }[] = [
       { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
+      { to: '/app/dialogues', label: t('appLayout.navDialogues'), icon: MessageSquare },
       { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
+      { to: '/app/marketing', label: t('appLayout.navMarketing'), icon: Megaphone },
+      { to: '/app/autopost', label: t('appLayout.navAutopost'), icon: Send },
       { to: '/app/commerce', label: 'Commerce', icon: Database },
     ] },
     { title: t('appLayout.groupAiTeams'), items: [
       { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
       { to: '/app/autonomous', label: t('appLayout.navAutonomous'), icon: Wand2 },
+      { to: '/app/research', label: t('appLayout.navResearch'), icon: FlaskConical },
       { to: '/app/automations', label: t('appLayout.navAutomations'), icon: Workflow, badge: t('automations.devBadge') },
       { to: '/app/agents', label: t('mvp.sidebar.agents'), icon: Bot },
       { to: '/app/teams', label: t('mvp.sidebar.aiTeams'), icon: Users },
@@ -128,6 +138,8 @@ export function AppLayout() {
       ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
       ...(emailEnabled ? [{ to: '/app/email-assistant', label: t('appLayout.navEmailAssistant'), icon: Mail }] : []),
       { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
+      { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
+      { to: '/app/followups', label: t('appLayout.navFollowups'), icon: Repeat },
       { to: '/app/approvals', label: 'Approvals', icon: ClipboardCheck },
       // Рядом с согласованиями: обе страницы про одно — посмотреть, что система сделала или
       // решила, и возразить. Память, до которой не дойти из меню, неисправима ровно так же,

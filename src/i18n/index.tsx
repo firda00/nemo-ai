@@ -42,7 +42,8 @@ function getInitialLang(): Lang {
     const stored = window.localStorage.getItem(STORAGE_KEY)
     if (stored === 'uz' || stored === 'ru' || stored === 'en') return stored
   }
-  return 'en'
+  // Продукт для Узбекистана: узбекский по умолчанию (CLAUDE.md), сохранённый выбор всегда важнее.
+  return 'uz'
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
