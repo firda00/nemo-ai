@@ -1,4 +1,7 @@
 // B2B subscription plans (mirror of supabase/functions/_shared/plans.ts — keep in sync).
+// Units here are RAW LLM tokens. src/data/billing.ts is the other pricing file: it models
+// CREDITS (1 credit = 1000 LLM tokens) and top-up packages for create-checkout — same
+// numbers, different unit. UI plan cards (Pricing/Billing) read from THIS file only.
 export interface PlanLimit {
   label: string
   price: number

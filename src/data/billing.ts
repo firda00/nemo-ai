@@ -1,4 +1,7 @@
 // Token packages (USD). Must stay in sync with supabase/functions/create-checkout PACKAGES.
+// Units here are CREDITS (1 credit = 1000 LLM tokens). Subscription entitlements shown in the
+// UI live in src/lib/plans.ts (raw LLM tokens) — same plan numbers, different unit. Do not add
+// plan cards reading from this file.
 export interface TokenPackage {
   id: string
   usd: number
