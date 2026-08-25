@@ -10,6 +10,7 @@ import PitchPage from './pages/PitchPage'
 import AuthPage from './pages/AuthPage'
 import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/app/DashboardPage'
+import VirtualOfficePage from './pages/app/VirtualOfficePage'
 import AgentsPage from './pages/app/AgentsPage'
 import AgentEditorPage from './pages/app/AgentEditorPage'
 import ResearchPage from './pages/app/ResearchPage'
@@ -120,7 +121,9 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route index element={<VirtualOfficePage />} />
+        <Route path="office" element={<VirtualOfficePage />} />
+        <Route path="dashboard" element={<DashboardPage />} />
         <Route path="autonomous" element={<AutonomousPage />} />
         <Route path="memory" element={<MemoryPage />} />
         <Route path="automations" element={<AutomationsPage />} />

@@ -115,7 +115,7 @@ export function AppLayout() {
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
       { title: t('appLayout.groupMain'), items: [
-      { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
+      { to: '/app/dashboard', label: t('appLayout.navOverview'), icon: LayoutDashboard },
       { to: '/app/dialogues', label: t('appLayout.navDialogues'), icon: MessageSquare },
       { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
       { to: '/app/marketing', label: t('appLayout.navMarketing'), icon: Megaphone },
@@ -127,6 +127,7 @@ export function AppLayout() {
       { to: '/app/autonomous', label: t('appLayout.navAutonomous'), icon: Wand2 },
       { to: '/app/research', label: t('appLayout.navResearch'), icon: FlaskConical },
       { to: '/app/automations', label: t('appLayout.navAutomations'), icon: Workflow, badge: t('automations.devBadge') },
+      { to: '/app/office', label: 'Virtual Office', icon: Building2 },
       { to: '/app/agents', label: t('mvp.sidebar.agents'), icon: Bot },
       { to: '/app/teams', label: t('mvp.sidebar.aiTeams'), icon: Users },
       { to: '/app/integrations', label: t('appLayout.navTools'), icon: Blocks },
