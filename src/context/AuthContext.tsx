@@ -18,6 +18,24 @@ const ACCOUNT_LOCAL_KEYS = [
   'nemo-workflow-results', 'nemo-education-workflow-v2', 'nemo-saved-report', 'nemo-yc-waitlist',
 ]
 
+/**
+ * OAuth must return to the canonical frontend, not to whichever stale or preview
+ * host happened to open the login screen. Local development keeps using its own
+ * origin when VITE_APP_URL is intentionally unset.
+ */
+function authRedirectUrl(path: string): string {
+  const configured = (import.meta.env.VITE_APP_URL as string | undefined)?.trim()
+  if (configured) {
+    try {
+      const url = new URL(configured)
+      if (url.protocol === 'https:' || url.protocol === 'http:') return new URL(path, url.origin).toString()
+    } catch {
+      // Invalid public configuration fails safely to the current same-origin URL.
+    }
+  }
+  return new URL(path, window.location.origin).toString()
+}
+
 function clearAccountLocalData() {
   if (typeof window === 'undefined') return
   for (const key of ACCOUNT_LOCAL_KEYS) window.localStorage.removeItem(key)
@@ -205,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (live && supabase) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin + '/setup' },
+        options: { redirectTo: authRedirectUrl('/setup') },
       })
       return error ? { error: error.message } : {}
     }
@@ -217,7 +235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string): Promise<AuthResult> => {
       if (live && supabase) {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: window.location.origin + '/auth/reset',
+          redirectTo: authRedirectUrl('/auth/reset'),
         })
         // Не отдаём наружу текст ошибки Supabase: экран показывает одинаковый «успех» независимо
         // от существования аккаунта, а сюда попадают только rate-limit / сетевые сбои.
