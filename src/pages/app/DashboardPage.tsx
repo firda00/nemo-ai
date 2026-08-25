@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n'
 import { useBackendStatus } from '../../hooks/useBackendStatus'
 import { QuickStart } from '../../components/platform/QuickStart'
 import { RecentActivity } from '../../components/platform/RecentActivity'
+import { VirtualOffice } from '../../components/VirtualOffice'
 
 function readLocalStorage(key: string): string {
   try {
@@ -88,6 +89,8 @@ export default function DashboardPage() {
       </div>
 
       <QuickStart />
+
+      <VirtualOffice />
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Metric icon={Users} label={t('mvp.dashboard.activeTeams')} value={String(Math.max(teams.length, savedTeamId ? 1 : 0))} />
