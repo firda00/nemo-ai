@@ -15,7 +15,8 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+\/-]{12,}/gi, 'Bearer [REDACTED_TOKEN]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
   [/(api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[^\s,"']{6,}/gi, '$1=[REDACTED]'],
-  [/\+?[1-9]\d{7,14}\b/g, '[REDACTED_PHONE]'],
+  [/\+[1-9]\d{7,14}\b/g, '[REDACTED_PHONE]'],
+  [/(phone|tel|mobile)\s*[:=]\s*["']?[1-9]\d{7,14}\b/gi, '$1=[REDACTED_PHONE]'],
 ]
 
 export interface WasiRunnerRequest {

@@ -124,6 +124,7 @@
     "test:grounding-evals": "node --experimental-strip-types tests/grounding_evals.test.ts",
     "test:ecosystem": "node --experimental-strip-types tests/ecosystem_integration.test.ts",
     "test:e2e": "vitest run tests/e2e_multimodal_flow.test.ts",
+    "test:self-healing": "vitest run tests/self_healing_loop.test.ts",
     "test:amocrm-native": "node --experimental-strip-types agent-hub/amocrm-native-behavior.mjs",
     "test:amocrm-webhook-secret": "node --experimental-strip-types agent-hub/amocrm-webhook-secret-behavior.mjs",
     "amocrm:worker": "node --experimental-strip-types agent-hub/workers/amocrm-enrichment.ts",
@@ -170,12 +171,12 @@
     "ioredis": "^6.0.0",
     "lucide-react": "^1.21.0",
     "mammoth": "^1.12.0",
-    "pdfjs-dist": "^6.0.227",
+    "pdfjs-dist": "^6.2.108",
     "playwright": "^1.62.1",
     "playwright-core": "^1.62.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.18.0",
+    "react-router-dom": "^7.18.2",
     "reactflow": "^11.11.4",
     "read-excel-file": "^9.3.1",
     "ws": "^8.21.3",
@@ -206,6 +207,15 @@
   },
   "optionalDependencies": {
     "onnxruntime-node": "^1.27.0"
+  },
+  "overrides": {
+    "onnxruntime-node": {
+      "adm-zip": "0.6.0"
+    },
+    "nanoid": "3.3.18",
+    "pdfjs-dist": "$pdfjs-dist",
+    "react-router": "7.18.2",
+    "react-router-dom": "$react-router-dom"
   },
   "bin": {
     "nemo": "./dist/cli.js"
