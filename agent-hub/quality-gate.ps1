@@ -62,6 +62,7 @@ $steps = @(
   @{ Name = 'ADR 002 vision shadow gateway'; Command = { npm run test:vision } },
   @{ Name = 'ADR 002 factual grounding and precision evals'; Command = { npm run test:grounding-evals } },
   @{ Name = 'ADR 002 ecosystem integration'; Command = { npm run test:ecosystem } },
+  @{ Name = 'ADR 001/002 multimodal E2E pipeline'; Command = { npm run test:e2e } },
   @{ Name = 'amoCRM shadow enrichment worker'; Command = { npm run test:amocrm-enrichment } },
   @{ Name = 'Native amoCRM webhook parser'; Command = { npm run test:amocrm-native } },
   @{ Name = 'amoCRM webhook secret lifecycle'; Command = { npm run test:amocrm-webhook-secret } },

@@ -123,6 +123,7 @@
     "test:vision": "node --experimental-strip-types tests/vision_gateway.test.ts",
     "test:grounding-evals": "node --experimental-strip-types tests/grounding_evals.test.ts",
     "test:ecosystem": "node --experimental-strip-types tests/ecosystem_integration.test.ts",
+    "test:e2e": "vitest run tests/e2e_multimodal_flow.test.ts",
     "test:amocrm-native": "node --experimental-strip-types agent-hub/amocrm-native-behavior.mjs",
     "test:amocrm-webhook-secret": "node --experimental-strip-types agent-hub/amocrm-webhook-secret-behavior.mjs",
     "amocrm:worker": "node --experimental-strip-types agent-hub/workers/amocrm-enrichment.ts",
@@ -200,6 +201,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
+    "vitest": "^4.1.11",
     "yaml": "^2.9.0"
   },
   "optionalDependencies": {
