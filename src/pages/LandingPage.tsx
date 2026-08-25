@@ -418,7 +418,7 @@ export default function LandingPage() {
               <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
-                <Button to="/waitlist" size="lg" className="cta-glow lift !bg-accent-cyan !bg-none !text-[#041018] hover:!brightness-110">
+                <Button to="/app" size="lg" className="cta-glow lift !bg-accent-cyan !bg-none !text-[#041018] hover:!brightness-110">
                   {c.primaryCta}<ArrowRight size={17} />
                 </Button>
                 <Button href="#workflow" variant="outline" size="lg">{c.secondaryCta}</Button>
@@ -490,7 +490,7 @@ export default function LandingPage() {
           <div className="container-page grid items-center gap-12 py-20 sm:py-28 lg:grid-cols-[0.82fr_1.18fr]">
             <div>
               <SectionIntro kicker={c.workflowKicker} title={c.workflowTitle} text={c.workflowSubtitle} />
-              <Button to="/waitlist" variant="outline" className="mt-8">{c.openTeam}<ArrowRight size={15} /></Button>
+              <Button to="/app" variant="outline" className="mt-8">{c.openTeam}<ArrowRight size={15} /></Button>
             </div>
             <WorkflowPreview copy={c.previewOps} />
           </div>
@@ -573,7 +573,7 @@ export default function LandingPage() {
               <h2 className="mt-6 text-[clamp(2.2rem,4.5vw,4rem)] font-black leading-[1.02] text-text">{c.finalTitle}</h2>
               <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{c.finalText}</p>
             </div>
-            <Button to="/waitlist" size="lg" className="relative mt-8 !bg-cyan !bg-none !text-[#041018] shadow-none hover:!brightness-110 lg:mt-0">{c.primaryCta}<ArrowRight size={17} /></Button>
+            <Button to="/app" size="lg" className="relative mt-8 !bg-cyan !bg-none !text-[#041018] shadow-none hover:!brightness-110 lg:mt-0">{c.primaryCta}<ArrowRight size={17} /></Button>
           </div>
         </section>
       </main>

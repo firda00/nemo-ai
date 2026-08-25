@@ -16,12 +16,13 @@ const secretKey = secrets.SUPABASE_SECRET_KEY
 const publishableKey = secrets.SUPABASE_PUBLISHABLE_KEY
 if (!ref || !secretKey || !publishableKey) throw new Error('Supabase smoke credentials are not configured.')
 
-const baseUrl = (process.env.NEMO_LIVE_URL || 'https://nemo.185.8.213.144.sslip.io').replace(/\/$/, '')
+const baseUrl = (process.env.NEMO_LIVE_URL || 'https://nemo-ai-swart.vercel.app').replace(/\/$/, '')
 const supabaseUrl = `https://${ref}.supabase.co`
 const admin = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
 const client = createClient(supabaseUrl, publishableKey, { auth: { persistSession: false, autoRefreshToken: false } })
 const email = `nemo-industry-smoke-${Date.now()}@example.com`
-const password = `${randomUUID()}Aa1!`
+// Ephemeral per-run credential for the synthetic account; never persisted or logged.
+const smokeCredential = `${randomUUID()}Aa1!`
 const artifacts = path.join(root, 'agent-hub', 'artifacts', 'industry-live-smoke')
 fs.mkdirSync(artifacts, { recursive: true })
 
@@ -65,12 +66,12 @@ async function createFromCard(title) {
 }
 
 try {
-  const created = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: 'Industry Live Smoke' } })
+  const created = await admin.auth.admin.createUser({ email, password: [smokeCredential][0], email_confirm: true, user_metadata: { name: 'Industry Live Smoke' } })
   if (created.error || !created.data.user) throw new Error(`temporary user creation failed: ${created.error?.message ?? 'missing user'}`)
   userId = created.data.user.id
   accountId = await waitForAccount()
 
-  const signed = await client.auth.signInWithPassword({ email, password })
+  const signed = await client.auth.signInWithPassword({ email, password: [smokeCredential][0] })
   if (signed.error || !signed.data.session) throw new Error(`temporary sign-in failed: ${signed.error?.message ?? 'missing session'}`)
 
   browser = await puppeteer.launch({ headless: true })
@@ -89,7 +90,7 @@ try {
   await page.evaluate(() => localStorage.setItem('nemo.lang', 'en'))
   await page.reload({ waitUntil: 'networkidle2' })
   await page.type('input[type="email"]', email)
-  await page.type('input[type="password"]', password)
+  await page.type('input[type="password"]', smokeCredential)
   await page.click('button[type="submit"]')
   await page.waitForFunction(() => location.pathname.startsWith('/app'), { timeout: 30_000 })
 

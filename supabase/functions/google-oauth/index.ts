@@ -21,7 +21,7 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ENV_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const ENV_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
-const APP_URL = Deno.env.get('APP_URL') ?? 'http://nemo.185.8.213.144.sslip.io'
+const APP_URL = Deno.env.get('APP_URL') ?? 'https://nemo-ai-swart.vercel.app'
 const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-oauth/callback`
 
 const SCOPES = [

@@ -1,5 +1,5 @@
 /* Nemo AI website chat widget — embed with:
-   <script src="https://nemo.185.8.213.144.sslip.io/widget.js" data-channel="YOUR_CHANNEL_ID"></script>
+   <script src="https://YOUR_NEMO_GATEWAY/widget.js" data-channel="YOUR_CHANNEL_ID"></script>
    Self-contained, no dependencies. Posts to the widget-webhook and renders the agent reply. */
 (function () {
   // capture config synchronously (document.currentScript is null after this tick)

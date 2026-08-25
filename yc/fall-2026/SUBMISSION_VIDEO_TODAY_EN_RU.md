@@ -48,7 +48,7 @@ Do not claim customers, revenue, pilots, measured savings, autonomous external a
 
 ### Exact On-Screen Steps
 
-1. Open `https://nemo.185.8.213.144.sslip.io/app/autonomous` and sign in to the prepared demo account.
+1. Open `https://nemo-ai-swart.vercel.app/app/autonomous` and sign in to the prepared demo account.
 2. Leave **AI Team** selected, not **One Agent**.
 3. Paste the workflow below into the main task field.
 4. Click the violet arrow button at the right side of the field to run the team architect.
@@ -185,7 +185,7 @@ Create an AI team for handling incoming inquiries for an online school. The team
 ## Pre-Recording Checklist
 
 - Record the English text, not the Russian translation.
-- Use `https://nemo.185.8.213.144.sslip.io/` and a separate demo account.
+- Use `https://nemo-ai-swart.vercel.app/` and a separate demo account.
 - Use only synthetic knowledge and test data.
 - Run the exact scenario three times before recording.
 - Do not show secrets, customer data, GitHub tools, fake MCP endpoints, payment pages, or unverified channels.

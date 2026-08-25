@@ -12,7 +12,7 @@ import { memoryHealthVerdict } from '../_shared/orgMemory.ts'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
-const SITE_URL = (Deno.env.get('SITE_URL') ?? 'https://nemo.185.8.213.144.sslip.io').replace(/\/$/, '')
+const SITE_URL = (Deno.env.get('SITE_URL') ?? 'https://nemo-ai-swart.vercel.app').replace(/\/$/, '')
 const RENDER_WORKER_URL = (Deno.env.get('RENDER_WORKER_URL') ?? '').replace(/\/$/, '')
 const RENDER_SECRET = Deno.env.get('RENDER_SECRET') ?? ''
 const ALERT_BOT = Deno.env.get('OPS_ALERT_BOT_TOKEN') ?? ''

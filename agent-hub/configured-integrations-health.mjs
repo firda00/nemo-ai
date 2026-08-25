@@ -90,7 +90,7 @@ if (secrets.OPENROUTER_API_KEY) {
   }
 }
 
-const liveUrl = (process.env.NEMO_LIVE_URL || 'https://nemo.185.8.213.144.sslip.io').replace(/\/$/, '')
+const liveUrl = (process.env.NEMO_LIVE_URL || 'https://nemo-ai-swart.vercel.app').replace(/\/$/, '')
 try {
   const response = await fetch(liveUrl, { signal: AbortSignal.timeout(12_000) })
   const html = await response.text()

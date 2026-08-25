@@ -5,7 +5,7 @@ into a 1080×1920 MP4 short (Remotion + ffmpeg), uploads it to Supabase Storage,
 
 Runs on the VPS **outside** Supabase (Remotion needs Node + headless Chromium). It is isolated from the
 other sites on the box via a dedicated systemd service with memory/CPU caps and a localhost-only bind;
-nginx exposes it only under `https://nemo.185.8.213.144.sslip.io/render-api/` behind a shared secret.
+the gateway exposes it only under `${NEMO_API_GATEWAY_URL}/render-api/` behind a shared secret.
 
 ## API (all requests need header `x-render-secret: <RENDER_SECRET>`)
 

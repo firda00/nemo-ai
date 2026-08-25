@@ -12,13 +12,12 @@ import { callNemo, forgetSession, readSession, reportResult, saveSession, sessio
 /**
  * Кто вправе говорить с расширением.
  *
- * Список точный, и это не перестраховка. `*.sslip.io` добавить нельзя: sslip.io это служба
- * подстановочного DNS, где `<любой-ip>.sslip.io` указывает на этот самый адрес. «Все поддомены
- * sslip.io» означало бы «любая страница, которую кто угодно поднял у себя».
+ * Список точный, и это не перестраховка. Wildcard-DNS origin добавлять нельзя: иначе доверенной
+ * станет любая страница, которую кто угодно поднял на произвольном IP.
  */
 const ALLOWED_ORIGINS = [
-  'https://nemo.185.8.213.144.sslip.io',
-  'http://nemo.185.8.213.144.sslip.io',
+  'https://nemo-ai-swart.vercel.app',
+  'https://nemo-ai-firda00s-projects.vercel.app',
 ]
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {

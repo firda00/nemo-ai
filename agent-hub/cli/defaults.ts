@@ -31,4 +31,4 @@ export const SUPABASE_ANON_KEY = pick(
 export const APP_URL = pick('NEMO_APP_URL', 'https://nemo-ai-firda00s-projects.vercel.app')
 
 /** Шлюз: виджет и служебные ручки. */
-export const GATEWAY_URL = pick('NEMO_GATEWAY_URL', 'https://nemo.185.8.213.144.sslip.io')
+export const GATEWAY_URL = pick('NEMO_GATEWAY_URL', 'https://nemo-ai-swart.vercel.app')

@@ -12,7 +12,7 @@ import { blocksExternalActions } from '../_shared/productionE2E.ts'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
-const NEMO_URL = Deno.env.get('APP_URL') ?? 'https://nemo.185.8.213.144.sslip.io'
+const NEMO_URL = Deno.env.get('APP_URL') ?? 'https://nemo-ai-swart.vercel.app'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any
 const isFreeTier = (p?: string) => !p || ['free', 'beta', ''].includes(String(p))

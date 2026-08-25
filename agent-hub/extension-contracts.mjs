@@ -31,7 +31,7 @@ const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 
-const NEMO_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
+const NEMO_ORIGIN = 'https://nemo-ai-swart.vercel.app'
 
 // Только тело обработчика agent_plan, а не «всё после первого упоминания строки». Голая строка
 // `action === 'agent_plan'` встречается ещё раз в общем списке разрешённых действий (строка ~246,
@@ -143,7 +143,7 @@ const contracts = [
     && background.includes('ALLOWED_ORIGINS.includes(origin)')
     && background.indexOf('forbidden_origin') < background.indexOf('saveSession(message.session)')],
 
-  // sslip.io — служба подстановочного DNS: <любой-ip>.sslip.io указывает на этот адрес, то есть
+  // Wildcard-DNS origin нельзя разрешать: любой IP может стать доверенным origin, то есть
   // «все поддомены» означало бы «любая страница, которую кто угодно поднял у себя».
   ['no wildcard origin may talk to the extension',
     manifest.externally_connectable.matches.every((one) => !one.includes('*.'))],

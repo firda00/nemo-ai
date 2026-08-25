@@ -62,7 +62,7 @@ export function MarketingFooter() {
         <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-white/[0.08] pt-6 text-xs text-fog sm:flex-row">
           <span>© {year} Nemo AI · {t('landing.footer.rights')}</span>
           <span>{t('landing.footer.madeBy')}</span>
-          <Link to="/auth" className="text-fog hover:text-text">{t('nav.login')}</Link>
+          <Link to="/app" className="text-fog hover:text-text">{t('nav.login')}</Link>
         </div>
       </div>
     </footer>

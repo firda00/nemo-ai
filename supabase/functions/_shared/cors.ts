@@ -5,7 +5,7 @@ export const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-const PROD_ORIGIN = 'https://nemo.185.8.213.144.sslip.io'
+const PROD_ORIGIN = 'https://nemo-ai-swart.vercel.app'
 
 /**
  * Расширение-загрузчик. Origin у него свой — chrome-extension://<идентификатор>.
@@ -27,7 +27,7 @@ const EXTENSION_ORIGIN = 'chrome-extension://mafjjfinnlpigcbmhiabkiamnhnmgcca'
  * уходил вовсе, и наружу это выглядело как «не удалось сохранить onboarding» — хотя точно так же
  * молча не работали подключение Telegram, провайдеров, оркестратор и инструменты агента.
  *
- * Проверено: с localhost и со старого адреса sslip.io предзапрос отдавал 200, с боевого Vercel —
+ * Проверено: с localhost и старого тестового origin предзапрос отдавал 200, с боевого Vercel —
  * 403. Поэтому в разработке всё выглядело исправным.
  *
  * ПОДСТАНОВКИ ВИДА *.vercel.app ЗДЕСЬ НЕДОПУСТИМЫ. Любой человек за пять минут разворачивает свой

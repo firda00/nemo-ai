@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight } from 'lucide-react'
+import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
@@ -11,6 +11,37 @@ import { Button } from '../../components/ui/Button'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { cn } from '../../lib/cn'
+import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
+import { isSupabaseEnabled } from '../../lib/supabase'
+import { BUSINESS_AGENT_PRESETS, guardedPresetRoles, type BusinessAgentPreset, type BusinessPresetId } from '../../data/businessAgentPresets'
+
+type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+
+interface PresetRunState {
+  status: PresetRunStatus
+  artifacts: string[]
+}
+
+const PRESET_ICON = {
+  media: Film,
+  sales: Handshake,
+  finance: Calculator,
+  support: MessagesSquare,
+}
+
+const RUN_LABEL: Record<PresetRunStatus, string> = {
+  idle: 'Готов к запуску',
+  queued: 'В очереди Runtime',
+  running: 'Выполняется',
+  completed: 'Завершено',
+  failed: 'Требует внимания',
+}
+
+function artifactUrls(result: string): string[] {
+  return [...new Set(result.match(/https?:\/\/[^\s)\]}>'"]+/g) ?? [])]
+    .filter((url) => /\.(pdf|mp4|webm|docx|pptx|csv)(\?|$)|\/storage\/|\/object\//i.test(url))
+    .slice(0, 6)
+}
 
 export default function AgentsPage() {
   const { t } = useI18n()
@@ -20,13 +51,54 @@ export default function AgentsPage() {
   const { agents, toggleAgent, duplicateAgent, deleteAgent } = useAgentStore()
   const [menu, setMenu] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<string | null>(null)
+  const [activePresetId, setActivePresetId] = useState<BusinessPresetId | null>(null)
+  const [goal, setGoal] = useState('')
+  const [customPrompt, setCustomPrompt] = useState('')
+  const [model, setModel] = useState('')
+  const [confidenceThreshold, setConfidenceThreshold] = useState(0.9)
+  const [requireCitations, setRequireCitations] = useState(true)
+  const [requireApproval, setRequireApproval] = useState(true)
+  const [runStates, setRunStates] = useState<Partial<Record<BusinessPresetId, PresetRunState>>>({})
   const teamsView = location.pathname.startsWith('/app/teams')
   const visibleAgents = agents.filter((a) => teamsView ? a.type === 'workflow' : a.type !== 'workflow')
 
   const modelLabel = (id: string) => MODELS.find((m) => m.id === id)?.label ?? id
+  const activePreset = BUSINESS_AGENT_PRESETS.find((preset) => preset.id === activePresetId) ?? null
+  const activeRoles = useMemo(() => activePreset ? guardedPresetRoles(activePreset, {
+    customPrompt,
+    confidenceThreshold,
+    requireCitations,
+    requireApproval,
+  }) : [], [activePreset, customPrompt, confidenceThreshold, requireCitations, requireApproval])
+
+  const openPreset = (preset: BusinessAgentPreset) => {
+    setActivePresetId(preset.id)
+    setGoal(preset.defaultGoal)
+    setCustomPrompt('')
+    setModel(preset.defaultModel)
+    setConfidenceThreshold(0.9)
+    setRequireCitations(true)
+    setRequireApproval(true)
+  }
+
+  const onPresetState = useCallback((status: PresetRunStatus) => {
+    if (!activePresetId) return
+    setRunStates((current) => ({
+      ...current,
+      [activePresetId]: { status, artifacts: current[activePresetId]?.artifacts ?? [] },
+    }))
+  }, [activePresetId])
+
+  const onPresetComplete = useCallback((result: string) => {
+    if (!activePresetId) return
+    setRunStates((current) => ({
+      ...current,
+      [activePresetId]: { status: 'completed', artifacts: artifactUrls(result) },
+    }))
+  }, [activePresetId])
 
   return (
-    <div className="container-page max-w-6xl py-8">
+    <div className="container-page max-w-6xl overflow-x-hidden py-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-normal tracking-tight text-text">{teamsView ? t('agentsPage.teamsTitle') : t('agentsPage.agentsTitle')}</h1>
@@ -36,6 +108,65 @@ export default function AgentsPage() {
           <Plus size={16} /> {teamsView ? t('agentsPage.createTeam') : t('agentsPage.createAgent')}
         </Button>
       </div>
+
+      {!teamsView && (
+        <section className="mt-7" aria-labelledby="business-teams-heading">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan">Production teams</p>
+              <h2 id="business-teams-heading" className="mt-1 text-lg font-medium text-text">Боевые команды для бизнеса</h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted">Запускаются через Durable Runtime, используют изолированные compute-профили и передают неподтверждённые решения человеку.</p>
+            </div>
+            <span className={cn('inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs', isSupabaseEnabled ? 'border-teal/25 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber')}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', isSupabaseEnabled ? 'bg-teal' : 'bg-amber')} />
+              {isSupabaseEnabled ? 'Live Runtime' : 'Demo mode'}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {BUSINESS_AGENT_PRESETS.map((preset) => {
+              const Icon = PRESET_ICON[preset.icon]
+              const state = runStates[preset.id] ?? { status: 'idle' as const, artifacts: [] }
+              return (
+                <article key={preset.id} className="card group relative overflow-hidden rounded-2xl p-5">
+                  <div className="absolute inset-x-0 top-0 h-px opacity-80" style={{ background: `linear-gradient(90deg, transparent, ${preset.accent}, transparent)` }} />
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${preset.accent}18`, color: preset.accent }}><Icon size={21} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-medium text-text">{preset.title}</h3>
+                        <span className={cn('rounded-full px-2 py-1 text-[10px] font-medium', state.status === 'completed' ? 'bg-teal/10 text-teal' : state.status === 'failed' ? 'bg-danger/10 text-danger' : state.status === 'running' || state.status === 'queued' ? 'bg-cyan/10 text-cyan' : 'bg-white/5 text-muted')}>{RUN_LABEL[state.status]}</span>
+                      </div>
+                      <p className="mt-1.5 text-sm leading-relaxed text-muted">{preset.description}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-1.5">
+                    {preset.roles.map((role) => <span key={role.name} className="rounded-lg border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-fog">{role.role}</span>)}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {preset.integrations.map((item) => <span key={item} className="rounded-lg px-2 py-1 text-[10px] font-medium" style={{ background: `${preset.accent}10`, color: preset.accent }}>{item}</span>)}
+                  </div>
+
+                  {state.artifacts.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-teal/15 bg-teal/[0.04] p-3">
+                      <p className="flex items-center gap-1.5 text-[11px] font-medium text-teal"><FileCheck2 size={13} /> Артефакты Runtime</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {state.artifacts.map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-cyan hover:underline">Файл {index + 1}<ExternalLink size={11} /></a>)}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-5 flex items-center gap-2">
+                    <Button size="sm" className="flex-1" onClick={() => openPreset(preset)}><Play size={14} /> Запустить задачу</Button>
+                    <button type="button" onClick={() => openPreset(preset)} className="rounded-xl border border-white/10 p-2 text-muted transition hover:border-white/20 hover:text-text" aria-label={`Настроить ${preset.title}`}><Settings2 size={15} /></button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {visibleAgents.length === 0 ? (
         <div className="mt-8">
@@ -181,6 +312,61 @@ export default function AgentsPage() {
           setToDelete(null)
         }}
       />
+
+      {activePreset && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="preset-runner-title">
+          <div className="max-h-[94vh] w-full max-w-4xl overflow-y-auto rounded-t-3xl border border-white/10 bg-panel shadow-2xl sm:rounded-3xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-white/8 bg-panel/95 px-5 py-4 backdrop-blur sm:px-6">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: activePreset.accent }}>Durable team runner</p>
+                <h2 id="preset-runner-title" className="mt-1 text-xl font-medium text-text">{activePreset.title}</h2>
+                <p className="mt-1 text-xs text-muted">{activePreset.roles.map((role) => role.role).join(' → ')}</p>
+              </div>
+              <button type="button" onClick={() => setActivePresetId(null)} className="rounded-xl p-2 text-muted hover:bg-white/5 hover:text-text" aria-label="Закрыть"><X size={19} /></button>
+            </div>
+
+            <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[0.36fr_0.64fr]">
+              <aside className="space-y-4">
+                <div className="rounded-2xl border border-white/8 bg-black/10 p-4">
+                  <h3 className="flex items-center gap-2 text-sm font-medium text-text"><Settings2 size={15} className="text-violet" /> Системные параметры</h3>
+                  <label className="mt-4 block text-xs text-muted">Модель
+                    <select value={model} onChange={(event) => setModel(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
+                      {MODELS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="mt-4 block text-xs text-muted">Дополнение к системному промпту
+                    <textarea value={customPrompt} onChange={(event) => setCustomPrompt(event.target.value)} rows={5} placeholder="Тон, рынок, ограничения, формат результата…" className="mt-1.5 w-full resize-y rounded-xl border border-white/10 bg-bg px-3 py-2 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
+                  </label>
+                  <label className="mt-4 block text-xs text-muted">Порог уверенности: <span className="font-medium text-text">{confidenceThreshold.toFixed(2)}</span>
+                    <input type="range" min="0.75" max="0.99" step="0.01" value={confidenceThreshold} onChange={(event) => setConfidenceThreshold(Number(event.target.value))} className="mt-2 w-full accent-cyan" />
+                  </label>
+                  <label className="mt-4 flex items-start gap-2 text-xs text-muted"><input type="checkbox" checked={requireCitations} onChange={(event) => setRequireCitations(event.target.checked)} className="mt-0.5 accent-cyan" /><span>Требовать источники для внешних фактов</span></label>
+                  <label className="mt-3 flex items-start gap-2 text-xs text-muted"><input type="checkbox" checked={requireApproval} onChange={(event) => setRequireApproval(event.target.checked)} className="mt-0.5 accent-cyan" /><span>Согласовывать внешние действия</span></label>
+                </div>
+                <div className="rounded-2xl border border-cyan/15 bg-cyan/[0.04] p-4">
+                  <p className="flex items-center gap-2 text-xs font-medium text-cyan"><ShieldCheck size={14} /> Anti-hallucination gate</p>
+                  <p className="mt-2 text-xs leading-relaxed text-muted">Источники и расчёты проверяются вторым агентом. Недостающие данные помечаются «Не подтверждено», а confidence ниже порога переводит задачу на согласование.</p>
+                </div>
+              </aside>
+
+              <main className="min-w-0">
+                <AutonomousRunner
+                  goalValue={goal}
+                  onGoalChange={setGoal}
+                  presetSpecs={activeRoles}
+                  contextKey={`business-preset:${activePreset.id}`}
+                  contextHint={`Боевой пресет: ${activePreset.title}. Допустимые compute profiles: ${activePreset.profiles.join(', ')}. Разрешённые интеграции: ${activePreset.integrations.join(', ')}. Fail closed: не выполняй внешние действия без Runtime approval.`}
+                  model={model}
+                  postActions
+                  placeholder="Опишите задачу и приложите подтверждающие файлы…"
+                  onRunStateChange={onPresetState}
+                  onComplete={onPresetComplete}
+                />
+              </main>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

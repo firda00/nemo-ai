@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import puppeteer from 'puppeteer'
 
-const url = (process.env.NEMO_LIVE_URL || 'https://nemo.185.8.213.144.sslip.io').replace(/\/$/, '') + '/pricing'
+const url = (process.env.NEMO_LIVE_URL || 'https://nemo-ai-swart.vercel.app').replace(/\/$/, '') + '/pricing'
 const out = path.resolve('agent-hub/artifacts')
 fs.mkdirSync(out, { recursive: true })
 

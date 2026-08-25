@@ -6,7 +6,7 @@ Goal: show one real workflow from plain-language task to supervised result. Do n
 
 ## Preparation
 
-- Use `https://nemo.185.8.213.144.sslip.io/app/autonomous`.
+- Use `https://nemo-ai-swart.vercel.app/app/autonomous`.
 - Sign in with the dedicated investor demo account.
 - Set the interface language to English.
 - Use the synthetic knowledge file `yc/fall-2026/demo-assets/nemo-demo-academy-faq.txt`.

@@ -1,6 +1,6 @@
 param(
   [string]$RemoteTarget = 'root@185.8.213.144',
-  [string]$LiveUrl = 'https://nemo.185.8.213.144.sslip.io',
+  [string]$LiveUrl = 'https://nemo-ai-swart.vercel.app',
   [string]$SshKey = (Join-Path $env:USERPROFILE '.ssh\nemo_deploy_ed25519')
 )
 

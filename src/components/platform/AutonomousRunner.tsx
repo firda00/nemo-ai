@@ -95,6 +95,9 @@ export function AutonomousRunner({
   onRunSaved,
   goalValue,
   onGoalChange,
+  contextKey,
+  onRunStateChange,
+  onComplete,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -112,6 +115,10 @@ export function AutonomousRunner({
   // can never silently replace text the user already typed.
   goalValue?: string
   onGoalChange?: (value: string) => void
+  /** Stable runtime namespace for reusable launchers that are not persisted departments. */
+  contextKey?: string
+  onRunStateChange?: (status: 'idle' | 'queued' | 'running' | 'completed' | 'failed') => void
+  onComplete?: (result: string) => void
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -191,8 +198,27 @@ export function AutonomousRunner({
   // actually cost instead of the billing page guessing from a constant.
   const runRef = useRef<string | null>(null)
   const workerPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const checkpointContext = departmentId ? `department:${departmentId}` : 'ad-hoc'
+  const checkpointContext = contextKey ?? (departmentId ? `department:${departmentId}` : 'ad-hoc')
   const workerRunStorageKey = `nemo.autonomous.run:${checkpointContext}`
+
+  useEffect(() => {
+    if (running) {
+      onRunStateChange?.(resumeCheckpoint?.status === 'queued' ? 'queued' : 'running')
+      return
+    }
+    if (result) {
+      onRunStateChange?.('completed')
+      onComplete?.(result)
+      return
+    }
+    if (error) {
+      onRunStateChange?.('failed')
+      return
+    }
+    onRunStateChange?.('idle')
+    // Callbacks are notification sinks; their identity must not restart runtime polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, result, error, resumeCheckpoint?.status])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const call = async (b: Record<string, unknown>): Promise<any> => {
