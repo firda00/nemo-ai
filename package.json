@@ -126,6 +126,7 @@
     "test:e2e": "vitest run tests/e2e_multimodal_flow.test.ts",
     "test:self-healing": "vitest run tests/self_healing_loop.test.ts",
     "test:edge": "vitest run tests/edge_sync_bridge.test.ts",
+    "test:dashboard": "vitest run tests/dashboard_api.test.ts",
     "test:amocrm-native": "node --experimental-strip-types agent-hub/amocrm-native-behavior.mjs",
     "test:amocrm-webhook-secret": "node --experimental-strip-types agent-hub/amocrm-webhook-secret-behavior.mjs",
     "amocrm:worker": "node --experimental-strip-types agent-hub/workers/amocrm-enrichment.ts",

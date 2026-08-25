@@ -7,7 +7,7 @@ export function redactText(value: unknown): string {
     .replace(/(?<!\w)(?:\+?\d[\s().-]*){9,15}(?!\w)/g, '[PHONE REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[JWT REDACTED]')
     .replace(/\b(?:Bearer\s+)?(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_.-]{10,}/gi, '[TOKEN REDACTED]')
-    .replace(/\b(?:password|passwd|пароль|cvv|cvc|pin|api[_-]?key|token|secret)\s*[:=]\s*[^\s,;}]+/gi, '$1=[REDACTED]')
+    .replace(/\b(password|passwd|пароль|cvv|cvc|pin|api[_-]?key|token|secret)\s*[:=]\s*[^\s,;}]+/gi, '$1=[REDACTED]')
 }
 
 export function redactValue(value: unknown, depth = 0): unknown {

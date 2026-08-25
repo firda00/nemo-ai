@@ -84,6 +84,34 @@ const app = await buildGateway({
     const allowed = status === 'active' || status === 'trial'
     return { allowed, reason: allowed ? undefined : (status ?? 'no_subscription') }
   },
+  dashboard: {
+    rpc: admin,
+    resolveSession: async (accessToken) => {
+      const { data: { user }, error } = await admin.auth.getUser(accessToken)
+      if (error || !user) return null
+      const { data: profile } = await admin
+        .from('users')
+        .select('account_id, role, is_admin')
+        .eq('id', user.id)
+        .maybeSingle()
+      if (!profile?.account_id || (profile.role !== 'owner' && profile.role !== 'operator') && !profile.is_admin) {
+        return null
+      }
+      return {
+        userId: user.id,
+        accountId: profile.account_id,
+        role: profile.role === 'operator' ? 'operator' as const : 'owner' as const,
+        isAdmin: Boolean(profile.is_admin),
+      }
+    },
+    signArtifact: async (accountId, storagePath, ttlSeconds) => {
+      if (ttlSeconds > 300 || !storagePath.startsWith(`tenants/${accountId}/`)) return null
+      const { data, error } = await admin.storage
+        .from('runtime-artifacts')
+        .createSignedUrl(storagePath, ttlSeconds)
+      return error ? null : (data?.signedUrl ?? null)
+    },
+  },
 }, { logger: true })
 
 await app.listen({ port: PORT, host: HOST })

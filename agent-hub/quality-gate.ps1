@@ -65,6 +65,7 @@ $steps = @(
   @{ Name = 'ADR 001/002 multimodal E2E pipeline'; Command = { npm run test:e2e } },
   @{ Name = 'ADR 002 continuous self-healing loop'; Command = { npm run test:self-healing } },
   @{ Name = 'Production Edge sync and model routing'; Command = { npm run test:edge } },
+  @{ Name = 'Operational dashboard and human approvals'; Command = { npm run test:dashboard } },
   @{ Name = 'amoCRM shadow enrichment worker'; Command = { npm run test:amocrm-enrichment } },
   @{ Name = 'Native amoCRM webhook parser'; Command = { npm run test:amocrm-native } },
   @{ Name = 'amoCRM webhook secret lifecycle'; Command = { npm run test:amocrm-webhook-secret } },

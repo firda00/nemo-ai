@@ -40,6 +40,13 @@ import {
   handleVisionEvent,
   type VisionDeviceResolver,
 } from './vision-gateway.ts'
+import {
+  handleDashboardApprovalDecision,
+  handleDashboardApprovals,
+  handleDashboardMetrics,
+  handleDashboardTrace,
+  type DashboardApiDeps,
+} from './dashboard-api.ts'
 
 /** Столько же, сколько в Edge Function. Расхождение означало бы разную цену за один и тот же прогон. */
 const TOKENS_PER_LEAD = 700
@@ -77,6 +84,8 @@ export interface GatewayDeps {
   now?: () => number
   /** Optional test/provisioning adapter. Production resolves encrypted device identities via RPC. */
   visionDeviceResolver?: VisionDeviceResolver
+  /** Session-authenticated operational dashboard. Production always configures this boundary. */
+  dashboard?: DashboardApiDeps
 }
 
 export interface GatewayResponse {
@@ -557,6 +566,26 @@ export async function buildGateway(deps: GatewayDeps, options: { logger?: boolea
       (request.params as { secret: string }).secret,
       request.body,
     )))
+
+  if (deps.dashboard) {
+    app.get('/v1/dashboard/metrics', async (request, reply) =>
+      send(reply, await handleDashboardMetrics(deps.dashboard!, request.headers.authorization)))
+    app.get('/v1/dashboard/approvals', async (request, reply) =>
+      send(reply, await handleDashboardApprovals(deps.dashboard!, request.headers.authorization)))
+    app.post('/v1/dashboard/approvals/:id/decide', async (request, reply) =>
+      send(reply, await handleDashboardApprovalDecision(
+        deps.dashboard!,
+        request.headers.authorization,
+        (request.params as { id: string }).id,
+        request.body,
+      )))
+    app.get('/v1/dashboard/workflows/:id/trace', async (request, reply) =>
+      send(reply, await handleDashboardTrace(
+        deps.dashboard!,
+        request.headers.authorization,
+        (request.params as { id: string }).id,
+      )))
+  }
 
   // Raw bytes are part of the device HMAC. This parser is encapsulated to this route so existing
   // JSON endpoints keep receiving parsed objects.
