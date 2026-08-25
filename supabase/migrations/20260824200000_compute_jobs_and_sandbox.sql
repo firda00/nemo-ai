@@ -49,7 +49,8 @@ create table runtime.compute_jobs (
     or (status <> 'running' and claim_token is null and lease_holder is null and lease_until is null)
   ),
   constraint compute_jobs_result_integrity_check check (
-    (status in ('pending', 'running') and result_manifest is null and error_code is null)
+    (status = 'pending' and result_manifest is null)
+    or (status = 'running' and result_manifest is null and error_code is null)
     or (status = 'completed' and result_manifest is not null and error_code is null)
     or (status in ('failed', 'dead_letter') and result_manifest is null and error_code is not null)
   )
@@ -221,6 +222,7 @@ begin
         lease_until = v_until,
         lease_epoch = job.lease_epoch + 1,
         attempt_count = job.attempt_count + 1,
+        error_code = null,
         updated_at = v_now
     where job.account_id = v_job.account_id and job.id = v_job.id
     returning job.* into v_job;
@@ -266,9 +268,10 @@ as $$
 declare
   v_job runtime.compute_jobs%rowtype;
   v_run runtime.workflow_runs%rowtype;
+  v_effective_status text := p_status;
 begin
-  if p_status not in ('completed', 'failed', 'dead_letter') then
-    raise exception using errcode = '22023', message = 'invalid terminal compute status';
+  if p_status not in ('pending', 'completed', 'failed', 'dead_letter') then
+    raise exception using errcode = '22023', message = 'invalid compute finish status';
   end if;
   if p_status = 'completed' then
     if p_result_manifest is null or pg_catalog.jsonb_typeof(p_result_manifest) <> 'object'
@@ -294,14 +297,17 @@ begin
     or v_job.lease_until <= clock_timestamp() then
     raise exception using errcode = '55000', message = 'stale or invalid compute lease';
   end if;
+  if p_status = 'pending' and v_job.attempt_count >= v_job.max_attempts then
+    v_effective_status := 'dead_letter';
+  end if;
 
   update runtime.compute_jobs as job
-  set status = p_status,
+  set status = v_effective_status,
       claim_token = null,
       lease_holder = null,
       lease_until = null,
-      result_manifest = case when p_status = 'completed' then p_result_manifest else null end,
-      error_code = case when p_status = 'completed' then null else p_error_code end,
+      result_manifest = case when v_effective_status = 'completed' then p_result_manifest else null end,
+      error_code = case when v_effective_status = 'completed' then null else p_error_code end,
       updated_at = clock_timestamp()
   where job.account_id = p_account_id and job.id = p_job_id;
 
@@ -315,7 +321,7 @@ begin
     v_job.account_id, v_job.workflow_id, 'runtime.compute_job_finished',
     'worker', v_job.lease_holder, v_run.correlation_id,
     pg_catalog.jsonb_build_object(
-      'job_id', v_job.id, 'status', p_status,
+      'job_id', v_job.id, 'status', v_effective_status,
       'error_code', p_error_code,
       'result_hash', case when p_result_manifest is null then null else runtime.sha256_jsonb(p_result_manifest) end
     ),
@@ -323,7 +329,7 @@ begin
   );
 
   return pg_catalog.jsonb_build_object(
-    'status', p_status, 'job_id', p_job_id, 'workflow_id', v_job.workflow_id
+    'status', v_effective_status, 'job_id', p_job_id, 'workflow_id', v_job.workflow_id
   );
 end
 $$;

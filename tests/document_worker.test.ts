@@ -65,7 +65,7 @@ await assert.rejects(
 const root = await mkdtemp(path.join(tmpdir(), 'nemo-document-test-'))
 try {
   const finished: Array<{
-    status: 'completed' | 'failed' | 'dead_letter'
+    status: 'pending' | 'completed' | 'failed' | 'dead_letter'
     manifest: ArtifactManifest | null
     errorCode: string | null
   }> = []
@@ -111,6 +111,22 @@ try {
     }),
     /ARTIFACT_NAME_INVALID/,
   )
+
+  const transientJob = { ...job, job_id: randomUUID(), claim_token: randomUUID() }
+  assert.equal(await processDocumentJob(transientJob, {
+    compute,
+    sink: new LocalArtifactSink(root),
+    render: async () => { throw new DocumentRenderError('DOCUMENT_RENDER_FAILED', 'temporary renderer failure') },
+  }), 'pending')
+  assert.equal(finished.at(-1)?.status, 'pending')
+
+  const exhaustedJob = { ...transientJob, job_id: randomUUID(), claim_token: randomUUID(), attempt_count: 3 }
+  assert.equal(await processDocumentJob(exhaustedJob, {
+    compute,
+    sink: new LocalArtifactSink(root),
+    render: async () => { throw new DocumentRenderError('DOCUMENT_TIMEOUT', 'renderer timeout') },
+  }), 'dead_letter')
+  assert.equal(finished.at(-1)?.status, 'dead_letter')
 } finally {
   await rm(root, { recursive: true, force: true })
 }

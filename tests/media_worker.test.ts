@@ -7,12 +7,12 @@ import path from 'node:path'
 import type { ArtifactManifest, ComputeJob } from '../agent-hub/contracts/sandbox.ts'
 import {
   assertPathInside, buildFfmpegArgs, deriveFfprobePath, MediaJobPayloadSchema,
-  MediaPipelineError, runFfmpegPipeline,
+  MediaPipelineError, runFfmpegPipeline, sanitizedMediaSubprocessEnv,
 } from '../agent-hub/media/ffmpeg-pipeline.ts'
 import { probeCapabilities } from '../agent-hub/media/ffmpeg-engine.ts'
 import { makeSolidPng } from '../agent-hub/media/test-fixtures.mjs'
 import {
-  processMediaJob, validateStorageUrl, type MediaComputeClient,
+  processMediaJob, uploadPresignedArtifact, validateStorageUrl, type MediaComputeClient,
 } from '../agent-hub/workers/media-worker.ts'
 
 const ACCOUNT_ID = '01917b12-3a5c-7d9e-bf33-9118c7e7b801'
@@ -29,13 +29,13 @@ assert.deepEqual(capabilities.missingRequired, [])
 
 const png = makeSolidPng(320, 180, [20, 110, 220])
 const pngHash = createHash('sha256').update(png).digest('hex')
-const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString()
+const expiresAt = new Date(Date.now() + 4 * 60_000).toISOString()
 const payload = MediaJobPayloadSchema.parse({
   kind: 'ffmpeg_assembly',
   output_name: 'stage2.mp4',
   output: {
     storage_path: `tenants/${ACCOUNT_ID}/artifacts/2026/08/24/stage2.mp4`,
-    upload_url: 'https://storage.example.test/upload/stage2',
+    upload_url: `https://storage.example.test/tenants/${ACCOUNT_ID}/artifacts/2026/08/24/stage2.mp4`,
     expires_at: expiresAt,
   },
   assets: [{
@@ -84,6 +84,10 @@ try {
 }
 
 const publicResolver = async () => [{ address: '203.0.113.10' }]
+const childEnv = sanitizedMediaSubprocessEnv({
+  PATH: '/safe/bin', TMPDIR: '/safe/tmp', SUPABASE_SERVICE_ROLE_KEY: 'must-not-leak', OPENROUTER_API_KEY: 'must-not-leak',
+})
+assert.deepEqual(childEnv, { PATH: '/safe/bin', TMPDIR: '/safe/tmp', LC_ALL: 'C' })
 await validateStorageUrl('https://storage.example.test/object', new Set(['storage.example.test']), publicResolver)
 await assert.rejects(
   validateStorageUrl('https://storage.example.test/object', new Set(['storage.example.test']), async () => [{ address: '127.0.0.1' }]),
@@ -93,6 +97,37 @@ await assert.rejects(
   validateStorageUrl('https://evil.example.test/object', new Set(['storage.example.test']), publicResolver),
   /STORAGE_HOST_DENIED/,
 )
+const uploadAbort = new AbortController()
+await assert.rejects(
+  uploadPresignedArtifact({
+    payload: { ...payload, output: { ...payload.output, upload_url: 'https://storage.example.test/tenants/00000000-0000-4000-8000-000000000000/artifacts/2026/08/24/stage2.mp4' } },
+    accountId: ACCOUNT_ID,
+    bytes: new Uint8Array([1]),
+    mimeType: 'video/mp4',
+    sha256: 'a'.repeat(64),
+    allowedHosts: new Set(['storage.example.test']),
+    resolver: publicResolver,
+    fetchImpl: async () => new Response(null, { status: 200 }),
+    signal: uploadAbort.signal,
+    now: new Date(),
+  }),
+  /UPLOAD_TENANT_PATH_MISMATCH/,
+)
+await assert.rejects(
+  uploadPresignedArtifact({
+    payload: { ...payload, output: { ...payload.output, expires_at: new Date(Date.now() + 301_000).toISOString() } },
+    accountId: ACCOUNT_ID,
+    bytes: new Uint8Array([1]),
+    mimeType: 'video/mp4',
+    sha256: 'a'.repeat(64),
+    allowedHosts: new Set(['storage.example.test']),
+    resolver: publicResolver,
+    fetchImpl: async () => new Response(null, { status: 200 }),
+    signal: uploadAbort.signal,
+    now: new Date(),
+  }),
+  /UPLOAD_CAPABILITY_EXPIRED/,
+)
 
 const finished: Array<{ status: string; manifest: ArtifactManifest | null; errorCode: string | null }> = []
 const compute: MediaComputeClient = {
@@ -100,13 +135,15 @@ const compute: MediaComputeClient = {
   async finish(_job, status, manifest, errorCode) { finished.push({ status, manifest, errorCode }) },
 }
 let uploaded = new Uint8Array()
+let uploadChecksum = ''
 const fetchImpl: typeof fetch = async (input, init) => {
   const url = String(input)
   if (url.includes('/download/')) {
     return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.byteLength) } })
   }
-  if (url.includes('/upload/') && init?.method === 'PUT') {
+  if (url.includes(`/tenants/${ACCOUNT_ID}/`) && init?.method === 'PUT') {
     uploaded = new Uint8Array(await new Response(init.body).arrayBuffer())
+    uploadChecksum = new Headers(init.headers).get('x-amz-content-sha256') ?? ''
     return new Response(null, { status: 200 })
   }
   return new Response(null, { status: 404 })
@@ -134,13 +171,44 @@ assert.ok(artifact)
 assert.equal(artifact.mime_type, 'video/mp4')
 assert.equal(artifact.size_bytes, uploaded.byteLength)
 assert.equal(artifact.sha256, createHash('sha256').update(uploaded).digest('hex'))
+assert.equal(uploadChecksum, artifact.sha256)
 assert.ok((artifact.duration_seconds ?? 0) > 0)
 assert.equal(finished[0].manifest?.provenance.seed, 23)
+
+const failingFetch: typeof fetch = async () => new Response(null, { status: 503 })
+const retryRoot = await mkdtemp(path.join(tmpdir(), 'nemo-media-retry-test-'))
+try {
+  const retryJob = {
+    ...job,
+    job_id: randomUUID(),
+    claim_token: randomUUID(),
+    input_payload: { ...payload, output: { ...payload.output, expires_at: new Date(Date.now() + 240_000).toISOString() } },
+  }
+  assert.equal(await processMediaJob(retryJob, {
+    compute, capabilities, ffmpegPath, ffprobePath,
+    storageHosts: new Set(['storage.example.test']), resolver: publicResolver,
+    fetchImpl: failingFetch, workRoot: retryRoot,
+  }), 'pending')
+  assert.equal(finished.at(-1)?.status, 'pending')
+
+  assert.equal(await processMediaJob({ ...retryJob, job_id: randomUUID(), claim_token: randomUUID(), attempt_count: 3 }, {
+    compute, capabilities, ffmpegPath, ffprobePath,
+    storageHosts: new Set(['storage.example.test']), resolver: publicResolver,
+    fetchImpl: failingFetch, workRoot: retryRoot,
+  }), 'dead_letter')
+  assert.equal(finished.at(-1)?.status, 'dead_letter')
+} finally {
+  await rm(retryRoot, { recursive: true, force: true })
+}
 
 const compose = readFileSync(path.join(root, 'docker-compose.yml'), 'utf8')
 assert.match(compose, /compute-media-worker:[\s\S]*mem_limit:\s*1g/)
 assert.match(compose, /compute-media-worker:[\s\S]*pids_limit:\s*64/)
 assert.match(compose, /compute-media-worker:[\s\S]*read_only:\s*true/)
 assert.match(compose, /\/tmp\/nemo-media:rw,noexec,nosuid,nodev,size=805306368/)
+const mediaService = compose.match(/compute-media-worker:[\s\S]*?(?=\n  [a-z][a-z0-9-]+:|\nvolumes:)/)?.[0] ?? ''
+assert.doesNotMatch(mediaService, /SUPABASE_(?:SERVICE_ROLE_KEY|SECRET_KEY)/)
+assert.match(mediaService, /NEMO_COMPUTE_API_URL/)
+assert.match(mediaService, /NEMO_COMPUTE_WORKER_TOKEN/)
 
 console.log('ADR 002 Stage 2 media worker passed: render, ffprobe policy, timeout, traversal, SSRF, upload, and manifest.')

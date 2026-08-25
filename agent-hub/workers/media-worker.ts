@@ -9,9 +9,9 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { createClient } from '@supabase/supabase-js'
 import { ZodError } from 'zod'
 import { ArtifactManifestSchema, ComputeJobSchema, type ArtifactManifest, type ComputeJob } from '../contracts/sandbox.ts'
+import { ScopedComputeApiTransport } from '../compute/scoped-client.ts'
 import { loadLocalEnv } from '../load-local-env.mjs'
 import {
   assertRegularInput, deriveFfprobePath, MediaJobPayloadSchema, MediaPipelineError,
@@ -30,7 +30,7 @@ interface RpcTransport { rpc<T>(name: string, args: Record<string, unknown>): Pr
 
 export interface MediaComputeClient {
   claim(workerId: string, limit: number): Promise<ComputeJob[]>
-  finish(job: ComputeJob, status: 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void>
+  finish(job: ComputeJob, status: 'pending' | 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void>
 }
 
 export interface StorageResolver {
@@ -64,7 +64,7 @@ export class SupabaseMediaComputeClient implements MediaComputeClient {
     return jobs
   }
 
-  async finish(job: ComputeJob, status: 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void> {
+  async finish(job: ComputeJob, status: 'pending' | 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void> {
     const { error } = await this.transport.rpc('runtime_finish_compute_job', {
       p_account_id: job.account_id, p_job_id: job.job_id, p_claim_token: job.claim_token,
       p_expected_epoch: job.lease_epoch, p_status: status, p_result_manifest: manifest, p_error_code: errorCode,
@@ -181,6 +181,7 @@ export async function downloadStorageAsset(options: {
 
 export async function uploadPresignedArtifact(options: {
   payload: MediaJobPayload
+  accountId: string
   bytes: Uint8Array
   mimeType: 'video/mp4' | 'video/webm'
   sha256: string
@@ -191,11 +192,25 @@ export async function uploadPresignedArtifact(options: {
   now: Date
 }): Promise<void> {
   const expiresAt = Date.parse(options.payload.output.expires_at)
-  if (!Number.isFinite(expiresAt) || expiresAt <= options.now.getTime() + 5_000 || expiresAt > options.now.getTime() + 60 * 60_000) {
+  if (!Number.isFinite(expiresAt) || expiresAt <= options.now.getTime() + 5_000 || expiresAt > options.now.getTime() + 300_000) {
     throw new Error('UPLOAD_CAPABILITY_EXPIRED')
   }
   const target = await resolveStorageTarget(options.payload.output.upload_url, options.allowedHosts, options.resolver)
-  const headers = { 'content-type': options.mimeType, 'content-length': String(options.bytes.byteLength) }
+  let targetPath: string
+  try {
+    targetPath = decodeURIComponent(target.url.pathname).replace(/^\/+/, '')
+  } catch {
+    throw new Error('UPLOAD_TENANT_PATH_MISMATCH')
+  }
+  const tenantPrefix = `tenants/${options.accountId}/`
+  if (!targetPath.startsWith(tenantPrefix) || targetPath !== options.payload.output.storage_path) {
+    throw new Error('UPLOAD_TENANT_PATH_MISMATCH')
+  }
+  const headers = {
+    'content-type': options.mimeType,
+    'content-length': String(options.bytes.byteLength),
+    'x-amz-content-sha256': options.sha256,
+  }
   const response = options.fetchImpl
     ? await options.fetchImpl(target.url, { method: 'PUT', redirect: 'error', signal: options.signal, body: options.bytes, headers })
     : await pinnedHttpsRequest({ url: target.url, addresses: target.addresses, method: 'PUT', headers, body: options.bytes, signal: options.signal })
@@ -236,7 +251,14 @@ function errorCode(error: unknown): string {
   return /^[A-Z][A-Z0-9_]{0,63}$/.test(message) ? message : 'MEDIA_RENDER_FAILED'
 }
 
-export async function processMediaJob(job: ComputeJob, dependencies: MediaWorkerDependencies): Promise<'completed' | 'failed' | 'dead_letter'> {
+function isRetryableMediaError(code: string): boolean {
+  return new Set([
+    'MEDIA_TIMEOUT', 'MEDIA_RENDER_FAILED', 'MEDIA_PROBE_FAILED',
+    'STORAGE_DOWNLOAD_FAILED', 'STORAGE_UPLOAD_FAILED', 'COMPUTE_API_UNAVAILABLE',
+  ]).has(code)
+}
+
+export async function processMediaJob(job: ComputeJob, dependencies: MediaWorkerDependencies): Promise<'pending' | 'completed' | 'failed' | 'dead_letter'> {
   if (job.profile !== PROFILE) throw new Error('MEDIA_PROFILE_MISMATCH')
   const controller = new AbortController()
   const deadline = Date.now() + MEDIA_TIMEOUT_MS
@@ -258,7 +280,7 @@ export async function processMediaJob(job: ComputeJob, dependencies: MediaWorker
     const sha256 = createHash('sha256').update(rendered.bytes).digest('hex')
     const mimeType = payload.output_name.toLowerCase().endsWith('.webm') ? 'video/webm' : 'video/mp4'
     await uploadPresignedArtifact({
-      payload, bytes: rendered.bytes, mimeType, sha256,
+      payload, accountId: job.account_id, bytes: rendered.bytes, mimeType, sha256,
       allowedHosts: dependencies.storageHosts, resolver: dependencies.resolver, fetchImpl: dependencies.fetchImpl,
       signal: controller.signal, now: (dependencies.now ?? (() => new Date()))(),
     })
@@ -272,8 +294,11 @@ export async function processMediaJob(job: ComputeJob, dependencies: MediaWorker
       provenance: { engine_version: ENGINE_VERSION, seed: payload.seed },
     })
   } catch (error) {
-    const status = job.attempt_count >= job.max_attempts ? 'dead_letter' : 'failed'
-    await dependencies.compute.finish(job, status, null, controller.signal.aborted ? 'MEDIA_TIMEOUT' : errorCode(error))
+    const code = controller.signal.aborted ? 'MEDIA_TIMEOUT' : errorCode(error)
+    const status = isRetryableMediaError(code)
+      ? (job.attempt_count >= job.max_attempts ? 'dead_letter' : 'pending')
+      : 'failed'
+    await dependencies.compute.finish(job, status, null, code)
     return status
   } finally {
     clearTimeout(timer)
@@ -301,16 +326,15 @@ function defaultFfmpegPath(root: string): string {
 async function main(): Promise<void> {
   const root = path.resolve(import.meta.dirname, '..', '..')
   loadLocalEnv(root)
-  const url = process.env.SUPABASE_URL ?? ''
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY ?? ''
+  const computeApiUrl = process.env.NEMO_COMPUTE_API_URL ?? ''
+  const computeWorkerToken = process.env.NEMO_COMPUTE_WORKER_TOKEN ?? ''
   const storageHosts = new Set((process.env.MEDIA_STORAGE_HOST_ALLOWLIST ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean))
-  if (!url || !serviceKey || !storageHosts.size) throw new Error('Missing Supabase service credentials or MEDIA_STORAGE_HOST_ALLOWLIST')
+  if (!computeApiUrl || !computeWorkerToken || !storageHosts.size) throw new Error('Missing scoped compute API credentials or MEDIA_STORAGE_HOST_ALLOWLIST')
   const ffmpegPath = defaultFfmpegPath(root)
   const capabilities = await probeCapabilities(ffmpegPath)
   if (capabilities.missingRequired.length) throw new Error(`FFmpeg lacks required filters: ${capabilities.missingRequired.join(',')}`)
-  const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const dependencies: MediaWorkerDependencies = {
-    compute: new SupabaseMediaComputeClient(admin as unknown as RpcTransport),
+    compute: new SupabaseMediaComputeClient(new ScopedComputeApiTransport(computeApiUrl, computeWorkerToken)),
     capabilities, ffmpegPath, ffprobePath: process.env.FFPROBE_PATH ?? deriveFfprobePath(ffmpegPath), storageHosts,
     workRoot: process.env.MEDIA_WORK_ROOT,
   }

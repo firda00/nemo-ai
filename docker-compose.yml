@@ -151,8 +151,8 @@ services:
       - FFPROBE_PATH=/usr/bin/ffprobe
       - MEDIA_WORK_ROOT=/tmp/nemo-media
       - MEDIA_STORAGE_HOST_ALLOWLIST=${MEDIA_STORAGE_HOST_ALLOWLIST:?configure exact Object Storage hosts}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - NEMO_COMPUTE_API_URL=${NEMO_COMPUTE_API_URL:?configure the scoped compute broker endpoint}
+      - NEMO_COMPUTE_WORKER_TOKEN=${NEMO_MEDIA_WORKER_TOKEN:?configure a dedicated media worker token}
     networks:
       - nemo_net
   sdr-worker:

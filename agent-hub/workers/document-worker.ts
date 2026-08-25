@@ -4,8 +4,8 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFi
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createClient } from '@supabase/supabase-js'
 import { ZodError, z } from 'zod'
+import { ScopedComputeApiTransport } from '../compute/scoped-client.ts'
 import { ArtifactManifestSchema, ComputeJobSchema, type ArtifactManifest, type ComputeJob } from '../contracts/sandbox.ts'
 import { loadLocalEnv } from '../load-local-env.mjs'
 import { MarpPresentationInputSchema } from '../documents/marp-renderer.ts'
@@ -33,7 +33,7 @@ export interface ComputeRpcTransport {
 
 export interface DocumentComputeClient {
   claim(workerId: string, limit: number): Promise<ComputeJob[]>
-  finish(job: ComputeJob, status: 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void>
+  finish(job: ComputeJob, status: 'pending' | 'completed' | 'failed' | 'dead_letter', manifest: ArtifactManifest | null, errorCode: string | null): Promise<void>
 }
 
 export interface ArtifactSink {
@@ -86,7 +86,7 @@ export class SupabaseDocumentComputeClient implements DocumentComputeClient {
 
   async finish(
     job: ComputeJob,
-    status: 'completed' | 'failed' | 'dead_letter',
+    status: 'pending' | 'completed' | 'failed' | 'dead_letter',
     manifest: ArtifactManifest | null,
     errorCode: string | null,
   ): Promise<void> {
@@ -263,6 +263,10 @@ function failureCode(error: unknown): string {
   return 'DOCUMENT_RENDER_FAILED'
 }
 
+function isRetryableDocumentError(code: string): boolean {
+  return code === 'DOCUMENT_TIMEOUT' || code === 'DOCUMENT_RENDER_FAILED'
+}
+
 export async function processDocumentJob(
   job: ComputeJob,
   dependencies: {
@@ -270,7 +274,7 @@ export async function processDocumentJob(
     sink: ArtifactSink
     render?: typeof renderProfileBDocument
   },
-): Promise<'completed' | 'failed' | 'dead_letter'> {
+): Promise<'pending' | 'completed' | 'failed' | 'dead_letter'> {
   if (job.profile !== PROFILE) throw new Error('DOCUMENT_PROFILE_MISMATCH')
   let manifest: ArtifactManifest
   try {
@@ -300,8 +304,11 @@ export async function processDocumentJob(
       provenance: { engine_version: ENGINE_VERSION, seed: rendered.seed },
     })
   } catch (error) {
-    const status = job.attempt_count >= job.max_attempts ? 'dead_letter' : 'failed'
-    await dependencies.compute.finish(job, status, null, failureCode(error))
+    const code = failureCode(error)
+    const status = isRetryableDocumentError(code)
+      ? (job.attempt_count >= job.max_attempts ? 'dead_letter' : 'pending')
+      : 'failed'
+    await dependencies.compute.finish(job, status, null, code)
     return status
   }
   // Keep the fenced completion outside the render catch: a stale lease must never be rewritten as
@@ -328,11 +335,10 @@ export async function runDocumentBatch(
 async function main(): Promise<void> {
   const root = path.resolve(import.meta.dirname, '..', '..')
   loadLocalEnv(root)
-  const url = process.env.SUPABASE_URL ?? ''
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY ?? ''
-  if (!url || !serviceKey) throw new Error('Missing SUPABASE_URL or service-role key')
-  const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const compute = new SupabaseDocumentComputeClient(admin as unknown as ComputeRpcTransport)
+  const computeApiUrl = process.env.NEMO_COMPUTE_API_URL ?? ''
+  const computeWorkerToken = process.env.NEMO_COMPUTE_WORKER_TOKEN ?? ''
+  if (!computeApiUrl || !computeWorkerToken) throw new Error('Missing scoped compute API credentials')
+  const compute = new SupabaseDocumentComputeClient(new ScopedComputeApiTransport(computeApiUrl, computeWorkerToken))
   const sink = new LocalArtifactSink(process.env.DOCUMENT_ARTIFACT_ROOT ?? path.join(root, 'var', 'document-artifacts'))
   for (;;) {
     try {

@@ -32,7 +32,7 @@ export const ComputeJobSchema = z.object({
   profile: ComputeProfileSchema,
   claim_token: z.string().uuid(),
   lease_epoch: z.number().int().nonnegative(),
-  lease_until: z.string().datetime(),
+  lease_until: z.string().datetime({ offset: true }),
   attempt_count: z.number().int().positive(),
   max_attempts: z.number().int().min(1).max(20),
   input_payload: boundedJsonObject(),
@@ -77,7 +77,7 @@ export const VisionEventSchema = z.object({
   event_id: z.string().regex(UUID_V7, 'event_id must be UUIDv7'),
   account_id: z.string().uuid(),
   device_id: z.string().min(1).max(160).regex(/^[A-Za-z0-9._:-]+$/),
-  timestamp: z.string().datetime({ precision: 3 }),
+  timestamp: z.string().datetime({ precision: 3, offset: true }),
   event_type: z.string().min(1).max(120).regex(/^[A-Z][A-Z0-9_]*$/),
   precision_score: z.number().min(0).max(1),
   bounding_box: z.object({

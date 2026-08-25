@@ -8,6 +8,7 @@
     "click-webhook",
     "commerce-digest",
     "commerce-worker",
+    "compute-worker-api",
     "daily-digest",
     "evolve-agent",
     "follow-up",

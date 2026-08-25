@@ -25,7 +25,7 @@ assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory mus
 // необходимости: ни платёжный провайдер, ни незалогиненный посетитель формы не пришлют JWT
 // Supabase; авторизация своя — Basic/подпись у касс, honeypot + HMAC-лимит с обязательным перцем
 // у waitlist.
-assert.equal(publicFunctions.length, 33)
+assert.equal(publicFunctions.length, 34)
 assert.equal(authenticatedFunctions.length, 49)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
@@ -57,6 +57,12 @@ assert.ok(
   !sdrApiSource.includes('runSdrPipeline'),
   'the gateway must enqueue, never run the multi-minute pipeline inside an Edge Function',
 )
+
+const computeApiSource = fs.readFileSync(path.join(functionsRoot, 'compute-worker-api', 'index.ts'), 'utf8')
+assert.match(computeApiSource, /runtime_claim_compute_jobs/, 'compute broker exposes the fenced claim RPC')
+assert.match(computeApiSource, /runtime_finish_compute_job/, 'compute broker exposes the fenced finish RPC')
+assert.doesNotMatch(computeApiSource, /runtime_enqueue_compute_job/, 'render workers cannot enqueue arbitrary compute jobs')
+assert.match(computeApiSource, /constantTimeTokenMatch/, 'compute broker verifies scoped tokens in constant time')
 
 // Публичная форма waitlist: без перца достаточной длины функция обязана отказывать (503),
 // а не принимать заявки с перебираемыми IP-хэшами.

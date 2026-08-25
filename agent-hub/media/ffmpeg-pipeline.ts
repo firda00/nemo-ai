@@ -112,6 +112,14 @@ export class MediaPipelineError extends Error {
   }
 }
 
+export function sanitizedMediaSubprocessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    PATH: source.PATH || '/usr/bin:/bin',
+    TMPDIR: source.TMPDIR || '/tmp',
+    LC_ALL: 'C',
+  }
+}
+
 export function assertPathInside(root: string, candidate: string): string {
   const resolvedRoot = path.resolve(root)
   const resolved = path.resolve(candidate)
@@ -200,7 +208,13 @@ async function runProcess(command: string, args: string[], timeoutMs: number): P
   let timedOut = false
   let stderr = ''
   const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
-  const child = spawn(command, args, { shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], signal: controller.signal })
+  const child = spawn(command, args, {
+    shell: false,
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    signal: controller.signal,
+    env: sanitizedMediaSubprocessEnv(),
+  })
   child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-MAX_CAPTURE_BYTES) })
   const code = await new Promise<number>((resolve) => {
     let settled = false
@@ -227,7 +241,13 @@ export async function probeMediaOutput(ffprobePath: string, outputPath: string, 
     '-v', 'error', '-select_streams', 'v:0',
     '-show_entries', 'stream=codec_name,width,height,avg_frame_rate,bit_rate:format=duration,bit_rate,format_name',
     '-of', 'json', outputPath,
-  ], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], signal: controller.signal })
+  ], {
+    shell: false,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    signal: controller.signal,
+    env: sanitizedMediaSubprocessEnv(),
+  })
   const stdout: Buffer[] = []
   child.stdout.on('data', (chunk) => stdout.push(chunk))
   const code = await new Promise<number>((resolve) => {

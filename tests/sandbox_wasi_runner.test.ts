@@ -58,6 +58,20 @@ const sanitized = sanitizeSandboxOutput(
 assert.equal(sanitized.includes(syntheticToken), false)
 assert.equal(sanitized.includes('+998901112233'), false)
 assert.match(sanitized, /REDACTED/)
+assert.equal(sanitized.includes('$1='), false)
+
+ComputeJobSchema.parse({
+  account_id: '01917b12-3a5c-7d9e-bf33-9118c7e7b801',
+  job_id: JOB_ID,
+  workflow_id: '01917b12-3a5c-7d9e-bf33-9118c7e7b800',
+  profile: 'PROFILE_A_WASI',
+  claim_token: 'a1b2c3d4-e5f6-4890-abcd-ef1234567890',
+  lease_epoch: 1,
+  lease_until: '2026-08-24T15:00:00.123456+00:00',
+  attempt_count: 1,
+  max_attempts: 3,
+  input_payload: { source: 'console.log(42)', parameters: {} },
+})
 
 ComputeJobSchema.parse({
   account_id: '01917b12-3a5c-7d9e-bf33-9118c7e7b801',

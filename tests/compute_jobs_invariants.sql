@@ -10,6 +10,11 @@ declare
   v_claim record;
   v_second jsonb;
   v_second_claim record;
+  v_retry jsonb;
+  v_retry_claim record;
+  v_reclaimed record;
+  v_cap jsonb;
+  v_cap_claim record;
   v_rejected boolean := false;
 begin
   v_ingest := public.runtime_ingest_event(
@@ -72,6 +77,49 @@ begin
       and status = 'completed' and claim_token is null and result_manifest is not null
   ) then
     raise exception 'compute completion was not persisted atomically';
+  end if;
+
+  v_retry := public.runtime_enqueue_compute_job(
+    '41000000-0000-4000-8000-000000000001',
+    (v_ingest->>'workflow_id')::uuid,
+    'PROFILE_A_WASI',
+    '{"source":"throw new Error()"}'::jsonb
+  );
+  select * into strict v_retry_claim
+  from public.runtime_claim_compute_jobs('wasi-retry-worker-1', 30, 1, 'PROFILE_A_WASI');
+  perform public.runtime_finish_compute_job(
+    v_retry_claim.account_id, v_retry_claim.job_id, v_retry_claim.claim_token, v_retry_claim.lease_epoch,
+    'pending', null, 'SANDBOX_EXECUTION_FAILED'
+  );
+  select * into strict v_reclaimed
+  from public.runtime_claim_compute_jobs('wasi-retry-worker-2', 30, 1, 'PROFILE_A_WASI');
+  if v_reclaimed.job_id <> (v_retry->>'job_id')::uuid or v_reclaimed.attempt_count <> 2 then
+    raise exception 'retryable compute failure was not reclaimed';
+  end if;
+  perform public.runtime_finish_compute_job(
+    v_reclaimed.account_id, v_reclaimed.job_id, v_reclaimed.claim_token, v_reclaimed.lease_epoch,
+    'failed', null, 'SANDBOX_EXECUTION_FAILED'
+  );
+
+  v_cap := public.runtime_enqueue_compute_job(
+    '41000000-0000-4000-8000-000000000001',
+    (v_ingest->>'workflow_id')::uuid,
+    'PROFILE_A_WASI',
+    '{"source":"throw new Error()"}'::jsonb
+  );
+  update runtime.compute_jobs set max_attempts = 1 where id = (v_cap->>'job_id')::uuid;
+  select * into strict v_cap_claim
+  from public.runtime_claim_compute_jobs('wasi-cap-worker', 30, 1, 'PROFILE_A_WASI');
+  perform public.runtime_finish_compute_job(
+    v_cap_claim.account_id, v_cap_claim.job_id, v_cap_claim.claim_token, v_cap_claim.lease_epoch,
+    'pending', null, 'SANDBOX_EXECUTION_FAILED'
+  );
+  if not exists (
+    select 1 from runtime.compute_jobs
+    where id = v_cap_claim.job_id and status = 'dead_letter'
+      and error_code = 'SANDBOX_EXECUTION_FAILED'
+  ) then
+    raise exception 'final retry request was not forced to dead_letter';
   end if;
 
   v_second := public.runtime_enqueue_compute_job(
