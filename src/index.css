@@ -330,62 +330,6 @@
   }
 }
 
-@keyframes officeFloat {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(0, -5px, 0); }
-}
-
-@keyframes officeBorderFlow {
-  0% { background-position: 0% 50%; filter: brightness(0.9); }
-  50% { background-position: 100% 50%; filter: brightness(1.25); }
-  100% { background-position: 0% 50%; filter: brightness(0.9); }
-}
-
-@keyframes officeCableFlow {
-  to { stroke-dashoffset: -42; }
-}
-
-@keyframes officeSpeechIn {
-  0% { opacity: 0; transform: translateY(6px) scale(0.96); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes officeTypewriter {
-  from { clip-path: inset(0 100% 0 0); }
-  to { clip-path: inset(0 0 0 0); }
-}
-
-.office-float {
-  animation: officeFloat 6s ease-in-out infinite;
-  will-change: transform;
-}
-
-.office-active-border {
-  background-size: 260% 100%;
-  animation: officeFloat 5s ease-in-out infinite, officeBorderFlow 3.2s linear infinite;
-}
-
-.office-data-stream {
-  stroke-dasharray: 12 14;
-  animation: officeCableFlow 1.4s linear infinite;
-  filter: drop-shadow(0 0 5px var(--office-accent));
-}
-
-.office-data-stream-fast {
-  stroke-dasharray: 4 30;
-  animation-duration: 0.8s;
-}
-
-.office-speech {
-  animation: officeSpeechIn 300ms ease-out both;
-}
-
-.office-typewriter {
-  display: inline-block;
-  white-space: nowrap;
-  animation: officeTypewriter 1.3s steps(22, end) 120ms both;
-}
-
 /* Motion is decoration here, never information: nothing in this UI is conveyed only by
    movement, so honouring the OS preference costs the design nothing. The project had no
    guard at all before the 2026.1 interaction layer introduced hover transforms. */

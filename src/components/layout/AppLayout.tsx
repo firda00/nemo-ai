@@ -2,22 +2,44 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent, type CSSProper
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
+  Bot,
+  Users,
+  Wand2,
+  PenLine,
   Building2,
+  BarChart3,
   Archive,
+  Blocks,
+  CreditCard,
+  ClipboardList,
+  ClipboardCheck,
   Activity,
+  Workflow,
+  Wrench,
   Settings as SettingsIcon,
+  ShieldCheck,
   Menu,
   X,
   LogOut,
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
+  Mail,
+  Database,
+  Brain,
+  MessageSquare,
+  LineChart,
+  FlaskConical,
+  Megaphone,
+  Send,
+  Repeat,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
 import { useAgentStore } from '../../store/useAgentStore'
 import { Logo } from '../ui/Logo'
 import { LanguageToggle } from '../ui/LanguageToggle'
+import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { FeedbackWidget } from '../platform/FeedbackWidget'
 import { featureEnabled, trackEvent } from '../../lib/telemetry'
@@ -25,11 +47,13 @@ import { featureEnabled, trackEvent } from '../../lib/telemetry'
 export function AppLayout() {
   const { t } = useI18n()
   const { user, logout, isAuthed } = useAuth()
+  const isAdmin = useAgentStore((s) => s.isAdmin)
   const navigate = useNavigate()
   const location = useLocation()
   const hydrate = useAgentStore((s) => s.hydrate)
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [emailEnabled, setEmailEnabled] = useState(true)
   const [feedbackEnabled, setFeedbackEnabled] = useState(true)
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
@@ -83,18 +107,50 @@ export function AppLayout() {
 
   useEffect(() => {
     if (!isAuthed) return
+    void featureEnabled('email_assistant', user?.id).then(setEmailEnabled)
     void featureEnabled('feedback_agent', user?.id).then(setFeedbackEnabled)
   }, [isAuthed, user?.id])
 
-  // The product shell exposes four destinations. Legacy routes remain addressable for
-  // backwards-compatible deep links, but no longer compete for attention in the sidebar.
+  // Grouping is useful, but every released workflow must remain reachable.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
-    { title: 'Nemo OS', items: [
-      { to: '/app/office', label: 'Office', icon: Building2 },
-      { to: '/app/library', label: 'Artifacts', icon: Archive },
-      { to: '/app/activity', label: 'Activity & Telemetry', icon: Activity },
-      { to: '/app/settings', label: 'Settings', icon: SettingsIcon },
+      { title: t('appLayout.groupMain'), items: [
+      { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
+      { to: '/app/dialogues', label: t('appLayout.navDialogues'), icon: MessageSquare },
+      { to: '/app/content', label: t('appLayout.navContent'), icon: PenLine },
+      { to: '/app/marketing', label: t('appLayout.navMarketing'), icon: Megaphone },
+      { to: '/app/autopost', label: t('appLayout.navAutopost'), icon: Send },
+      { to: '/app/commerce', label: 'Commerce', icon: Database },
+    ] },
+    { title: t('appLayout.groupAiTeams'), items: [
+      { to: '/app/company-brain', label: t('appLayout.navCompanyBrain'), icon: Building2 },
+      { to: '/app/autonomous', label: t('appLayout.navAutonomous'), icon: Wand2 },
+      { to: '/app/research', label: t('appLayout.navResearch'), icon: FlaskConical },
+      { to: '/app/automations', label: t('appLayout.navAutomations'), icon: Workflow, badge: t('automations.devBadge') },
+      { to: '/app/agents', label: t('mvp.sidebar.agents'), icon: Bot },
+      { to: '/app/teams', label: t('mvp.sidebar.aiTeams'), icon: Users },
+      { to: '/app/integrations', label: t('appLayout.navTools'), icon: Blocks },
+      { to: '/app/tools', label: t('appLayout.navToolsHub'), icon: Wrench },
+      { to: '/app/templates', label: t('mvp.sidebar.templates'), icon: ClipboardList },
+    ] },
+    { title: t('appLayout.groupResults'), items: [
+      // Monitoring (system/site health) is an admin-only view.
+      ...(isAdmin ? [{ to: '/app/monitor', label: t('appLayout.navMonitor'), icon: Activity }] : []),
+      ...(emailEnabled ? [{ to: '/app/email-assistant', label: t('appLayout.navEmailAssistant'), icon: Mail }] : []),
+      { to: '/app/activity', label: t('appLayout.navActivity'), icon: BarChart3 },
+      { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
+      { to: '/app/followups', label: t('appLayout.navFollowups'), icon: Repeat },
+      { to: '/app/approvals', label: 'Approvals', icon: ClipboardCheck },
+      // Рядом с согласованиями: обе страницы про одно — посмотреть, что система сделала или
+      // решила, и возразить. Память, до которой не дойти из меню, неисправима ровно так же,
+      // как память, которой нет.
+      { to: '/app/memory', label: t('appLayout.navMemory'), icon: Brain },
+      { to: '/app/library', label: t('appLayout.navLibrary'), icon: Archive },
+    ] },
+    { title: t('appLayout.groupAccount'), items: [
+      { to: '/app/billing', label: t('appLayout.navBilling'), icon: CreditCard },
+      { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },
+      ...(isAdmin ? [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] : []),
     ] },
   ]
   const nav = navGroups.flatMap((g) => g.items)
@@ -160,8 +216,10 @@ export function AppLayout() {
           </div>
         ))}
       </nav>
-      <div className="border-t border-ice/10 px-5 py-4 text-[11px] leading-relaxed text-fog">
-        Durable Runtime · tenant isolated
+      <div className="border-t border-ice/10 p-3">
+        <Button to="/app/create-team" fullWidth size="sm">
+          {t('mvp.sidebar.createTeam')}
+        </Button>
       </div>
     </div>
   )
