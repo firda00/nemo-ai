@@ -41,7 +41,12 @@ export interface SubtitleStyle {
   outline?: number
   shadow?: number
   marginV?: number
+  playResX?: number
+  playResY?: number
 }
+
+export interface KaraokeWord { text: string; startMs: number; endMs: number }
+export interface ProSubtitleCue extends SubtitleCue { style?: 'standard' | 'karaoke'; words?: KaraokeWord[] }
 
 /**
  * Стиль по умолчанию: то, как выглядят субтитры в коротких видео 2020-х.
@@ -61,6 +66,8 @@ const DEFAULT_STYLE: Required<SubtitleStyle> = {
   outline: 6,
   shadow: 3,
   marginV: Math.round(OUTPUT_HEIGHT * BOTTOM_UI_FRACTION),
+  playResX: OUTPUT_WIDTH,
+  playResY: OUTPUT_HEIGHT,
 }
 
 /**
@@ -139,8 +146,8 @@ export function buildAssHeader(style: Required<SubtitleStyle>): string {
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
-    `PlayResX: ${OUTPUT_WIDTH}`,
-    `PlayResY: ${OUTPUT_HEIGHT}`,
+    `PlayResX: ${style.playResX}`,
+    `PlayResY: ${style.playResY}`,
     'ScaledBorderAndShadow: yes',
     'WrapStyle: 0',
     'YCbCr Matrix: TV.709',
@@ -168,13 +175,15 @@ export function buildAssHeader(style: Required<SubtitleStyle>): string {
  * пересекающиеся реплики в неотсортированном списке дают наложение текста поверх текста — а приходит
  * список из расшифровки, где порядок никто не гарантировал.
  */
-export function buildAssFile(cues: readonly SubtitleCue[], style: SubtitleStyle = {}): string {
+export function buildAssFile(cues: readonly ProSubtitleCue[], style: SubtitleStyle = {}): string {
   const merged: Required<SubtitleStyle> = { ...DEFAULT_STYLE, ...style }
   const ordered = [...cues].sort((a, b) => a.startMs - b.startMs)
 
   const events = ordered.map((cue) => {
     const escaped = escapeAssText(cue.text)
-    const withHighlight = applyHighlight(escaped, cue.highlightWord, merged)
+    const withHighlight = cue.style === 'karaoke' && cue.words?.length
+      ? cue.words.map((word) => `{\\k${Math.max(1, Math.round((word.endMs - word.startMs) / 10))}}${escapeAssText(word.text)}`).join(' ')
+      : applyHighlight(escaped, cue.highlightWord, merged)
     // Появление лёгким увеличением: 120 мс от 92% к 100%. Достаточно, чтобы взгляд зацепился за смену
     // реплики, и мало, чтобы это читалось как анимация ради анимации.
     const entrance = '{\\fscx92\\fscy92\\t(0,120,\\fscx100\\fscy100)}'
@@ -182,6 +191,19 @@ export function buildAssFile(cues: readonly SubtitleCue[], style: SubtitleStyle 
   })
 
   return `${buildAssHeader(merged)}\n${events.join('\n')}\n`
+}
+
+function formatSrtTime(ms: number): string {
+  const value = Math.max(0, Math.round(ms)); const hours = Math.floor(value / 3_600_000)
+  const minutes = Math.floor(value / 60_000) % 60; const seconds = Math.floor(value / 1_000) % 60; const millis = value % 1_000
+  return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':') + `,${String(millis).padStart(3, '0')}`
+}
+
+/** Portable sidecar for players that do not support ASS styling. */
+export function buildSrtFile(cues: readonly ProSubtitleCue[]): string {
+  return [...cues].sort((a, b) => a.startMs - b.startMs).map((cue, index) =>
+    `${index + 1}\n${formatSrtTime(cue.startMs)} --> ${formatSrtTime(cue.endMs)}\n${String(cue.text).replace(/\r?\n/g, ' ')}\n`,
+  ).join('\n')
 }
 
 /**

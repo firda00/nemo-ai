@@ -407,10 +407,11 @@ console.log(JSON.stringify({ labor, materials: parameters.materials, total, curr
 
       const result = await new SubagentSupervisor(executor).run([
         { id: 'estimate', role: 'FINANCE_ANALYST', input: { profile: 'PROFILE_A_WASI', job_id: randomUUID() } },
-        { id: 'proposal', role: 'MARKETER', input: { profile: 'PROFILE_B_DOCS', job_id: randomUUID() } },
+        { id: 'proposal', role: 'MARKETER', input: { profile: 'PROFILE_B_DOCS', job_id: randomUUID() }, dependsOn: ['estimate'] },
         { id: 'media', role: 'MARKETER', input: { profile: 'PROFILE_C_BROWSER', job_id: randomUUID() } },
       ])
       expect(result.branches.map((branch) => branch.status)).toEqual(['completed', 'completed', 'completed'])
+      expect(result.branches.find((branch) => branch.taskId === 'proposal')?.status).toBe('completed')
       expect(result.merged.merge_marker).toBe('media')
       expect(result.merged.estimate).toEqual({ labor: 875_000, materials: 450_000, total: 1_325_000, currency: 'UZS' })
       const estimateManifest = ArtifactManifestSchema.parse(result.merged.estimate_manifest)

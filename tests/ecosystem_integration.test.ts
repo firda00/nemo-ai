@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { compressContext } from '../agent-hub/llm/token-optimizer.ts'
-import { CodebaseKnowledgeGraph } from '../agent-hub/memory/codebase-graph.ts'
-import { AGENCY_ROLES, AgencyRoleSchema, canRoleUseProfile } from '../agent-hub/skills/agency-roles.ts'
+import { CodebaseKnowledgeGraph, indexCodebaseGraph } from '../agent-hub/memory/codebase-graph.ts'
+import { AGENCY_ROLES, AGENCY_ROLE_COUNT, AgencyRoleSchema, canRoleUseProfile, getAgencyRolesByDepartment } from '../agent-hub/skills/agency-roles.ts'
 import { SubagentSupervisor, type SubagentExecutor } from '../agent-hub/orchestration/subagent-supervisor.ts'
 import { createStoryboardManifest } from '../agent-hub/media/storyboard-engine.ts'
 import { MediaJobPayloadSchema } from '../agent-hub/media/ffmpeg-pipeline.ts'
@@ -20,6 +20,11 @@ assert.equal(compressed.messages.at(-1)?.content, 'current request')
 assert.ok(compressed.metrics.savedEstimatedTokens > 0)
 assert.ok(compressed.metrics.estimationRatio > 0 && compressed.metrics.estimationRatio <= 1)
 assert.equal(compressed.metrics.budgetExceeded, false)
+assert.equal(compressed.cachePlan.prefixMessageCount, 1)
+assert.match(compressed.cachePlan.prefixSha256, /^[a-f0-9]{64}$/)
+
+const jsonCompressed = compressContext([{ role: 'user', content: '```json\n{ "schema": { "type": "object" }, "required": ["id"] }\n```' }])
+assert.match(jsonCompressed.messages[0].content, /\{"schema":\{"type":"object"\},"required":\["id"\]\}/)
 
 const formatted = compressContext([
   { role: 'system', content: 'critical' },
@@ -47,8 +52,16 @@ assert.ok(relevant.nodes.some((node) => node.id === 'rpc:claim'))
 assert.ok(relevant.nodes.some((node) => node.id === 'table:jobs'))
 assert.equal(relevant.nodes.some((node) => node.id === 'file:unrelated'), false)
 assert.ok(relevant.nodes.length <= 4)
+assert.ok(graph.findDependencyPath('file:runtime', 'table:jobs'))
+const indexedGraph = await indexCodebaseGraph(process.cwd())
+assert.equal(indexedGraph.nodes.filter((node) => node.type === 'Migration').length, 157)
+assert.ok(indexedGraph.nodes.some((node) => node.type === 'Policy'))
+assert.ok(indexedGraph.nodes.some((node) => node.type === 'RPC'))
 
 for (const role of Object.values(AGENCY_ROLES)) AgencyRoleSchema.parse(role)
+assert.equal(AGENCY_ROLE_COUNT, 232)
+assert.equal(new Set(Object.values(AGENCY_ROLES).map((role) => role.department)).size, 16)
+assert.equal(getAgencyRolesByDepartment('MEDIA_PRODUCTION').length, 15)
 assert.equal(canRoleUseProfile('MARKETER', 'PROFILE_C_BROWSER'), true)
 assert.equal(canRoleUseProfile('MARKETER', 'PROFILE_A_WASI'), false)
 assert.equal(canRoleUseProfile('FINANCE_ANALYST', 'PROFILE_A_WASI'), true)
@@ -81,6 +94,26 @@ assert.equal(supervised.branches[1].status, 'completed')
 assert.equal(supervised.branches[2].status, 'timed_out')
 assert.equal(supervised.merged.shared, 'second-by-order')
 assert.equal(supervised.merged.timeout, undefined)
+
+const dagExecutor: SubagentExecutor = async (task) => {
+  if (task.id === 'failed_source') throw new Error('planned')
+  return { [task.id]: Object.keys(task.dependencies).sort() }
+}
+const dag = await new SubagentSupervisor(dagExecutor).run([
+  { id: 'finance', role: 'FINANCE_ANALYST', input: {} },
+  { id: 'script', role: 'MARKETER', input: {} },
+  { id: 'proposal', role: 'MARKETER', input: {}, dependsOn: ['finance'] },
+  { id: 'failed_source', role: 'PYTHON_ENGINEER', input: {} },
+  { id: 'blocked', role: 'MARKETER', input: {}, dependsOn: ['failed_source'] },
+  { id: 'resilient', role: 'MARKETER', input: {}, dependsOn: ['failed_source'], dependencyPolicy: 'all_settled' },
+])
+assert.deepEqual(dag.merged.proposal, ['finance'])
+assert.equal(dag.branches.find((branch) => branch.taskId === 'blocked')?.status, 'skipped')
+assert.equal(dag.branches.find((branch) => branch.taskId === 'resilient')?.status, 'completed')
+await assert.rejects(() => new SubagentSupervisor(dagExecutor).run([
+  { id: 'cycle_a', role: 'MARKETER', input: {}, dependsOn: ['cycle_b'] },
+  { id: 'cycle_b', role: 'MARKETER', input: {}, dependsOn: ['cycle_a'] },
+]), /SUBAGENT_DAG_CYCLE/)
 
 const defensiveExecutor: SubagentExecutor = async (task) => {
   if (task.id === 'oversized') return { value: 'x'.repeat(65 * 1024) }
@@ -120,6 +153,7 @@ const storyboardTemplate = {
   height: 1080,
   fps: 30,
   seconds_per_scene: 4,
+  format_preset: 'LANDSCAPE_16_9',
 } as const
 const storyboard = createStoryboardManifest('Opening problem\n\nNemo solves it', storyboardTemplate)
 MediaJobPayloadSchema.parse(storyboard)
@@ -129,6 +163,14 @@ assert.equal(storyboard.clips.reduce((sum, clip) => sum + clip.duration_seconds,
 assert.equal(storyboard.width, 1920)
 assert.equal(storyboard.height, 1080)
 assert.ok(storyboard.output.storage_path.startsWith(`tenants/${accountId}/artifacts/`))
+
+const proStoryboard = createStoryboardManifest({
+  title: 'Pro montage',
+  scenes: [{ asset_id: 'scene_1', duration_seconds: 4, overlay: 'From 120 USD', transition: { type: 'crossfade', duration_seconds: 0.5 }, word_timings: [{ text: 'From', start_ms: 0, end_ms: 400 }, { text: '120', start_ms: 400, end_ms: 900 }] }, { asset_id: 'scene_2', duration_seconds: 4, overlay: 'Ready today', image_overlays: [{ asset_id: 'scene_1', start_ms: 100, end_ms: 900, x: 20, y: 20, width: 200, height: 100 }] }],
+}, storyboardTemplate)
+assert.equal(proStoryboard.clips[0].transition?.type, 'crossfade')
+assert.equal(proStoryboard.subtitles[0].style, 'karaoke')
+assert.equal(proStoryboard.overlays[0].start_ms, 4_100)
 
 assert.throws(() => createStoryboardManifest({
   title: 'Too long',

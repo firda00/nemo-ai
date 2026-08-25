@@ -238,8 +238,11 @@ async function materializePayload(
   let subtitlesPath: string | null = null
   if (payload.subtitles.length) {
     subtitlesPath = path.join(workDirectory, 'subtitles.ass')
-    const cues = payload.subtitles.map((cue) => ({ startMs: cue.start_ms, endMs: cue.end_ms, text: cue.text }))
-    await writeFile(subtitlesPath, buildAssFile(cues), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    const cues = payload.subtitles.map((cue) => ({
+      startMs: cue.start_ms, endMs: cue.end_ms, text: cue.text, style: cue.style,
+      words: cue.words?.map((word) => ({ text: word.text, startMs: word.start_ms, endMs: word.end_ms })),
+    }))
+    await writeFile(subtitlesPath, buildAssFile(cues, { playResX: payload.width, playResY: payload.height }), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
   }
   return { assets, subtitlesPath, outputPath: path.join(workDirectory, payload.output_name), workDirectory }
 }

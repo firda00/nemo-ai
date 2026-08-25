@@ -20,21 +20,23 @@ export const SubagentTaskSchema = z.object({
   role: AgencyRoleIdSchema,
   input: BoundedRecordSchema,
   timeoutMs: z.number().int().min(10).max(120_000).default(30_000),
+  dependsOn: z.array(z.string().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/)).max(MAX_BRANCHES).default([]),
+  dependencyPolicy: z.enum(['all_completed', 'all_settled']).default('all_completed'),
 }).strict()
 
 export type SubagentTask = z.infer<typeof SubagentTaskSchema>
 
 export type SubagentExecutor = (
-  task: Readonly<{ id: string; role: AgencyRoleId; input: Readonly<Record<string, unknown>> }>,
+  task: Readonly<{ id: string; role: AgencyRoleId; input: Readonly<Record<string, unknown>>; dependencies: Readonly<Record<string, SubagentBranchResult>> }>,
   signal: AbortSignal,
 ) => Promise<Record<string, unknown>>
 
 export interface SubagentBranchResult {
   taskId: string
   role: AgencyRoleId
-  status: 'completed' | 'failed' | 'timed_out'
+  status: 'completed' | 'failed' | 'timed_out' | 'skipped'
   output?: Record<string, unknown>
-  errorCode?: 'SUBAGENT_FAILED' | 'SUBAGENT_TIMEOUT' | 'SUBAGENT_RESULT_INVALID'
+  errorCode?: 'SUBAGENT_FAILED' | 'SUBAGENT_TIMEOUT' | 'SUBAGENT_RESULT_INVALID' | 'SUBAGENT_DEPENDENCY_FAILED'
 }
 
 export interface SupervisorArtifact {
@@ -57,7 +59,7 @@ function safeResult(value: unknown): Record<string, unknown> {
   return output
 }
 
-async function executeBranch(task: SubagentTask, executor: SubagentExecutor): Promise<SubagentBranchResult> {
+async function executeBranch(task: SubagentTask, dependencies: Record<string, SubagentBranchResult>, executor: SubagentExecutor): Promise<SubagentBranchResult> {
   const controller = new AbortController()
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -70,7 +72,7 @@ async function executeBranch(task: SubagentTask, executor: SubagentExecutor): Pr
   })
   try {
     const output = safeResult(await Promise.race([
-      executor(Object.freeze({ id: task.id, role: task.role, input: Object.freeze({ ...task.input }) }), controller.signal),
+      executor(Object.freeze({ id: task.id, role: task.role, input: Object.freeze({ ...task.input }), dependencies: Object.freeze({ ...dependencies }) }), controller.signal),
       timeout,
     ]))
     return { taskId: task.id, role: task.role, status: 'completed', output }
@@ -96,7 +98,26 @@ export class SubagentSupervisor {
   async run(rawTasks: readonly SubagentTask[]): Promise<SupervisorArtifact> {
     const tasks = z.array(SubagentTaskSchema).min(1).max(MAX_BRANCHES).parse(rawTasks)
     if (new Set(tasks.map((task) => task.id)).size !== tasks.length) throw new Error('SUBAGENT_TASK_ID_DUPLICATE')
-    const branches = await Promise.all(tasks.map((task) => executeBranch(task, this.executor)))
+    const ids = new Set(tasks.map((task) => task.id))
+    for (const task of tasks) {
+      if (new Set(task.dependsOn).size !== task.dependsOn.length || task.dependsOn.includes(task.id)) throw new Error('SUBAGENT_DAG_INVALID')
+      if (task.dependsOn.some((dependency) => !ids.has(dependency))) throw new Error('SUBAGENT_DAG_UNKNOWN_DEPENDENCY')
+    }
+    const pending = new Set(tasks.map((task) => task.id))
+    const results = new Map<string, SubagentBranchResult>()
+    while (pending.size) {
+      const ready = tasks.filter((task) => pending.has(task.id) && task.dependsOn.every((dependency) => results.has(dependency)))
+      if (!ready.length) throw new Error('SUBAGENT_DAG_CYCLE')
+      const wave = await Promise.all(ready.map(async (task) => {
+        const dependencies = Object.fromEntries(task.dependsOn.map((id) => [id, results.get(id)!]))
+        if (task.dependencyPolicy === 'all_completed' && Object.values(dependencies).some((dependency) => dependency.status !== 'completed')) {
+          return { taskId: task.id, role: task.role, status: 'skipped', errorCode: 'SUBAGENT_DEPENDENCY_FAILED' } as SubagentBranchResult
+        }
+        return await executeBranch(task, dependencies, this.executor)
+      }))
+      for (const branch of wave) { results.set(branch.taskId, branch); pending.delete(branch.taskId) }
+    }
+    const branches = tasks.map((task) => results.get(task.id)!)
     // Merge only after every branch settles, in caller-defined order. Completion timing cannot
     // change the winner for a shallow-key collision.
     const merged: Record<string, unknown> = {}

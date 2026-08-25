@@ -6,6 +6,8 @@ import { killTree, type FfmpegCapabilities } from './ffmpeg-engine.ts'
 import { escapeFilterPath } from './subtitles.ts'
 
 export const MEDIA_MEMORY_CEILING_BYTES = 1024 * 1024 * 1024
+/** DB/RPC compatibility is PROFILE_C_BROWSER; product terminology is PROFILE_C_MEDIA. */
+export const PROFILE_C_MEDIA = 'PROFILE_C_BROWSER' as const
 export const MEDIA_TIMEOUT_MS = 120_000
 export const MAX_MEDIA_OUTPUT_BYTES = 256 * 1024 * 1024
 const MAX_CAPTURE_BYTES = 64 * 1024
@@ -25,13 +27,29 @@ export const MediaAssetSchema = z.object({
 const ClipSchema = z.object({
   asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
   duration_seconds: z.number().positive().min(0.1).max(120),
+  transition: z.object({ type: z.enum(['cut', 'fade', 'crossfade']), duration_seconds: z.number().min(0.1).max(3).default(0.5) }).strict().optional(),
 }).strict()
 
+const WordTimingSchema = z.object({ text: z.string().min(1).max(80), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive() }).strict()
 const SubtitleSchema = z.object({
   start_ms: z.number().int().nonnegative(),
   end_ms: z.number().int().positive(),
   text: z.string().min(1).max(300),
-}).strict().refine((cue) => cue.end_ms > cue.start_ms, { message: 'subtitle end must follow start' })
+  style: z.enum(['standard', 'karaoke']).default('standard'),
+  words: z.array(WordTimingSchema).max(80).optional(),
+}).strict().superRefine((cue, context) => {
+  if (cue.end_ms <= cue.start_ms) context.addIssue({ code: z.ZodIssueCode.custom, message: 'subtitle end must follow start' })
+  for (const word of cue.words ?? []) if (word.start_ms < cue.start_ms || word.end_ms > cue.end_ms || word.end_ms <= word.start_ms) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'word timing must be inside subtitle cue', path: ['words'] })
+  }
+})
+
+const OverlaySchema = z.object({
+  asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive(),
+  x: z.number().int().min(0).max(1920), y: z.number().int().min(0).max(1920),
+  width: z.number().int().min(16).max(1920), height: z.number().int().min(16).max(1080),
+}).strict().refine((overlay) => overlay.end_ms > overlay.start_ms, 'overlay end must follow start')
 
 export const MediaJobPayloadSchema = z.object({
   kind: z.literal('ffmpeg_assembly'),
@@ -39,12 +57,17 @@ export const MediaJobPayloadSchema = z.object({
   output: z.object({
     storage_path: StoragePathSchema,
     upload_url: z.string().url().refine((value) => new URL(value).protocol === 'https:', 'HTTPS is required'),
-    expires_at: z.string().datetime(),
+    expires_at: z.string().datetime({ offset: true }),
   }).strict(),
   assets: z.array(MediaAssetSchema).min(1).max(64),
   clips: z.array(ClipSchema).min(1).max(100),
   audio_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  voice_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  background_audio_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  background_volume: z.number().min(0.02).max(0.8).default(0.18),
+  overlays: z.array(OverlaySchema).max(32).default([]),
   subtitles: z.array(SubtitleSchema).max(2_000).default([]),
+  format_preset: z.enum(['LANDSCAPE_16_9', 'VERTICAL_9_16', 'CUSTOM']).default('CUSTOM'),
   width: z.number().int().min(160).max(1920).default(1920),
   height: z.number().int().min(160).max(1920).default(1080),
   fps: z.number().int().min(1).max(60).default(30),
@@ -60,6 +83,10 @@ export const MediaJobPayloadSchema = z.object({
   if (ids.size !== value.assets.length) context.addIssue({ code: z.ZodIssueCode.custom, message: 'asset ids must be unique', path: ['assets'] })
   for (const clip of value.clips) if (!ids.has(clip.asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'clip asset is missing', path: ['clips'] })
   if (value.audio_asset_id && !ids.has(value.audio_asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'audio asset is missing', path: ['audio_asset_id'] })
+  for (const field of ['voice_asset_id', 'background_audio_asset_id'] as const) if (value[field] && !ids.has(value[field]!)) context.addIssue({ code: z.ZodIssueCode.custom, message: `${field} asset is missing`, path: [field] })
+  for (const overlay of value.overlays) if (!ids.has(overlay.asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'overlay asset is missing', path: ['overlays'] })
+  if (value.format_preset === 'LANDSCAPE_16_9' && value.width / value.height !== 16 / 9) context.addIssue({ code: z.ZodIssueCode.custom, message: 'landscape preset requires 16:9', path: ['format_preset'] })
+  if (value.format_preset === 'VERTICAL_9_16' && value.width / value.height !== 9 / 16) context.addIssue({ code: z.ZodIssueCode.custom, message: 'vertical preset requires 9:16', path: ['format_preset'] })
   if (value.clips.reduce((sum, clip) => sum + clip.duration_seconds, 0) > 600) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'media duration exceeds 600 seconds', path: ['clips'] })
   }
@@ -139,7 +166,6 @@ export function buildFfmpegArgs(
   inputs: LocalMediaInputs,
   capabilities: FfmpegCapabilities,
 ): { args: string[]; durationSeconds: number } {
-  const durationSeconds = payload.clips.reduce((sum, clip) => sum + clip.duration_seconds, 0)
   const args = ['-hide_banner', '-nostdin', '-y', '-max_alloc', String(MEDIA_MEMORY_CEILING_BYTES)]
   const videoLabels: string[] = []
   const filters: string[] = []
@@ -166,7 +192,41 @@ export function buildFfmpegArgs(
   })
 
   let videoOut = 'vout'
-  filters.push(`${videoLabels.join('')}concat=n=${videoLabels.length}:v=1:a=0[${videoOut}]`)
+  const transitions = payload.clips.slice(0, -1).map((clip) => clip.transition).filter((transition) => transition && transition.type !== 'cut')
+  let durationSeconds = payload.clips.reduce((sum, clip) => sum + clip.duration_seconds, 0)
+  if (transitions.length) {
+    if (!capabilities.has('xfade')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg xfade filter is required for requested transitions')
+    let previous = 'clip0'
+    let cursor = payload.clips[0].duration_seconds
+    for (let index = 1; index < payload.clips.length; index += 1) {
+      const transition = payload.clips[index - 1].transition
+      const transitionDuration = transition?.type === 'cut' || !transition ? 0.001 : transition.duration_seconds
+      const output = index === payload.clips.length - 1 ? videoOut : `x${index}`
+      const transitionName = transition?.type === 'fade' ? 'fadeblack' : 'fade'
+      const offset = Math.max(0, cursor - transitionDuration)
+      filters.push(`[${previous}][clip${index}]xfade=transition=${transitionName}:duration=${transitionDuration}:offset=${offset}[${output}]`)
+      cursor = offset + payload.clips[index].duration_seconds
+      durationSeconds = cursor
+      previous = output
+    }
+  } else {
+    filters.push(`${videoLabels.join('')}concat=n=${videoLabels.length}:v=1:a=0[${videoOut}]`)
+  }
+
+  let nextInputIndex = payload.clips.length
+  for (let index = 0; index < payload.overlays.length; index += 1) {
+    const overlay = payload.overlays[index]
+    const asset = payload.assets.find((candidate) => candidate.id === overlay.asset_id)
+    const overlayPath = inputs.assets.get(overlay.asset_id)
+    if (!capabilities.has('overlay')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg overlay filter is required for image overlays')
+    if (!asset?.mime_type.startsWith('image/') || !overlayPath) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'overlay must be a materialized image')
+    assertPathInside(inputs.workDirectory, overlayPath)
+    args.push('-loop', '1', '-i', overlayPath)
+    const scaled = `ov${index}`; const composed = `vov${index}`
+    filters.push(`[${nextInputIndex}:v]scale=${overlay.width}:${overlay.height},format=rgba[${scaled}]`)
+    filters.push(`[${videoOut}][${scaled}]overlay=${overlay.x}:${overlay.y}:enable='between(t,${overlay.start_ms / 1000},${overlay.end_ms / 1000})'[${composed}]`)
+    videoOut = composed; nextInputIndex += 1
+  }
   if (inputs.subtitlesPath) {
     if (!capabilities.has('ass')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg ass filter is required for burn-in subtitles')
     assertPathInside(inputs.workDirectory, inputs.subtitlesPath)
@@ -175,14 +235,27 @@ export function buildFfmpegArgs(
   }
 
   let audioOut: string | null = null
-  if (payload.audio_asset_id) {
-    const audioPath = inputs.assets.get(payload.audio_asset_id)
+  const voiceId = payload.voice_asset_id ?? payload.audio_asset_id
+  const musicId = payload.background_audio_asset_id
+  const addAudio = (assetId: string): number => {
+    const audioPath = inputs.assets.get(assetId)
     if (!audioPath) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'materialized audio is missing')
-    assertPathInside(inputs.workDirectory, audioPath)
-    const audioIndex = payload.clips.length
-    args.push('-i', audioPath)
-    filters.push(`[${audioIndex}:a]apad,atrim=duration=${durationSeconds}[aout]`)
+    assertPathInside(inputs.workDirectory, audioPath); args.push('-i', audioPath); return nextInputIndex++
+  }
+  if (voiceId && musicId) {
+    if (!capabilities.has('amix')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg amix filter is required for voice and music')
+    const voiceIndex = addAudio(voiceId); const musicIndex = addAudio(musicId)
+    filters.push(`[${voiceIndex}:a]apad,atrim=duration=${durationSeconds}[voice]`)
+    filters.push(`[${musicIndex}:a]volume=${payload.background_volume},apad,atrim=duration=${durationSeconds}[music]`)
+    if (capabilities.has('sidechaincompress')) {
+      filters.push('[music][voice]sidechaincompress=threshold=0.04:ratio=10:attack=20:release=400[ducked]')
+      filters.push('[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]')
+    } else filters.push('[voice][music]amix=inputs=2:duration=first:normalize=0[aout]')
     audioOut = 'aout'
+  } else if (voiceId || musicId) {
+    const audioIndex = addAudio((voiceId ?? musicId)!)
+    const volume = musicId ? `volume=${payload.background_volume},` : ''
+    filters.push(`[${audioIndex}:a]${volume}apad,atrim=duration=${durationSeconds}[aout]`); audioOut = 'aout'
   }
 
   assertPathInside(inputs.workDirectory, inputs.outputPath)

@@ -6,6 +6,9 @@ const SceneSchema = z.object({
   duration_seconds: z.number().min(0.1).max(120),
   narration: z.string().max(1_000).optional(),
   overlay: z.string().max(300).optional(),
+  transition: z.object({ type: z.enum(['cut', 'fade', 'crossfade']), duration_seconds: z.number().min(0.1).max(3).default(0.5) }).strict().optional(),
+  image_overlays: z.array(z.object({ asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive(), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), width: z.number().int().positive(), height: z.number().int().positive() }).strict()).max(8).default([]),
+  word_timings: z.array(z.object({ text: z.string().min(1).max(80), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive() }).strict()).max(80).optional(),
 }).strict()
 
 export const StoryboardScriptSchema = z.object({
@@ -30,6 +33,10 @@ export const StoryboardTemplateSchema = z.object({
   video_bitrate_kbps: z.number().int().min(128).max(12_000).default(4_000),
   max_output_bytes: z.number().int().positive().max(256 * 1024 * 1024).default(256 * 1024 * 1024),
   codec: z.enum(['h264', 'h265', 'vp9']).default('h264'),
+  format_preset: z.enum(['LANDSCAPE_16_9', 'VERTICAL_9_16', 'CUSTOM']).default('CUSTOM'),
+  voice_asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+  background_audio_asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+  background_volume: z.number().min(0.02).max(0.8).default(0.18),
   seed: z.union([z.number().int(), z.string().max(128)]).default(0),
   seconds_per_scene: z.number().min(0.1).max(30).default(5),
 }).strict().superRefine((value, context) => {
@@ -88,6 +95,12 @@ export function createStoryboardManifest(
   const script = typeof rawScript === 'string' ? fromText(rawScript, template) : StoryboardScriptSchema.parse(rawScript)
   const assetIds = new Set(template.assets.map((asset) => asset.id))
   for (const scene of script.scenes) if (!assetIds.has(scene.asset_id)) throw new Error('STORYBOARD_ASSET_MISSING')
+  for (const scene of script.scenes) for (const overlay of scene.image_overlays) {
+    if (!assetIds.has(overlay.asset_id)) throw new Error('STORYBOARD_OVERLAY_ASSET_MISSING')
+    if (overlay.end_ms > scene.duration_seconds * 1_000 || overlay.x + overlay.width > template.width || overlay.y + overlay.height > template.height) {
+      throw new Error('STORYBOARD_OVERLAY_BOUNDS_INVALID')
+    }
+  }
   const storagePath = `tenants/${template.account_id}/artifacts/${template.date_path}/${template.output_name}`
   let uploadPath: string
   try {
@@ -102,7 +115,13 @@ export function createStoryboardManifest(
     const start = cursorMs
     cursorMs += Math.round(scene.duration_seconds * 1_000)
     const text = scene.overlay ?? scene.narration
-    return text ? [{ start_ms: start, end_ms: cursorMs, text: text.slice(0, 300) }] : []
+    const words = scene.word_timings?.map((word) => ({ ...word, start_ms: start + word.start_ms, end_ms: start + word.end_ms }))
+    return text ? [{ start_ms: start, end_ms: cursorMs, text: text.slice(0, 300), style: words?.length ? 'karaoke' as const : 'standard' as const, words }] : []
+  })
+  let overlayCursorMs = 0
+  const overlays = script.scenes.flatMap((scene) => {
+    const offset = overlayCursorMs; overlayCursorMs += Math.round(scene.duration_seconds * 1_000)
+    return scene.image_overlays.map((overlay) => ({ ...overlay, start_ms: offset + overlay.start_ms, end_ms: offset + overlay.end_ms }))
   })
   return MediaJobPayloadSchema.parse({
     kind: 'ffmpeg_assembly',
@@ -113,8 +132,13 @@ export function createStoryboardManifest(
       expires_at: template.expires_at,
     },
     assets: template.assets,
-    clips: script.scenes.map((scene) => ({ asset_id: scene.asset_id, duration_seconds: scene.duration_seconds })),
+    clips: script.scenes.map((scene) => ({ asset_id: scene.asset_id, duration_seconds: scene.duration_seconds, transition: scene.transition })),
+    overlays,
     subtitles,
+    voice_asset_id: template.voice_asset_id,
+    background_audio_asset_id: template.background_audio_asset_id,
+    background_volume: template.background_volume,
+    format_preset: template.format_preset,
     width: template.width,
     height: template.height,
     fps: template.fps,

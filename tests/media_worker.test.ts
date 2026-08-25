@@ -11,6 +11,7 @@ import {
 } from '../agent-hub/media/ffmpeg-pipeline.ts'
 import { probeCapabilities } from '../agent-hub/media/ffmpeg-engine.ts'
 import { makeSolidPng } from '../agent-hub/media/test-fixtures.mjs'
+import { buildAssFile, buildSrtFile } from '../agent-hub/media/subtitles.ts'
 import {
   processMediaJob, uploadPresignedArtifact, validateStorageUrl, type MediaComputeClient,
 } from '../agent-hub/workers/media-worker.ts'
@@ -61,6 +62,27 @@ try {
   // FFmpeg filter graphs legitimately contain semicolons and pipes. Shell
   // expansion markers and command separators via line breaks must never occur.
   assert.equal(plan.args.some((arg) => /[`\r\n]|\$\(/.test(arg)), false)
+
+  const proCapabilities = { filters: new Set([...capabilities.filters, 'xfade', 'overlay', 'sidechaincompress', 'amix']), has(name: string) { return this.filters.has(name) }, missingRequired: [] }
+  const proPayload = MediaJobPayloadSchema.parse({
+    ...payload,
+    assets: [...payload.assets, { ...payload.assets[0], id: 'badge' }, { ...payload.assets[0], id: 'voice', mime_type: 'audio/wav' }, { ...payload.assets[0], id: 'music', mime_type: 'audio/mpeg' }],
+    clips: [{ asset_id: 'scene1', duration_seconds: 1, transition: { type: 'crossfade', duration_seconds: 0.2 } }, { asset_id: 'scene1', duration_seconds: 1 }],
+    overlays: [{ asset_id: 'badge', start_ms: 100, end_ms: 900, x: 10, y: 10, width: 80, height: 40 }],
+    voice_asset_id: 'voice', background_audio_asset_id: 'music', background_volume: 0.2,
+    format_preset: 'CUSTOM',
+  })
+  const proInputs = { ...inputs, assets: new Map([['scene1', source], ['badge', source], ['voice', source], ['music', source]]) }
+  const proPlan = buildFfmpegArgs(proPayload, proInputs, proCapabilities)
+  const filterGraph = proPlan.args[proPlan.args.indexOf('-filter_complex') + 1]
+  assert.match(filterGraph, /xfade=/)
+  assert.match(filterGraph, /overlay=/)
+  assert.match(filterGraph, /sidechaincompress=/)
+  assert.ok(proPlan.durationSeconds < 2)
+
+  const karaoke = [{ startMs: 0, endMs: 900, text: 'Nemo works', style: 'karaoke' as const, words: [{ text: 'Nemo', startMs: 0, endMs: 400 }, { text: 'works', startMs: 400, endMs: 900 }] }]
+  assert.match(buildAssFile(karaoke), /\\k40.*Nemo.*\\k50.*works/)
+  assert.match(buildSrtFile(karaoke), /00:00:00,000 --> 00:00:00,900/)
 
   const rendered = await runFfmpegPipeline({ payload, inputs, capabilities, ffmpegPath, ffprobePath })
   assert.ok(rendered.bytes.byteLength > 1_000)
