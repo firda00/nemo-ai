@@ -1,5 +1,7 @@
 begin;
 
+select plan(1);
+
 insert into public.accounts (id, name) values
   ('51000000-0000-4000-8000-000000000001', 'vision-device-a'),
   ('51000000-0000-4000-8000-000000000002', 'vision-device-b');
@@ -68,5 +70,8 @@ begin
   end if;
 end
 $$;
+
+select pass('vision device identities preserve ciphertext, tenant and service-role invariants');
+select * from finish();
 
 rollback;

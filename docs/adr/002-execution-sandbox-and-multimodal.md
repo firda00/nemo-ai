@@ -146,3 +146,16 @@ Compute jobs are decoupled from external transactional side effects (`runtime.ou
         ▼
 [Stage 4: Grounding, Precision Evals & Live Gate] ──► (Operational actions enabled)
 ```
+
+### Stage 4 live invariants
+
+- Sensor attributes remain untrusted data and are compared only with tenant-authoritative deals,
+  schedules and inventory records; they never become agent instructions.
+- A live cohort needs at least 100 labelled shadow cases, precision `>= 0.95`, false-action rate
+  `<= 0.01`, average grounding `>= 0.95`, and a summary no older than 30 days.
+- `runtime_evaluate_live_gate` is fail-closed and accepts only workflows already created in `live`
+  mode. It cannot upgrade a shadow workflow.
+- The gate reuses ADR 001 Policy Engine transitions. An allowed decision moves to
+  `waiting_for_action`, where the exact action hash can enter the live Outbox; a rejected gate moves
+  to `waiting_for_approval` and creates the canonical `public.approval_requests` row.
+- The live gate never executes an external action and never writes directly to a connector.
