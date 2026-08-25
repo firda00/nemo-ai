@@ -1,0 +1,115 @@
+name: nemo-edge
+
+services:
+  edge-vision-gateway:
+    image: ${NEMO_EDGE_GATEWAY_IMAGE:?pin a signed edge gateway image}
+    restart: unless-stopped
+    init: true
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    cpus: 2.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    mem_swappiness: 0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=134217728
+    ports:
+      - '${EDGE_BIND_ADDRESS:-127.0.0.1}:${EDGE_VISION_PORT:-3000}:3000'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      EDGE_SYNC_BRIDGE_URL: http://edge-sync-bridge:3100
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      EDGE_DEVICE_HMAC_KEY_FILE: /run/secrets/edge_device_hmac_key
+    secrets: [edge_device_hmac_key]
+    networks: [edge_internal]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  edge-media-worker:
+    image: ${NEMO_EDGE_MEDIA_IMAGE:?pin a signed edge media image}
+    restart: unless-stopped
+    init: true
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 4.0
+    mem_limit: 1g
+    memswap_limit: 1g
+    mem_swappiness: 0
+    tmpfs:
+      - /tmp/nemo-media:rw,noexec,nosuid,nodev,size=805306368
+    environment:
+      NODE_ENV: production
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      MEDIA_WORK_ROOT: /tmp/nemo-media
+      NEMO_COMPUTE_API_URL: http://edge-vision-gateway:3000/v1/compute
+      NEMO_COMPUTE_WORKER_TOKEN_FILE: /run/secrets/edge_worker_token
+    secrets: [edge_worker_token]
+    networks: [edge_internal]
+    depends_on:
+      edge-vision-gateway:
+        condition: service_healthy
+
+  edge-sync-bridge:
+    image: ${NEMO_EDGE_SYNC_IMAGE:?pin a signed edge sync image}
+    restart: unless-stopped
+    init: true
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 1.0
+    mem_limit: 256m
+    memswap_limit: 256m
+    mem_swappiness: 0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=67108864
+    volumes:
+      - edge_queue:/var/lib/nemo-edge:rw
+    environment:
+      NODE_ENV: production
+      PORT: '3100'
+      EDGE_QUEUE_PATH: /var/lib/nemo-edge/events.json
+      EDGE_CLOUD_SYNC_URL: ${EDGE_CLOUD_SYNC_URL:?configure exact HTTPS edge ingest URL}
+      EDGE_SYNC_HMAC_KEY_FILE: /run/secrets/edge_sync_hmac_key
+    secrets: [edge_sync_hmac_key]
+    networks: [edge_internal, edge_cloud_egress]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  edge_internal:
+    driver: bridge
+    internal: true
+  # Only edge-sync-bridge joins this network. Restrict it to TCP/443 in the host DOCKER-USER chain.
+  edge_cloud_egress:
+    driver: bridge
+
+volumes:
+  edge_queue:
+
+secrets:
+  edge_device_hmac_key:
+    file: ${EDGE_DEVICE_HMAC_KEY_FILE_HOST:-./secrets/device-hmac.key}
+  edge_sync_hmac_key:
+    file: ${EDGE_SYNC_HMAC_KEY_FILE_HOST:-./secrets/sync-hmac.key}
+  edge_worker_token:
+    file: ${EDGE_WORKER_TOKEN_FILE_HOST:-./secrets/worker.token}
