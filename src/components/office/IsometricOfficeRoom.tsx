@@ -1,72 +1,51 @@
 import { useEffect, useRef } from 'react'
 
-export type OfficeAgentState = 'idle' | 'walking' | 'working' | 'waiting_approval'
+export type OfficeAgentState = 'idle' | 'working' | 'complete' | 'waiting_approval'
 export type OfficeAgentRole = 'coordinator' | 'copywriter' | 'finance' | 'media' | 'specialist'
 
 export interface OfficeAgentNode {
   id: string
   name: string
   role: OfficeAgentRole
-  state: Exclude<OfficeAgentState, 'walking'>
+  state: OfficeAgentState
   status: string
 }
 
-interface Point { x: number; y: number }
-
-interface AnimatedAgent extends OfficeAgentNode {
-  position: Point
-  target: Point
-  visualState: OfficeAgentState
+interface DeskSlot { x: number; y: number; scale: number }
+interface RenderAgent extends OfficeAgentNode {
+  slot: number
+  spawnProgress: number
   bubbleUntil: number
   lastStatus: string
+  stateSince: number
 }
 
 const WORLD = { width: 1000, height: 700 }
 const BACKGROUND = '/assets/office/team-lead-hq.jpg'
-const SPRITES: Record<OfficeAgentRole, string> = {
-  coordinator: '/assets/office/sprites/coordinator.png',
-  copywriter: '/assets/office/sprites/copywriter.png',
-  finance: '/assets/office/sprites/finance.png',
-  media: '/assets/office/sprites/media.png',
-  specialist: '/assets/office/sprites/finance.png',
+const DESKS: Record<OfficeAgentRole, string> = {
+  coordinator: '/assets/office/workstations/engineer-desk.png',
+  copywriter: '/assets/office/workstations/creative-desk.png',
+  finance: '/assets/office/workstations/finance-desk.png',
+  media: '/assets/office/workstations/media-desk.png',
+  specialist: '/assets/office/workstations/engineer-desk.png',
+}
+const COMPLETE: Record<OfficeAgentRole, string> = {
+  coordinator: '/assets/office/workstations/lead-complete.png',
+  copywriter: '/assets/office/workstations/copy-complete.png',
+  finance: '/assets/office/workstations/engineer-complete.png',
+  media: '/assets/office/workstations/media-complete.png',
+  specialist: '/assets/office/workstations/engineer-complete.png',
 }
 
-const WORKSTATIONS: Record<OfficeAgentRole, Point> = {
-  coordinator: { x: 0.50, y: 0.47 },
-  copywriter: { x: 0.33, y: 0.56 },
-  finance: { x: 0.61, y: 0.30 },
-  media: { x: 0.69, y: 0.54 },
-  specialist: { x: 0.62, y: 0.68 },
-}
-
-const IDLE_SPOTS: Point[] = [
-  { x: 0.35, y: 0.76 },
-  { x: 0.43, y: 0.77 },
-  { x: 0.33, y: 0.39 },
-  { x: 0.68, y: 0.73 },
-  { x: 0.65, y: 0.78 },
-  { x: 0.58, y: 0.77 },
+const SLOTS: DeskSlot[] = [
+  { x: 0.40, y: 0.27, scale: 0.145 },
+  { x: 0.50, y: 0.24, scale: 0.15 },
+  { x: 0.60, y: 0.27, scale: 0.145 },
+  { x: 0.40, y: 0.57, scale: 0.15 },
+  { x: 0.50, y: 0.55, scale: 0.155 },
+  { x: 0.60, y: 0.57, scale: 0.15 },
+  { x: 0.50, y: 0.77, scale: 0.14 },
 ]
-
-const MEETING_SPOTS: Point[] = [
-  { x: 0.45, y: 0.51 }, { x: 0.54, y: 0.51 }, { x: 0.49, y: 0.58 },
-]
-
-function destination(agent: OfficeAgentNode, index: number): Point {
-  if (agent.state === 'waiting_approval') return MEETING_SPOTS[index % MEETING_SPOTS.length]
-  if (agent.state === 'working') {
-    if (agent.role === 'specialist') {
-      return { x: WORKSTATIONS.specialist.x + (index % 3) * 0.07, y: WORKSTATIONS.specialist.y - (index % 2) * 0.09 }
-    }
-    return WORKSTATIONS[agent.role]
-  }
-  return IDLE_SPOTS[index % IDLE_SPOTS.length]
-}
-
-function initialPosition(agent: OfficeAgentNode, index: number): Point {
-  if (agent.role === 'coordinator') return WORKSTATIONS.coordinator
-  return IDLE_SPOTS[index % IDLE_SPOTS.length]
-}
 
 function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   context.beginPath()
@@ -80,85 +59,114 @@ function drawCover(context: CanvasRenderingContext2D, image: HTMLImageElement, w
   context.drawImage(image, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight)
 }
 
-function drawAvatar(
+function drawSpeechBubble(context: CanvasRenderingContext2D, x: number, y: number, status: string, tone: string) {
+  context.save()
+  context.font = '700 13px Inter, ui-sans-serif, system-ui'
+  const safeStatus = status.slice(0, 44)
+  const width = Math.min(190, Math.max(120, context.measureText(safeStatus).width + 28))
+  const left = Math.max(12, Math.min(WORLD.width - width - 12, x - width / 2))
+  const top = Math.max(12, y - 56)
+  roundedRect(context, left, top, width, 40, 15)
+  context.fillStyle = 'rgba(255,255,255,.97)'
+  context.shadowColor = 'rgba(3,7,18,.32)'
+  context.shadowBlur = 20
+  context.fill()
+  context.shadowBlur = 0
+  context.strokeStyle = tone
+  context.lineWidth = 1.5
+  context.stroke()
+  context.fillStyle = '#0f172a'
+  context.textAlign = 'center'
+  context.fillText(safeStatus, left + width / 2, top + 25)
+  context.beginPath()
+  context.moveTo(x - 7, top + 40)
+  context.lineTo(x + 7, top + 40)
+  context.lineTo(x, top + 49)
+  context.closePath()
+  context.fillStyle = '#fff'
+  context.fill()
+  context.restore()
+}
+
+function drawAgentDesk(
   context: CanvasRenderingContext2D,
-  agent: AnimatedAgent,
-  image: HTMLImageElement | undefined,
+  agent: RenderAgent,
+  desk: HTMLImageElement | undefined,
+  complete: HTMLImageElement | undefined,
   now: number,
   reducedMotion: boolean,
 ) {
-  const x = agent.position.x * WORLD.width
-  const walkingBob = agent.visualState === 'walking' && !reducedMotion ? Math.sin(now / 90) * 4 : 0
-  const y = agent.position.y * WORLD.height + walkingBob
-  const radius = agent.role === 'coordinator' ? 34 : 30
-  const active = agent.visualState === 'working' || agent.visualState === 'waiting_approval'
+  const slot = SLOTS[agent.slot % SLOTS.length]
+  const x = slot.x * WORLD.width
+  const y = slot.y * WORLD.height
+  const workingPulse = agent.state === 'working' && !reducedMotion ? (Math.sin(now / 155) + 1) / 2 : 0
+  const completeBounce = agent.state === 'complete' && !reducedMotion ? Math.abs(Math.sin((now - agent.stateSince) / 210)) * 10 : 0
+  const spawnEase = 1 - Math.pow(1 - Math.min(1, agent.spawnProgress), 3)
+  const deskSize = WORLD.width * slot.scale
+  const imageRatio = desk?.naturalWidth && desk?.naturalHeight ? desk.naturalHeight / desk.naturalWidth : 1
+  const deskHeight = deskSize * imageRatio
+  const scale = (0.88 + spawnEase * 0.12) * (agent.state === 'working' ? 1 + workingPulse * 0.012 : 1)
+  const drawWidth = deskSize * scale
+  const drawHeight = deskHeight * scale
+  const left = x - drawWidth / 2
+  const top = y - drawHeight / 2 - completeBounce
+  const active = agent.state === 'working' || agent.state === 'complete' || agent.state === 'waiting_approval'
+  const tone = agent.state === 'waiting_approval' ? '#f59e0b' : agent.state === 'complete' ? '#10b981' : '#22d3ee'
 
   context.save()
-  context.shadowColor = active ? '#22d3ee' : 'rgba(15,23,42,.55)'
-  context.shadowBlur = active ? 22 : 10
-  context.fillStyle = active ? '#ecfeff' : '#f8fafc'
-  context.beginPath()
-  context.arc(x, y, radius + 5, 0, Math.PI * 2)
-  context.fill()
-  context.shadowBlur = 0
-
-  context.beginPath()
-  context.arc(x, y, radius, 0, Math.PI * 2)
-  context.clip()
-  if (image?.complete && image.naturalWidth) {
-    context.drawImage(image, x - radius, y - radius, radius * 2, radius * 2)
-  } else {
-    context.fillStyle = '#111827'
-    context.fillRect(x - radius, y - radius, radius * 2, radius * 2)
-  }
+  context.globalAlpha = spawnEase * (agent.state === 'idle' ? 0.9 : 1)
+  context.shadowColor = active ? tone : 'rgba(3,7,18,.42)'
+  context.shadowBlur = active ? 20 + workingPulse * 18 : 12
+  if (desk?.complete && desk.naturalWidth) context.drawImage(desk, left, top, drawWidth, drawHeight)
   context.restore()
 
+  if (agent.state === 'working') {
+    context.save()
+    const glow = context.createRadialGradient(x, y - drawHeight * 0.13, 4, x, y - drawHeight * 0.13, drawWidth * 0.3)
+    glow.addColorStop(0, `rgba(34,211,238,${0.24 + workingPulse * 0.22})`)
+    glow.addColorStop(1, 'rgba(34,211,238,0)')
+    context.fillStyle = glow
+    context.fillRect(left, top, drawWidth, drawHeight)
+    context.restore()
+  }
+
+  if (agent.state === 'complete' && complete?.complete && complete.naturalWidth) {
+    const resultHeight = drawHeight * 0.62
+    const resultWidth = resultHeight * (complete.naturalWidth / complete.naturalHeight)
+    context.save()
+    context.shadowColor = '#10b981'
+    context.shadowBlur = 18
+    context.drawImage(complete, x + drawWidth * 0.12, top + drawHeight * 0.08 - completeBounce, resultWidth, resultHeight)
+    context.restore()
+  }
+
   context.save()
-  context.font = '600 12px Inter, ui-sans-serif, system-ui'
-  context.textAlign = 'center'
-  const labelWidth = Math.min(138, Math.max(70, context.measureText(agent.name).width + 22))
-  roundedRect(context, x - labelWidth / 2, y + radius + 8, labelWidth, 25, 12)
-  context.fillStyle = 'rgba(3,7,18,.82)'
+  const labelWidth = Math.min(190, Math.max(112, context.measureText(agent.name).width + 42))
+  roundedRect(context, x - labelWidth / 2, y + drawHeight * 0.38, labelWidth, 31, 11)
+  context.fillStyle = 'rgba(3,7,18,.86)'
   context.fill()
-  context.strokeStyle = active ? 'rgba(34,211,238,.72)' : 'rgba(255,255,255,.22)'
+  context.strokeStyle = active ? tone : 'rgba(255,255,255,.22)'
+  context.lineWidth = 1.3
   context.stroke()
   context.fillStyle = '#f8fafc'
-  context.fillText(agent.name, x, y + radius + 25)
+  context.font = '700 12px Inter, ui-sans-serif, system-ui'
+  context.textAlign = 'center'
+  context.fillText(agent.name, x, y + drawHeight * 0.38 + 20)
   context.restore()
 
-  if (agent.bubbleUntil > now) {
-    context.save()
-    context.font = '600 13px Inter, ui-sans-serif, system-ui'
-    const safeStatus = agent.status.slice(0, 42)
-    const bubbleWidth = Math.min(230, Math.max(122, context.measureText(safeStatus).width + 30))
-    const bubbleX = Math.min(WORLD.width - bubbleWidth - 12, Math.max(12, x - bubbleWidth / 2))
-    const bubbleY = Math.max(14, y - radius - 58)
-    roundedRect(context, bubbleX, bubbleY, bubbleWidth, 38, 16)
-    context.fillStyle = 'rgba(255,255,255,.96)'
-    context.shadowColor = 'rgba(15,23,42,.24)'
-    context.shadowBlur = 18
-    context.fill()
-    context.shadowBlur = 0
-    context.fillStyle = '#111827'
-    context.textAlign = 'center'
-    context.fillText(safeStatus, bubbleX + bubbleWidth / 2, bubbleY + 24)
-    context.beginPath()
-    context.moveTo(x - 7, bubbleY + 38)
-    context.lineTo(x + 7, bubbleY + 38)
-    context.lineTo(x, bubbleY + 47)
-    context.closePath()
-    context.fillStyle = 'rgba(255,255,255,.96)'
-    context.fill()
-    context.restore()
+  if (agent.bubbleUntil > now || agent.state === 'waiting_approval' || agent.state === 'complete') {
+    const bubbleOffset = (agent.slot % 3) * 44
+    drawSpeechBubble(context, x, top + drawHeight * 0.04 + bubbleOffset, agent.status, tone)
   }
 }
 
 export function IsometricOfficeRoom({ agents, deskCount }: { agents: OfficeAgentNode[]; deskCount: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const frameRef = useRef<number | null>(null)
-  const runtimeRef = useRef<AnimatedAgent[]>([])
+  const runtimeRef = useRef<RenderAgent[]>([])
   const backgroundRef = useRef<HTMLImageElement | null>(null)
-  const spriteRef = useRef<Partial<Record<OfficeAgentRole, HTMLImageElement>>>({})
+  const deskImagesRef = useRef<Partial<Record<OfficeAgentRole, HTMLImageElement>>>({})
+  const completeImagesRef = useRef<Partial<Record<OfficeAgentRole, HTMLImageElement>>>({})
   const reducedMotionRef = useRef(false)
 
   useEffect(() => {
@@ -167,35 +175,41 @@ export function IsometricOfficeRoom({ agents, deskCount }: { agents: OfficeAgent
     background.decoding = 'async'
     background.src = BACKGROUND
     backgroundRef.current = background
-    ;(Object.entries(SPRITES) as [OfficeAgentRole, string][]).forEach(([role, source]) => {
+    ;(Object.entries(DESKS) as [OfficeAgentRole, string][]).forEach(([role, source]) => {
       const image = new Image()
       image.decoding = 'async'
       image.src = source
-      spriteRef.current[role] = image
+      deskImagesRef.current[role] = image
+    })
+    ;(Object.entries(COMPLETE) as [OfficeAgentRole, string][]).forEach(([role, source]) => {
+      const image = new Image()
+      image.decoding = 'async'
+      image.src = source
+      completeImagesRef.current[role] = image
     })
     return () => {
       backgroundRef.current = null
-      spriteRef.current = {}
+      deskImagesRef.current = {}
+      completeImagesRef.current = {}
     }
   }, [])
 
   useEffect(() => {
     const now = performance.now()
-    const currentById = new Map(runtimeRef.current.map((agent) => [agent.id, agent]))
+    const previous = new Map(runtimeRef.current.map((agent) => [agent.id, agent]))
     runtimeRef.current = agents.map((agent, index) => {
-      const current = currentById.get(agent.id)
-      const target = destination(agent, index)
+      const current = previous.get(agent.id)
       if (!current) {
-        const position = initialPosition(agent, index)
-        return { ...agent, position, target, visualState: agent.state, bubbleUntil: now + 3200, lastStatus: agent.status }
+        return { ...agent, slot: index, spawnProgress: reducedMotionRef.current ? 1 : 0, bubbleUntil: now + 3200, lastStatus: agent.status, stateSince: now }
       }
-      const statusChanged = current.lastStatus !== agent.status || current.state !== agent.state
+      const changed = current.state !== agent.state || current.lastStatus !== agent.status
       return {
         ...current,
         ...agent,
-        target,
-        bubbleUntil: statusChanged ? now + 3200 : current.bubbleUntil,
+        slot: index,
+        bubbleUntil: changed ? now + 3200 : current.bubbleUntil,
         lastStatus: agent.status,
+        stateSince: changed ? now : current.stateSince,
       }
     })
   }, [agents])
@@ -207,6 +221,8 @@ export function IsometricOfficeRoom({ agents, deskCount }: { agents: OfficeAgent
     if (!context) return
     let disposed = false
     let lastFrame = performance.now()
+    let fpsWindowStart = lastFrame
+    let fpsFrameCount = 0
     let cssWidth = 1
     let cssHeight = 1
     let deviceScale = 1
@@ -231,59 +247,32 @@ export function IsometricOfficeRoom({ agents, deskCount }: { agents: OfficeAgent
       if (disposed) return
       const delta = Math.min(0.034, Math.max(0, (now - lastFrame) / 1000))
       lastFrame = now
+      fpsFrameCount += 1
+      if (now - fpsWindowStart >= 1000) {
+        canvas.dataset.renderFps = String(Math.round((fpsFrameCount * 1000) / (now - fpsWindowStart)))
+        fpsWindowStart = now
+        fpsFrameCount = 0
+      }
       context.setTransform(1, 0, 0, 1, 0, 0)
       context.clearRect(0, 0, canvas.width, canvas.height)
       const worldScale = Math.max(cssWidth / WORLD.width, cssHeight / WORLD.height)
       const offsetX = (cssWidth - WORLD.width * worldScale) / 2
       const offsetY = (cssHeight - WORLD.height * worldScale) / 2
-      context.setTransform(
-        deviceScale * worldScale, 0, 0, deviceScale * worldScale,
-        deviceScale * offsetX, deviceScale * offsetY,
-      )
-      context.clearRect(0, 0, WORLD.width, WORLD.height)
+      context.setTransform(deviceScale * worldScale, 0, 0, deviceScale * worldScale, deviceScale * offsetX, deviceScale * offsetY)
+
       const background = backgroundRef.current
       if (background?.complete && background.naturalWidth) drawCover(context, background, WORLD.width, WORLD.height)
       else {
-        context.fillStyle = '#0b1220'
+        context.fillStyle = '#07101d'
         context.fillRect(0, 0, WORLD.width, WORLD.height)
       }
-
-      const shade = context.createLinearGradient(0, 0, 0, WORLD.height)
-      shade.addColorStop(0, 'rgba(4,9,20,.05)')
-      shade.addColorStop(1, 'rgba(4,9,20,.28)')
-      context.fillStyle = shade
+      context.fillStyle = 'rgba(3,7,18,.52)'
       context.fillRect(0, 0, WORLD.width, WORLD.height)
 
-      const agentsByDepth = [...runtimeRef.current].sort((a, b) => a.position.y - b.position.y)
-      agentsByDepth.forEach((agent) => {
-        const dx = agent.target.x - agent.position.x
-        const dy = agent.target.y - agent.position.y
-        const distance = Math.hypot(dx, dy)
-        if (distance > 0.004 && !reducedMotionRef.current) {
-          const step = Math.min(distance, delta * 0.17)
-          agent.position.x += (dx / distance) * step
-          agent.position.y += (dy / distance) * step
-          agent.visualState = 'walking'
-        } else {
-          agent.position = { ...agent.target }
-          agent.visualState = agent.state
-        }
-        drawAvatar(context, agent, spriteRef.current[agent.role], now, reducedMotionRef.current)
+      runtimeRef.current.forEach((agent) => {
+        agent.spawnProgress = Math.min(1, agent.spawnProgress + delta * 2.4)
+        drawAgentDesk(context, agent, deskImagesRef.current[agent.role], completeImagesRef.current[agent.role], now, reducedMotionRef.current)
       })
-
-      const freeDesks = Math.max(0, deskCount - agents.length)
-      if (freeDesks) {
-        context.save()
-        roundedRect(context, 610, 620, 218, 44, 16)
-        context.fillStyle = 'rgba(3,7,18,.78)'
-        context.fill()
-        context.fillStyle = '#e2e8f0'
-        context.font = '600 13px Inter, ui-sans-serif, system-ui'
-        context.textAlign = 'center'
-        context.fillText(`${freeDesks} свободных рабочих мест`, 719, 647)
-        context.restore()
-      }
-
       frameRef.current = requestAnimationFrame(render)
     }
     frameRef.current = requestAnimationFrame(render)
@@ -296,25 +285,21 @@ export function IsometricOfficeRoom({ agents, deskCount }: { agents: OfficeAgent
   }, [deskCount])
 
   return (
-    <div className="relative h-full min-h-[430px] overflow-hidden bg-[#07101d] lg:min-h-[680px]">
+    <div className="relative h-full min-h-[500px] overflow-hidden bg-[#07101d] lg:min-h-[720px]">
       <canvas
         ref={canvasRef}
-        className="h-full min-h-[430px] w-full lg:min-h-[680px]"
+        className="h-full min-h-[500px] w-full lg:min-h-[720px]"
         role="img"
-        aria-label="Живой изометрический офис Nemo: агенты перемещаются между рабочими местами, зоной отдыха и переговорной"
+        aria-label="Живой изометрический офис Nemo: полноценные рабочие места появляются вместе с агентами и отражают их реальный статус"
         data-testid="isometric-office-canvas"
       />
       <div className="pointer-events-none absolute inset-x-4 top-4 flex items-center justify-between gap-3">
-        <div className="rounded-full border border-white/15 bg-[#06101c]/75 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-xl backdrop-blur-md">
-          Isometric workspace · Live
-        </div>
-        <div className="rounded-full border border-cyan-300/20 bg-[#06101c]/75 px-3 py-1.5 text-[11px] font-medium text-cyan-100 backdrop-blur-md">
-          rAF · 60 FPS target
-        </div>
+        <span className="rounded-full border border-white/15 bg-[#06101c]/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-xl backdrop-blur-md">Live team floor</span>
+        <span className="hidden rounded-full border border-cyan-300/20 bg-[#06101c]/80 px-3 py-1.5 text-[11px] font-medium text-cyan-100 backdrop-blur-md sm:inline-flex">Canvas · managed rAF</span>
       </div>
-      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-2 text-[11px] font-medium text-white">
-        <span className="rounded-full border border-white/15 bg-[#06101c]/75 px-3 py-1.5 backdrop-blur-md">{agents.length} агентов</span>
-        <span className="rounded-full border border-white/15 bg-[#06101c]/75 px-3 py-1.5 backdrop-blur-md">{deskCount} столов</span>
+      <div className="pointer-events-none absolute bottom-4 left-4 flex gap-2 text-[11px] font-medium text-white">
+        <span className="rounded-full border border-white/15 bg-[#06101c]/80 px-3 py-1.5 backdrop-blur-md">{agents.length} online</span>
+        <span className="rounded-full border border-white/15 bg-[#06101c]/80 px-3 py-1.5 backdrop-blur-md">{deskCount} workstations</span>
       </div>
     </div>
   )

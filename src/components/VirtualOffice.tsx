@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, Bot, Check, ChevronRight, CircleDot, Clock3, Focus,
-  Inbox, Loader2, Minus, Plus, RefreshCw, Send, Sparkles, X,
+  FileText, Film, Inbox, Loader2, Minus, Plus, RefreshCw, Send, Sparkles, X,
 } from 'lucide-react'
-import { IsometricOfficeRoom, type OfficeAgentNode } from './office/IsometricOfficeRoom'
+import { IsometricOfficeRoom, type OfficeAgentNode, type OfficeAgentRole } from './office/IsometricOfficeRoom'
 import { getAccessToken, supabase } from '../lib/supabase'
 
 const POLL_INTERVAL_MS = 3_000
@@ -45,6 +45,7 @@ interface ChatMessage {
   author: 'coordinator' | 'user' | 'system'
   body: string
   timestamp: string
+  artifacts?: { name: string; kind: 'document' | 'video' }[]
 }
 
 interface ActivityEvent {
@@ -67,12 +68,20 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   },
 ]
 
-const BASE_AGENTS: OfficeAgentNode[] = [
-  { id: 'lead', name: 'Nemo Lead', role: 'coordinator', state: 'idle', status: 'Координирую команду' },
-  { id: 'copy', name: 'Mira · Copy', role: 'copywriter', state: 'idle', status: 'Свободна' },
-  { id: 'finance', name: 'Arman · Finance', role: 'finance', state: 'idle', status: 'Свободен' },
-  { id: 'media', name: 'Kai · Media', role: 'media', state: 'idle', status: 'Свободен' },
-]
+type SpecialistRole = Exclude<OfficeAgentRole, 'coordinator' | 'specialist'>
+
+const COORDINATOR: OfficeAgentNode = { id: 'lead', name: 'Nemo Lead', role: 'coordinator', state: 'idle', status: 'Координирую команду' }
+const SPECIALISTS: Record<SpecialistRole, OfficeAgentNode> = {
+  copywriter: { id: 'copy', name: 'Mira · Copy', role: 'copywriter', state: 'idle', status: 'Ожидаю бриф' },
+  finance: { id: 'finance', name: 'Arman · Finance', role: 'finance', state: 'idle', status: 'Ожидаю расчёт' },
+  media: { id: 'media', name: 'Kai · Media', role: 'media', state: 'idle', status: 'Ожидаю монтаж' },
+}
+
+const ROLE_STATUS: Record<SpecialistRole, { working: string; complete: string }> = {
+  copywriter: { working: 'Пишу сценарий', complete: 'Сценарий готов' },
+  finance: { working: 'Считаю смету', complete: 'Смета готова' },
+  media: { working: 'Рендерю видео', complete: 'Видео готово' },
+}
 
 function apiUrl(path: string): string {
   return GATEWAY ? `${GATEWAY}${path}` : path
@@ -140,6 +149,18 @@ function profileForBrief(brief: string): ComputeProfile {
   return 'PROFILE_B_DOCS'
 }
 
+function specialistsForBrief(brief: string): SpecialistRole[] {
+  const roles = new Set<SpecialistRole>()
+  if (/видео|ролик|рилс|reels|монтаж|субтитр|промо/i.test(brief)) {
+    roles.add('copywriter')
+    roles.add('media')
+  }
+  if (/смет|финанс|бюджет|стоимост|расч[её]т|маржин|цена/i.test(brief)) roles.add('finance')
+  if (/текст|сценар|пост|копирайт|описан|контент/i.test(brief)) roles.add('copywriter')
+  if (roles.size === 0) roles.add('copywriter')
+  return [...roles]
+}
+
 function highLevelStage(status: WorkflowStatus | undefined, approval: boolean): string {
   if (approval || status?.state === 'waiting_for_approval') return 'Ожидает согласования'
   if (!status) return 'Команда свободна'
@@ -170,13 +191,15 @@ export function VirtualOffice() {
   const [workflow, setWorkflow] = useState<WorkflowStatus | undefined>()
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
   const [activities, setActivities] = useState<ActivityEvent[]>([
-    { id: 'ready', label: 'Координатор и специалисты готовы', timestamp: 'сейчас', tone: 'emerald' },
+    { id: 'ready', label: 'Координатор готов сформировать команду', timestamp: 'сейчас', tone: 'emerald' },
   ])
   const [brief, setBrief] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [extraAgents, setExtraAgents] = useState(loadExtraAgents)
+  const [spawnedRoles, setSpawnedRoles] = useState<SpecialistRole[]>([])
+  const [assignedRoles, setAssignedRoles] = useState<SpecialistRole[]>([])
   const simulationTimers = useRef<number[]>([])
   const chatEndRef = useRef<HTMLDivElement>(null)
 
@@ -238,12 +261,16 @@ export function VirtualOffice() {
 
   const agents = useMemo<OfficeAgentNode[]>(() => {
     const waiting = Boolean(activeApproval) || workflow?.state === 'waiting_for_approval'
-    const result = BASE_AGENTS.map((agent) => {
+    const roster = [COORDINATOR, ...spawnedRoles.map((role) => SPECIALISTS[role])]
+    const result = roster.map((agent) => {
       if (waiting && agent.role === 'coordinator') return { ...agent, state: 'waiting_approval' as const, status: 'Нужно ваше решение' }
+      if (waiting && agent.role !== 'coordinator' && agent.role !== 'specialist' && assignedRoles.includes(agent.role)) {
+        return { ...agent, state: 'complete' as const, status: ROLE_STATUS[agent.role].complete }
+      }
       if (isActive && agent.role === 'coordinator') return { ...agent, state: 'working' as const, status: 'Координирую workflow' }
-      if (isActive && workflow?.profile === 'PROFILE_A_WASI' && agent.role === 'finance') return { ...agent, state: 'working' as const, status: 'Расчёт сметы' }
-      if (isActive && workflow?.profile === 'PROFILE_B_DOCS' && agent.role === 'copywriter') return { ...agent, state: 'working' as const, status: 'Готовлю материалы' }
-      if (isActive && workflow?.profile === 'PROFILE_C_BROWSER' && agent.role === 'media') return { ...agent, state: 'working' as const, status: 'Рендер видео' }
+      if (isActive && agent.role !== 'coordinator' && agent.role !== 'specialist' && assignedRoles.includes(agent.role)) {
+        return { ...agent, state: 'working' as const, status: ROLE_STATUS[agent.role].working }
+      }
       return agent
     })
     for (let index = 0; index < extraAgents; index += 1) {
@@ -256,7 +283,7 @@ export function VirtualOffice() {
       })
     }
     return result
-  }, [activeApproval, extraAgents, isActive, workflow])
+  }, [activeApproval, assignedRoles, extraAgents, isActive, spawnedRoles, workflow])
 
   const hireAgent = () => {
     setExtraAgents((current) => Math.min(3, current + 1))
@@ -271,7 +298,7 @@ export function VirtualOffice() {
     if (extraAgents > 0) addActivity('Свободное рабочее место убрано', 'amber')
   }
 
-  const simulateWorkflow = (profile: ComputeProfile) => {
+  const simulateWorkflow = (profile: ComputeProfile, roles: SpecialistRole[]) => {
     setWorkflow({ state: 'planned', profile })
     simulationTimers.current.forEach((timer) => window.clearTimeout(timer))
     simulationTimers.current = [
@@ -282,7 +309,17 @@ export function VirtualOffice() {
       window.setTimeout(() => {
         setWorkflow({ state: 'waiting_for_approval', profile })
         addActivity('Пакет готов к безопасной проверке', 'amber')
-        setMessages((current) => [...current, { id: crypto.randomUUID(), author: 'coordinator', body: 'Команда завершила этап. Результат передан в Human-in-the-Loop для проверки.', timestamp: currentTime() }])
+        const artifacts: ChatMessage['artifacts'] = []
+        if (roles.includes('copywriter')) artifacts.push({ name: 'campaign-script.pdf', kind: 'document' })
+        if (roles.includes('finance')) artifacts.push({ name: 'service-estimate.pdf', kind: 'document' })
+        if (roles.includes('media')) artifacts.push({ name: 'promo-cut.mp4', kind: 'video' })
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          author: 'coordinator',
+          body: 'Orca DAG завершён. Артефакты собраны и переданы в Human-in-the-Loop для проверки.',
+          timestamp: currentTime(),
+          artifacts,
+        }])
       }, 5600),
     ]
   }
@@ -291,18 +328,23 @@ export function VirtualOffice() {
     const goal = brief.trim().slice(0, 4000)
     if (!goal || submitting) return
     const profile = profileForBrief(goal)
+    const roles = specialistsForBrief(goal)
+    const newRoles = roles.filter((role) => !spawnedRoles.includes(role))
     setSubmitting(true)
     setBrief('')
+    setSpawnedRoles((current) => [...new Set([...current, ...roles])])
+    setAssignedRoles(roles)
     setMessages((current) => [...current, { id: crypto.randomUUID(), author: 'user', body: goal, timestamp: currentTime() }])
     setWorkflow({ state: 'received', profile })
     addActivity('Новый бриф принят координатором')
+    newRoles.forEach((role) => addActivity(`Создано рабочее место: ${SPECIALISTS[role].name}`, 'violet'))
     try {
       if (supabase) {
         const runRef = crypto.randomUUID()
         const { data, error: invokeError } = await supabase.functions.invoke('orchestrate', {
           body: {
             action: 'run_enqueue', goal, orchestrated_goal: goal,
-            context_key: 'virtual-office', run_ref: runRef,
+            context_key: 'virtual-office', run_ref: runRef, requested_roles: roles,
           },
         })
         const payload = data as { ok?: boolean; run?: { run_ref?: string } } | null
@@ -310,11 +352,11 @@ export function VirtualOffice() {
         setWorkflow({ state: 'planned', profile, workflowId: payload.run?.run_ref })
         await refresh(undefined, true)
       } else {
-        simulateWorkflow(profile)
+        simulateWorkflow(profile, roles)
       }
       setMessages((current) => [...current, {
         id: crypto.randomUUID(), author: 'coordinator',
-        body: `Бриф принят. Назначаю специалистов. Текущий этап: ${highLevelStage({ state: 'planned', profile }, false)}.`,
+        body: `Бриф принят. Orca DAG назначил: ${roles.map((role) => SPECIALISTS[role].name).join(', ')}. Текущий этап: ${highLevelStage({ state: 'planned', profile }, false)}.`,
         timestamp: currentTime(),
       }])
     } catch {
@@ -364,12 +406,12 @@ export function VirtualOffice() {
         </div>
       </header>
 
-      <div className="grid min-h-[720px] lg:grid-cols-[42%_58%]">
+      <div className="grid min-h-[720px] lg:h-[720px] lg:min-h-0 lg:grid-cols-[42%_58%]">
         <aside className="flex min-h-[620px] flex-col border-b border-[#dce3ee] bg-white lg:min-h-[720px] lg:border-b-0 lg:border-r" aria-label="Командный чат координатора">
           <div className="border-b border-[#e6ebf2] px-4 py-3.5 sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <img src="/assets/office/sprites/coordinator.png" alt="Nemo Coordinator" className="h-9 w-9 rounded-full border-2 border-cyan-200 bg-white object-cover" />
+                <img src="/assets/office/sprites/coordinator.png" alt="Nemo Coordinator" className="h-9 w-9 rounded-xl border border-cyan-200 bg-white object-cover shadow-sm" />
                 <div><p className="text-sm font-bold text-[#111827]">Team Chat</p><p className="text-[11px] text-[#64748b]">Nemo Coordinator + {agents.length - 1} специалистов</p></div>
               </div>
               <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-500" />online</span>
@@ -460,9 +502,20 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   const user = message.author === 'user'
   return (
     <div className={`flex gap-2.5 ${user ? 'justify-end' : 'justify-start'}`}>
-      {!user && <img src="/assets/office/sprites/coordinator.png" alt="" className="mt-1 h-7 w-7 shrink-0 rounded-full bg-white object-cover" />}
+      {!user && <img src="/assets/office/sprites/coordinator.png" alt="" className="mt-1 h-7 w-7 shrink-0 rounded-lg bg-white object-cover shadow-sm" />}
       <div className={`max-w-[86%] ${user ? 'items-end' : 'items-start'} flex flex-col`}>
         <div className={`rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${user ? 'rounded-br-md bg-[#111827] text-white' : 'rounded-bl-md border border-[#e2e8f0] bg-white text-[#334155] shadow-sm'}`}>{message.body}</div>
+        {message.artifacts && message.artifacts.length > 0 && (
+          <div className="mt-2 grid w-full gap-1.5">
+            {message.artifacts.map((artifact) => (
+              <div key={artifact.name} className="flex items-center gap-2 rounded-xl border border-[#dce3ee] bg-[#f8fafc] px-3 py-2 text-[11px] font-semibold text-[#334155]">
+                {artifact.kind === 'video' ? <Film size={14} className="text-violet-600" /> : <FileText size={14} className="text-cyan-700" />}
+                <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
+                <span className="text-[9px] uppercase tracking-[0.12em] text-emerald-700">ready</span>
+              </div>
+            ))}
+          </div>
+        )}
         <span className="mt-1 px-1 text-[9px] text-[#94a3b8]">{message.timestamp}</span>
       </div>
     </div>

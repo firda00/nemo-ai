@@ -1,72 +1,60 @@
-# Teamly-style Isometric Virtual Office — Design QA
+# Design QA — Dynamic Desk-Agent Virtual Office
 
 ## Evidence
 
-- Source visual truth: `C:/Users/firda/Downloads/Characters_working_in_tech_office_202608251751.jpeg` — 2752×1536 px.
-- Idle browser implementation: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-isometric-fixed.png` — 1440×1000 px, 1440×1000 CSS viewport, deviceScaleFactor 1.
-- Active workflow implementation: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-isometric-active.png` — 1430×993 px after submitting a media brief.
-- Mobile implementation: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-isometric-mobile.png` — 380×822 px in a 390×844 CSS viewport, deviceScaleFactor 1.
-- Combined comparison input: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-isometric-comparison.jpg` — 2400×878 px. Source and implementation were cover-normalized into equal 1200×820 panels and viewed together.
-- State: `/app/office` in local demo mode; browser checks covered idle, executing, waiting-for-approval, add-agent, remove-agent, desktop, and mobile states. Dashboard values remain unavailable (`—`) instead of being fabricated.
+- Source visual truth: `C:/Users/firda/Downloads/Characters_working_in_tech_office_202608251751.jpeg`
+- Source pixels: `2752 × 1536`
+- Active implementation: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-desk-working-final-2.png`
+- Completed implementation: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-desk-complete-final-3.png`
+- Mobile Canvas: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-desk-mobile-canvas-final.png`
+- Side-by-side comparison: `C:/Users/firda/nemo-ai/docs/archive/design-qa/virtual-office-desk-comparison-final.jpg`
+- Desktop viewport: `1280 × 720` CSS px, density `1`; implementation capture `1238 × 714` px after the in-app browser panel crop.
+- Mobile viewport: `390 × 844` CSS px, density `1`; implementation capture `380 × 822` px after the in-app browser panel crop.
+- State: coordinator receives a video + copy + estimate brief, spawns three role-specific desks, runs them in parallel, then returns PDF/MP4 artifacts and waits for approval.
+
+The source and implementation were normalized into one `1600 × 700` comparison image with contain-fit scaling. The source is an art-direction reference rather than a literal application frame: comparison therefore focused on the isometric office, workstation characters, neon palette, spatial hierarchy, and activity states.
+
+## Full-view comparison
+
+The implementation preserves the supplied isometric neon-office language and uses real provided diorama assets for every desk. The product frame intentionally adds the requested split-screen chat, four-item navigation, telemetry, safe status bubbles, and artifact output. The office remains the dominant visual region and no longer uses primitive circles or emoji avatars.
+
+## Focused region comparison
+
+Focused checks were made on the Canvas region at active, completed, and mobile states. Workstation silhouettes, seated characters, monitor glow, labels, status bubbles, and the generated-artifact handoff remained readable. Image masks show no checkerboard background; minor soft antialiasing around one generated workstation is acceptable at rendered scale.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Nemo UI system font stack is preserved; labels and chat hierarchy remain legible at desktop/mobile sizes. Long operational statuses are bounded and never expose model reasoning.
+- Spacing and layout rhythm: fixed `720px` desktop split-screen prevents chat growth from stretching the Canvas; mobile stacks chat and office without horizontal overflow (`380px` document width inside a `390px` viewport).
+- Colors and visual tokens: cyan/emerald/amber operational states match the supplied neon art and remain distinguishable on the dark office background.
+- Image quality and asset fidelity: supplied real office/character artwork is used. No CSS-drawn characters, placeholder circles, handcrafted SVG people, or emoji assets remain in the Canvas.
+- Copy and content: navigation is limited to Office, Artifacts, Activity & Telemetry, and Settings. Chat and speech bubbles contain only high-level operational statuses.
+- Accessibility and behavior: Canvas has an accessible label; visible controls use semantic buttons; reduced-motion is respected; the animation owns one managed `requestAnimationFrame` loop with cleanup and capped delta/device density.
+
+## Comparison history
+
+1. **P2 — oversized desks and clipped labels at Canvas edges.** The first desktop capture showed workstations extending beyond the visible cover-cropped world. Fixed by reducing desk scale and moving all seven slots into the visible center band. Post-fix evidence: `virtual-office-desk-idle-fixed.png`.
+2. **P2 — mobile bubbles and technical badge clipped.** The first mobile Canvas capture showed a partially clipped coordinator bubble and an empty secondary badge. Fixed by narrowing bubbles, pulling columns inward, and hiding the secondary technical badge below `sm`. Post-fix evidence: `virtual-office-desk-mobile-canvas-final.png`.
+3. **P2 — simultaneous active bubbles overlapped each other and telemetry.** Fixed by staggering bubble anchors per desk column. Post-fix evidence: `virtual-office-desk-working-final-2.png`.
+4. **P1 — completed chat content stretched the grid and produced an unstable oversized Canvas.** Fixed by constraining the desktop split-screen row to `720px` and keeping chat scrolling internal. Post-fix evidence: `virtual-office-desk-complete-final-3.png`.
+
+## Interaction and runtime checks
+
+- Brief submission spawned Copywriter, Media, and Finance workstations.
+- Active state showed working monitor glow and role-specific safe status bubbles.
+- Completed state returned `campaign-script.pdf`, `service-estimate.pdf`, and `promo-cut.mp4` in chat.
+- Add/remove workstation controls were exercised.
+- Sidebar exposes exactly the four requested destinations.
+- Browser console: no application errors. Only expected Vite development messages and the explicit demo-mode placeholder warning were present.
+- Canvas measured `60 FPS` at the `1280 × 720` desktop viewport through the render-loop QA counter.
+- TypeScript, capability contracts, security contracts, UI smoke, UI stability, demo build, and secret scan passed.
 
 ## Findings
 
-- No remaining P0/P1/P2 findings.
-- Fonts and typography: the Nemo UI hierarchy stays consistent across chat, toolbar, telemetry, agent labels, and journal. Russian action copy wraps cleanly and no chain-of-thought text is exposed.
-- Spacing and layout rhythm: desktop keeps the requested 42/58 split between team chat and canvas, with the office as the dominant surface. Mobile intentionally stacks both regions without control collisions.
-- Colors and visual tokens: the white shell and chat balance the dark cyan/violet office artwork. Emerald denotes online/approved state; amber denotes HITL; canvas labels retain sufficient contrast.
-- Image quality and asset fidelity: the supplied Nemo isometric office is used directly. Agent portraits are clean transparent raster assets derived from the supplied specialist artwork, without checkerboard remnants, stretching, or placeholder shapes.
-- Copy and content: visible statuses are limited to safe operational labels such as `Анализ брифа`, `Расчёт сметы`, `Рендер видео`, and `Ожидает согласования`. Internal reasoning, prompts, secrets, and tenant payloads are absent.
-- Icons and interactions: Lucide controls match the host app. Brief submission, Refocus, Status update, Add Agent, remove desk, refresh, and HITL actions use semantic buttons and accessible labels.
-- Motion and accessibility: the Canvas uses one managed `requestAnimationFrame` loop, delta-capped interpolation, depth sorting, ResizeObserver, and explicit cleanup. `prefers-reduced-motion` stops travel while preserving state.
+No actionable P0/P1/P2 findings remain.
 
-## Full-view Comparison Evidence
+## Follow-up polish
 
-The combined source/implementation image confirms the same room, city-office composition, cyan/purple lighting, central coordination table, workstations, and lounge area. The product view intentionally adds the requested 42/58 chat-and-canvas command center, agent nodes, safe telemetry, and staffing controls.
-
-## Focused Region Comparison Evidence
-
-Focused inspection covered agent portrait masks, canvas labels, telemetry, the composer, and the mobile stack. The source art remains sharp and correctly cropped; portraits have clean transparent edges; labels stay legible; mobile chat cards and hints wrap without overlap. A separate focused crop was unnecessary because these regions are readable in the desktop and mobile captures.
-
-## Comparison History
-
-1. Initial isometric pass — blocked:
-   - [P2] Character crops retained checkerboard backgrounds.
-   - [P2] Finance and right-side agents sat too close to the canvas crop boundary.
-2. Visual fixes:
-   - Converted character crops to true transparent PNGs.
-   - Moved destinations into a safe-center grid and used a uniform cover transform.
-3. Interaction pass — blocked:
-   - [P1] Clicking Add Agent exposed an invalid React effect cleanup and temporarily blanked the screen.
-4. Interaction fix:
-   - Corrected the chat auto-scroll effect so it returns no value; verified add/remove and hot-reload without a crash.
-5. Post-fix evidence:
-   - `virtual-office-isometric-fixed.png` shows the full idle composition with clean portraits.
-   - `virtual-office-isometric-active.png` shows the submitted media brief, safe journal events, and active state.
-   - `virtual-office-isometric-mobile.png` confirms the stacked narrow-screen layout.
-   - Browser logs after the fix contain no runtime errors; only the expected demo-mode Supabase warning remains. Earlier errors remain in browser history as evidence of the resolved iteration.
-
-## Primary Interactions Tested
-
-- Submitted `Создай промо-видео и смету для запуска новой услуги`; verified `Рендер видео`, then `Ожидает согласования`.
-- Verified that chat and journal report only safe operational stages.
-- Removed the fifth workstation and confirmed `4 агента`, then added it back and confirmed `5 агентов`.
-- Verified localStorage persistence for team size.
-- Verified desktop at 1440×1000 and mobile at 390×844.
-- Exercised route reload/HMR after the cleanup fix without a new runtime error.
-
-## Implementation Checklist
-
-- [x] Split-screen Team Chat / Isometric Canvas layout.
-- [x] Agent nodes with idle, walking, working, and waiting-approval behavior.
-- [x] Linear path interpolation, speech bubbles, depth sorting, and managed rAF cleanup.
-- [x] 3-second authenticated dashboard polling with safe unavailable states.
-- [x] Runtime brief submission through the existing orchestrator; deterministic demo simulation only when Supabase is disabled.
-- [x] Add/remove workstations with local preference persistence.
-- [x] Desktop/mobile browser QA, TypeScript, contracts, UI smoke, and UI-stability gates.
-
-## Follow-up Polish
-
-- [P3] The dashboard metrics contract does not yet emit optional `active_workflow_state`, `active_compute_profile`, and `active_workflow_id`. The client validates them and falls back safely; exposing them server-side will let production agents mirror every compute profile without the demo transition path.
+- P3: add per-role soundless micro-gestures when dedicated multi-frame character assets become available; the current breathing, monitor glow, completion bounce, and full-body result pose intentionally avoid fake frame-by-frame animation.
 
 final result: passed
