@@ -1227,7 +1227,7 @@ export const extraUz = {
     "tagline": "Real biznes workflowlar uchun AI-komandalar: sotuv, support, CRM, hisobot va operatsiyalar."
   },
   "marketingHeader": {
-    "book": "Boshlash",
+    "book": "Navbatga yozilish",
     "pricing": "Narxlar",
     "product": "Product",
     "templates": "Templates",
@@ -3012,7 +3012,7 @@ export const extraRu = {
     "tagline": "AI-команды для реальных бизнес-процессов: продажи, поддержка, CRM, отчёты и операции."
   },
   "marketingHeader": {
-    "book": "Начать",
+    "book": "Записаться",
     "pricing": "Цены",
     "product": "Продукт",
     "templates": "Templates",
@@ -4797,7 +4797,7 @@ export const extraEn = {
     "tagline": "AI teams for real business workflows: sales, support, CRM updates, reports and operations."
   },
   "marketingHeader": {
-    "book": "Get started",
+    "book": "Join waitlist",
     "pricing": "Pricing",
     "product": "Product",
     "templates": "Templates",

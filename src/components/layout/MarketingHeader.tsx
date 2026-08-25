@@ -63,7 +63,7 @@ export function MarketingHeader() {
                 <Link to="/auth" className="text-sm font-medium text-muted transition-colors hover:text-text">
                   {t('nav.login')}
                 </Link>
-                <Button to="/auth?mode=signup" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
+                <Button to="/waitlist" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </>
@@ -85,7 +85,7 @@ export function MarketingHeader() {
               ))}
               <div className="mt-2 flex items-center justify-between gap-3 px-1">
                 <LanguageToggle />
-                <Button to="/auth?mode=signup" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
+                <Button to="/waitlist" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </div>
