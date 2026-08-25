@@ -88,8 +88,18 @@ export const VisionEventSchema = z.object({
   }).strict().optional(),
   untrusted_attributes: boundedJsonObject(16 * 1024),
   snapshot_ref: z.string().max(512).regex(STORAGE_PATH).optional(),
-  device_signature: z.string().regex(/^ed25519:[a-f0-9]{64}$/),
-}).strict()
+}).strict().superRefine((event, context) => {
+  if (event.snapshot_ref && (
+    !event.snapshot_ref.startsWith(`tenants/${event.account_id}/vision/`)
+    || !event.snapshot_ref.toLowerCase().endsWith('.jpg')
+  )) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'snapshot_ref must be a tenant-scoped JPEG vision object',
+      path: ['snapshot_ref'],
+    })
+  }
+})
 
 export const WasiExecutionInputSchema = z.object({
   source: z.string().min(1).max(48 * 1024),

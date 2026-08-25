@@ -59,6 +59,7 @@ $steps = @(
   @{ Name = 'ADR 002 WASI sandbox'; Command = { npm run test:sandbox } },
   @{ Name = 'ADR 002 document worker'; Command = { npm run test:document-worker } },
   @{ Name = 'ADR 002 media worker'; Command = { npm run test:media-worker } },
+  @{ Name = 'ADR 002 vision shadow gateway'; Command = { npm run test:vision } },
   @{ Name = 'amoCRM shadow enrichment worker'; Command = { npm run test:amocrm-enrichment } },
   @{ Name = 'Native amoCRM webhook parser'; Command = { npm run test:amocrm-native } },
   @{ Name = 'amoCRM webhook secret lifecycle'; Command = { npm run test:amocrm-webhook-secret } },

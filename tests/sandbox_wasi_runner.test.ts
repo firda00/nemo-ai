@@ -92,7 +92,6 @@ VisionEventSchema.parse({
   precision_score: 0.96,
   bounding_box: { x: 120, y: 340, width: 800, height: 450 },
   untrusted_attributes: { license_plate_raw: '01A777AA', vehicle_color: 'white' },
-  device_signature: `ed25519:${'a'.repeat(64)}`,
 })
 
 assert.throws(() => VisionEventSchema.parse({
@@ -103,7 +102,6 @@ assert.throws(() => VisionEventSchema.parse({
   event_type: 'IGNORE_PREVIOUS_INSTRUCTIONS',
   precision_score: 1.2,
   untrusted_attributes: {},
-  device_signature: `ed25519:${'a'.repeat(64)}`,
 }))
 
 console.log('ADR 002 Stage 1A sandbox behavior passed: isolation, limits, redaction, and contracts.')

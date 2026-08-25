@@ -36,6 +36,10 @@ import {
   parseNativeAmoWebhook,
 } from './amocrm-native.ts'
 import { disabledQueue, type JobQueue } from './queue.ts'
+import {
+  handleVisionEvent,
+  type VisionDeviceResolver,
+} from './vision-gateway.ts'
 
 /** Столько же, сколько в Edge Function. Расхождение означало бы разную цену за один и тот же прогон. */
 const TOKENS_PER_LEAD = 700
@@ -71,6 +75,8 @@ export interface GatewayDeps {
   /** Проверка подписки. Отдельным параметром, потому что в Node модуль Edge Function недоступен. */
   entitlement?: (accountId: string) => Promise<{ allowed: boolean; reason?: string }>
   now?: () => number
+  /** Optional test/provisioning adapter. Production resolves encrypted device identities via RPC. */
+  visionDeviceResolver?: VisionDeviceResolver
 }
 
 export interface GatewayResponse {
@@ -551,6 +557,29 @@ export async function buildGateway(deps: GatewayDeps, options: { logger?: boolea
       (request.params as { secret: string }).secret,
       request.body,
     )))
+
+  // Raw bytes are part of the device HMAC. This parser is encapsulated to this route so existing
+  // JSON endpoints keep receiving parsed objects.
+  await app.register(async (visionScope) => {
+    visionScope.removeContentTypeParser('application/json')
+    visionScope.addContentTypeParser(
+      'application/json',
+      { parseAs: 'buffer', bodyLimit: 64 * 1024 },
+      (_request, body, done) => done(null, body),
+    )
+    visionScope.post('/v1/vision/events', { logLevel: 'silent' }, async (request, reply) => {
+      const rawBody = request.body instanceof Uint8Array ? request.body : new Uint8Array()
+      return send(reply, await handleVisionEvent(
+        {
+          admin: deps.admin,
+          resolveDevice: deps.visionDeviceResolver,
+          now: deps.now,
+        },
+        rawBody,
+        request.headers['x-nemo-device-signature'] as string | undefined,
+      ))
+    })
+  })
 
   app.get('/health', async (request, reply) => send(reply, await handleHealth(deps)))
 
