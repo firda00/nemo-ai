@@ -11,7 +11,7 @@
 -- когда CLI недоступен. Для существующего проекта используйте db push: повторный прогон всего
 -- файла целиком безопаснее не стал — часть миграций не идемпотентна.
 --
--- Собрано из 157 миграций: 20260624090000_init.sql … 20260825030000_dashboard_telemetry_and_approvals.sql
+-- Собрано из 160 миграций: 20260624090000_init.sql … 20260826100000_billing_legacy_drain_cutover.sql
 
 begin;
 -- ЛИЧНЫЕ АДРЕСА ЗАМЕНЕНЫ НА redacted@invalid.
@@ -15901,5 +15901,1627 @@ grant execute on function public.runtime_dashboard_workflow_trace(uuid, uuid) to
 
 comment on function public.runtime_dashboard_decide_approval(uuid, uuid, uuid, text, text) is
   'Tenant-scoped HITL decision. Approval uses the canonical payload-hash resolver; rejection cancels atomically.';
+
+-- ─── 20260826090000_billing_usage_metering.sql ───────────────────────────────────────────────
+-- ADR 003: usage metering, FEFO reservations and append-only ledger.
+-- Closed schema: every table is unreachable except through the security-definer RPCs below.
+
+create schema billing;
+revoke all on schema billing from public, anon, authenticated;
+grant usage on schema billing to service_role;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.pricing_matrices
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.pricing_matrices (
+  id uuid primary key default gen_random_uuid(),
+  version integer not null,
+  name text not null,
+  conversion_rules jsonb not null default '{}'::jsonb,
+  effective_from timestamptz not null default clock_timestamp(),
+  effective_until timestamptz,
+  is_active boolean not null default false,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint pricing_matrices_version_key unique (version),
+  constraint pricing_matrices_account_id_id_key unique (id),
+  constraint pricing_matrices_version_check check (version > 0),
+  constraint pricing_matrices_name_check check (char_length(name) between 1 and 160),
+  constraint pricing_matrices_rules_type_check check (jsonb_typeof(conversion_rules) = 'object'),
+  -- 32 KiB bound: these payloads are small structured rule sets, not agent output; see ADR 003 §3.7.
+  constraint pricing_matrices_rules_size_check check (octet_length(conversion_rules::text) <= 32768),
+  constraint pricing_matrices_window_check check (
+    effective_until is null or effective_until > effective_from
+  )
+);
+
+-- Only one active matrix at a time: admission always snapshots exactly one unambiguous version.
+create unique index pricing_matrices_single_active_idx
+  on billing.pricing_matrices ((true))
+  where is_active;
+
+revoke all on billing.pricing_matrices from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.account_usage_policies
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.account_usage_policies (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  pricing_matrix_version integer not null references billing.pricing_matrices (version),
+  budget_units bigint not null,
+  policy jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default clock_timestamp(),
+  updated_at timestamptz not null default clock_timestamp(),
+  constraint account_usage_policies_account_key unique (account_id),
+  constraint account_usage_policies_account_id_id_key unique (account_id, id),
+  constraint account_usage_policies_budget_check check (budget_units > 0),
+  constraint account_usage_policies_policy_type_check check (jsonb_typeof(policy) = 'object'),
+  constraint account_usage_policies_policy_size_check check (octet_length(policy::text) <= 32768)
+);
+
+revoke all on billing.account_usage_policies from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.usage_buckets — FEFO-consumed purchased/granted compute-unit buckets
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.usage_buckets (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  source text not null,
+  pricing_matrix_version integer not null references billing.pricing_matrices (version),
+  total_units bigint not null,
+  remaining_units bigint not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint usage_buckets_account_id_id_key unique (account_id, id),
+  constraint usage_buckets_source_check check (
+    source in ('purchase', 'grant', 'promo', 'legacy_migration')
+  ),
+  constraint usage_buckets_total_check check (total_units > 0),
+  constraint usage_buckets_remaining_check check (
+    remaining_units >= 0 and remaining_units <= total_units
+  )
+);
+
+create index usage_buckets_fefo_idx
+  on billing.usage_buckets (account_id, expires_at, id)
+  where remaining_units > 0;
+
+revoke all on billing.usage_buckets from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.usage_reservations
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.usage_reservations (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  idempotency_key text not null,
+  claim_token uuid not null default gen_random_uuid(),
+  lease_epoch bigint not null default 0,
+  owner_token text not null,
+  status text not null default 'reserved',
+  reserved_units bigint not null,
+  actual_units bigint,
+  policy_snapshot jsonb not null default '{}'::jsonb,
+  result jsonb,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default clock_timestamp(),
+  finalized_at timestamptz,
+  released_at timestamptz,
+  constraint usage_reservations_account_id_id_key unique (account_id, id),
+  constraint usage_reservations_idempotency_key unique (account_id, idempotency_key),
+  constraint usage_reservations_status_check check (
+    status in ('reserved', 'finalized', 'released', 'expired')
+  ),
+  constraint usage_reservations_idempotency_shape_check check (
+    char_length(idempotency_key) between 1 and 200
+  ),
+  constraint usage_reservations_owner_token_check check (
+    char_length(owner_token) between 1 and 200
+  ),
+  constraint usage_reservations_reserved_check check (reserved_units > 0),
+  constraint usage_reservations_actual_check check (
+    actual_units is null or (actual_units >= 0 and actual_units <= reserved_units)
+  ),
+  constraint usage_reservations_lease_epoch_check check (lease_epoch >= 0),
+  constraint usage_reservations_snapshot_type_check check (
+    jsonb_typeof(policy_snapshot) = 'object'
+  ),
+  constraint usage_reservations_snapshot_size_check check (
+    octet_length(policy_snapshot::text) <= 32768
+  ),
+  constraint usage_reservations_result_type_check check (
+    result is null or jsonb_typeof(result) = 'object'
+  ),
+  constraint usage_reservations_result_size_check check (
+    result is null or octet_length(result::text) <= 32768
+  ),
+  constraint usage_reservations_terminal_check check (
+    (status = 'reserved' and finalized_at is null and released_at is null)
+    or (status = 'finalized' and finalized_at is not null)
+    or (status in ('released', 'expired') and released_at is not null)
+  )
+);
+
+create index usage_reservations_expiry_idx
+  on billing.usage_reservations (account_id, expires_at, id)
+  where status = 'reserved';
+
+revoke all on billing.usage_reservations from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.usage_reservation_allocations — one reservation, FEFO-split across many buckets
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.usage_reservation_allocations (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  reservation_id uuid not null,
+  bucket_id uuid not null,
+  allocated_units bigint not null,
+  refunded_units bigint not null default 0,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint usage_reservation_allocations_account_id_id_key unique (account_id, id),
+  constraint usage_reservation_allocations_reservation_fkey
+    foreign key (account_id, reservation_id)
+    references billing.usage_reservations (account_id, id) on delete cascade,
+  constraint usage_reservation_allocations_bucket_fkey
+    foreign key (account_id, bucket_id)
+    references billing.usage_buckets (account_id, id) on delete restrict,
+  constraint usage_reservation_allocations_units_check check (allocated_units > 0),
+  constraint usage_reservation_allocations_refund_check check (
+    refunded_units >= 0 and refunded_units <= allocated_units
+  )
+);
+
+create index usage_reservation_allocations_reservation_idx
+  on billing.usage_reservation_allocations (account_id, reservation_id);
+create index usage_reservation_allocations_bucket_idx
+  on billing.usage_reservation_allocations (account_id, bucket_id);
+
+revoke all on billing.usage_reservation_allocations from public, anon, authenticated;
+
+-- The parent-sum invariant ("reserved_units = sum(allocations.allocated_units)") is cross-row and
+-- cannot be a CHECK constraint (see ADR 003 §3.5). reserve_usage always inserts a reservation's
+-- full allocation set in a single multi-row INSERT, so a statement-level trigger reading the
+-- transition table sees the complete set exactly once per reservation.
+create function billing.check_allocation_sum()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  r record;
+  v_expected bigint;
+begin
+  for r in
+    select new_rows.reservation_id as reservation_id, sum(new_rows.allocated_units) as total
+    from new_rows
+    group by new_rows.reservation_id
+  loop
+    select reservation.reserved_units into strict v_expected
+    from billing.usage_reservations as reservation
+    where reservation.id = r.reservation_id;
+    if r.total is distinct from v_expected then
+      raise exception using errcode = '0LU02',
+        message = 'allocation sum does not match reservation.reserved_units';
+    end if;
+  end loop;
+  return null;
+end
+$$;
+
+create trigger usage_reservation_allocations_sum_check
+  after insert on billing.usage_reservation_allocations
+  referencing new table as new_rows
+  for each statement
+  execute function billing.check_allocation_sum();
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.usage_ledger — append-only audit trail
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.usage_ledger (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts (id) on delete cascade,
+  event_type text not null,
+  units bigint not null,
+  reservation_id uuid,
+  bucket_id uuid,
+  idempotency_key text,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint usage_ledger_event_type_check check (
+    event_type in ('reserve', 'finalize', 'refund', 'release', 'expire', 'grant')
+  ),
+  -- >= 0, not > 0: a finalize event may legitimately record zero actual units (fully refunded).
+  constraint usage_ledger_units_check check (units >= 0),
+  constraint usage_ledger_details_type_check check (jsonb_typeof(details) = 'object'),
+  constraint usage_ledger_details_size_check check (octet_length(details::text) <= 32768),
+  constraint usage_ledger_reservation_fkey
+    foreign key (account_id, reservation_id)
+    references billing.usage_reservations (account_id, id) on delete restrict,
+  constraint usage_ledger_bucket_fkey
+    foreign key (account_id, bucket_id)
+    references billing.usage_buckets (account_id, id) on delete restrict
+);
+
+create index usage_ledger_account_idx on billing.usage_ledger (account_id, created_at, id);
+create index usage_ledger_reservation_idx on billing.usage_ledger (account_id, reservation_id);
+
+revoke all on billing.usage_ledger from public, anon, authenticated;
+
+create function billing.prevent_ledger_mutation()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  raise exception using errcode = '0LU01', message = 'usage_ledger is append-only';
+end
+$$;
+
+create trigger usage_ledger_immutable
+  before update or delete on billing.usage_ledger
+  for each row execute function billing.prevent_ledger_mutation();
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.cutover_state — GLOBAL, one-way admission gate. Neither billing.reserve_usage nor the
+-- patched public.reserve_token_usage may ever both admit the same unit of work: before activation
+-- only legacy admits (v2_active = false), after a successful billing.activate_global_cutover only
+-- v2 admits. This is deliberately a single singleton row, not a per-account flag — a per-account
+-- cutover would let two admission routes both be "correct" for different accounts at once, which is
+-- exactly the dual-admission risk this table exists to close off. See ADR 003 §5.
+-- ---------------------------------------------------------------------------------------------
+
+create table billing.cutover_state (
+  singleton boolean primary key default true,
+  v2_active boolean not null default false,
+  activated_by text,
+  reason_code text,
+  activated_at timestamptz,
+  cutover_epoch bigint not null default 0,
+  constraint cutover_state_singleton_check check (singleton),
+  constraint cutover_state_epoch_check check (cutover_epoch >= 0),
+  constraint cutover_state_activation_check check (
+    (not v2_active and activated_by is null and reason_code is null and activated_at is null)
+    or (v2_active and activated_by is not null and reason_code is not null and activated_at is not null)
+  ),
+  constraint cutover_state_reason_check check (
+    reason_code is null or reason_code ~ '^[A-Z][A-Z0-9_]{0,63}$'
+  ),
+  constraint cutover_state_actor_check check (
+    activated_by is null or char_length(activated_by) between 1 and 160
+  )
+);
+
+insert into billing.cutover_state (singleton) values (true);
+
+revoke all on billing.cutover_state from public, anon, authenticated;
+
+comment on table billing.cutover_state is
+  'Global, one-way v2 admission gate. Never per-account: exactly one of legacy/v2 may admit at a time.';
+
+comment on table billing.pricing_matrices is
+  'Versioned pricing/unit-conversion rules. Admission always snapshots a specific version.';
+comment on table billing.account_usage_policies is
+  'Per-account budget referencing a pricing_matrices version by value, not a live pointer.';
+comment on table billing.usage_buckets is
+  'Purchased/granted compute-unit capacity, FEFO-consumed by expires_at.';
+comment on table billing.usage_reservations is
+  'Fenced reservations: claim_token + lease_epoch gate every state transition.';
+comment on table billing.usage_reservation_allocations is
+  'FEFO split of one reservation across one or more buckets.';
+comment on table billing.usage_ledger is
+  'Append-only event trail; mutation is blocked by trigger, not just convention.';
+
+-- ─── 20260826093000_billing_reservation_rpcs.sql ─────────────────────────────────────────────
+-- ADR 003: billing.* reservation RPCs — fail-closed admission, FEFO allocation, fenced lifecycle.
+
+create function billing.reserve_usage(
+  p_account_id uuid,
+  p_idempotency_key text,
+  p_units bigint,
+  p_owner_token text,
+  p_ttl_seconds integer default 300
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_control runtime.system_controls%rowtype;
+  v_cutover billing.cutover_state%rowtype;
+  v_legacy public.token_usage_reservations%rowtype;
+  v_existing billing.usage_reservations%rowtype;
+  v_policy billing.account_usage_policies%rowtype;
+  v_matrix billing.pricing_matrices%rowtype;
+  v_outstanding bigint;
+  v_bucket record;
+  v_remaining_needed bigint;
+  v_take bigint;
+  v_reservation_id uuid := gen_random_uuid();
+  v_claim_token uuid := gen_random_uuid();
+  v_now timestamptz := clock_timestamp();
+  v_expires_at timestamptz;
+  v_allocations jsonb := '[]'::jsonb;
+  v_bucket_ids uuid[] := '{}';
+  v_alloc_units bigint[] := '{}';
+  v_result jsonb;
+begin
+  if p_account_id is null then
+    raise exception using errcode = '22023', message = 'invalid account id';
+  end if;
+  if p_idempotency_key is null or char_length(p_idempotency_key) not between 1 and 200 then
+    raise exception using errcode = '22023', message = 'invalid idempotency key';
+  end if;
+  if p_units is null or p_units <= 0 then
+    raise exception using errcode = '22023', message = 'invalid reservation units';
+  end if;
+  if p_owner_token is null or char_length(p_owner_token) not between 1 and 200 then
+    raise exception using errcode = '22023', message = 'invalid owner token';
+  end if;
+  if p_ttl_seconds not between 5 and 3600 then
+    raise exception using errcode = '22023', message = 'invalid reservation ttl';
+  end if;
+
+  select controls.* into strict v_control
+  from runtime.system_controls as controls
+  where controls.singleton
+  for share;
+  if v_control.kill_switch_active or v_control.claims_paused then
+    return jsonb_build_object('status', 'denied_kill_switch');
+  end if;
+
+  -- Global cutover gate (ADR 003 §5): v2 admits nothing until billing.activate_global_cutover has
+  -- run. This is the mirror image of the cutover check patched into public.reserve_token_usage, so
+  -- exactly one of the two routes ever admits for a given moment in time.
+  select cutover.* into strict v_cutover
+  from billing.cutover_state as cutover
+  where cutover.singleton
+  for share;
+  if not v_cutover.v2_active then
+    return jsonb_build_object('status', 'denied_cutover_inactive');
+  end if;
+
+  -- Lock this account's policy row FIRST, before the idempotency lookup and the outstanding-budget
+  -- calculation, so that all concurrent reserve_usage calls for the same account serialize on this
+  -- one lock. That serialization is what makes the idempotency lookup below race-free (a concurrent
+  -- caller with the same idempotency_key can no longer race the INSERT — it queues behind this lock
+  -- and then sees the first caller's committed row) and what makes the budget check exact (no two
+  -- concurrent callers can read the same "outstanding" total and both admit past budget_units).
+  select policy.* into v_policy
+  from billing.account_usage_policies as policy
+  where policy.account_id = p_account_id
+  for update;
+  if not found then
+    return jsonb_build_object('status', 'denied_no_policy');
+  end if;
+
+  -- Cross-scheme idempotency at cutover (ADR 003 §5): p_idempotency_key and the legacy
+  -- public.token_usage_reservations.billing_key share the same caller-chosen key space, so a
+  -- legacy reservation finalized before cutover and retried with the same key after cutover must
+  -- not be silently re-admitted and re-charged by v2. The policy lock above already serializes
+  -- same-account callers, so this lookup is race-free against a concurrent legacy writer too.
+  select legacy.* into v_legacy
+  from public.token_usage_reservations as legacy
+  where legacy.account_id = p_account_id and legacy.billing_key = p_idempotency_key
+  for update;
+  if found then
+    if v_legacy.status = 'finalized' then
+      return jsonb_build_object(
+        'status', 'legacy_finalized',
+        'idempotent_replay', true,
+        'legacy_result', v_legacy.result
+      );
+    elsif v_legacy.status = 'active' then
+      -- An active legacy reservation after cutover means the legacy admission route raced (or was
+      -- bypassed) past the point where it should have been denied by the cutover gate. Fail closed
+      -- rather than risk double-admitting the same logical work.
+      return jsonb_build_object('status', 'denied_legacy_active');
+    end if;
+    -- released/expired: the legacy reservation consumed no lasting balance (it was refunded or
+    -- swept without ever finalizing), so admitting a fresh v2 reservation under the same key is
+    -- correct — fall through to the v2 idempotency lookup below.
+  end if;
+
+  -- Tenant-scoped idempotency: any prior result for this key wins, regardless of its status. Safe
+  -- from unique_violation races now because the policy lock above already serializes same-account
+  -- callers — a second call with the same key can only reach this SELECT after the first call's
+  -- INSERT has committed (or the first call is still holding the policy lock ahead of it).
+  select reservation.* into v_existing
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id
+    and reservation.idempotency_key = p_idempotency_key
+  for update;
+  if found then
+    return jsonb_build_object(
+      'status', case v_existing.status
+        when 'reserved' then 'reserved'
+        else v_existing.status
+      end,
+      'reservation_id', v_existing.id,
+      'claim_token', v_existing.claim_token,
+      'lease_epoch', v_existing.lease_epoch,
+      'reserved_units', v_existing.reserved_units,
+      'expires_at', v_existing.expires_at,
+      'idempotent_replay', true
+    );
+  end if;
+
+  select matrix.* into strict v_matrix
+  from billing.pricing_matrices as matrix
+  where matrix.version = v_policy.pricing_matrix_version;
+
+  select coalesce(sum(reservation.reserved_units), 0) into v_outstanding
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id
+    and reservation.status = 'reserved'
+    and reservation.expires_at > v_now;
+
+  if v_outstanding + p_units > v_policy.budget_units then
+    return jsonb_build_object(
+      'status', 'denied_budget',
+      'outstanding_units', v_outstanding,
+      'budget_units', v_policy.budget_units
+    );
+  end if;
+
+  v_remaining_needed := p_units;
+  v_expires_at := v_now + pg_catalog.make_interval(secs => p_ttl_seconds);
+
+  -- FEFO, locked (not skip locked): a scarce bucket must serialize concurrent reservers so that
+  -- exactly as many admissions succeed as there are units, deterministically. See ADR 003 §4.1.
+  for v_bucket in
+    select bucket.id, bucket.remaining_units
+    from billing.usage_buckets as bucket
+    where bucket.account_id = p_account_id
+      and bucket.remaining_units > 0
+      and bucket.expires_at > v_now
+    order by bucket.expires_at asc, bucket.id asc
+    for update
+  loop
+    exit when v_remaining_needed <= 0;
+    v_take := least(v_bucket.remaining_units, v_remaining_needed);
+    v_bucket_ids := v_bucket_ids || v_bucket.id;
+    v_alloc_units := v_alloc_units || v_take;
+    v_remaining_needed := v_remaining_needed - v_take;
+  end loop;
+
+  if v_remaining_needed > 0 then
+    return jsonb_build_object(
+      'status', 'denied_insufficient_units',
+      'requested_units', p_units,
+      'short_by', v_remaining_needed
+    );
+  end if;
+
+  insert into billing.usage_reservations (
+    id, account_id, idempotency_key, claim_token, lease_epoch, owner_token,
+    status, reserved_units, policy_snapshot, expires_at
+  ) values (
+    v_reservation_id, p_account_id, p_idempotency_key, v_claim_token, 0, p_owner_token,
+    'reserved', p_units,
+    jsonb_build_object(
+      'pricing_matrix_version', v_matrix.version,
+      'budget_units', v_policy.budget_units,
+      'conversion_rules', v_matrix.conversion_rules
+    ),
+    v_expires_at
+  );
+
+  update billing.usage_buckets as bucket
+  set remaining_units = bucket.remaining_units - alloc.units
+  from (
+    select unnest(v_bucket_ids) as id, unnest(v_alloc_units) as units
+  ) as alloc
+  where bucket.account_id = p_account_id and bucket.id = alloc.id;
+
+  insert into billing.usage_reservation_allocations (account_id, reservation_id, bucket_id, allocated_units)
+  select p_account_id, v_reservation_id, alloc.id, alloc.units
+  from (
+    select unnest(v_bucket_ids) as id, unnest(v_alloc_units) as units
+  ) as alloc;
+
+  insert into billing.usage_ledger (account_id, event_type, units, reservation_id, bucket_id, idempotency_key)
+  select p_account_id, 'reserve', alloc.units, v_reservation_id, alloc.id, p_idempotency_key
+  from (
+    select unnest(v_bucket_ids) as id, unnest(v_alloc_units) as units
+  ) as alloc;
+
+  select jsonb_agg(jsonb_build_object('bucket_id', alloc.id, 'allocated_units', alloc.units))
+  into v_allocations
+  from (select unnest(v_bucket_ids) as id, unnest(v_alloc_units) as units) as alloc;
+
+  v_result := jsonb_build_object(
+    'status', 'reserved',
+    'reservation_id', v_reservation_id,
+    'claim_token', v_claim_token,
+    'lease_epoch', 0,
+    'reserved_units', p_units,
+    'expires_at', v_expires_at,
+    'allocations', coalesce(v_allocations, '[]'::jsonb)
+  );
+  return v_result;
+end
+$$;
+
+create function billing.heartbeat_usage(
+  p_account_id uuid,
+  p_reservation_id uuid,
+  p_claim_token uuid,
+  p_lease_epoch bigint,
+  p_extend_seconds integer default 300
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_reservation billing.usage_reservations%rowtype;
+  v_now timestamptz := clock_timestamp();
+begin
+  if p_extend_seconds not between 5 and 3600 then
+    raise exception using errcode = '22023', message = 'invalid heartbeat extension';
+  end if;
+
+  select reservation.* into v_reservation
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id and reservation.id = p_reservation_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'reservation not found';
+  end if;
+  if v_reservation.status <> 'reserved' or v_reservation.expires_at <= v_now then
+    raise exception using errcode = '55000', message = 'reservation not active';
+  end if;
+  if v_reservation.claim_token is distinct from p_claim_token
+    or v_reservation.lease_epoch is distinct from p_lease_epoch then
+    raise exception using errcode = '55000', message = 'reservation ownership mismatch';
+  end if;
+
+  update billing.usage_reservations
+  set expires_at = v_now + pg_catalog.make_interval(secs => p_extend_seconds)
+  where account_id = p_account_id and id = p_reservation_id;
+
+  return jsonb_build_object(
+    'status', 'reserved',
+    'reservation_id', p_reservation_id,
+    'claim_token', p_claim_token,
+    'lease_epoch', p_lease_epoch,
+    'expires_at', v_now + pg_catalog.make_interval(secs => p_extend_seconds)
+  );
+end
+$$;
+
+create function billing.reclaim_usage_reservation(
+  p_account_id uuid,
+  p_reservation_id uuid,
+  p_new_owner_token text,
+  p_lease_seconds integer default 300
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_reservation billing.usage_reservations%rowtype;
+  v_now timestamptz := clock_timestamp();
+  v_new_token uuid := gen_random_uuid();
+  v_new_epoch bigint;
+begin
+  if p_new_owner_token is null or char_length(p_new_owner_token) not between 1 and 200 then
+    raise exception using errcode = '22023', message = 'invalid owner token';
+  end if;
+  if p_lease_seconds not between 5 and 3600 then
+    raise exception using errcode = '22023', message = 'invalid reclaim lease duration';
+  end if;
+
+  select reservation.* into v_reservation
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id and reservation.id = p_reservation_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'reservation not found';
+  end if;
+  if v_reservation.status <> 'reserved' then
+    raise exception using errcode = '55000', message = 'reservation not reclaimable';
+  end if;
+  if v_reservation.expires_at > v_now then
+    raise exception using errcode = '55000', message = 'reservation lease has not expired';
+  end if;
+
+  v_new_epoch := v_reservation.lease_epoch + 1;
+  update billing.usage_reservations
+  set claim_token = v_new_token,
+      lease_epoch = v_new_epoch,
+      owner_token = p_new_owner_token,
+      expires_at = v_now + pg_catalog.make_interval(secs => p_lease_seconds)
+  where account_id = p_account_id and id = p_reservation_id;
+
+  return jsonb_build_object(
+    'status', 'reserved',
+    'reservation_id', p_reservation_id,
+    'claim_token', v_new_token,
+    'lease_epoch', v_new_epoch,
+    'expires_at', v_now + pg_catalog.make_interval(secs => p_lease_seconds)
+  );
+end
+$$;
+
+create function billing.finalize_usage(
+  p_account_id uuid,
+  p_reservation_id uuid,
+  p_claim_token uuid,
+  p_lease_epoch bigint,
+  p_actual_units bigint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_reservation billing.usage_reservations%rowtype;
+  v_now timestamptz := clock_timestamp();
+  v_refund bigint;
+  v_allocated_total bigint;
+  v_running_refund bigint := 0;
+  v_alloc record;
+  v_apply record;
+  v_this_refund bigint;
+  v_last_id uuid;
+  v_result jsonb;
+  v_calc_ids uuid[] := '{}';
+  v_calc_buckets uuid[] := '{}';
+  v_calc_refunds bigint[] := '{}';
+begin
+  if p_actual_units is null or p_actual_units < 0 then
+    raise exception using errcode = '22023', message = 'invalid actual usage';
+  end if;
+
+  select reservation.* into v_reservation
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id and reservation.id = p_reservation_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'reservation not found';
+  end if;
+
+  if v_reservation.status = 'finalized' then
+    return v_reservation.result;
+  end if;
+  if v_reservation.status <> 'reserved' then
+    raise exception using errcode = '55000', message = 'reservation not active';
+  end if;
+  if v_reservation.expires_at <= v_now then
+    raise exception using errcode = '55000', message = 'reservation expired; reclaim required';
+  end if;
+  if v_reservation.claim_token is distinct from p_claim_token
+    or v_reservation.lease_epoch is distinct from p_lease_epoch then
+    raise exception using errcode = '55000', message = 'reservation ownership mismatch';
+  end if;
+  if p_actual_units > v_reservation.reserved_units then
+    raise exception using errcode = '22023', message = 'actual_units exceeds reserved_units';
+  end if;
+
+  v_refund := v_reservation.reserved_units - p_actual_units;
+
+  select coalesce(sum(allocation.allocated_units), 0) into v_allocated_total
+  from billing.usage_reservation_allocations as allocation
+  where allocation.account_id = p_account_id and allocation.reservation_id = p_reservation_id;
+
+  select allocation.id into v_last_id
+  from billing.usage_reservation_allocations as allocation
+  where allocation.account_id = p_account_id and allocation.reservation_id = p_reservation_id
+  order by allocation.id desc
+  limit 1;
+
+  if v_refund > 0 then
+    -- Pass 1: compute the largest-remainder refund split in allocation-id order (pure arithmetic,
+    -- no locks taken — this order only decides which allocation absorbs the rounding remainder).
+    for v_alloc in
+      select allocation.id, allocation.bucket_id, allocation.allocated_units
+      from billing.usage_reservation_allocations as allocation
+      where allocation.account_id = p_account_id and allocation.reservation_id = p_reservation_id
+      order by allocation.id asc
+    loop
+      if v_alloc.id = v_last_id then
+        v_this_refund := v_refund - v_running_refund;
+      else
+        v_this_refund := (v_refund * v_alloc.allocated_units) / v_allocated_total;
+      end if;
+      v_running_refund := v_running_refund + v_this_refund;
+      v_calc_ids := v_calc_ids || v_alloc.id;
+      v_calc_buckets := v_calc_buckets || v_alloc.bucket_id;
+      v_calc_refunds := v_calc_refunds || v_this_refund;
+    end loop;
+
+    -- Pass 2: apply the credits and take the bucket row locks in bucket_id-ascending order — the
+    -- same global lock order used by release_usage and expire_usage_reservations below, so two
+    -- concurrent settlements that happen to share buckets can never deadlock against each other
+    -- (see ADR 003 §4.3/§4.4).
+    for v_apply in
+      select t.id, t.bucket_id, t.refund_units
+      from unnest(v_calc_ids, v_calc_buckets, v_calc_refunds) as t(id, bucket_id, refund_units)
+      where t.refund_units > 0
+      order by t.bucket_id asc, t.id asc
+    loop
+      update billing.usage_reservation_allocations
+      set refunded_units = refunded_units + v_apply.refund_units
+      where account_id = p_account_id and id = v_apply.id;
+
+      update billing.usage_buckets
+      set remaining_units = remaining_units + v_apply.refund_units
+      where account_id = p_account_id and id = v_apply.bucket_id;
+
+      insert into billing.usage_ledger (account_id, event_type, units, reservation_id, bucket_id)
+      values (p_account_id, 'refund', v_apply.refund_units, p_reservation_id, v_apply.bucket_id);
+    end loop;
+  end if;
+
+  insert into billing.usage_ledger (account_id, event_type, units, reservation_id)
+  values (p_account_id, 'finalize', p_actual_units, p_reservation_id);
+
+  v_result := jsonb_build_object(
+    'status', 'finalized',
+    'reservation_id', p_reservation_id,
+    'reserved_units', v_reservation.reserved_units,
+    'actual_units', p_actual_units,
+    'refunded_units', v_refund
+  );
+
+  update billing.usage_reservations
+  set status = 'finalized', actual_units = p_actual_units, result = v_result, finalized_at = v_now
+  where account_id = p_account_id and id = p_reservation_id;
+
+  return v_result;
+end
+$$;
+
+create function billing.release_usage(
+  p_account_id uuid,
+  p_reservation_id uuid,
+  p_claim_token uuid,
+  p_lease_epoch bigint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_reservation billing.usage_reservations%rowtype;
+  v_now timestamptz := clock_timestamp();
+  v_alloc record;
+  v_result jsonb;
+begin
+  select reservation.* into v_reservation
+  from billing.usage_reservations as reservation
+  where reservation.account_id = p_account_id and reservation.id = p_reservation_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'reservation not found';
+  end if;
+
+  if v_reservation.status in ('released', 'expired') then
+    return jsonb_build_object(
+      'status', v_reservation.status,
+      'reservation_id', p_reservation_id,
+      'refunded_units', v_reservation.reserved_units
+    );
+  end if;
+  if v_reservation.status <> 'reserved' then
+    raise exception using errcode = '55000', message = 'reservation not active';
+  end if;
+  if v_reservation.claim_token is distinct from p_claim_token
+    or v_reservation.lease_epoch is distinct from p_lease_epoch then
+    raise exception using errcode = '55000', message = 'reservation ownership mismatch';
+  end if;
+
+  -- Deterministic bucket_id-ascending lock order — matches finalize_usage's pass 2 and
+  -- expire_usage_reservations below, so concurrent settlements sharing buckets never deadlock.
+  for v_alloc in
+    select allocation.id, allocation.bucket_id, allocation.allocated_units, allocation.refunded_units
+    from billing.usage_reservation_allocations as allocation
+    where allocation.account_id = p_account_id and allocation.reservation_id = p_reservation_id
+    order by allocation.bucket_id asc, allocation.id asc
+  loop
+    update billing.usage_reservation_allocations
+    set refunded_units = allocation.allocated_units
+    from (select v_alloc.allocated_units as allocated_units) as allocation
+    where account_id = p_account_id and id = v_alloc.id;
+
+    update billing.usage_buckets
+    set remaining_units = remaining_units + (v_alloc.allocated_units - v_alloc.refunded_units)
+    where account_id = p_account_id and id = v_alloc.bucket_id;
+
+    insert into billing.usage_ledger (account_id, event_type, units, reservation_id, bucket_id)
+    values (
+      p_account_id, 'release', v_alloc.allocated_units - v_alloc.refunded_units,
+      p_reservation_id, v_alloc.bucket_id
+    );
+  end loop;
+
+  v_result := jsonb_build_object(
+    'status', 'released',
+    'reservation_id', p_reservation_id,
+    'refunded_units', v_reservation.reserved_units
+  );
+
+  update billing.usage_reservations
+  set status = 'released', result = v_result, released_at = v_now
+  where account_id = p_account_id and id = p_reservation_id;
+
+  return v_result;
+end
+$$;
+
+create function billing.expire_usage_reservations(p_limit integer default 100)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_now timestamptz := clock_timestamp();
+  v_reservation record;
+  v_alloc record;
+  v_expired_count integer := 0;
+  v_expired_units bigint := 0;
+begin
+  if p_limit not between 1 and 10000 then
+    raise exception using errcode = '22023', message = 'invalid expiry batch limit';
+  end if;
+
+  for v_reservation in
+    select reservation.account_id, reservation.id, reservation.reserved_units
+    from billing.usage_reservations as reservation
+    where reservation.status = 'reserved' and reservation.expires_at <= v_now
+    order by reservation.account_id, reservation.expires_at, reservation.id
+    for update skip locked
+    limit p_limit
+  loop
+    -- Deterministic bucket_id-ascending lock order — matches finalize_usage/release_usage above.
+    for v_alloc in
+      select allocation.id, allocation.bucket_id, allocation.allocated_units, allocation.refunded_units
+      from billing.usage_reservation_allocations as allocation
+      where allocation.account_id = v_reservation.account_id
+        and allocation.reservation_id = v_reservation.id
+      order by allocation.bucket_id asc, allocation.id asc
+    loop
+      update billing.usage_reservation_allocations
+      set refunded_units = v_alloc.allocated_units
+      where account_id = v_reservation.account_id and id = v_alloc.id;
+
+      update billing.usage_buckets
+      set remaining_units = remaining_units + (v_alloc.allocated_units - v_alloc.refunded_units)
+      where account_id = v_reservation.account_id and id = v_alloc.bucket_id;
+
+      insert into billing.usage_ledger (account_id, event_type, units, reservation_id, bucket_id)
+      values (
+        v_reservation.account_id, 'expire', v_alloc.allocated_units - v_alloc.refunded_units,
+        v_reservation.id, v_alloc.bucket_id
+      );
+    end loop;
+
+    update billing.usage_reservations
+    set status = 'expired',
+        result = jsonb_build_object(
+          'status', 'expired', 'reservation_id', v_reservation.id,
+          'refunded_units', v_reservation.reserved_units
+        ),
+        released_at = v_now
+    where account_id = v_reservation.account_id and id = v_reservation.id;
+
+    v_expired_count := v_expired_count + 1;
+    v_expired_units := v_expired_units + v_reservation.reserved_units;
+  end loop;
+
+  return jsonb_build_object('expired_count', v_expired_count, 'expired_units', v_expired_units);
+end
+$$;
+
+revoke all on function billing.reserve_usage(uuid, text, bigint, text, integer)
+  from public, anon, authenticated;
+revoke all on function billing.heartbeat_usage(uuid, uuid, uuid, bigint, integer)
+  from public, anon, authenticated;
+revoke all on function billing.reclaim_usage_reservation(uuid, uuid, text, integer)
+  from public, anon, authenticated;
+revoke all on function billing.finalize_usage(uuid, uuid, uuid, bigint, bigint)
+  from public, anon, authenticated;
+revoke all on function billing.release_usage(uuid, uuid, uuid, bigint)
+  from public, anon, authenticated;
+revoke all on function billing.expire_usage_reservations(integer)
+  from public, anon, authenticated;
+
+grant execute on function billing.reserve_usage(uuid, text, bigint, text, integer) to service_role;
+grant execute on function billing.heartbeat_usage(uuid, uuid, uuid, bigint, integer) to service_role;
+grant execute on function billing.reclaim_usage_reservation(uuid, uuid, text, integer) to service_role;
+grant execute on function billing.finalize_usage(uuid, uuid, uuid, bigint, bigint) to service_role;
+grant execute on function billing.release_usage(uuid, uuid, uuid, bigint) to service_role;
+grant execute on function billing.expire_usage_reservations(integer) to service_role;
+
+comment on function billing.reserve_usage(uuid, text, bigint, text, integer) is
+  'Fail-closed FEFO admission: system_controls gate, global cutover gate, per-account policy lock, tenant-idempotent.';
+comment on function billing.finalize_usage(uuid, uuid, uuid, bigint, bigint) is
+  'Fenced settlement: rejects actual_units > reserved_units, proportional multi-bucket refund in bucket_id lock order, idempotent retry.';
+comment on function billing.release_usage(uuid, uuid, uuid, bigint) is
+  'Fenced full refund in bucket_id lock order; idempotent on retry once already released or expired.';
+comment on function billing.expire_usage_reservations(integer) is
+  'Bounded batch sweep of overdue reservations in bucket_id lock order; skip locked is safe on the reservation scan because rows are independent.';
+comment on function billing.reclaim_usage_reservation(uuid, uuid, text, integer) is
+  'Increments lease_epoch to fence out a stale claim_token after lease expiry.';
+
+-- ─── 20260826100000_billing_legacy_drain_cutover.sql ─────────────────────────────────────────
+-- ADR 003: GLOBAL drain-first legacy cutover. billing_legacy schema, one-way whole-environment
+-- snapshot gated by runtime.system_controls maintenance + billing_legacy.quad_zero_check, a
+-- fail-closed patch of the legacy admission function, atomic maintenance enter/resume, quad-zero
+-- check. No per-account cutover path exists: billing.cutover_state (see the schema migration) is
+-- a single singleton row, and exactly one of the legacy/v2 admission routes may admit at a time
+-- for the whole environment.
+
+create schema billing_legacy;
+revoke all on schema billing_legacy from public, anon, authenticated;
+grant usage on schema billing_legacy to service_role;
+
+-- ---------------------------------------------------------------------------------------------
+-- billing_legacy.drain_snapshots — one row per account, written once by billing.activate_global_
+-- cutover inside its single snapshot transaction. Composite FK to billing.usage_buckets scoped by
+-- account_id makes a cross-tenant bucket reference structurally impossible; zero-unit accounts get
+-- a NULL granted_bucket_id (MATCH SIMPLE lets a NULL column skip FK enforcement).
+-- ---------------------------------------------------------------------------------------------
+
+create table billing_legacy.drain_snapshots (
+  account_id uuid primary key references public.accounts (id) on delete cascade,
+  snapshotted_balance bigint not null,
+  granted_bucket_id uuid,
+  pricing_matrix_version integer references billing.pricing_matrices (version),
+  snapshotted_at timestamptz not null default clock_timestamp(),
+  constraint drain_snapshots_balance_check check (snapshotted_balance >= 0),
+  constraint drain_snapshots_bucket_fkey
+    foreign key (account_id, granted_bucket_id)
+    references billing.usage_buckets (account_id, id) on delete restrict
+);
+
+revoke all on billing_legacy.drain_snapshots from public, anon, authenticated;
+
+comment on table billing_legacy.drain_snapshots is
+  'One-way per-account snapshot row written once, in bulk, by billing.activate_global_cutover.';
+
+-- ---------------------------------------------------------------------------------------------
+-- Patch the legacy admission function: add the runtime.system_controls fail-closed check used by
+-- public.runtime_claim_workflow, AND the global cutover gate — once billing.cutover_state.v2_active
+-- is true, legacy denies unconditionally so the two admission routes can never both admit the same
+-- unit of work. Identical signature otherwise, so every existing caller keeps working.
+-- finalize_token_usage/release_token_usage are untouched — in-flight legacy reservations created
+-- before cutover must still be settleable.
+-- ---------------------------------------------------------------------------------------------
+
+create or replace function public.reserve_token_usage(
+  p_account_id uuid,
+  p_billing_key text,
+  p_reserved_tokens bigint,
+  p_monthly_limit bigint,
+  p_run_id uuid,
+  p_claim_token uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  existing public.token_usage_reservations;
+  balance bigint;
+  credits bigint;
+  expired_credits bigint;
+  used_tokens bigint;
+  active_tokens bigint;
+  month_start timestamptz := date_trunc('month', now() at time zone 'UTC') at time zone 'UTC';
+  v_control runtime.system_controls%rowtype;
+  v_cutover billing.cutover_state%rowtype;
+begin
+  if p_account_id is null or p_billing_key is null or length(p_billing_key) not between 1 and 200
+    or p_reserved_tokens <= 0 or p_monthly_limit <= 0 then raise exception 'invalid reservation input'; end if;
+
+  -- Fail-closed admission gate, matching public.runtime_claim_workflow (ADR 001/003). Returned as
+  -- a denied status, not an exception, to preserve this function's existing denied_* contract.
+  select controls.* into strict v_control
+  from runtime.system_controls as controls
+  where controls.singleton
+  for share;
+  if v_control.kill_switch_active or v_control.claims_paused then
+    return jsonb_build_object('status', 'denied_kill_switch');
+  end if;
+
+  -- Global cutover gate: once billing.activate_global_cutover has run, legacy denies
+  -- unconditionally. Mirror of the v2_active check in billing.reserve_usage — see ADR 003 §5.
+  select cutover.* into strict v_cutover
+  from billing.cutover_state as cutover
+  where cutover.singleton
+  for share;
+  if v_cutover.v2_active then
+    return jsonb_build_object('status', 'denied_cutover_active');
+  end if;
+
+  perform 1 from public.autonomous_run_checkpoints where id = p_run_id and account_id = p_account_id and status = 'running' and claim_token = p_claim_token for update;
+  if not found then raise exception 'worker claim lost'; end if;
+
+  select * into existing from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key;
+  if found and existing.status = 'finalized' then
+    return jsonb_build_object('status', existing.status, 'result', existing.result);
+  end if;
+  if found and existing.status = 'active' and existing.expires_at > now() then
+    return jsonb_build_object('status', 'in_progress');
+  end if;
+
+  select token_balance into balance from public.accounts where id = p_account_id for update;
+  if not found then raise exception 'account not found'; end if;
+
+  select * into existing from public.token_usage_reservations
+  where account_id = p_account_id and billing_key = p_billing_key;
+  if found and existing.status = 'finalized' then
+    return jsonb_build_object('status', existing.status, 'result', existing.result);
+  end if;
+  if found and existing.status = 'active' and existing.expires_at > now() then
+    return jsonb_build_object('status', 'in_progress');
+  end if;
+
+  with released as (
+    update public.token_usage_reservations
+    set status = 'expired'
+    where account_id = p_account_id and status = 'active' and expires_at <= now()
+    returning reserved_credits
+  ) select coalesce(sum(reserved_credits), 0) into expired_credits from released;
+  balance := balance + expired_credits;
+  if expired_credits > 0 then update public.accounts set token_balance = balance where id = p_account_id; end if;
+
+  credits := ceil(p_reserved_tokens / 1000.0)::bigint;
+  select coalesce(sum(tokens), 0) into used_tokens from public.usage
+  where account_id = p_account_id and created_at >= month_start;
+  select coalesce(sum(reserved_tokens), 0) into active_tokens from public.token_usage_reservations
+  where account_id = p_account_id and status = 'active';
+
+  if balance < credits then return jsonb_build_object('status', 'denied_balance'); end if;
+  if used_tokens + active_tokens + p_reserved_tokens > p_monthly_limit then return jsonb_build_object('status', 'denied_quota'); end if;
+
+  insert into public.token_usage_reservations(account_id, billing_key, run_id, claim_token, reserved_tokens, reserved_credits, monthly_limit, expires_at)
+  values (p_account_id, p_billing_key, p_run_id, p_claim_token, p_reserved_tokens, credits, p_monthly_limit, now() + interval '10 minutes')
+  on conflict (account_id, billing_key) do update
+    set reserved_tokens = excluded.reserved_tokens,
+        reserved_credits = excluded.reserved_credits,
+        monthly_limit = excluded.monthly_limit,
+        run_id = excluded.run_id,
+        claim_token = excluded.claim_token,
+        status = 'active', result = null, actual_tokens = null,
+        expires_at = excluded.expires_at, finalized_at = null;
+  update public.accounts set token_balance = balance - credits where id = p_account_id;
+  return jsonb_build_object('status', 'reserved');
+end
+$$;
+
+revoke all on function public.reserve_token_usage(uuid,text,bigint,bigint,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.reserve_token_usage(uuid,text,bigint,bigint,uuid,uuid) to service_role;
+
+comment on function public.reserve_token_usage(uuid,text,bigint,bigint,uuid,uuid) is
+  'ADR 003: legacy admission, now fail-closed on runtime.system_controls kill switch / claims pause.';
+
+-- ---------------------------------------------------------------------------------------------
+-- billing_legacy.expire_legacy_reservations — bounded cleanup, exactly-once refund, deterministic
+-- account lock order to avoid deadlocks with other account-locking processes.
+-- ---------------------------------------------------------------------------------------------
+
+create function billing_legacy.expire_legacy_reservations(p_limit integer default 100)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+  v_expired_count integer := 0;
+  v_refunded_credits bigint := 0;
+  v_rows_touched integer;
+begin
+  if p_limit not between 1 and 10000 then
+    raise exception using errcode = '22023', message = 'invalid expiry batch limit';
+  end if;
+
+  for v_row in
+    select reservation.id, reservation.account_id, reservation.reserved_credits
+    from public.token_usage_reservations as reservation
+    where reservation.status = 'active' and reservation.expires_at <= now()
+    order by reservation.account_id, reservation.expires_at, reservation.id
+    for update skip locked
+    limit p_limit
+  loop
+    -- Lock the account row before mutating it; scan order above is already account_id-ascending,
+    -- so this preserves a single deterministic lock order across concurrent cleanup runs.
+    perform 1 from public.accounts where id = v_row.account_id for update;
+
+    -- Guard the refund inside the same statement as the terminal status transition so a retry of
+    -- this loop iteration (or a concurrent cleanup run that skipped the row-lock race) can never
+    -- refund the same reservation twice: the WHERE clause only matches while still 'active'.
+    with settled as (
+      update public.token_usage_reservations
+      set status = 'expired'
+      where id = v_row.id and account_id = v_row.account_id and status = 'active'
+      returning reserved_credits
+    )
+    update public.accounts as account
+    set token_balance = account.token_balance + settled.reserved_credits
+    from settled
+    where account.id = v_row.account_id;
+
+    get diagnostics v_rows_touched = row_count;
+    if v_rows_touched > 0 then
+      v_expired_count := v_expired_count + 1;
+      v_refunded_credits := v_refunded_credits + v_row.reserved_credits;
+    end if;
+  end loop;
+
+  return jsonb_build_object('expired_count', v_expired_count, 'refunded_credits', v_refunded_credits);
+end
+$$;
+
+revoke all on function billing_legacy.expire_legacy_reservations(integer) from public, anon, authenticated;
+grant execute on function billing_legacy.expire_legacy_reservations(integer) to service_role;
+
+comment on function billing_legacy.expire_legacy_reservations(integer) is
+  'Service-role-only cleanup: refunds overdue legacy reservations exactly once via a guarded status transition.';
+
+-- ---------------------------------------------------------------------------------------------
+-- billing_legacy.quad_zero_check — read-only cutover readiness signal
+-- ---------------------------------------------------------------------------------------------
+
+create function billing_legacy.quad_zero_check()
+returns jsonb
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select jsonb_build_object(
+    'autonomous_run_checkpoints_nonterminal', (
+      select count(*) from public.autonomous_run_checkpoints
+      where status in ('active', 'queued', 'running')
+    ),
+    'workflow_runs_nonterminal', (
+      select count(*) from runtime.workflow_runs
+      where current_state not in ('completed', 'failed', 'denied', 'dead_letter', 'cancelled')
+    ),
+    'compute_jobs_pending_or_running', (
+      select count(*) from runtime.compute_jobs
+      where status in ('pending', 'running')
+    ),
+    'token_usage_reservations_active', (
+      select count(*) from public.token_usage_reservations where status = 'active'
+    )
+  );
+$$;
+
+revoke all on function billing_legacy.quad_zero_check() from public, anon, authenticated;
+grant execute on function billing_legacy.quad_zero_check() to service_role;
+
+comment on function billing_legacy.quad_zero_check() is
+  'Read-only. All four counts must be zero, per account fully drained, before the manual revoke runbook in ADR 003 §5.';
+
+-- ---------------------------------------------------------------------------------------------
+-- billing_legacy.reconciliation_report — read-only migration reconciliation, computed directly
+-- from drain_snapshots joined to the pricing matrix each snapshot was converted under, the
+-- legacy_migration bucket it funded, and the grant ledger row that recorded the funding. This is
+-- the actual cutover-migration check (conservation of buckets/allocations/ledger under ongoing
+-- reserve/finalize/release traffic is a separate, already-covered invariant — see
+-- supabase/tests/billing_usage_invariants.sql).
+-- ---------------------------------------------------------------------------------------------
+
+create function billing_legacy.reconciliation_report()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+stable
+as $$
+declare
+  v_expected_units bigint;
+  v_bucket_units bigint;
+  v_ledger_grant_units bigint;
+  v_mismatched_accounts integer;
+begin
+  select coalesce(sum(
+    greatest(floor(
+      snapshot.snapshotted_balance * (matrix.conversion_rules ->> 'legacy_credit_to_unit')::numeric
+    )::bigint, 0)
+  ), 0)
+  into v_expected_units
+  from billing_legacy.drain_snapshots as snapshot
+  join billing.pricing_matrices as matrix on matrix.version = snapshot.pricing_matrix_version;
+
+  select coalesce(sum(bucket.total_units), 0)
+  into v_bucket_units
+  from billing_legacy.drain_snapshots as snapshot
+  join billing.usage_buckets as bucket
+    on bucket.account_id = snapshot.account_id and bucket.id = snapshot.granted_bucket_id;
+
+  select coalesce(sum(ledger.units), 0)
+  into v_ledger_grant_units
+  from billing_legacy.drain_snapshots as snapshot
+  join billing.usage_ledger as ledger
+    on ledger.account_id = snapshot.account_id and ledger.bucket_id = snapshot.granted_bucket_id
+   and ledger.event_type = 'grant';
+
+  select count(*)
+  into v_mismatched_accounts
+  from billing_legacy.drain_snapshots as snapshot
+  join billing.pricing_matrices as matrix on matrix.version = snapshot.pricing_matrix_version
+  left join billing.usage_buckets as bucket
+    on bucket.account_id = snapshot.account_id and bucket.id = snapshot.granted_bucket_id
+  left join billing.usage_ledger as ledger
+    on ledger.account_id = snapshot.account_id and ledger.bucket_id = snapshot.granted_bucket_id
+   and ledger.event_type = 'grant'
+  where greatest(floor(
+          snapshot.snapshotted_balance * (matrix.conversion_rules ->> 'legacy_credit_to_unit')::numeric
+        )::bigint, 0) is distinct from coalesce(bucket.total_units, 0)
+     or greatest(floor(
+          snapshot.snapshotted_balance * (matrix.conversion_rules ->> 'legacy_credit_to_unit')::numeric
+        )::bigint, 0) is distinct from coalesce(ledger.units, 0);
+
+  return jsonb_build_object(
+    'expected_units', v_expected_units,
+    'bucket_units', v_bucket_units,
+    'ledger_grant_units', v_ledger_grant_units,
+    'bucket_delta', v_bucket_units - v_expected_units,
+    'ledger_delta', v_ledger_grant_units - v_expected_units,
+    'mismatched_accounts', v_mismatched_accounts
+  );
+end
+$$;
+
+revoke all on function billing_legacy.reconciliation_report() from public, anon, authenticated;
+grant execute on function billing_legacy.reconciliation_report() to service_role;
+
+comment on function billing_legacy.reconciliation_report() is
+  'Read-only. Recomputes expected legacy-migration units from drain_snapshots x pricing_matrices and compares against actual usage_buckets/usage_ledger; all deltas/mismatches must be zero before global cutover activates.';
+
+-- ---------------------------------------------------------------------------------------------
+-- runtime.enter_billing_maintenance — atomic entering half of a maintenance transition. There was
+-- previously no RPC for this (operators set the pause flags directly); billing.activate_global_
+-- cutover requires claims_paused AND ingestion_paused to already be true with valid metadata
+-- before it will run, so a dedicated, validated, service-role-only entry point replaces the manual
+-- direct UPDATE. Does not touch kill_switch_active — this is a metering-admission maintenance
+-- window, not the workflow-runtime kill switch, and the two are independently controllable
+-- (system_controls_kill_switch_check only requires claims_paused when kill_switch_active is set,
+-- not the reverse).
+-- ---------------------------------------------------------------------------------------------
+
+create function runtime.enter_billing_maintenance(p_actor text, p_reason_code text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row runtime.system_controls%rowtype;
+  v_now timestamptz := clock_timestamp();
+begin
+  if p_actor is null or char_length(p_actor) not between 1 and 160 then
+    raise exception using errcode = '22023', message = 'invalid maintenance actor';
+  end if;
+  if p_reason_code is null or p_reason_code !~ '^[A-Z][A-Z0-9_]{0,63}$' then
+    raise exception using errcode = '22023', message = 'invalid maintenance reason code';
+  end if;
+
+  -- Kill switch independence (ADR 003 §5): the kill switch is an unrelated incident control.
+  -- Fail closed rather than silently overwriting its reason_code/activated_by/activated_at.
+  select controls.* into strict v_row
+  from runtime.system_controls as controls
+  where controls.singleton
+  for update;
+  if v_row.kill_switch_active then
+    raise exception using errcode = '55000',
+      message = 'kill switch is active; billing maintenance cannot start until it is cleared independently';
+  end if;
+
+  -- Single atomic UPDATE: flags on and metadata set together, matching
+  -- system_controls_activation_check (ADR 003 §5).
+  update runtime.system_controls
+  set claims_paused = true,
+      ingestion_paused = true,
+      reason_code = p_reason_code,
+      activated_by = p_actor,
+      activated_at = v_now,
+      control_epoch = control_epoch + 1,
+      updated_at = v_now
+  where singleton
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'claims_paused', v_row.claims_paused,
+    'ingestion_paused', v_row.ingestion_paused,
+    'reason_code', v_row.reason_code,
+    'activated_by', v_row.activated_by,
+    'activated_at', v_row.activated_at,
+    'control_epoch', v_row.control_epoch
+  );
+end
+$$;
+
+revoke all on function runtime.enter_billing_maintenance(text, text) from public, anon, authenticated;
+grant execute on function runtime.enter_billing_maintenance(text, text) to service_role;
+
+comment on function runtime.enter_billing_maintenance(text, text) is
+  'ADR 003: single atomic UPDATE setting claims_paused + ingestion_paused and maintenance metadata together.';
+
+-- ---------------------------------------------------------------------------------------------
+-- runtime.resume_from_maintenance — atomic clearing half of a maintenance transition
+-- ---------------------------------------------------------------------------------------------
+
+create function runtime.resume_from_maintenance(p_actor text, p_reason_code text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row runtime.system_controls%rowtype;
+  v_now timestamptz := clock_timestamp();
+begin
+  if p_actor is null or char_length(p_actor) not between 1 and 160 then
+    raise exception using errcode = '22023', message = 'invalid resume actor';
+  end if;
+  -- p_reason_code is optional (why the resume happened need not match the entering reason_code),
+  -- but if supplied it must still be a well-formed reason code, and it is returned to the caller
+  -- to log — it is not a dead parameter.
+  if p_reason_code is not null and p_reason_code !~ '^[A-Z][A-Z0-9_]{0,63}$' then
+    raise exception using errcode = '22023', message = 'invalid resume reason code';
+  end if;
+
+  -- Kill switch independence (ADR 003 §5): this RPC clears billing maintenance only. It must never
+  -- change kill_switch_active, and must fail closed if an incident is still active so a billing
+  -- resume can never be mistaken for clearing the kill switch.
+  select controls.* into strict v_row
+  from runtime.system_controls as controls
+  where controls.singleton
+  for update;
+  if v_row.kill_switch_active then
+    raise exception using errcode = '55000',
+      message = 'kill switch is active; clear it independently before resuming from billing maintenance';
+  end if;
+
+  -- Single atomic UPDATE: flags off and metadata cleared together, matching
+  -- system_controls_activation_check (ADR 003 §5). The resume actor/reason are audited via
+  -- runtime.audit_events, not stored on the now-inactive singleton row.
+  -- runtime.audit_events requires a tenant account_id and workflow-scoped correlation_id; this is
+  -- a control-plane, not tenant-scoped, action, so it does not fit that table. The resume actor
+  -- and reason are returned to the caller (an operator-facing Edge Function) to log instead.
+  update runtime.system_controls
+  set claims_paused = false,
+      ingestion_paused = false,
+      reason_code = null,
+      activated_by = null,
+      activated_at = null,
+      control_epoch = control_epoch + 1,
+      updated_at = v_now
+  where singleton
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'resumed_by', p_actor,
+    'resume_reason_code', p_reason_code,
+    'resumed_at', v_now,
+    'control_epoch', v_row.control_epoch
+  );
+end
+$$;
+
+revoke all on function runtime.resume_from_maintenance(text, text) from public, anon, authenticated;
+grant execute on function runtime.resume_from_maintenance(text, text) to service_role;
+
+comment on function runtime.resume_from_maintenance(text, text) is
+  'ADR 003: single atomic UPDATE clearing all system_controls pause flags and metadata together.';
+
+-- ---------------------------------------------------------------------------------------------
+-- billing.activate_global_cutover — the one-way, whole-environment cutover. Requires the caller to
+-- have already put the system into maintenance via runtime.enter_billing_maintenance (claims_paused
+-- AND ingestion_paused, with reason_code/activated_by/activated_at all set) and requires
+-- billing_legacy.quad_zero_check() to report all four counts as exactly zero. On success: snapshots
+-- every account deterministically (ascending account_id, all locked for update in the same
+-- transaction as this function body), grants source='legacy_migration' buckets with a 12-month TTL
+-- funded by the active pricing matrix's legacy_credit_to_unit conversion, writes one append-only
+-- 'grant' ledger row per funded account, then atomically clears the maintenance flags/metadata
+-- (same shape as runtime.resume_from_maintenance) and flips billing.cutover_state.v2_active — all
+-- in the one transaction this function body runs in. This function is defined here but never
+-- invoked by any migration: the actual cutover is a manual, per-environment operator action (see
+-- ADR 003 §5), run only after a human has read quad_zero_check() output for that specific
+-- environment.
+-- ---------------------------------------------------------------------------------------------
+
+create function billing.activate_global_cutover(p_actor text, p_reason_code text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_cutover billing.cutover_state%rowtype;
+  v_control runtime.system_controls%rowtype;
+  v_quad jsonb;
+  v_matrix billing.pricing_matrices%rowtype;
+  v_factor numeric;
+  v_now timestamptz := clock_timestamp();
+  v_account record;
+  v_granted_units bigint;
+  v_bucket_id uuid;
+  v_accounts_migrated integer := 0;
+  v_units_migrated bigint := 0;
+  v_new_control_epoch bigint;
+  v_reconciliation jsonb;
+begin
+  if p_actor is null or char_length(p_actor) not between 1 and 160 then
+    raise exception using errcode = '22023', message = 'invalid activation actor';
+  end if;
+  if p_reason_code is null or p_reason_code !~ '^[A-Z][A-Z0-9_]{0,63}$' then
+    raise exception using errcode = '22023', message = 'invalid activation reason code';
+  end if;
+
+  -- Lock system_controls before cutover_state (same order as the reserve/maintenance paths) and
+  -- check the kill switch BEFORE the already-active short-circuit below: a kill switch activated
+  -- after v2 is already live must still fail this call closed rather than silently no-op-succeeding.
+  select controls.* into strict v_control
+  from runtime.system_controls as controls
+  where controls.singleton
+  for update;
+  if v_control.kill_switch_active then
+    raise exception using errcode = '55000',
+      message = 'kill switch is active; global cutover cannot run until it is cleared independently';
+  end if;
+
+  select cutover.* into strict v_cutover
+  from billing.cutover_state as cutover
+  where cutover.singleton
+  for update;
+  if v_cutover.v2_active then
+    return jsonb_build_object(
+      'status', 'already_active',
+      'activated_at', v_cutover.activated_at,
+      'cutover_epoch', v_cutover.cutover_epoch
+    );
+  end if;
+
+  if not (v_control.claims_paused and v_control.ingestion_paused) then
+    raise exception using errcode = '55000',
+      message = 'global cutover requires claims_paused and ingestion_paused; call runtime.enter_billing_maintenance first';
+  end if;
+  if v_control.reason_code is null or v_control.activated_by is null or v_control.activated_at is null then
+    raise exception using errcode = '55000', message = 'system_controls maintenance metadata incomplete';
+  end if;
+
+  v_quad := billing_legacy.quad_zero_check();
+  if (v_quad ->> 'autonomous_run_checkpoints_nonterminal')::integer <> 0
+    or (v_quad ->> 'workflow_runs_nonterminal')::integer <> 0
+    or (v_quad ->> 'compute_jobs_pending_or_running')::integer <> 0
+    or (v_quad ->> 'token_usage_reservations_active')::integer <> 0 then
+    raise exception using errcode = '55000',
+      message = format('quad-zero check not clear, cannot activate global cutover: %s', v_quad);
+  end if;
+
+  select matrix.* into v_matrix
+  from billing.pricing_matrices as matrix
+  where matrix.is_active
+  limit 1;
+  if not found then
+    raise exception using errcode = '55000', message = 'no active pricing matrix for global cutover conversion';
+  end if;
+  v_factor := coalesce((v_matrix.conversion_rules ->> 'legacy_credit_to_unit')::numeric, 0);
+  if v_factor <= 0 then
+    raise exception using errcode = '55000',
+      message = 'pricing matrix missing legacy_credit_to_unit conversion rule';
+  end if;
+
+  -- Deterministic, single-transaction snapshot of every account, locked in ascending account_id
+  -- order. Explicit conversion (never implicit 1:1) via legacy_credit_to_unit, exactly like
+  -- billing_legacy.expire_legacy_reservations locks accounts in the same ascending order.
+  for v_account in
+    select account.id, account.token_balance
+    from public.accounts as account
+    order by account.id
+    for update
+  loop
+    if exists (
+      select 1 from billing_legacy.drain_snapshots as snapshot where snapshot.account_id = v_account.id
+    ) then
+      continue;
+    end if;
+
+    v_granted_units := greatest(floor(v_account.token_balance * v_factor)::bigint, 0);
+    v_bucket_id := null;
+
+    -- Composite tenant integrity: zero-unit accounts store a NULL bucket id (ADR 003 §5).
+    if v_granted_units > 0 then
+      v_bucket_id := gen_random_uuid();
+      insert into billing.usage_buckets (
+        id, account_id, source, pricing_matrix_version, total_units, remaining_units, expires_at
+      ) values (
+        v_bucket_id, v_account.id, 'legacy_migration', v_matrix.version,
+        v_granted_units, v_granted_units, v_now + interval '12 months'
+      );
+
+      insert into billing.usage_ledger (account_id, event_type, units, bucket_id, details)
+      values (
+        v_account.id, 'grant', v_granted_units, v_bucket_id,
+        jsonb_build_object('reason', 'legacy_migration', 'snapshotted_balance', v_account.token_balance)
+      );
+      v_units_migrated := v_units_migrated + v_granted_units;
+    end if;
+
+    insert into billing_legacy.drain_snapshots (
+      account_id, snapshotted_balance, granted_bucket_id, pricing_matrix_version
+    ) values (
+      v_account.id, v_account.token_balance, v_bucket_id, v_matrix.version
+    );
+
+    v_accounts_migrated := v_accounts_migrated + 1;
+  end loop;
+
+  -- Fail-closed reconciliation gate (ADR 003 §5): recompute expected legacy-migration units from
+  -- the snapshots just written and compare against the buckets/ledger just written, in the same
+  -- transaction. Any nonzero delta or mismatch aborts the whole cutover — nothing below this point
+  -- (clearing maintenance, flipping v2_active) runs, and the entire transaction rolls back.
+  v_reconciliation := billing_legacy.reconciliation_report();
+  if (v_reconciliation ->> 'bucket_delta')::bigint <> 0
+    or (v_reconciliation ->> 'ledger_delta')::bigint <> 0
+    or (v_reconciliation ->> 'mismatched_accounts')::integer <> 0 then
+    raise exception using errcode = '55000',
+      message = format('cutover reconciliation is not clear, refusing to activate: %s', v_reconciliation);
+  end if;
+
+  -- Atomically clear maintenance metadata/flags and bump control_epoch — same shape as
+  -- runtime.resume_from_maintenance — in the same transaction as the snapshot loop above.
+  update runtime.system_controls
+  set claims_paused = false,
+      ingestion_paused = false,
+      reason_code = null,
+      activated_by = null,
+      activated_at = null,
+      control_epoch = control_epoch + 1,
+      updated_at = v_now
+  where singleton
+  returning control_epoch into v_new_control_epoch;
+
+  update billing.cutover_state
+  set v2_active = true,
+      activated_by = p_actor,
+      reason_code = p_reason_code,
+      activated_at = v_now,
+      cutover_epoch = cutover_epoch + 1
+  where singleton;
+
+  return jsonb_build_object(
+    'status', 'activated',
+    'activated_by', p_actor,
+    'reason_code', p_reason_code,
+    'activated_at', v_now,
+    'accounts_migrated', v_accounts_migrated,
+    'units_migrated', v_units_migrated,
+    'system_controls_epoch', v_new_control_epoch,
+    'reconciliation', v_reconciliation
+  );
+end
+$$;
+
+revoke all on function billing.activate_global_cutover(text, text) from public, anon, authenticated;
+grant execute on function billing.activate_global_cutover(text, text) to service_role;
+
+comment on function billing.activate_global_cutover(text, text) is
+  'ADR 003: one-way global cutover. Never invoked by a migration — manual operator action per the runbook.';
 
 commit;
