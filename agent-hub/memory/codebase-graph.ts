@@ -105,7 +105,8 @@ export class CodebaseKnowledgeGraph {
   }
 }
 
-function sqlName(raw: string): string { return raw.replace(/"/g, '').toLowerCase() }
+function sqlName(raw: string): string { return raw.replace(/"/g, '').toLowerCase().replace(/^\.+|\.+$/g, '') }
+function sqlTags(name: string): string[] { return name.split('.').filter(Boolean) }
 function addNode(nodes: Map<string, CodebaseNode>, node: CodebaseNode): void { if (!nodes.has(node.id)) nodes.set(node.id, node) }
 
 /** Build the repository graph from migrations plus workers without executing or importing either. */
@@ -122,26 +123,26 @@ export async function indexCodebaseGraph(repoRoot: string): Promise<CodebaseKnow
     addNode(nodes, { id: migrationId, type: 'Migration', name: filename, summary: 'Supabase SQL migration', path: `supabase/migrations/${filename}`, tags: ['migration'] })
     for (const match of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?([\w".]+)/gi)) {
       const name = sqlName(match[1]); const id = `table:${name}`
-      addNode(nodes, { id, type: 'Table', name, summary: `PostgreSQL table ${name}`, tags: name.split('.') })
+      addNode(nodes, { id, type: 'Table', name, summary: `PostgreSQL table ${name}`, tags: sqlTags(name) })
       addEdge({ source: migrationId, target: id, type: 'defines' })
     }
     const functions: Array<{ id: string; start: number }> = []
     for (const match of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+([\w".]+)/gi)) {
       const name = sqlName(match[1]); const id = `rpc:${name}`
-      addNode(nodes, { id, type: 'RPC', name, summary: `PostgreSQL function ${name}`, tags: ['rpc', ...name.split('.')] })
+      addNode(nodes, { id, type: 'RPC', name, summary: `PostgreSQL function ${name}`, tags: ['rpc', ...sqlTags(name)] })
       addEdge({ source: migrationId, target: id, type: 'defines' }); functions.push({ id, start: match.index ?? 0 })
     }
     for (const match of sql.matchAll(/create\s+policy\s+"?([^"\n]+?)"?\s+on\s+([\w".]+)/gi)) {
       const table = sqlName(match[2]); const tableId = `table:${table}`; const id = `policy:${filename}:${makeSafeId(match[1])}`
       addNode(nodes, { id, type: 'Policy', name: match[1].trim(), summary: `RLS policy on ${table}`, tags: ['rls', table] })
-      addNode(nodes, { id: tableId, type: 'Table', name: table, summary: `Referenced PostgreSQL table ${table}`, tags: table.split('.') })
+      addNode(nodes, { id: tableId, type: 'Table', name: table, summary: `Referenced PostgreSQL table ${table}`, tags: sqlTags(table) })
       addEdge({ source: migrationId, target: id, type: 'defines' }); addEdge({ source: id, target: tableId, type: 'enforces' })
     }
     for (let index = 0; index < functions.length; index += 1) {
       const section = sql.slice(functions[index].start, functions[index + 1]?.start ?? sql.length)
       for (const match of section.matchAll(/\b(?:from|into|update|join)\s+([\w".]+)/gi)) {
         const name = sqlName(match[1]); if (!name.includes('.')) continue
-        const id = `table:${name}`; addNode(nodes, { id, type: 'Table', name, summary: `Referenced PostgreSQL table ${name}`, tags: name.split('.') })
+        const id = `table:${name}`; addNode(nodes, { id, type: 'Table', name, summary: `Referenced PostgreSQL table ${name}`, tags: sqlTags(name) })
         addEdge({ source: functions[index].id, target: id, type: 'queries' })
       }
     }

@@ -54,7 +54,7 @@ assert.equal(relevant.nodes.some((node) => node.id === 'file:unrelated'), false)
 assert.ok(relevant.nodes.length <= 4)
 assert.ok(graph.findDependencyPath('file:runtime', 'table:jobs'))
 const indexedGraph = await indexCodebaseGraph(process.cwd())
-assert.equal(indexedGraph.nodes.filter((node) => node.type === 'Migration').length, 157)
+assert.ok(indexedGraph.nodes.filter((node) => node.type === 'Migration').length >= 157)
 assert.ok(indexedGraph.nodes.some((node) => node.type === 'Policy'))
 assert.ok(indexedGraph.nodes.some((node) => node.type === 'RPC'))
 

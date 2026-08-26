@@ -1,5 +1,14 @@
 import { z } from 'zod'
 import { AgencyRoleIdSchema, type AgencyRoleId } from '../skills/agency-roles.ts'
+import {
+  A2AArtifactRefSchema,
+  A2AEvidenceRefSchema,
+  A2AMessageSchema,
+  buildA2AIdempotencyKey,
+  decodeA2AMessage,
+  encodeA2AMessage,
+  type A2AMessage,
+} from '../../src/types/a2a-wire.ts'
 
 const MAX_BRANCHES = 16
 const MAX_RESULT_BYTES = 64 * 1024
@@ -36,12 +45,80 @@ export interface SubagentBranchResult {
   role: AgencyRoleId
   status: 'completed' | 'failed' | 'timed_out' | 'skipped'
   output?: Record<string, unknown>
-  errorCode?: 'SUBAGENT_FAILED' | 'SUBAGENT_TIMEOUT' | 'SUBAGENT_RESULT_INVALID' | 'SUBAGENT_DEPENDENCY_FAILED'
+  errorCode?: 'SUBAGENT_FAILED' | 'SUBAGENT_TIMEOUT' | 'SUBAGENT_RESULT_INVALID' | 'SUBAGENT_DEPENDENCY_FAILED' | 'SUBAGENT_A2A_INVALID'
 }
 
 export interface SupervisorArtifact {
   merged: Record<string, unknown>
   branches: SubagentBranchResult[]
+}
+
+const A2AHandoffSchema = z.object({
+  summary: z.string().min(1).max(600),
+  data: z.record(z.unknown()).default({}),
+  artifact_refs: z.array(A2AArtifactRefSchema).max(32).default([]),
+  evidence_refs: z.array(A2AEvidenceRefSchema).max(32).default([]),
+  confidence: z.number().finite().min(0).max(1).optional(),
+  requires_approval: z.boolean().default(false),
+}).strict()
+
+export interface DurableA2ABridge {
+  accountId: string
+  workflowId: string
+  senderLeaseEpoch: number
+  messageIdForEdge: (fromTaskId: string, toTaskId: string) => string
+  enqueue: (message: A2AMessage, idempotencyKey: string) => Promise<void>
+  now?: () => string
+}
+
+export interface SubagentSupervisorOptions {
+  a2a?: DurableA2ABridge
+}
+
+async function compactDependencies(
+  targetTaskId: string,
+  dependencies: Record<string, SubagentBranchResult>,
+  bridge: DurableA2ABridge,
+): Promise<Record<string, SubagentBranchResult>> {
+  const compact: Record<string, SubagentBranchResult> = {}
+  for (const [sourceTaskId, dependency] of Object.entries(dependencies)) {
+    if (dependency.status !== 'completed' || !dependency.output) {
+      compact[sourceTaskId] = dependency
+      continue
+    }
+    const handoff = A2AHandoffSchema.parse(dependency.output._a2a)
+    const message = A2AMessageSchema.parse({
+      version: '1.0',
+      message_id: bridge.messageIdForEdge(sourceTaskId, targetTaskId),
+      account_id: bridge.accountId,
+      workflow_id: bridge.workflowId,
+      from_agent_id: sourceTaskId,
+      to_agent_id: targetTaskId,
+      intent: 'result',
+      created_at: (bridge.now ?? (() => new Date().toISOString()))(),
+      sender_lease_epoch: bridge.senderLeaseEpoch,
+      summary: handoff.summary,
+      data: handoff.data,
+      artifact_refs: handoff.artifact_refs,
+      evidence_refs: handoff.evidence_refs,
+      confidence: handoff.confidence,
+      requires_approval: handoff.requires_approval,
+    })
+    const decoded = decodeA2AMessage(encodeA2AMessage(message))
+    await bridge.enqueue(decoded, buildA2AIdempotencyKey(decoded))
+    compact[sourceTaskId] = {
+      ...dependency,
+      output: {
+        summary: decoded.summary,
+        data: decoded.data,
+        artifact_refs: decoded.artifact_refs,
+        evidence_refs: decoded.evidence_refs,
+        confidence: decoded.confidence,
+        requires_approval: decoded.requires_approval,
+      },
+    }
+  }
+  return compact
 }
 
 function safeResult(value: unknown): Record<string, unknown> {
@@ -90,9 +167,11 @@ async function executeBranch(task: SubagentTask, dependencies: Record<string, Su
 
 export class SubagentSupervisor {
   private readonly executor: SubagentExecutor
+  private readonly a2a?: DurableA2ABridge
 
-  constructor(executor: SubagentExecutor) {
+  constructor(executor: SubagentExecutor, options: SubagentSupervisorOptions = {}) {
     this.executor = executor
+    this.a2a = options.a2a
   }
 
   async run(rawTasks: readonly SubagentTask[]): Promise<SupervisorArtifact> {
@@ -109,9 +188,16 @@ export class SubagentSupervisor {
       const ready = tasks.filter((task) => pending.has(task.id) && task.dependsOn.every((dependency) => results.has(dependency)))
       if (!ready.length) throw new Error('SUBAGENT_DAG_CYCLE')
       const wave = await Promise.all(ready.map(async (task) => {
-        const dependencies = Object.fromEntries(task.dependsOn.map((id) => [id, results.get(id)!]))
+        let dependencies = Object.fromEntries(task.dependsOn.map((id) => [id, results.get(id)!]))
         if (task.dependencyPolicy === 'all_completed' && Object.values(dependencies).some((dependency) => dependency.status !== 'completed')) {
           return { taskId: task.id, role: task.role, status: 'skipped', errorCode: 'SUBAGENT_DEPENDENCY_FAILED' } as SubagentBranchResult
+        }
+        if (this.a2a && Object.keys(dependencies).length) {
+          try {
+            dependencies = await compactDependencies(task.id, dependencies, this.a2a)
+          } catch {
+            return { taskId: task.id, role: task.role, status: 'failed', errorCode: 'SUBAGENT_A2A_INVALID' } as SubagentBranchResult
+          }
         }
         return await executeBranch(task, dependencies, this.executor)
       }))
@@ -123,7 +209,9 @@ export class SubagentSupervisor {
     const merged: Record<string, unknown> = {}
     for (const branch of branches) {
       if (branch.status !== 'completed' || !branch.output) continue
-      Object.assign(merged, branch.output)
+      for (const [key, value] of Object.entries(branch.output)) {
+        if (key !== '_a2a') merged[key] = value
+      }
     }
     return { merged, branches }
   }

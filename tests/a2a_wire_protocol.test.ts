@@ -7,6 +7,7 @@ import {
   decodeA2AMessage,
   encodeA2AMessage,
 } from '../src/types/a2a-wire.ts'
+import { SubagentSupervisor, type SubagentExecutor } from '../agent-hub/orchestration/subagent-supervisor.ts'
 
 const accountId = '01917b12-3a5c-7d9e-bf33-9118c7e7b801'
 const workflowId = '01917b12-3a5c-7d9e-bf33-9118c7e7b802'
@@ -92,4 +93,57 @@ assert.throws(
   /Unrecognized key/i,
 )
 
-console.log('A2A Wire Protocol: 13 invariants passed')
+const dispatched: Array<{ message: unknown; idempotencyKey: string }> = []
+let dependencySeenByWriter: Record<string, unknown> | undefined
+const executor: SubagentExecutor = async (task) => {
+  if (task.id === 'finance') {
+    return {
+      privateScratch: 'must not be forwarded to another agent',
+      total: 125_000,
+      _a2a: {
+        summary: 'Estimate calculated from tenant-approved prices.',
+        data: { total_minor: 125_000, currency: 'UZS' },
+        evidence_refs: [{ evidence_id: 'price-list-v4', source_type: 'tenant_record', sha256: 'a'.repeat(64) }],
+      },
+    }
+  }
+  dependencySeenByWriter = task.dependencies.finance.output
+  return { proposalReady: true }
+}
+const supervised = await new SubagentSupervisor(executor, {
+  a2a: {
+    accountId,
+    workflowId,
+    senderLeaseEpoch: 7,
+    messageIdForEdge: () => '01917b12-3a5c-7d9e-bf33-9118c7e7b805',
+    now: () => '2026-08-26T10:00:00+05:00',
+    enqueue: async (message, idempotencyKey) => { dispatched.push({ message, idempotencyKey }) },
+  },
+}).run([
+  { id: 'finance', role: 'FINANCE_ANALYST', input: {} },
+  { id: 'proposal', role: 'MARKETER', input: {}, dependsOn: ['finance'] },
+])
+assert.equal(dispatched.length, 1)
+assert.equal(dispatched[0].idempotencyKey, `${accountId}:${workflowId}:01917b12-3a5c-7d9e-bf33-9118c7e7b805`)
+assert.equal(dependencySeenByWriter?.privateScratch, undefined, 'A2A must not forward a branch scratchpad')
+assert.equal((dependencySeenByWriter?.data as Record<string, unknown>).total_minor, 125_000)
+assert.equal(supervised.merged._a2a, undefined, 'wire envelopes must not leak into the final artifact')
+assert.equal(supervised.merged.proposalReady, true)
+
+const invalidA2A = await new SubagentSupervisor(async (task) => (
+  task.id === 'source' ? { raw: 'no compact handoff' } : { shouldNotRun: true }
+), {
+  a2a: {
+    accountId,
+    workflowId,
+    senderLeaseEpoch: 7,
+    messageIdForEdge: () => '01917b12-3a5c-7d9e-bf33-9118c7e7b806',
+    enqueue: async () => undefined,
+  },
+}).run([
+  { id: 'source', role: 'FINANCE_ANALYST', input: {} },
+  { id: 'target', role: 'MARKETER', input: {}, dependsOn: ['source'] },
+])
+assert.equal(invalidA2A.branches[1].errorCode, 'SUBAGENT_A2A_INVALID')
+
+console.log('A2A Wire Protocol: 19 invariants passed')
