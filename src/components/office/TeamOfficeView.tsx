@@ -23,7 +23,17 @@ function position(index: number, count: number, mode: 'office' | 'graph') {
   return { x: 360 + Math.cos(angle) * 280, y: 260 + Math.sin(angle) * 150 }
 }
 
-export function TeamOfficeView({ platformAgents, loading = false, error }: { platformAgents: PlatformAgent[]; loading?: boolean; error?: string }) {
+export function TeamOfficeView({
+  platformAgents,
+  supplementalAgents,
+  loading = false,
+  error,
+}: {
+  platformAgents: PlatformAgent[]
+  supplementalAgents?: AgentNodeData[]
+  loading?: boolean
+  error?: string
+}) {
   const { t } = useI18n()
   const syncAgents = useTeamOfficeStore((state) => state.syncAgents)
   const agentsMap = useTeamOfficeStore((state) => state.agents)
@@ -34,7 +44,16 @@ export function TeamOfficeView({ platformAgents, loading = false, error }: { pla
   const [selected, setSelected] = useState<AgentNodeData | null>(null)
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   useEffect(() => { syncAgents(platformAgents) }, [platformAgents, syncAgents])
-  const agents = useMemo(() => Object.values(agentsMap), [agentsMap])
+  const agents = useMemo(() => {
+    const syncedAgents = Object.values(agentsMap)
+    const platformIds = new Set(platformAgents.map((agent) => agent.id))
+    const baseAgents = supplementalAgents === undefined
+      ? syncedAgents
+      : syncedAgents.filter((agent) => platformIds.has(agent.id))
+    const merged = new Map(baseAgents.map((agent) => [agent.id, agent]))
+    for (const agent of supplementalAgents ?? []) merged.set(agent.id, agent)
+    return [...merged.values()]
+  }, [agentsMap, platformAgents, supplementalAgents])
   const nodes = useMemo<Node<AgentNodeData & { onSelect?: () => void }>[]>(() => agents.map((agent, index) => ({
     id: agent.id,
     type: mode === 'office' ? 'agentDesk' : 'pipeline',

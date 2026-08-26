@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2, LayoutGrid, List, Sparkles } from 'lucide-react'
 import { useI18n } from '../../i18n'
@@ -12,17 +12,33 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { cn } from '../../lib/cn'
 import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
-import { isSupabaseEnabled } from '../../lib/supabase'
+import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { BUSINESS_AGENT_PRESETS, guardedPresetRoles, type BusinessAgentPreset, type BusinessPresetId } from '../../data/businessAgentPresets'
 import { TeamOfficeView } from '../../components/office/TeamOfficeView'
 import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
-import type { OperationalAgentStatus } from '../../types/orchestrator'
+import type { AgentNodeData, OperationalAgentStatus } from '../../types/orchestrator'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
 interface PresetRunState {
   status: PresetRunStatus
   artifacts: string[]
+}
+
+interface SavedSubAgentRow {
+  id: string
+  name: string
+  role: string
+  model?: string | null
+  skills?: string[] | null
+  status?: string | null
+}
+
+interface SavedTeamRosterState {
+  teamId: string | null
+  members: AgentNodeData[]
+  loading: boolean
+  error: string
 }
 
 const PRESET_ICON = {
@@ -74,9 +90,83 @@ export default function AgentsPage() {
   const [requireCitations, setRequireCitations] = useState(true)
   const [requireApproval, setRequireApproval] = useState(true)
   const [runStates, setRunStates] = useState<Partial<Record<BusinessPresetId, PresetRunState>>>({})
+  const [activeOfficeTeamId, setActiveOfficeTeamId] = useState<string | null>(null)
+  const [savedTeamRoster, setSavedTeamRoster] = useState<SavedTeamRosterState>({ teamId: null, members: [], loading: false, error: '' })
   const teamsView = location.pathname.startsWith('/app/teams')
   const officeView = location.pathname === '/app/agents'
   const visibleAgents = agents.filter((a) => teamsView ? a.type === 'workflow' : a.type !== 'workflow')
+  const savedTeams = useMemo(() => agents.filter((agent) => agent.type === 'workflow'), [agents])
+  const selectedOfficeTeamId = activeOfficeTeamId && savedTeams.some((team) => team.id === activeOfficeTeamId)
+    ? activeOfficeTeamId
+    : savedTeams[0]?.id ?? null
+  const activeOfficeTeam = savedTeams.find((team) => team.id === selectedOfficeTeamId) ?? null
+  const activeSavedTeamRoster = savedTeamRoster.teamId === selectedOfficeTeamId ? savedTeamRoster.members : []
+  const activeSavedTeamRosterLoading = isSupabaseEnabled && Boolean(teamsView && selectedOfficeTeamId)
+    && (savedTeamRoster.teamId !== selectedOfficeTeamId || savedTeamRoster.loading)
+  const activeSavedTeamRosterError = savedTeamRoster.teamId === selectedOfficeTeamId ? savedTeamRoster.error : ''
+
+  useEffect(() => {
+    if (!teamsView || !selectedOfficeTeamId || !isSupabaseEnabled || !supabase) return
+
+    let cancelled = false
+
+    void (async () => {
+      await Promise.resolve()
+      if (cancelled) return
+      setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: true, error: '' })
+
+      try {
+        const { data: department, error: departmentError } = await supabase
+          .from('departments')
+          .select('id')
+          .eq('main_agent_id', selectedOfficeTeamId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (cancelled) return
+        if (departmentError) {
+          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить состав команды.' })
+          return
+        }
+        if (!department?.id) {
+          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: '' })
+          return
+        }
+
+        const { data: members, error: membersError } = await supabase
+          .from('sub_agents')
+          .select('id, name, role, model, skills, status')
+          .eq('department_id', department.id)
+          .order('created_at', { ascending: true })
+
+        if (cancelled) return
+        if (membersError) {
+          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить специалистов команды.' })
+          return
+        }
+
+        const roster: AgentNodeData[] = ((members ?? []) as SavedSubAgentRow[]).map((member) => ({
+          id: member.id,
+          name: member.name || 'AI specialist',
+          role: member.role || 'Specialist',
+          avatar: 'cyan',
+          status: 'idle',
+          tools: Array.isArray(member.skills) ? member.skills : [],
+          metrics: { tasksCompleted: 0, avgExecutionTimeMs: 0 },
+          model: member.model ?? undefined,
+          provider: member.model?.includes('/') ? member.model.split('/')[0] : 'configured',
+          configurationSummary: member.status === 'active' ? 'published' : member.status ?? 'saved',
+          parentId: selectedOfficeTeamId,
+        }))
+        setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: roster, loading: false, error: '' })
+      } catch {
+        if (!cancelled) setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить специалистов команды.' })
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [selectedOfficeTeamId, teamsView])
 
   const modelLabel = (id: string) => MODELS.find((m) => m.id === id)?.label ?? id
   const activePreset = BUSINESS_AGENT_PRESETS.find((preset) => preset.id === activePresetId) ?? null
@@ -205,7 +295,41 @@ export default function AgentsPage() {
         </section>
       )}
 
-      <TeamOfficeView platformAgents={agents} />
+      {teamsView && savedTeams.length > 0 && (
+        <section className="mt-7 rounded-2xl border border-ice/10 bg-white/[0.02] p-3" aria-label="Выбор команды для холста">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-medium text-text">Команда на холсте</p>
+              <p className="mt-0.5 text-[11px] text-muted">Открывается последняя созданная команда; можно переключиться без потери расположения столов.</p>
+            </div>
+            <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1 sm:justify-end">
+              {savedTeams.map((team) => (
+                <button
+                  key={team.id}
+                  type="button"
+                  onClick={() => setActiveOfficeTeamId(team.id)}
+                  aria-pressed={selectedOfficeTeamId === team.id}
+                  className={cn(
+                    'shrink-0 rounded-xl border px-3 py-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan/40',
+                    selectedOfficeTeamId === team.id
+                      ? 'border-cyan/30 bg-cyan/10 text-cyan'
+                      : 'border-ice/10 bg-bg/50 text-muted hover:border-ice/20 hover:text-text',
+                  )}
+                >
+                  {team.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <TeamOfficeView
+        platformAgents={teamsView ? (activeOfficeTeam ? [activeOfficeTeam] : []) : visibleAgents}
+        supplementalAgents={teamsView ? activeSavedTeamRoster : undefined}
+        loading={activeSavedTeamRosterLoading}
+        error={teamsView ? activeSavedTeamRosterError : undefined}
+      />
 
       {visibleAgents.length === 0 ? (
         <div className="mt-8">
