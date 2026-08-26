@@ -15,6 +15,7 @@ import {
   MessageSquare,
   LineChart,
   Megaphone,
+  Sparkles,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -188,6 +189,7 @@ export function AppLayout() {
       </nav>
       <div className="border-t border-ice/10 p-3">
         <Button to="/app/create-team" fullWidth size="sm">
+          <Sparkles size={15} className="shrink-0" />
           {t('mvp.sidebar.createTeam')}
         </Button>
       </div>
@@ -198,11 +200,45 @@ export function AppLayout() {
     <div className="flex min-h-screen bg-bg" style={{ '--sb': collapsed ? '64px' : `${width}px` } as CSSProperties}>
       <aside className="fixed inset-y-0 left-0 z-30 hidden border-r border-ice/10 bg-bg lg:block" style={{ width: collapsed ? 64 : width }}>
         {collapsed ? (
-          <div className="flex h-full flex-col items-center gap-3 py-4">
-            <button onClick={toggleCollapse} className="group flex flex-col items-center gap-3 rounded-2xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
-              <Logo showWordmark={false} size={30} className="rotate-90 transition-transform group-hover:rotate-0" />
-              <PanelLeftOpen size={18} />
-            </button>
+          <div className="flex h-full flex-col items-center py-3">
+            <div className="flex h-14 w-full items-center justify-center gap-1 border-b border-ice/10 px-2">
+              <Link to="/" className="rounded-xl p-1.5 transition hover:bg-white/5" aria-label="Nemo AI">
+                <Logo showWordmark={false} size={30} />
+              </Link>
+              <button onClick={toggleCollapse} className="rounded-xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('appLayout.showSidebar')} title={t('appLayout.showSidebar')}>
+                <PanelLeftOpen size={17} />
+              </button>
+            </div>
+
+            <nav className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-4" aria-label={t('common.menu')}>
+              {navGroups.flatMap((group) => group.items).map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  title={item.label}
+                  aria-label={item.label}
+                  className={({ isActive }) => cn(
+                    'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors',
+                    'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-accent-cyan before:opacity-0',
+                    isActive ? 'bg-panel text-accent-cyan before:opacity-100' : 'hover:bg-panel/70 hover:text-text',
+                  )}
+                >
+                  <item.icon size={18} className="shrink-0" />
+                </NavLink>
+              ))}
+            </nav>
+
+            <div className="w-full border-t border-ice/10 px-2 pt-3">
+              <Link
+                to="/app/create-team"
+                title={t('mvp.sidebar.createTeam')}
+                aria-label={t('mvp.sidebar.createTeam')}
+                className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-r from-accent-cyan to-accent-indigo text-white shadow-sm transition hover:opacity-90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/60"
+              >
+                <Sparkles size={17} className="shrink-0" />
+              </Link>
+            </div>
           </div>
         ) : (
           <>

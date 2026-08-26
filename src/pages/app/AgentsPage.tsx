@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2 } from 'lucide-react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2, LayoutGrid, List, Sparkles } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
@@ -75,6 +75,7 @@ export default function AgentsPage() {
   const [requireApproval, setRequireApproval] = useState(true)
   const [runStates, setRunStates] = useState<Partial<Record<BusinessPresetId, PresetRunState>>>({})
   const teamsView = location.pathname.startsWith('/app/teams')
+  const officeView = location.pathname === '/app/agents'
   const visibleAgents = agents.filter((a) => teamsView ? a.type === 'workflow' : a.type !== 'workflow')
 
   const modelLabel = (id: string) => MODELS.find((m) => m.id === id)?.label ?? id
@@ -120,10 +121,30 @@ export default function AgentsPage() {
           <h1 className="text-2xl font-normal tracking-tight text-text">{teamsView ? t('agentsPage.teamsTitle') : t('agentsPage.agentsTitle')}</h1>
           <p className="mt-1 text-sm text-muted">{teamsView ? t('agentsPage.teamsSubtitle') : t('agentsPage.agentsSubtitle')}</p>
         </div>
-        <Button to={teamsView ? '/app/create-team' : '/app/create-agent'} size="md">
-          <Plus size={16} /> {teamsView ? t('agentsPage.createTeam') : t('agentsPage.createAgent')}
+        <Button to="/app/create-team" size="md">
+          <Plus size={16} /> {t('agentsPage.createTeam')}
         </Button>
       </div>
+
+      <nav className="mt-5 flex w-full gap-1 overflow-x-auto rounded-2xl border border-white/8 bg-panel/70 p-1 sm:w-fit" aria-label={t('teamOffice.navTeams')}>
+        {[
+          { to: '/app/agents', label: t('teamOffice.office'), icon: LayoutGrid, active: officeView },
+          { to: '/app/teams', label: t('teamOffice.navTeams'), icon: List, active: teamsView },
+          { to: '/app/create-team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
+        ].map((tab) => (
+          <NavLink
+            key={tab.to}
+            to={tab.to}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/40',
+              tab.active ? 'bg-bg text-text shadow-sm' : 'text-muted hover:bg-white/[0.04] hover:text-text',
+            )}
+          >
+            <tab.icon size={14} className={cn('shrink-0', tab.active && 'text-cyan')} />
+            {tab.label}
+          </NavLink>
+        ))}
+      </nav>
 
       {!teamsView && (
         <section className="mt-7" aria-labelledby="business-teams-heading">
