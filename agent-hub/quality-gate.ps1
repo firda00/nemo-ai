@@ -110,6 +110,7 @@ $steps = @(
   @{ Name = 'Isolated production test account'; Command = { npm run test:production-account } },
   @{ Name = 'Complete Edge Function deployment manifest'; Command = { npm run test:edge-deployment } },
   @{ Name = 'Schema drift vs runtime reads'; Command = { npm run test:schema-drift } },
+  @{ Name = 'ADR 004 order service contracts'; Command = { npm run test:orders-runtime } },
   @{ Name = 'Deterministic growth plan'; Command = { npm run test:growth-plan } },
   @{ Name = 'Marketplace catalogue audit'; Command = { npm run test:catalog-audit } },
   @{ Name = 'Swarm efficiency behavior'; Command = { npm run test:swarm-efficiency } },

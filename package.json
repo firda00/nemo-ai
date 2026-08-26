@@ -53,6 +53,7 @@
     "test:production-account-live": "powershell -ExecutionPolicy Bypass -File ./agent-hub/production-test-account-smoke.ps1",
     "provision:production-account": "powershell -ExecutionPolicy Bypass -File ./agent-hub/provision-production-test-account.ps1",
     "test:schema-drift": "node agent-hub/schema-drift-contracts.mjs",
+    "test:orders-runtime": "node agent-hub/order-service-contracts.mjs",
     "test:growth-plan": "node --experimental-strip-types agent-hub/growth-plan-behavior.mjs",
     "test:catalog-audit": "node --experimental-strip-types agent-hub/catalog-audit-behavior.mjs",
     "test:swarm-efficiency": "node --experimental-strip-types agent-hub/swarm-efficiency-behavior.mjs",
