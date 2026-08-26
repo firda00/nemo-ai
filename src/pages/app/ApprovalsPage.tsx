@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { AlertCircle, Check, ExternalLink, Loader2, ShieldCheck, X } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
+import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 
 type Request = {
   id: string
@@ -50,6 +51,7 @@ export default function ApprovalsPage() {
   const dateLocale = lang === 'uz' ? 'uz-UZ' : lang === 'en' ? 'en-US' : 'ru-RU'
 
   return <div className="container-page max-w-5xl py-8">
+    <ContentSalesNav active="approvals" />
     <div className="flex items-start gap-3">
       <span className="rounded-xl bg-amber/15 p-3 text-amber"><ShieldCheck size={22} /></span>
       <div><h1 className="text-2xl font-semibold text-text">{t('approvals.title')}</h1><p className="mt-1 text-sm text-muted">{t('approvals.subtitle')}</p></div>

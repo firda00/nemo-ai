@@ -3,6 +3,17 @@
 // Safe to edit by hand: add/adjust a key here and it flows through t('<namespace>.<key>').
 
 export const extraUz = {
+  "teamOffice": {
+    "title": "Jamoa ish maydoni",
+    "subtitle": "Agentlarning faqat tasdiqlangan operatsion holatlari. Ichki mulohazalar ko‘rsatilmaydi.",
+    "navTeams": "Agentlar va jamoalar", "navMarketing": "Marketing va savdo", "navKnowledge": "Bilimlar va integratsiyalar",
+    "office": "Ofis", "graph": "Sxema", "live": "Jonli telemetriya", "local": "Runtime hodisalari kutilmoqda", "empty": "Avval agent yoki AI-jamoa yarating.",
+    "status": { "idle": "Tayyor", "queued": "Navbatda", "working": "Ishlamoqda", "waiting_approval": "Tasdiq kutilmoqda", "completed": "Tugallandi", "failed": "E'tibor kerak" },
+    "tasks": { "brief_analysis": "Brif tahlili", "estimate_calculation": "Smeta hisobi", "video_rendering": "Video render", "awaiting_approval": "Tasdiq kutilmoqda", "task_completed": "Vazifa tugallandi", "task_failed": "Vazifa to‘xtadi" },
+    "drawer": { "status": "Holat", "completed": "Tugallangan", "model": "Model va provayder", "configuration": "Konfiguratsiya", "tools": "Ruxsat etilgan vositalar", "events": "Operatsion hodisalar", "safeEvents": "Faqat yuqori darajadagi holatlar; yashirin reasoning va LLM loglarisiz.", "noEvents": "Hozircha runtime hodisalari yo‘q." },
+    "configuration": { "published": "Nashr qilingan", "paused": "To‘xtatilgan", "draft": "Qoralama", "runtime": "Runtime tomonidan boshqariladi" },
+    "marketingTabs": { "funnels": "Voronkalar", "leads": "Lidlar", "approvals": "Tasdiqlar" }
+  },
   "billingPagePay": {
     "payTitle": "To‘lov usulini tanlang",
     "paySubtitle": "Oyiga {amount} so‘m. Hisob tayyor — kassani tanlang.",
@@ -1788,6 +1799,17 @@ export const extraUz = {
 } as const
 
 export const extraRu = {
+  "teamOffice": {
+    "title": "Рабочая карта команды",
+    "subtitle": "Только подтверждённые операционные статусы агентов. Внутренние рассуждения не отображаются.",
+    "navTeams": "Агенты и команды", "navMarketing": "Маркетинг и продажи", "navKnowledge": "Знания и интеграции",
+    "office": "Офис", "graph": "Схема", "live": "Живая телеметрия", "local": "Ожидание событий Runtime", "empty": "Сначала создайте агента или AI-команду.",
+    "status": { "idle": "Готов", "queued": "В очереди", "working": "Работает", "waiting_approval": "Ждёт согласования", "completed": "Завершил", "failed": "Требует внимания" },
+    "tasks": { "brief_analysis": "Анализ брифа", "estimate_calculation": "Расчёт сметы", "video_rendering": "Рендер видео", "awaiting_approval": "Ожидает согласования", "task_completed": "Задача завершена", "task_failed": "Задача остановлена" },
+    "drawer": { "status": "Статус", "completed": "Завершено", "model": "Модель и провайдер", "configuration": "Конфигурация", "tools": "Разрешённые инструменты", "events": "Операционные события", "safeEvents": "Только верхнеуровневые статусы — без скрытых рассуждений и LLM-логов.", "noEvents": "Событий Runtime пока нет." },
+    "configuration": { "published": "Опубликован", "paused": "Приостановлен", "draft": "Черновик", "runtime": "Управляется Runtime" },
+    "marketingTabs": { "funnels": "Воронки", "leads": "Лиды", "approvals": "Согласования" }
+  },
   "billingPagePay": {
     "payTitle": "Выберите способ оплаты",
     "paySubtitle": "{amount} сум в месяц. Счёт выставлен — выберите кассу.",
@@ -3573,6 +3595,17 @@ export const extraRu = {
 } as const
 
 export const extraEn = {
+  "teamOffice": {
+    "title": "Team workspace",
+    "subtitle": "Verified operational agent states only. Internal reasoning is never displayed.",
+    "navTeams": "Agents & teams", "navMarketing": "Marketing & sales", "navKnowledge": "Knowledge & integrations",
+    "office": "Office", "graph": "Graph", "live": "Live telemetry", "local": "Waiting for Runtime events", "empty": "Create an agent or AI team first.",
+    "status": { "idle": "Ready", "queued": "Queued", "working": "Working", "waiting_approval": "Awaiting approval", "completed": "Completed", "failed": "Needs attention" },
+    "tasks": { "brief_analysis": "Brief analysis", "estimate_calculation": "Estimate calculation", "video_rendering": "Video rendering", "awaiting_approval": "Awaiting approval", "task_completed": "Task completed", "task_failed": "Task stopped" },
+    "drawer": { "status": "Status", "completed": "Completed", "model": "Model and provider", "configuration": "Configuration", "tools": "Allowed tools", "events": "Operational events", "safeEvents": "High-level states only, without hidden reasoning or LLM logs.", "noEvents": "No Runtime events yet." },
+    "configuration": { "published": "Published", "paused": "Paused", "draft": "Draft", "runtime": "Runtime managed" },
+    "marketingTabs": { "funnels": "Funnels", "leads": "Leads", "approvals": "Approvals" }
+  },
   "billingPagePay": {
     "payTitle": "Choose how to pay",
     "paySubtitle": "{amount} UZS per month. The invoice is ready — pick a provider.",

@@ -9,6 +9,7 @@ import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 import { AGENT_SKILLS } from '../../data/agentSkills'
 import { CapabilityDirectory } from '../../components/platform/CapabilityDirectory'
+import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
 
 /**
  * Integrations — connect a third-party service once; it becomes a TOOL the AI agent can
@@ -170,6 +171,7 @@ export default function IntegrationsToolsPage() {
 
   return (
     <div className="container-page max-w-5xl py-8">
+      <KnowledgeIntegrationNav active="tools" />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Blocks size={20} /></span>

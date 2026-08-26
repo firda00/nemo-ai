@@ -43,6 +43,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { INTEGRATIONS, INT_CATEGORIES, INT_REGIONS, type IntCategory, type IntRegion } from '../../data/integrations'
 import { GoogleSetup } from '../../components/platform/GoogleSetup'
 import { cn } from '../../lib/cn'
+import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
 import { widgetSnippet, widgetHostConfigured } from '../../lib/widget'
 
 type ConnectMethod = 'token' | 'oauth' | 'widget'
@@ -397,6 +398,7 @@ export default function IntegrationsPage() {
 
   return (
     <div className="container-page max-w-6xl py-8">
+      <KnowledgeIntegrationNav active="integrations" />
       {/* hero */}
       <div className="relative overflow-hidden rounded-3xl border border-white/[0.07] bg-gradient-to-br from-violet/[0.12] via-panel to-panel p-6 sm:p-8">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-violet/20 blur-3xl" />

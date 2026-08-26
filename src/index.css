@@ -348,3 +348,21 @@
     scroll-behavior: auto !important;
   }
 }
+@keyframes office-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.08); }
+  50% { box-shadow: 0 0 0 5px rgba(34, 211, 238, 0.04); }
+}
+
+@keyframes office-attention-pulse {
+  0%, 100% { border-color: rgba(139, 124, 248, 0.42); }
+  50% { border-color: rgba(139, 124, 248, 0.85); }
+}
+
+.office-node-active { animation: office-status-pulse 1.8s ease-in-out infinite; }
+.office-node-attention { animation: office-attention-pulse 1.5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .office-node-active,
+  .office-node-attention { animation: none; }
+  .react-flow__edge-path { animation: none !important; }
+}

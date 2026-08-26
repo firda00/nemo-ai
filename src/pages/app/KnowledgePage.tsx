@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { KnowledgeManager } from '../../components/platform/KnowledgeManager'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
+import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
 
 export default function KnowledgePage() {
   const { t } = useI18n()
@@ -36,6 +37,7 @@ export default function KnowledgePage() {
 
   return (
     <div className="container-page max-w-4xl py-8">
+      <KnowledgeIntegrationNav active="knowledge" />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.knowledge')}</h1>

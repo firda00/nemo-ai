@@ -14,6 +14,9 @@ import { cn } from '../../lib/cn'
 import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
 import { isSupabaseEnabled } from '../../lib/supabase'
 import { BUSINESS_AGENT_PRESETS, guardedPresetRoles, type BusinessAgentPreset, type BusinessPresetId } from '../../data/businessAgentPresets'
+import { TeamOfficeView } from '../../components/office/TeamOfficeView'
+import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
+import type { OperationalAgentStatus } from '../../types/orchestrator'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
@@ -37,6 +40,17 @@ const RUN_LABEL: Record<PresetRunStatus, string> = {
   failed: 'Требует внимания',
 }
 
+const OFFICE_STATUS: Record<PresetRunStatus, OperationalAgentStatus> = {
+  idle: 'idle', queued: 'queued', running: 'working', completed: 'completed', failed: 'failed',
+}
+
+const PRESET_TASK: Record<BusinessPresetId, string> = {
+  'media-studio': 'video_rendering',
+  'sales-manager': 'brief_analysis',
+  'finance-analyst': 'estimate_calculation',
+  'support-assistant': 'brief_analysis',
+}
+
 function artifactUrls(result: string): string[] {
   return [...new Set(result.match(/https?:\/\/[^\s)\]}>'"]+/g) ?? [])]
     .filter((url) => /\.(pdf|mp4|webm|docx|pptx|csv)(\?|$)|\/storage\/|\/object\//i.test(url))
@@ -49,6 +63,7 @@ export default function AgentsPage() {
   const location = useLocation()
   const toast = useToast()
   const { agents, toggleAgent, duplicateAgent, deleteAgent } = useAgentStore()
+  const setPresetRuntimeTeam = useTeamOfficeStore((state) => state.setPresetRuntimeTeam)
   const [menu, setMenu] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<string | null>(null)
   const [activePresetId, setActivePresetId] = useState<BusinessPresetId | null>(null)
@@ -87,7 +102,8 @@ export default function AgentsPage() {
       ...current,
       [activePresetId]: { status, artifacts: current[activePresetId]?.artifacts ?? [] },
     }))
-  }, [activePresetId])
+    setPresetRuntimeTeam(activePresetId, activeRoles.map((role) => ({ ...role, model })), OFFICE_STATUS[status], PRESET_TASK[activePresetId])
+  }, [activePresetId, activeRoles, model, setPresetRuntimeTeam])
 
   const onPresetComplete = useCallback((result: string) => {
     if (!activePresetId) return
@@ -167,6 +183,8 @@ export default function AgentsPage() {
           </div>
         </section>
       )}
+
+      <TeamOfficeView platformAgents={agents} />
 
       {visibleAgents.length === 0 ? (
         <div className="mt-8">

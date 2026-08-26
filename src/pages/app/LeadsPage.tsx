@@ -7,6 +7,7 @@ import { AgentAvatar } from '../../components/ui/AgentAvatar'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
+import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 
 const live = isSupabaseEnabled
 
@@ -63,6 +64,7 @@ export default function LeadsPage() {
 
   return (
     <div className="container-page max-w-5xl py-8">
+      <ContentSalesNav active="leads" />
       <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.leadForms')}</h1>
       <p className="mt-1 text-sm text-muted">{t('platform.leads.subtitle')}</p>
 

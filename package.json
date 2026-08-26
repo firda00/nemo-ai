@@ -15,6 +15,7 @@
     "test:visual-rag": "node agent-hub/visual-rag-contracts.mjs",
     "test:ui-stability": "node agent-hub/ui-stability-contracts.mjs",
     "test:ui": "node agent-hub/site-smoke.mjs",
+    "test:team-office": "node agent-hub/team-office-ui-contracts.mjs",
     "test:trace-ui": "node agent-hub/trace-ui-smoke.mjs",
     "test:integrations-ui": "node agent-hub/integrations-ui-smoke.mjs",
     "test:landing-nav": "node agent-hub/landing-nav-smoke.mjs",
