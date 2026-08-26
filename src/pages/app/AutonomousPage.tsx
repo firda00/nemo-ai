@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Sparkles, Wand2, Users, ListChecks, Bot, Send, Repeat } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Sparkles, Wand2, Users, ListChecks, Bot, Send, Repeat } from 'lucide-react'
 import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
 import { SingleAgentRunner } from '../../components/platform/SingleAgentRunner'
 import { useI18n } from '../../i18n'
@@ -8,6 +9,7 @@ import { DURABLE_TEAM_TEMPLATES, type DurableTeamTemplate } from '../../data/dur
 
 export default function AutonomousPage() {
   const { t, lang } = useI18n()
+  const navigate = useNavigate()
   const [mode, setMode] = useState<'team' | 'single'>('team')
   const [starterGoal, setStarterGoal] = useState(() => {
     try {
@@ -42,6 +44,15 @@ export default function AutonomousPage() {
   return (
     <div className="container-page max-w-4xl py-8">
       <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={() => navigate('/app/agents')}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-ice/10 bg-white/[0.03] text-muted transition hover:border-cyan/30 hover:bg-white/[0.06] hover:text-text focus:outline-none focus:ring-2 focus:ring-cyan/40"
+          title={lang === 'ru' ? 'Вернуться к агентам' : lang === 'uz' ? 'Agentlarga qaytish' : 'Back to agents'}
+          aria-label={lang === 'ru' ? 'Вернуться к агентам' : lang === 'uz' ? 'Agentlarga qaytish' : 'Back to agents'}
+        >
+          <ArrowLeft size={19} />
+        </button>
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
           {isTeam ? <Wand2 size={20} /> : <Bot size={20} />}
         </span>

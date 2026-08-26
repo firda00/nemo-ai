@@ -1,6 +1,9 @@
 import { create } from 'zustand'
+import { applyNodeChanges, type Node, type NodeChange, type XYPosition } from 'reactflow'
 import type { PlatformAgent } from '../types/platform'
 import type { AgentNodeData, OperationalAgentStatus } from '../types/orchestrator'
+
+export type TeamOfficeViewMode = 'office' | 'graph'
 
 const SAFE_TASK_LABELS = new Set([
   'brief_analysis',
@@ -32,8 +35,10 @@ function fromPlatformAgent(agent: PlatformAgent): AgentNodeData {
 interface TeamOfficeStore {
   agents: Record<string, AgentNodeData>
   connected: boolean
+  nodePositions: Record<TeamOfficeViewMode, Record<string, XYPosition>>
   syncAgents: (agents: PlatformAgent[]) => void
   setConnected: (connected: boolean) => void
+  applyNodeChangesForMode: (mode: TeamOfficeViewMode, changes: NodeChange[], nodes: Node<AgentNodeData>[]) => void
   setRuntimeStatus: (ids: string[], status: OperationalAgentStatus, task?: string) => void
   setPresetRuntimeTeam: (teamKey: string, members: { name: string; role: string; skills?: string[]; model?: string }[], status: OperationalAgentStatus, task?: string) => void
 }
@@ -41,6 +46,7 @@ interface TeamOfficeStore {
 export const useTeamOfficeStore = create<TeamOfficeStore>((set) => ({
   agents: {},
   connected: false,
+  nodePositions: { office: {}, graph: {} },
   syncAgents: (platformAgents) => set((state) => {
     const next: Record<string, AgentNodeData> = Object.fromEntries(
       Object.entries(state.agents).filter(([id]) => id.startsWith('runtime:')),
@@ -57,6 +63,16 @@ export const useTeamOfficeStore = create<TeamOfficeStore>((set) => ({
     return { agents: next }
   }),
   setConnected: (connected) => set({ connected }),
+  applyNodeChangesForMode: (mode, changes, nodes) => set((state) => {
+    const changedNodes = applyNodeChanges(changes, nodes)
+    const positions = Object.fromEntries(changedNodes.map((node) => [node.id, node.position]))
+    return {
+      nodePositions: {
+        ...state.nodePositions,
+        [mode]: positions,
+      },
+    }
+  }),
   setRuntimeStatus: (ids, status, task) => set((state) => {
     const occurredAt = new Date().toISOString()
     const label = safeTask(task)
