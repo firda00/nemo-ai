@@ -177,7 +177,8 @@ check(
 
 check(
   'claim is a single atomic CTE (candidates -> claimed UPDATE ... FROM), not a per-row PL/pgSQL loop',
-  /with dead_lettered as \(/i.test(RPCS)
+  /with exhausted_candidates as \(/i.test(RPCS)
+    && /dead_lettered as \(/i.test(RPCS)
     && /candidates as \(/i.test(RPCS)
     && /claimed as \(\s*\n\s*update commerce_runtime\.order_outbox_events as event/i.test(RPCS)
     && /from candidates\s*\n\s*where event\.account_id = candidates\.account_id and event\.id = candidates\.id/i
@@ -187,8 +188,21 @@ check(
 
 check(
   'claim self-heals an exhausted event whose lease expired on its final attempt to dead_letter',
-  /update commerce_runtime\.order_outbox_events as event\s*\n\s*set status = 'dead_letter'[\s\S]{0,300}where event\.status = 'processing'\s*\n\s*and event\.lease_until <= clock_timestamp\(\)\s*\n\s*and event\.attempt_count >= event\.max_attempts/i
+  /select event\.account_id, event\.id\s*\n\s*from commerce_runtime\.order_outbox_events as event\s*\n\s*where event\.status = 'processing'\s*\n\s*and event\.lease_until <= clock_timestamp\(\)\s*\n\s*and event\.attempt_count >= event\.max_attempts/i
+    .test(RPCS)
+    && /update commerce_runtime\.order_outbox_events as event\s*\n\s*set status = 'dead_letter'[\s\S]{0,400}from exhausted_candidates\s*\n\s*where event\.account_id = exhausted_candidates\.account_id and event\.id = exhausted_candidates\.id/i
+      .test(RPCS),
+)
+
+check(
+  'claim bounds exhausted-lease dead-lettering to p_limit rows via a deterministic FOR UPDATE SKIP LOCKED scan',
+  /where event\.status = 'processing'\s*\n\s*and event\.lease_until <= clock_timestamp\(\)\s*\n\s*and event\.attempt_count >= event\.max_attempts\s*\n\s*order by event\.lease_until, event\.created_at, event\.id\s*\n\s*for update skip locked\s*\n\s*limit p_limit/i
     .test(RPCS),
+)
+
+check(
+  'claim dead-letters exhausted leases with a sanitized generic error code, not silently',
+  /set status = 'dead_letter'[\s\S]{0,200}last_error_code = 'LEASE_EXHAUSTED'/i.test(RPCS),
 )
 
 check(

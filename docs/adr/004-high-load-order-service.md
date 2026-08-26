@@ -346,13 +346,21 @@ exhausted, expired lease (see below).
   the last clause is what makes an abandoned-but-still-retryable lease reclaimable without a
   separate sweep job. Each claimed row gets a fresh `claim_token`, `lease_epoch = lease_epoch + 1`,
   and `lease_until = now() + lease_duration`. Before that candidate scan runs, the same statement
-  also **dead-letters, in a sibling CTE, any `processing` row whose lease has expired *and* whose
-  `attempt_count` has already reached `max_attempts`** — such a row can never satisfy the candidate
-  predicate (`attempt_count < max_attempts` correctly excludes it from being reclaimed for another
-  attempt it isn't entitled to), and without this explicit dead-lettering step it would simply stay
-  `processing` with a dead lease forever, invisible to both claim and any future caller, because
-  nothing else in this schema ever revisits a `processing` row on its own. The function never holds
-  any lock while talking to Kafka — it returns the claimed batch to the caller, which publishes
+  also **dead-letters, via a bounded sibling CTE pair, up to `p_limit` `processing` rows whose lease
+  has expired *and* whose `attempt_count` has already reached `max_attempts`** — such a row can
+  never satisfy the candidate predicate (`attempt_count < max_attempts` correctly excludes it from
+  being reclaimed for another attempt it isn't entitled to), and without this explicit
+  dead-lettering step it would simply stay `processing` with a dead lease forever, invisible to both
+  claim and any future caller, because nothing else in this schema ever revisits a `processing` row
+  on its own. This scan (`exhausted_candidates`) is itself a `SELECT ... FOR UPDATE SKIP LOCKED`
+  ordered deterministically by `(lease_until, created_at, id)` and capped at `p_limit` rows, exactly
+  like the claimable-candidate scan below it — a large outage backlog of exhausted leases therefore
+  dead-letters at most `p_limit` rows per claim call instead of every exhausted row in the table in
+  one unbounded UPDATE, which would otherwise turn a single claim call into a long-running
+  transaction that every concurrent claimer then lock-contends on. Dead-lettered rows this way carry
+  `last_error_code = 'LEASE_EXHAUSTED'` with a generic sanitized message, the same fields
+  `finish_order_outbox_event`'s own dead-letter path already populates. The function never holds any
+  lock while talking to Kafka — it returns the claimed batch to the caller, which publishes
   *outside* this transaction, and reports back via `finish_order_outbox_event` in a second, separate
   transaction. This is the same "never hold a DB lock across a network call" discipline the
   `runtime` claim/finish pair already established.
@@ -451,5 +459,6 @@ by service_role only, same as before.
 | Outbox worker publishes then crashes before `finish` | Lease expires, `claim` reclaims it under a new `lease_epoch`, event is republished — **at-least-once**, not exactly-once; see the correction in §1 and the dedupe/idempotent-consumer requirement it implies | §5.4 |
 | A reclaimed lease's original worker eventually calls `finish` anyway | Rejected: stale `lease_epoch`/`claim_token`, or a `lease_holder` that no longer matches `p_worker_id` | §5.4 |
 | Outbox event's lease expires on its *last* attempt (`attempt_count = max_attempts`) | `claim` dead-letters it in the same statement it runs its candidate scan — no separate sweep job, no permanently-stuck `processing` row | §5.4 |
+| Large outage backlog leaves many `processing` rows exhausted at once | Self-heal dead-lettering is itself bounded to `p_limit` rows per claim call (`FOR UPDATE SKIP LOCKED`, deterministic order) — no unbounded UPDATE, no lock storm across concurrent claimers | §5.4 |
 | Same Kafka message delivered twice | `consumer_inbox` dedupe in the same transaction as the mutation it guards — this, not the outbox, is what turns at-least-once delivery into exactly-once effect | §5.5 |
 | Mutation fails after dedupe insert | Whole transaction rolls back — message is not marked consumed | §5.5 |

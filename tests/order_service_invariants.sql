@@ -792,6 +792,85 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------------------------
+-- Bounded self-heal: a large backlog of exhausted, expired processing rows must not all be
+-- dead-lettered by a single claim call — only up to p_limit of them, so an outage backlog cannot
+-- turn one claim into an unbounded transaction.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+declare
+  v_order jsonb;
+  v_order_id uuid;
+  v_claim record;
+  v_event_ids uuid[] := array[]::uuid[];
+  v_dead_letter_count int;
+  v_still_processing_count int;
+  i int;
+  j int;
+begin
+  -- Build 3 independent orders/events, each individually driven to 'processing' with an expired
+  -- lease and attempt_count = max_attempts (8), exactly like the single-row self-heal setup above.
+  for i in 1..3 loop
+    v_order := public.commerce_create_order(
+      '90000000-0000-4000-8000-000000000001', format('outbox-bounded-selfheal-key-%s', i), 'USD', 760 + i
+    );
+    v_order_id := (v_order ->> 'order_id')::uuid;
+
+    for j in 1..8 loop
+      select * into v_claim
+      from public.commerce_claim_order_outbox_events(format('worker-bounded-stuck-%s', i), 1, 10)
+      where order_id = v_order_id
+      limit 1;
+      exit when v_claim.outbox_event_id is null;
+
+      update commerce_runtime.order_outbox_events
+      set lease_until = clock_timestamp() - interval '1 minute'
+      where account_id = '90000000-0000-4000-8000-000000000001' and id = v_claim.outbox_event_id;
+    end loop;
+
+    v_event_ids := v_event_ids || v_claim.outbox_event_id;
+  end loop;
+
+  select count(*) into v_still_processing_count
+  from commerce_runtime.order_outbox_events
+  where account_id = '90000000-0000-4000-8000-000000000001' and id = any (v_event_ids) and status = 'processing';
+  perform pg_temp.expect(
+    'setup: all 3 events are stuck processing with expired, exhausted leases',
+    v_still_processing_count = 3, v_still_processing_count::text
+  );
+
+  -- A single claim call with p_limit = 2 must dead-letter at most 2 of the 3 exhausted rows.
+  perform public.commerce_claim_order_outbox_events('worker-bounded-sweeper', 300, 2);
+
+  select count(*) into v_dead_letter_count
+  from commerce_runtime.order_outbox_events
+  where account_id = '90000000-0000-4000-8000-000000000001' and id = any (v_event_ids) and status = 'dead_letter';
+  perform pg_temp.expect(
+    'one bounded claim call dead-letters at most p_limit exhausted rows, not the whole backlog',
+    v_dead_letter_count <= 2, v_dead_letter_count::text
+  );
+
+  select count(*) into v_still_processing_count
+  from commerce_runtime.order_outbox_events
+  where account_id = '90000000-0000-4000-8000-000000000001' and id = any (v_event_ids) and status = 'processing';
+  perform pg_temp.expect(
+    'the remaining exhausted rows past p_limit are left processing for a later claim call to clean up',
+    v_still_processing_count = 3 - v_dead_letter_count, v_still_processing_count::text
+  );
+
+  -- A second claim call drains the rest of the bounded backlog.
+  perform public.commerce_claim_order_outbox_events('worker-bounded-sweeper', 300, 2);
+  select count(*) into v_dead_letter_count
+  from commerce_runtime.order_outbox_events
+  where account_id = '90000000-0000-4000-8000-000000000001' and id = any (v_event_ids) and status = 'dead_letter';
+  perform pg_temp.expect(
+    'a follow-up claim call drains the remainder of the exhausted backlog',
+    v_dead_letter_count = 3, v_dead_letter_count::text
+  );
+end;
+$$;
+
+-- ---------------------------------------------------------------------------------------------
 -- Append-only order_transitions enforcement — a direct table writer is blocked too, not just the
 -- RPC surface.
 -- ---------------------------------------------------------------------------------------------

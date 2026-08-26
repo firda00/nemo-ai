@@ -445,7 +445,10 @@ $$;
 -- self-heals a lease that expired on an event's FINAL attempt: such a row previously matched
 -- neither the claimable-candidate predicate (attempt_count < max_attempts excludes it) nor any
 -- sweep job, so it stayed 'processing' with a dead lease forever. Claim now dead-letters those rows
--- itself, in the same statement, every time it runs.
+-- itself, in the same statement, every time it runs — but only up to p_limit of them per call
+-- (exhausted_candidates is its own bounded, deterministically-ordered, FOR UPDATE SKIP LOCKED scan),
+-- so a large outage backlog of exhausted leases cannot turn one claim call into an unbounded
+-- transaction that every concurrent claimer then contends on.
 -- ---------------------------------------------------------------------------------------------
 
 create function commerce_runtime.claim_order_outbox_events(
@@ -483,21 +486,37 @@ begin
   end if;
 
   return query
-  with dead_lettered as (
+  with exhausted_candidates as (
+    -- Bounded scan for exhausted, expired processing rows: same lease-exhaustion predicate the
+    -- dead-lettering below relies on, but capped to p_limit rows in deterministic order under
+    -- FOR UPDATE SKIP LOCKED, so a large outage backlog dead-letters at most p_limit rows per claim
+    -- call instead of every exhausted row in the table in one unbounded transaction.
+    select event.account_id, event.id
+    from commerce_runtime.order_outbox_events as event
+    where event.status = 'processing'
+      and event.lease_until <= clock_timestamp()
+      and event.attempt_count >= event.max_attempts
+    order by event.lease_until, event.created_at, event.id
+    for update skip locked
+    limit p_limit
+  ),
+  dead_lettered as (
     -- Self-heal: an event whose lease expired on its last attempt is exhausted and unreclaimable
     -- by the candidates CTE below (attempt_count < max_attempts excludes it) — without this it
     -- would stay 'processing' with a dead lease forever. Dead-letter it here instead, clearing the
-    -- lease so it stops looking like a live claim.
+    -- lease so it stops looking like a live claim. Scoped to exhausted_candidates above, so this
+    -- UPDATE only ever touches the bounded set just locked, never the full exhausted backlog.
     update commerce_runtime.order_outbox_events as event
     set status = 'dead_letter',
         claim_token = null,
         lease_holder = null,
         lease_until = null,
         next_attempt_at = null,
+        last_error_code = 'LEASE_EXHAUSTED',
+        sanitized_error_message = 'Outbox lease expired after exhausting max_attempts',
         updated_at = clock_timestamp()
-    where event.status = 'processing'
-      and event.lease_until <= clock_timestamp()
-      and event.attempt_count >= event.max_attempts
+    from exhausted_candidates
+    where event.account_id = exhausted_candidates.account_id and event.id = exhausted_candidates.id
     returning event.id
   ),
   candidates as (
