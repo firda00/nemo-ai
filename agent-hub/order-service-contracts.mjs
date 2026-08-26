@@ -73,6 +73,31 @@ check(
     && !/allowed_order_transition_to_state_check check \(to_state in \([^)]*'new'/i.test(CORE),
 )
 
+check(
+  'the FSM lifecycle includes the full required state set (inventory + payment + terminal branches)',
+  [
+    'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed',
+    'inventory_rejected', 'payment_failed', 'cancelled',
+  ].every((state) => CORE.includes(`'${state}'`)),
+)
+
+check(
+  'reserve_inventory success transitions created -> inventory_reserved (seeded as a legal pair)',
+  /\('created', 'inventory_reserved'\)/.test(CORE),
+)
+
+check(
+  'reserve_inventory failure transitions created -> inventory_rejected (seeded as a legal pair)',
+  /\('created', 'inventory_rejected'\)/.test(CORE),
+)
+
+check(
+  'payment transitions are explicit legal pairs (inventory_reserved -> payment_pending -> paid | payment_failed)',
+  /\('inventory_reserved', 'payment_pending'\)/.test(CORE)
+    && /\('payment_pending', 'paid'\)/.test(CORE)
+    && /\('payment_pending', 'payment_failed'\)/.test(CORE),
+)
+
 // --- Orders: tenant idempotency, payload hash, monotonic state_version ---------------------
 
 check(
@@ -91,9 +116,9 @@ check(
 )
 
 check(
-  'orders.state_version exists and is non-negative-constrained',
-  /state_version bigint not null default 0/i.test(CORE)
-    && /constraint orders_state_version_check check \(state_version >= 0\)/i.test(CORE),
+  'orders.state_version is 1-based (birth transition_seq is always 1, never 0)',
+  /state_version bigint not null default 1/i.test(CORE)
+    && /constraint orders_state_version_check check \(state_version >= 1\)/i.test(CORE),
 )
 
 check(
@@ -151,14 +176,41 @@ check(
 )
 
 check(
+  'claim is a single atomic CTE (candidates -> claimed UPDATE ... FROM), not a per-row PL/pgSQL loop',
+  /with dead_lettered as \(/i.test(RPCS)
+    && /candidates as \(/i.test(RPCS)
+    && /claimed as \(\s*\n\s*update commerce_runtime\.order_outbox_events as event/i.test(RPCS)
+    && /from candidates\s*\n\s*where event\.account_id = candidates\.account_id and event\.id = candidates\.id/i
+      .test(RPCS)
+    && !/for v_event in/i.test(RPCS.split('create function commerce_runtime.claim_order_outbox_events')[1]?.split('$$;')[0] ?? ''),
+)
+
+check(
+  'claim self-heals an exhausted event whose lease expired on its final attempt to dead_letter',
+  /update commerce_runtime\.order_outbox_events as event\s*\n\s*set status = 'dead_letter'[\s\S]{0,300}where event\.status = 'processing'\s*\n\s*and event\.lease_until <= clock_timestamp\(\)\s*\n\s*and event\.attempt_count >= event\.max_attempts/i
+    .test(RPCS),
+)
+
+check(
   'claim never publishes and finish never claims — the claim/finish split holds no lock across Kafka',
   /never holds a lock while a worker talks to Kafka/i.test(RPCS),
 )
 
 check(
-  'finish_order_outbox_event validates claim_token, lease_epoch and an unexpired lease together',
-  /lease_epoch <> p_expected_epoch[\s\S]{0,80}claim_token is distinct from p_claim_token[\s\S]{0,80}lease_until <= v_now/i
+  'finish_order_outbox_event validates claim_token, lease_epoch, lease_holder and an unexpired lease together',
+  /lease_epoch <> p_expected_epoch[\s\S]{0,80}claim_token is distinct from p_claim_token[\s\S]{0,120}lease_holder <> p_worker_id[\s\S]{0,80}lease_until <= v_now/i
     .test(RPCS),
+)
+
+check(
+  "finish_order_outbox_event rejects 'failed' as a result status (not a table-CHECK-permitted status)",
+  /p_result_status not in \('published', 'retry_scheduled', 'dead_letter'\)/i.test(RPCS)
+    && !/p_result_status not in \([^)]*'failed'/i.test(RPCS),
+)
+
+check(
+  'finish_order_outbox_event requires a sanitized error code for both retry_scheduled and dead_letter',
+  /p_result_status in \('retry_scheduled', 'dead_letter'\) and p_error_code is null/i.test(RPCS),
 )
 
 check(
@@ -167,7 +219,7 @@ check(
 )
 
 check(
-  'claim treats an expired processing lease as reclaimable (no separate sweep job)',
+  'claim treats an expired processing lease with attempts remaining as reclaimable (no separate sweep job)',
   /status = 'processing' and event\.lease_until <= clock_timestamp\(\)/i.test(RPCS),
 )
 
@@ -210,8 +262,25 @@ check(
 )
 
 check(
-  'reserve_inventory verifies every line before mutating any of them (all-or-nothing)',
-  /if jsonb_array_length\(v_short\) > 0 then\s*\n\s*return jsonb_build_object\(\s*\n\s*'status', 'denied_insufficient_stock'/i
+  'reserve_inventory verifies every locked line before mutating any of them (all-or-nothing)',
+  /if array_length\(v_missing, 1\) > 0 or jsonb_array_length\(v_short\) > 0 then/i.test(RPCS),
+)
+
+check(
+  'reserve_inventory has no unlocked pre-check for missing rows (missing-ness is derived after the lock loop)',
+  !/select array_agg\(id\) into v_missing\s*\n\s*from unnest\(v_agg_ids\) as id\s*\n\s*where not exists \(\s*\n\s*select 1 from commerce_runtime\.inventory/i
+    .test(RPCS),
+)
+
+check(
+  'reserve_inventory atomically transitions a denied reservation to inventory_rejected instead of leaving the order in created',
+  /commerce_runtime\.transition_order\(\s*\n\s*p_account_id, p_order_id, p_expected_state_version, 'inventory_rejected'/i
+    .test(RPCS),
+)
+
+check(
+  "reserve_inventory's success transition targets inventory_reserved (part of the full payment/fulfillment FSM)",
+  /commerce_runtime\.transition_order\(\s*\n\s*p_account_id, p_order_id, p_expected_state_version, 'inventory_reserved'/i
     .test(RPCS),
 )
 
@@ -226,6 +295,23 @@ check(
 check(
   'create_order rejects a payload-hash mismatch under a reused idempotency key as a collision, not a silent overwrite',
   /idempotency_key_collision/i.test(RPCS),
+)
+
+check(
+  'create_order uses INSERT ... ON CONFLICT DO NOTHING as the idempotency arbiter (no unlocked-then-insert race)',
+  /on conflict \(account_id, idempotency_key\) do nothing/i.test(RPCS)
+    && /returning \* into v_inserted/i.test(RPCS),
+)
+
+check(
+  'create_order only creates the birth transition/outbox event when it actually won the insert',
+  /if v_inserted\.id is null then/i.test(RPCS),
+)
+
+check(
+  "create_order's birth transition and initial state_version are both 1",
+  /'new', 'created',\s*\n\s*'system', 'create_order'/i.test(RPCS)
+    && /'state_version', 1,\s*\n\s*'idempotent_replay', false/i.test(RPCS),
 )
 
 // --- RPC surface: security definer, empty search_path, service_role only -------------------
@@ -254,6 +340,43 @@ check(
   !/grant [^;]*(anon|authenticated)/i.test(COMBINED),
 )
 
+// --- Public RPC-exposure wrappers: Supabase/PostgREST only exposes the `public` schema by ------
+// --- default, so every commerce_runtime RPC needs a same-shaped public.commerce_* wrapper. -----
+
+const PUBLIC_WRAPPER_NAMES = [
+  'commerce_create_order', 'commerce_transition_order', 'commerce_reserve_inventory',
+  'commerce_claim_order_outbox_events', 'commerce_finish_order_outbox_event',
+  'commerce_consume_order_event',
+]
+
+for (const fn of PUBLIC_WRAPPER_NAMES) {
+  check(
+    `public.${fn} exists as an RPC-exposure wrapper`,
+    new RegExp(String.raw`create function public\.${fn}\(`, 'i').test(RPCS),
+  )
+
+  const def = RPCS.split(`create function public.${fn}(`)[1]
+  check(`public.${fn} is declared security definer`, /security definer/i.test(def?.slice(0, 1000) ?? ''), 'not found')
+  check(`public.${fn} pins set search_path = ''`, /set search_path = ''/i.test(def?.slice(0, 1000) ?? ''), 'not found')
+}
+
+check(
+  'every public.commerce_* wrapper delegates to its commerce_runtime.* counterpart, not reimplemented logic',
+  PUBLIC_WRAPPER_NAMES.every((fn) => {
+    const runtimeFn = fn.replace(/^commerce_/, '')
+    const def = RPCS.split(`create function public.${fn}(`)[1]?.slice(0, 1500) ?? ''
+    return new RegExp(String.raw`commerce_runtime\.${runtimeFn}\(`, 'i').test(def)
+  }),
+)
+
+check(
+  'every public.commerce_* wrapper is revoked from public/anon/authenticated and granted only to service_role',
+  PUBLIC_WRAPPER_NAMES.every((fn) => new RegExp(
+    String.raw`public\.${fn}\([^)]*\)\s*(from public, anon, authenticated|to service_role)`,
+    'is',
+  ).test(RPCS)),
+)
+
 // --- Deployment artifact stays in sync ------------------------------------------------------
 
 const initSql = read('deploy/init-supabase.sql')
@@ -265,6 +388,7 @@ check(
 )
 
 assert.ok(RPC_NAMES.length === 6)
+assert.ok(PUBLIC_WRAPPER_NAMES.length === 6)
 
 if (failed > 0) {
   console.error(`\n${failed} order service contract check(s) failed.`)

@@ -10,6 +10,10 @@ grant usage on schema commerce_runtime to service_role;
 -- commerce_runtime.allowed_order_transitions — FSM legality lookup, not an ENUM (ADR 004 §4.1).
 -- 'new' is a sentinel from_state only: the birth transition ('new' -> 'created') is every order's
 -- first row, and 'new' is never a legal orders.status value or a legal to_state.
+--
+-- Lifecycle: created -> inventory_reserved -> payment_pending -> paid -> confirmed -> fulfilling
+-- -> shipped -> completed, with inventory_rejected/payment_failed/cancelled/failed as explicit
+-- terminal-or-recoverable branches (ADR 004 §4.1).
 -- ---------------------------------------------------------------------------------------------
 
 create table commerce_runtime.allowed_order_transitions (
@@ -17,22 +21,28 @@ create table commerce_runtime.allowed_order_transitions (
   to_state text not null,
   primary key (from_state, to_state),
   constraint allowed_order_transition_from_state_check check (from_state in (
-    'new', 'created', 'reserved', 'confirmed', 'fulfilling', 'shipped'
+    'new', 'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed',
+    'fulfilling', 'shipped'
   )),
   constraint allowed_order_transition_to_state_check check (to_state in (
-    'created', 'reserved', 'confirmed', 'fulfilling', 'shipped', 'completed', 'cancelled', 'failed'
+    'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed', 'fulfilling',
+    'shipped', 'completed', 'inventory_rejected', 'payment_failed', 'cancelled', 'failed'
   )),
   constraint allowed_order_transition_not_identity_check check (from_state <> to_state)
 );
 
 insert into commerce_runtime.allowed_order_transitions (from_state, to_state) values
   ('new', 'created'),
-  ('created', 'reserved'),
+  ('created', 'inventory_reserved'),
+  ('created', 'inventory_rejected'),
   ('created', 'cancelled'),
-  ('created', 'failed'),
-  ('reserved', 'confirmed'),
-  ('reserved', 'cancelled'),
-  ('reserved', 'failed'),
+  ('inventory_reserved', 'payment_pending'),
+  ('inventory_reserved', 'cancelled'),
+  ('payment_pending', 'paid'),
+  ('payment_pending', 'payment_failed'),
+  ('payment_pending', 'cancelled'),
+  ('paid', 'confirmed'),
+  ('paid', 'cancelled'),
   ('confirmed', 'fulfilling'),
   ('confirmed', 'cancelled'),
   ('confirmed', 'failed'),
@@ -53,7 +63,7 @@ create table commerce_runtime.orders (
   idempotency_key text not null,
   payload_hash text not null,
   status text not null default 'created',
-  state_version bigint not null default 0,
+  state_version bigint not null default 1,
   currency text not null,
   total_amount_minor bigint not null,
   customer_ref text,
@@ -69,11 +79,13 @@ create table commerce_runtime.orders (
   constraint orders_payload_hash_check check (payload_hash ~ '^[0-9a-f]{64}$'),
   constraint orders_status_check check (
     status in (
-      'created', 'reserved', 'confirmed', 'fulfilling', 'shipped',
-      'completed', 'cancelled', 'failed'
+      'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed', 'fulfilling',
+      'shipped', 'completed', 'inventory_rejected', 'payment_failed', 'cancelled', 'failed'
     )
   ),
-  constraint orders_state_version_check check (state_version >= 0),
+  -- state_version is 1-based: the birth transition (transition_seq = 1) is applied in the same
+  -- transaction as the insert, so an order is never observed at version 0 (ADR 004 §4.2).
+  constraint orders_state_version_check check (state_version >= 1),
   constraint orders_currency_check check (currency ~ '^[A-Z]{3}$'),
   constraint orders_total_amount_check check (total_amount_minor >= 0),
   constraint orders_customer_ref_check check (
@@ -316,7 +328,7 @@ comment on schema commerce_runtime is
 comment on table commerce_runtime.allowed_order_transitions is
   'FSM legality lookup (composite PK), not an ENUM. new is a birth-transition sentinel from_state only.';
 comment on table commerce_runtime.orders is
-  'Tenant-scoped idempotent order header. state_version fences every transition/reservation RPC.';
+  'Tenant-scoped idempotent order header. state_version (1-based, birth = 1) fences every transition/reservation RPC.';
 comment on table commerce_runtime.order_transitions is
   'Append-only FSM audit log; mutation is blocked by trigger, not just convention.';
 comment on table commerce_runtime.order_outbox_events is

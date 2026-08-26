@@ -15,11 +15,27 @@ introduces a new `commerce_runtime` schema rather than extending `runtime` or `b
 
 > **The Exactly-Once-Effect Invariant:**
 > No order may be created twice from the same logical request, no inventory unit may be reserved
-> twice or lost to a lost update, no order transition may apply against a state the caller did not
-> actually observe, and no domain event may be published to Kafka more than once from a single
-> claimed lease. Every mutation is fenced by `state_version` (orders) or `lease_epoch`/`claim_token`
-> (outbox), every multi-row inventory update is all-or-nothing, and every consumer-side dedupe check
-> runs in the same transaction as the business mutation it guards.
+> twice or lost to a lost update, and no order transition may apply against a state the caller did
+> not actually observe. Every mutation is fenced by `state_version` (orders) or
+> `lease_epoch`/`claim_token`/`lease_holder` (outbox), every multi-row inventory update is
+> all-or-nothing, and every consumer-side dedupe check runs in the same transaction as the business
+> mutation it guards. **Kafka publication itself is at-least-once, not exactly-once** — see the
+> correction below — and it is the consumer side (§5.5), not the outbox, that turns repeated
+> publication into exactly-once business effect.
+>
+> **Correction: the outbox cannot make Kafka publication exactly-once.** A worker that successfully
+> publishes to Kafka and then crashes (or loses connectivity) before calling
+> `finish_order_outbox_event` leaves the event `processing` under a lease that will simply expire;
+> `claim_order_outbox_events` then reclaims it under a new `lease_epoch` and it is published again.
+> This is by design, not a bug — the alternative (marking published before the publish is confirmed)
+> can silently drop events instead — but it means every domain event must be treated by its Kafka
+> consumers as **at-least-once delivery**: `order_outbox_events.id` (or `dedupe_key`) is a stable
+> event identifier that belongs in the Kafka message so consumers can deduplicate, the Kafka producer
+> should be configured idempotent (`enable.idempotence=true`) to collapse producer-side retries, and
+> any consumer that itself causes a side effect must be idempotent or run its own inbox-style dedupe
+> (exactly what `commerce_runtime.consume_order_event`, §5.5, does for this service's own inbound
+> consumption). The only place in this ADR that can honestly claim exactly-once *effect* is that
+> inbox/transition pairing — never the outbox's claim/publish/finish cycle in isolation.
 
 This is a **correctness and safety** invariant, not a throughput guarantee. See §2.
 
@@ -107,6 +123,21 @@ it, and adding a new legal transition is a data change (one `INSERT` here), not 
 is complete from an order's very first row without a nullable `from_state` column. `'new'` is never
 a legal `orders.status` value and never appears as a `to_state`.
 
+The lifecycle is: `created -> inventory_reserved -> payment_pending -> paid -> confirmed ->
+fulfilling -> shipped -> completed`, with explicit branches at each fallible step rather than a
+single generic `failed`/`cancelled` catch-all:
+
+- `created -> inventory_rejected` — `reserve_inventory` could not admit every requested line
+  (missing product row or insufficient stock); see §5.3.
+- `inventory_reserved -> payment_pending -> paid | payment_failed` — payment is its own explicit
+  two-step branch, not folded into a generic `failed`.
+- `created | inventory_reserved | payment_pending | paid -> cancelled` — cancellation is legal from
+  every pre-fulfillment state (see §6 for what is *not* shipped here: automatic inventory release on
+  cancellation of an already-reserved order).
+- `confirmed | fulfilling | shipped -> failed` — `failed` is kept only for the fulfillment stages
+  (a carrier failure, a fulfillment-center exception) that this ADR does not attempt to subdivide
+  further; it is not used for inventory or payment failure, which have their own named states above.
+
 ### 4.2 `commerce_runtime.orders`
 
 One row per order. `unique(account_id, idempotency_key)` gives tenant-scoped idempotency for
@@ -116,13 +147,21 @@ caller-supplied immutable inputs (`currency`, `total_amount_minor`, `customer_re
 the same idempotency key and an *identical* payload hash replays the original result; a call with
 the same key and a *different* hash is a genuine idempotency-key collision (two different logical
 orders trying to share one key) and is rejected, never silently overwritten or silently returned as
-if it were the first order. `state_version` starts at `0` and increments by exactly one per
-committed transition — it is both the optimistic-concurrency fence for `transition_order`/
-`reserve_inventory` and, by construction, equal to the latest `order_transitions.transition_seq` for
-that order. `total_amount_minor` is an integer minor-unit amount (matches the `_tiyin`-suffixed
-columns already used in `public.commerce_skus`); `currency` is validated `~ '^[A-Z]{3}$'` (ISO 4217
-alphabetic code shape — not validated against a currency table, which is a deliberate simplification
-noted in §8).
+if it were the first order. `state_version` is **1-based**: an order's birth transition
+(`order_transitions.transition_seq = 1`, `'new' -> 'created'`) is applied in the same transaction as
+the `orders` insert, so an order is never observed at `state_version = 0` — it starts at `1` and
+increments by exactly one per subsequent committed transition. `state_version` is both the
+optimistic-concurrency fence for `transition_order`/`reserve_inventory` and, by construction, equal
+to the latest `order_transitions.transition_seq` for that order (an earlier draft of this schema
+started `state_version` at `0` while still assigning the birth transition `transition_seq = 1`,
+which meant the *first real* transition after creation computed `new_version = 0 + 1 = 1` and
+collided with the birth row's own `transition_seq = 1` under
+`order_transitions_seq_unique(account_id, order_id, transition_seq)` — every first transition on
+every order would have failed with a unique-violation; starting at `1` is what makes `state_version`
+actually equal `transition_seq` from the order's first row onward). `total_amount_minor` is an
+integer minor-unit amount (matches the `_tiyin`-suffixed columns already used in
+`public.commerce_skus`); `currency` is validated `~ '^[A-Z]{3}$'` (ISO 4217 alphabetic code shape —
+not validated against a currency table, which is a deliberate simplification noted in §8).
 
 ### 4.3 `commerce_runtime.order_transitions`
 
@@ -203,16 +242,31 @@ same convention `runtime.outbox_actions.sanitized_error_message` uses).
 1. Validates inputs: idempotency key shape, ISO-shaped currency, `total_amount_minor >= 0`,
    `customer_ref` length, `order_payload` object/size bound.
 2. Computes `payload_hash` over the canonical immutable inputs.
-3. Locks any existing `(account_id, idempotency_key)` row `for update`. If found: matching
-   `payload_hash` → returns the existing order's identity/state unconditionally (safe retry,
-   including retries that raced past a partial failure on the client side); mismatched hash →
-   returns `status = 'idempotency_key_collision'` and creates nothing — this is the "reject
-   collision" behavior named in the task brief, not a silent overwrite.
-4. Otherwise inserts the order (`status = 'created'`, `state_version = 0`), the birth
-   `order_transitions` row (`from_state = 'new'`, `to_state = 'created'`, `transition_seq = 1`),
-   and one `order_outbox_events` row (`event_type = 'order.created'`) — one transaction, so a crash
-   between any two of these three writes rolls all of them back; there is no window where an order
-   exists without its birth transition or its creation event.
+3. Attempts `INSERT ... ON CONFLICT (account_id, idempotency_key) DO NOTHING RETURNING *` directly —
+   it does **not** first `SELECT ... FOR UPDATE` the idempotency key to check whether a row already
+   exists. A `SELECT ... FOR UPDATE` against a key with no existing row takes no gap lock in
+   Postgres, so two concurrent calls with the same brand-new key would both observe "not found" and
+   both attempt the `INSERT`, and one would lose to `unique_violation` instead of getting a clean
+   replay/collision answer. The `INSERT ... ON CONFLICT` form makes Postgres itself the arbiter: a
+   losing inserter blocks on the `(account_id, idempotency_key)` unique index until the winner's
+   transaction commits (or rolls back), so by the time the losing inserter's `ON CONFLICT DO NOTHING`
+   resolves to "did nothing," the winner's row — if it committed — is guaranteed visible to the very
+   next `SELECT` in the same function.
+4. If the `INSERT` won (a row came back from `RETURNING`), this call is the sole creator: it inserts
+   the birth `order_transitions` row (`from_state = 'new'`, `to_state = 'created'`,
+   `transition_seq = 1`) and one `order_outbox_events` row (`event_type = 'order.created'`) in the
+   same transaction as the order insert — a crash between any two of these three writes rolls all of
+   them back; there is no window where an order exists without its birth transition or its creation
+   event. The order is created at `state_version = 1` (see §4.2 for why not `0`).
+5. If the `INSERT` did not win, this call reads the now-committed existing row (a plain `SELECT`,
+   no lock needed — see step 3) and compares `payload_hash`: matching hash → returns the existing
+   order's identity/state unconditionally (safe retry, including retries that raced past a partial
+   failure on the client side, and including a concurrent call that raced the winner and merely lost
+   the insert); mismatched hash → returns `status = 'idempotency_key_collision'` and creates nothing
+   — this is the "reject collision" behavior named in the task brief, not a silent overwrite. Only
+   the insert's winner ever creates the birth transition/outbox row, so N concurrent identical
+   `create_order` calls under the same key produce exactly one order, one birth transition, and one
+   outbox event, never more.
 
 ### 5.2 `commerce_runtime.transition_order`
 
@@ -248,47 +302,80 @@ moves to `reserved` before stock is actually committed (or vice versa).
    splitting one oversized request into two smaller ones that each individually look satisfiable.
 3. Locks the order `for update` and checks `state_version`/`status = 'created'` exactly as
    `transition_order` does (fenced, stale-write-rejected).
-4. Locks the aggregated inventory rows **`for update`, ordered by `product_id` ascending** —
-   deterministic across every caller of this RPC and every other RPC that will ever lock
-   `inventory` rows, so two concurrent reservations that happen to share SKUs can never form a
+4. Locks every **existing** requested inventory row **`for update`, ordered by `product_id`
+   ascending** — deterministic across every caller of this RPC and every other RPC that will ever
+   lock `inventory` rows, so two concurrent reservations that happen to share SKUs can never form a
    lock-ordering deadlock cycle (the same reasoning ADR 003 §4.1 documents for `usage_buckets`).
+   There is deliberately **no unlocked pre-check** for missing rows before this lock loop: an
+   earlier draft checked `not exists (select 1 from inventory where product_id = id)` first and only
+   then took the lock, which leaves a window where a product row that existed at pre-check time is
+   concurrently deleted before the lock is acquired — the lock loop would simply not find that row
+   (nothing to lock), and if the pre-check result were trusted rather than re-derived from what
+   actually got locked, the function could report the line as present when it no longer is. Instead,
+   `v_missing` (requested ids with **no** locked row) is computed *after* the lock loop, by comparing
+   the full requested id list against the set of ids the loop actually locked — a row can only be
+   "missing" if it is unlocked at the moment this function checks, not at some earlier unlocked read.
 5. **Verifies stock for every locked row before mutating any of them.** If any requested product
-   is missing from `inventory` or `available < requested`, the function returns a denial
-   (`denied_missing_inventory_row` / `denied_insufficient_stock`, listing every short/missing
-   product) and **updates nothing** — the row locks are released unchanged when the transaction
-   ends, exactly as ADR 003 §4.1 describes for FEFO bucket admission. This is the all-or-nothing
-   guarantee: partial reservation of some SKUs while others fail is not a state this function can
-   produce.
+   has no locked row (`v_missing`) or `available < requested` (`v_short`), the function does not
+   merely return a denial and leave the order sitting in `created` — it atomically calls
+   `commerce_runtime.transition_order` for `created -> inventory_rejected` (reason code
+   `INVENTORY_MISSING_ROW` or `INSUFFICIENT_STOCK`, transition payload listing every
+   short/missing product) **in the same transaction**, so the order lands on a definite terminal
+   branch and emits that transition's outbox event, rather than being left in an ambiguous
+   "not yet reserved" state a caller or downstream consumer has to interpret. No inventory row is
+   updated either way — the row locks are released unchanged when the transaction ends, exactly as
+   ADR 003 §4.1 describes for FEFO bucket admission. This is the all-or-nothing guarantee: partial
+   reservation of some SKUs while others fail is not a state this function can produce.
 6. On success, applies every row's `available -= qty, reserved += qty, version = version + 1` in
    one set-based `UPDATE ... FROM (SELECT unnest(...))` statement (matches the `billing.reserve_usage`
    bucket-decrement pattern), then calls `commerce_runtime.transition_order` for the `created ->
-   reserved` transition **within the same transaction** — a Postgres function call does not open a
-   new transaction, so the inventory mutation and the FSM transition (and its outbox event) commit
-   or roll back together with no intermediate observable state.
+   inventory_reserved` transition **within the same transaction** — a Postgres function call does not
+   open a new transaction, so the inventory mutation and the FSM transition (and its outbox event)
+   commit or roll back together with no intermediate observable state.
 
 ### 5.4 `commerce_runtime.claim_order_outbox_events` / `finish_order_outbox_event`
 
-Mirrors `public.runtime_claim_outbox_actions`/`runtime_finish_outbox_action` (ADR 001) exactly:
+Mirrors `public.runtime_claim_outbox_actions`/`runtime_finish_outbox_action` (ADR 001), with one
+addition this table's status lifecycle needs and `outbox_actions` does not: self-healing an
+exhausted, expired lease (see below).
 
-- **Claim**: single `UPDATE ... FROM` driven by a `SELECT ... FOR UPDATE SKIP LOCKED` candidate
-  scan (`status = 'pending'`, or `'retry_scheduled'` past `next_attempt_at`, or `'processing'` past
-  an **expired** `lease_until` — the last clause is what makes an abandoned lease reclaimable
-  without a separate sweep job). Each claimed row gets a fresh `claim_token`, `lease_epoch =
-  lease_epoch + 1`, and `lease_until = now() + lease_duration`. The function never holds any lock
-  while talking to Kafka — it returns the claimed batch to the caller, which publishes *outside*
-  this transaction, and reports back via `finish_order_outbox_event` in a second, separate
+- **Claim**: a single atomic statement — one `WITH` containing a `SELECT ... FOR UPDATE SKIP
+  LOCKED` candidate scan feeding an `UPDATE ... FROM candidates`, not a PL/pgSQL loop that updates
+  one candidate row at a time. Candidates are `status = 'pending'`, or `'retry_scheduled'` past
+  `next_attempt_at`, or `'processing'` past an **expired** `lease_until` with attempts remaining —
+  the last clause is what makes an abandoned-but-still-retryable lease reclaimable without a
+  separate sweep job. Each claimed row gets a fresh `claim_token`, `lease_epoch = lease_epoch + 1`,
+  and `lease_until = now() + lease_duration`. Before that candidate scan runs, the same statement
+  also **dead-letters, in a sibling CTE, any `processing` row whose lease has expired *and* whose
+  `attempt_count` has already reached `max_attempts`** — such a row can never satisfy the candidate
+  predicate (`attempt_count < max_attempts` correctly excludes it from being reclaimed for another
+  attempt it isn't entitled to), and without this explicit dead-lettering step it would simply stay
+  `processing` with a dead lease forever, invisible to both claim and any future caller, because
+  nothing else in this schema ever revisits a `processing` row on its own. The function never holds
+  any lock while talking to Kafka — it returns the claimed batch to the caller, which publishes
+  *outside* this transaction, and reports back via `finish_order_outbox_event` in a second, separate
   transaction. This is the same "never hold a DB lock across a network call" discipline the
   `runtime` claim/finish pair already established.
-- **Finish**: requires `status = 'processing'`, matching `claim_token` **and** `lease_epoch`, and
-  an unexpired `lease_until` — a worker whose lease already expired (and was reclaimed by another
-  worker) is rejected with `55000` even if it eventually gets around to calling finish, so two
-  workers can never both believe they successfully published the same event. `retry_scheduled`
-  requires a `p_next_attempt_at` that the function itself bounds to `[now(), now() + 24h]`
-  regardless of what the caller passes, and computes a default (`now() + least(3600s, 2^attempt_count
-  seconds)`, i.e. capped exponential backoff) when the caller does not supply one. If the event has
-  already exhausted `max_attempts`, a `retry_scheduled` result is silently upgraded to
-  `dead_letter` by the function itself — the caller cannot accidentally schedule an infinite retry
-  loop past the configured attempt budget.
+- **Finish**: requires `status = 'processing'`, matching `claim_token`, `lease_epoch`, **and**
+  `lease_holder = p_worker_id`, plus an unexpired `lease_until` — a worker whose lease already
+  expired (and was reclaimed by another worker) is rejected with `55000` even if it eventually gets
+  around to calling finish, and a worker id that does not match the current `lease_holder` is
+  rejected too (a token/epoch match alone does not prove *this* worker is the one holding the
+  lease), so two workers can never both believe they successfully published the same event.
+  `p_result_status` accepts `published`, `retry_scheduled`, or `dead_letter` — **not** `failed`,
+  which is not one of `order_outbox_events`'s own `CHECK`-constrained statuses
+  (`pending`/`processing`/`retry_scheduled`/`published`/`dead_letter`); a caller-observed publish
+  failure must already be classified as `retry_scheduled` (attempts remain) or `dead_letter`
+  (attempts exhausted) before calling finish, and both of those now **require a sanitized error
+  code** — a failure worth scheduling a retry or giving up on is a failure worth recording *why*,
+  not just *that*. `retry_scheduled` requires (or computes, when the caller does not supply one) a
+  `p_next_attempt_at` that the function itself bounds to `[now(), now() + 24h]` regardless of what
+  the caller passes (default: `now() + least(3600s, 2^attempt_count seconds)`, i.e. capped
+  exponential backoff). If the event has already exhausted `max_attempts`, a `retry_scheduled`
+  result is silently upgraded to `dead_letter` by the function itself — the caller cannot
+  accidentally schedule an infinite retry loop past the configured attempt budget; this is the
+  in-transaction complement to claim's own dead-lettering of rows that reach that exhaustion while
+  already abandoned (lease expired) rather than while being actively finished.
 
 ### 5.5 `commerce_runtime.consume_order_event`
 
@@ -306,6 +393,24 @@ control over — it claims exactly-once *effect application* for whatever number
 message is actually delivered to this function.
 
 ---
+
+### 5.6 `public.commerce_*` — RPC-exposure wrappers
+
+Supabase/PostgREST exposes only the schemas listed in the project's `db.schemas` config, which
+defaults to `public` (and `graphql_public`) and does **not** include `commerce_runtime`. A function
+that exists only in `commerce_runtime` — however correctly it validates input, fences its writes,
+and locks in the right order — is simply unreachable through `supabase.rpc(...)` or any other
+PostgREST-based client; it can only be called from a raw Postgres connection with the right role,
+which an Edge Function does not use for this purpose. Each RPC in §5.1–§5.5 therefore gets a thin
+`public.commerce_*` wrapper (`commerce_create_order`, `commerce_transition_order`,
+`commerce_reserve_inventory`, `commerce_claim_order_outbox_events`,
+`commerce_finish_order_outbox_event`, `commerce_consume_order_event`) — same argument shapes, no
+added logic beyond the pass-through call — that is itself `security definer` with
+`set search_path = ''`, revoked from `public`/`anon`/`authenticated`, and granted only to
+`service_role`, exactly like the `commerce_runtime` function it wraps. Exposing a callable contract
+through `public` does not loosen the closed-schema access model: `commerce_runtime` itself stays
+fully unreachable by any role except through these definer functions, and the wrappers are reachable
+by service_role only, same as before.
 
 ## 6. What Is Deliberately Out of Scope
 
@@ -335,13 +440,16 @@ message is actually delivered to this function.
 
 | Scenario | Mechanism | Section |
 |---|---|---|
-| Duplicate `create_order` retry, identical payload | Tenant idempotency key + payload hash match → replay | §5.1 |
+| N concurrent identical `create_order` calls, same key+payload | `INSERT ... ON CONFLICT DO NOTHING` — one winner creates order+birth transition+outbox, every other call reads the committed row and replays; zero `unique_violation`s | §5.1 |
 | Duplicate `create_order` retry, different payload | Payload hash mismatch → `idempotency_key_collision`, rejected | §5.1 |
 | Two transitions racing the same order | `state_version` fencing, one wins, one gets `55000` | §5.2 |
 | Illegal transition pair | `allowed_order_transitions` composite FK → `23503` | §4.1, §5.2 |
-| Multi-SKU reservation, one SKU short | All locks taken, no update issued, denial returned | §5.3 |
+| Multi-SKU reservation, one SKU short or missing | All existing rows locked first, then checked; no update issued; order atomically transitions to `inventory_rejected` instead of staying in `created` | §5.3 |
+| Product row deleted between an unlocked pre-check and the lock | Eliminated — there is no unlocked pre-check; missing-ness is derived from what the lock loop actually locked | §5.3 |
 | Multi-SKU reservation, duplicate SKU in request | Aggregated before locking/checking | §5.3 |
 | Two reservations sharing SKUs | Deterministic `product_id asc` lock order — no deadlock | §5.3 |
-| Outbox worker crash mid-publish | Lease expires, `claim` reclaims it, new `lease_epoch` fences the dead worker's eventual `finish` call | §5.4 |
-| Same Kafka message delivered twice | `consumer_inbox` dedupe in the same transaction as the mutation it guards | §5.5 |
+| Outbox worker publishes then crashes before `finish` | Lease expires, `claim` reclaims it under a new `lease_epoch`, event is republished — **at-least-once**, not exactly-once; see the correction in §1 and the dedupe/idempotent-consumer requirement it implies | §5.4 |
+| A reclaimed lease's original worker eventually calls `finish` anyway | Rejected: stale `lease_epoch`/`claim_token`, or a `lease_holder` that no longer matches `p_worker_id` | §5.4 |
+| Outbox event's lease expires on its *last* attempt (`attempt_count = max_attempts`) | `claim` dead-letters it in the same statement it runs its candidate scan — no separate sweep job, no permanently-stuck `processing` row | §5.4 |
+| Same Kafka message delivered twice | `consumer_inbox` dedupe in the same transaction as the mutation it guards — this, not the outbox, is what turns at-least-once delivery into exactly-once effect | §5.5 |
 | Mutation fails after dedupe insert | Whole transaction rolls back — message is not marked consumed | §5.5 |

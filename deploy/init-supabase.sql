@@ -17537,6 +17537,10 @@ grant usage on schema commerce_runtime to service_role;
 -- commerce_runtime.allowed_order_transitions — FSM legality lookup, not an ENUM (ADR 004 §4.1).
 -- 'new' is a sentinel from_state only: the birth transition ('new' -> 'created') is every order's
 -- first row, and 'new' is never a legal orders.status value or a legal to_state.
+--
+-- Lifecycle: created -> inventory_reserved -> payment_pending -> paid -> confirmed -> fulfilling
+-- -> shipped -> completed, with inventory_rejected/payment_failed/cancelled/failed as explicit
+-- terminal-or-recoverable branches (ADR 004 §4.1).
 -- ---------------------------------------------------------------------------------------------
 
 create table commerce_runtime.allowed_order_transitions (
@@ -17544,22 +17548,28 @@ create table commerce_runtime.allowed_order_transitions (
   to_state text not null,
   primary key (from_state, to_state),
   constraint allowed_order_transition_from_state_check check (from_state in (
-    'new', 'created', 'reserved', 'confirmed', 'fulfilling', 'shipped'
+    'new', 'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed',
+    'fulfilling', 'shipped'
   )),
   constraint allowed_order_transition_to_state_check check (to_state in (
-    'created', 'reserved', 'confirmed', 'fulfilling', 'shipped', 'completed', 'cancelled', 'failed'
+    'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed', 'fulfilling',
+    'shipped', 'completed', 'inventory_rejected', 'payment_failed', 'cancelled', 'failed'
   )),
   constraint allowed_order_transition_not_identity_check check (from_state <> to_state)
 );
 
 insert into commerce_runtime.allowed_order_transitions (from_state, to_state) values
   ('new', 'created'),
-  ('created', 'reserved'),
+  ('created', 'inventory_reserved'),
+  ('created', 'inventory_rejected'),
   ('created', 'cancelled'),
-  ('created', 'failed'),
-  ('reserved', 'confirmed'),
-  ('reserved', 'cancelled'),
-  ('reserved', 'failed'),
+  ('inventory_reserved', 'payment_pending'),
+  ('inventory_reserved', 'cancelled'),
+  ('payment_pending', 'paid'),
+  ('payment_pending', 'payment_failed'),
+  ('payment_pending', 'cancelled'),
+  ('paid', 'confirmed'),
+  ('paid', 'cancelled'),
   ('confirmed', 'fulfilling'),
   ('confirmed', 'cancelled'),
   ('confirmed', 'failed'),
@@ -17580,7 +17590,7 @@ create table commerce_runtime.orders (
   idempotency_key text not null,
   payload_hash text not null,
   status text not null default 'created',
-  state_version bigint not null default 0,
+  state_version bigint not null default 1,
   currency text not null,
   total_amount_minor bigint not null,
   customer_ref text,
@@ -17596,11 +17606,13 @@ create table commerce_runtime.orders (
   constraint orders_payload_hash_check check (payload_hash ~ '^[0-9a-f]{64}$'),
   constraint orders_status_check check (
     status in (
-      'created', 'reserved', 'confirmed', 'fulfilling', 'shipped',
-      'completed', 'cancelled', 'failed'
+      'created', 'inventory_reserved', 'payment_pending', 'paid', 'confirmed', 'fulfilling',
+      'shipped', 'completed', 'inventory_rejected', 'payment_failed', 'cancelled', 'failed'
     )
   ),
-  constraint orders_state_version_check check (state_version >= 0),
+  -- state_version is 1-based: the birth transition (transition_seq = 1) is applied in the same
+  -- transaction as the insert, so an order is never observed at version 0 (ADR 004 §4.2).
+  constraint orders_state_version_check check (state_version >= 1),
   constraint orders_currency_check check (currency ~ '^[A-Z]{3}$'),
   constraint orders_total_amount_check check (total_amount_minor >= 0),
   constraint orders_customer_ref_check check (
@@ -17843,7 +17855,7 @@ comment on schema commerce_runtime is
 comment on table commerce_runtime.allowed_order_transitions is
   'FSM legality lookup (composite PK), not an ENUM. new is a birth-transition sentinel from_state only.';
 comment on table commerce_runtime.orders is
-  'Tenant-scoped idempotent order header. state_version fences every transition/reservation RPC.';
+  'Tenant-scoped idempotent order header. state_version (1-based, birth = 1) fences every transition/reservation RPC.';
 comment on table commerce_runtime.order_transitions is
   'Append-only FSM audit log; mutation is blocked by trigger, not just convention.';
 comment on table commerce_runtime.order_outbox_events is
@@ -17906,6 +17918,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_inserted commerce_runtime.orders%rowtype;
   v_existing commerce_runtime.orders%rowtype;
   v_canonical jsonb;
   v_hash text;
@@ -17942,14 +17955,31 @@ begin
   );
   v_hash := commerce_runtime.sha256_jsonb(v_canonical);
 
-  -- Tenant-scoped idempotency lookup, locked first so a concurrent retry with the same key queues
-  -- behind this transaction instead of racing the INSERT below into a unique_violation.
-  select order_row.* into v_existing
-  from commerce_runtime.orders as order_row
-  where order_row.account_id = p_account_id and order_row.idempotency_key = p_idempotency_key
-  for update;
+  -- Race-free tenant-scoped idempotency: a plain SELECT ... FOR UPDATE against a key that has no
+  -- row yet takes no gap lock in Postgres, so two concurrent identical calls would both find
+  -- nothing and both attempt the INSERT below, and one would lose to unique_violation. Instead we
+  -- always attempt the INSERT; ON CONFLICT DO NOTHING makes it the arbiter — Postgres itself
+  -- serializes concurrent inserters on the (account_id, idempotency_key) unique index and blocks a
+  -- losing inserter until the winner's transaction concludes, so by the time control reaches the
+  -- "did we win" check below, the winner's row (if it committed) is guaranteed visible.
+  insert into commerce_runtime.orders (
+    id, account_id, idempotency_key, payload_hash, status, state_version,
+    currency, total_amount_minor, customer_ref, order_payload, correlation_id
+  ) values (
+    v_order_id, p_account_id, p_idempotency_key, v_hash, 'created', 1,
+    p_currency, p_total_amount_minor, p_customer_ref, p_order_payload, p_correlation_id
+  )
+  on conflict (account_id, idempotency_key) do nothing
+  returning * into v_inserted;
 
-  if found then
+  if v_inserted.id is null then
+    -- Lost the insert race (or this is a genuine later retry): the winner's row is committed and
+    -- visible now, since ON CONFLICT DO NOTHING only reaches "do nothing" after waiting out any
+    -- concurrent inserter racing the same conflicting key.
+    select order_row.* into v_existing
+    from commerce_runtime.orders as order_row
+    where order_row.account_id = p_account_id and order_row.idempotency_key = p_idempotency_key;
+
     if v_existing.payload_hash = v_hash then
       return jsonb_build_object(
         'status', v_existing.status,
@@ -17966,14 +17996,9 @@ begin
     end if;
   end if;
 
-  insert into commerce_runtime.orders (
-    id, account_id, idempotency_key, payload_hash, status, state_version,
-    currency, total_amount_minor, customer_ref, order_payload, correlation_id
-  ) values (
-    v_order_id, p_account_id, p_idempotency_key, v_hash, 'created', 0,
-    p_currency, p_total_amount_minor, p_customer_ref, p_order_payload, p_correlation_id
-  );
-
+  -- We won the insert: only the winner creates the birth transition and outbox event, so a
+  -- concurrent identical create_order storm produces exactly one order, one birth transition
+  -- (transition_seq = 1, matching state_version = 1 the order is born at), and one outbox event.
   insert into commerce_runtime.order_transitions (
     account_id, order_id, transition_seq, from_state, to_state,
     actor_type, actor_id, correlation_id, transition_payload
@@ -17999,7 +18024,7 @@ begin
   return jsonb_build_object(
     'status', 'created',
     'order_id', v_order_id,
-    'state_version', 0,
+    'state_version', 1,
     'idempotent_replay', false
   );
 end
@@ -18106,9 +18131,11 @@ $$;
 
 -- ---------------------------------------------------------------------------------------------
 -- commerce_runtime.reserve_inventory — all-or-nothing multi-SKU reservation (ADR 004 §5.3):
--- validates input, aggregates duplicate product ids, locks inventory rows in deterministic
--- product_id order, verifies every line has stock before mutating any of them, then reuses
--- transition_order for the created -> reserved transition within the same transaction.
+-- validates input, aggregates duplicate product ids, locks every existing requested inventory row
+-- in deterministic product_id order (no unlocked pre-check), verifies every locked line has stock
+-- before mutating any of them, then reuses transition_order for the created -> inventory_reserved
+-- transition on success, or created -> inventory_rejected on missing/insufficient stock, within the
+-- same transaction either way.
 -- ---------------------------------------------------------------------------------------------
 
 create function commerce_runtime.reserve_inventory(
@@ -18132,11 +18159,13 @@ declare
   v_quantity bigint;
   v_agg_ids uuid[] := array[]::uuid[];
   v_agg_qty bigint[] := array[]::bigint[];
+  v_locked_ids uuid[] := array[]::uuid[];
   v_missing uuid[] := array[]::uuid[];
   v_short jsonb := '[]'::jsonb;
   v_idx int;
   v_row record;
   v_transition_result jsonb;
+  v_reason_code text;
 begin
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     raise exception using errcode = '22023', message = 'invalid reservation items';
@@ -18193,24 +18222,12 @@ begin
     raise exception using errcode = '55000', message = 'order not in a reservable state';
   end if;
 
-  -- Missing-row check first, before taking any inventory lock, so a request naming an unknown
-  -- product fails fast without locking the products that do exist.
-  select array_agg(id) into v_missing
-  from unnest(v_agg_ids) as id
-  where not exists (
-    select 1 from commerce_runtime.inventory as inv
-    where inv.account_id = p_account_id and inv.product_id = id
-  );
-  if array_length(v_missing, 1) > 0 then
-    return jsonb_build_object(
-      'status', 'denied_missing_inventory_row',
-      'order_id', p_order_id,
-      'missing_product_ids', to_jsonb(v_missing)
-    );
-  end if;
-
   -- Deterministic product_id-ascending lock order: two reservations sharing SKUs can never
-  -- deadlock against each other. Verifies every line before mutating any of them (all-or-nothing).
+  -- deadlock against each other. Locks every EXISTING requested row first (no unlocked pre-check —
+  -- a pre-check-then-lock split leaves a window where a concurrent delete between the check and
+  -- the lock would make a since-deleted row look present), then determines which requested ids were
+  -- never locked (missing) only after the lock loop completes, and verifies every locked line's
+  -- stock before mutating any of them (all-or-nothing).
   for v_row in
     select inv.product_id, inv.available
     from commerce_runtime.inventory as inv
@@ -18218,6 +18235,7 @@ begin
     order by inv.product_id asc
     for update
   loop
+    v_locked_ids := v_locked_ids || v_row.product_id;
     v_idx := array_position(v_agg_ids, v_row.product_id);
     if v_row.available < v_agg_qty[v_idx] then
       v_short := v_short || jsonb_build_object(
@@ -18226,12 +18244,36 @@ begin
     end if;
   end loop;
 
-  if jsonb_array_length(v_short) > 0 then
-    return jsonb_build_object(
-      'status', 'denied_insufficient_stock',
-      'order_id', p_order_id,
-      'short', v_short
-    );
+  select array_agg(id) into v_missing
+  from unnest(v_agg_ids) as id
+  where not (id = any (v_locked_ids));
+
+  if array_length(v_missing, 1) > 0 or jsonb_array_length(v_short) > 0 then
+    -- Denied reservations do not leave the order sitting in created: they atomically transition it
+    -- to inventory_rejected and emit that transition's outbox event, in the same transaction, so a
+    -- caller and any downstream consumer both observe a definite terminal-branch outcome rather than
+    -- an order that looks merely "not yet reserved" (ADR 004 §5.3).
+    v_reason_code := case
+      when array_length(v_missing, 1) > 0 then 'INVENTORY_MISSING_ROW'
+      else 'INSUFFICIENT_STOCK'
+    end;
+
+    select commerce_runtime.transition_order(
+      p_account_id, p_order_id, p_expected_state_version, 'inventory_rejected',
+      p_actor_type, p_actor_id, p_correlation_id,
+      jsonb_build_object(
+        'missing_product_ids', to_jsonb(coalesce(v_missing, array[]::uuid[])),
+        'short', v_short
+      ),
+      v_reason_code
+    ) into v_transition_result;
+
+    return v_transition_result
+      || jsonb_build_object(
+        'status', 'inventory_rejected',
+        'missing_product_ids', to_jsonb(coalesce(v_missing, array[]::uuid[])),
+        'short', v_short
+      );
   end if;
 
   update commerce_runtime.inventory as inv
@@ -18245,7 +18287,7 @@ begin
   where inv.account_id = p_account_id and inv.product_id = alloc.product_id;
 
   select commerce_runtime.transition_order(
-    p_account_id, p_order_id, p_expected_state_version, 'reserved',
+    p_account_id, p_order_id, p_expected_state_version, 'inventory_reserved',
     p_actor_type, p_actor_id, p_correlation_id,
     jsonb_build_object(
       'reserved_items', (
@@ -18265,6 +18307,13 @@ $$;
 -- commerce_runtime.claim_order_outbox_events / finish_order_outbox_event — leased Kafka publish
 -- claim (ADR 004 §5.4). Claim never holds a lock while a worker talks to Kafka: it returns the
 -- claimed batch and the worker publishes and reports back via finish in a separate transaction.
+--
+-- Claim is a single atomic CTE (SELECT ... FOR UPDATE SKIP LOCKED feeding an UPDATE ... FROM), not
+-- a per-row PL/pgSQL loop, so the candidate scan and the claim mutation are one statement. It also
+-- self-heals a lease that expired on an event's FINAL attempt: such a row previously matched
+-- neither the claimable-candidate predicate (attempt_count < max_attempts excludes it) nor any
+-- sweep job, so it stayed 'processing' with a dead lease forever. Claim now dead-letters those rows
+-- itself, in the same statement, every time it runs.
 -- ---------------------------------------------------------------------------------------------
 
 create function commerce_runtime.claim_order_outbox_events(
@@ -18290,11 +18339,6 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
-declare
-  v_event commerce_runtime.order_outbox_events%rowtype;
-  v_token uuid;
-  v_epoch bigint;
-  v_until timestamptz;
 begin
   if p_worker_id is null or char_length(p_worker_id) not between 1 and 160 then
     raise exception using errcode = '22023', message = 'invalid outbox worker id';
@@ -18306,13 +18350,32 @@ begin
     raise exception using errcode = '22023', message = 'invalid outbox claim limit';
   end if;
 
-  -- Candidates: never-claimed pending rows, retry_scheduled rows past their backoff, and
-  -- processing rows whose lease already expired (an abandoned lease is reclaimable here, no
-  -- separate sweep job needed).
-  for v_event in
-    select event.*
+  return query
+  with dead_lettered as (
+    -- Self-heal: an event whose lease expired on its last attempt is exhausted and unreclaimable
+    -- by the candidates CTE below (attempt_count < max_attempts excludes it) — without this it
+    -- would stay 'processing' with a dead lease forever. Dead-letter it here instead, clearing the
+    -- lease so it stops looking like a live claim.
+    update commerce_runtime.order_outbox_events as event
+    set status = 'dead_letter',
+        claim_token = null,
+        lease_holder = null,
+        lease_until = null,
+        next_attempt_at = null,
+        updated_at = clock_timestamp()
+    where event.status = 'processing'
+      and event.lease_until <= clock_timestamp()
+      and event.attempt_count >= event.max_attempts
+    returning event.id
+  ),
+  candidates as (
+    -- Never-claimed pending rows, retry_scheduled rows past their backoff, and processing rows
+    -- whose lease already expired but still have attempts left (an abandoned lease is reclaimable
+    -- here, no separate sweep job needed).
+    select event.account_id, event.id
     from commerce_runtime.order_outbox_events as event
     where event.attempt_count < event.max_attempts
+      and event.id <> all (array(select dead_lettered.id from dead_lettered))
       and (
         event.status = 'pending'
         or (event.status = 'retry_scheduled' and event.next_attempt_at <= clock_timestamp())
@@ -18321,25 +18384,26 @@ begin
     order by coalesce(event.next_attempt_at, event.created_at), event.created_at, event.id
     for update skip locked
     limit p_limit
-  loop
-    v_token := gen_random_uuid();
-    v_epoch := v_event.lease_epoch + 1;
-    v_until := clock_timestamp() + pg_catalog.make_interval(secs => p_lease_duration_seconds);
-
+  ),
+  claimed as (
     update commerce_runtime.order_outbox_events as event
-    set status = 'processing', claim_token = v_token, lease_holder = p_worker_id,
-        lease_until = v_until, lease_epoch = v_epoch,
-        attempt_count = event.attempt_count + 1, next_attempt_at = null,
+    set status = 'processing',
+        claim_token = gen_random_uuid(),
+        lease_holder = p_worker_id,
+        lease_until = clock_timestamp() + pg_catalog.make_interval(secs => p_lease_duration_seconds),
+        lease_epoch = event.lease_epoch + 1,
+        attempt_count = event.attempt_count + 1,
+        next_attempt_at = null,
         updated_at = clock_timestamp()
-    where event.account_id = v_event.account_id and event.id = v_event.id;
-
-    return query
-    select event.account_id, event.id, event.order_id, event.event_type, event.event_version,
-      event.schema_version, event.payload, event.dedupe_key, event.claim_token, event.lease_epoch,
-      event.lease_until, event.attempt_count
-    from commerce_runtime.order_outbox_events as event
-    where event.account_id = v_event.account_id and event.id = v_event.id;
-  end loop;
+    from candidates
+    where event.account_id = candidates.account_id and event.id = candidates.id
+    returning event.account_id, event.id as outbox_event_id, event.order_id, event.event_type,
+      event.event_version, event.schema_version, event.payload, event.dedupe_key,
+      event.claim_token, event.lease_epoch, event.lease_until, event.attempt_count
+  )
+  select account_id, outbox_event_id, order_id, event_type, event_version, schema_version,
+    payload, dedupe_key, claim_token, lease_epoch, lease_until, attempt_count
+  from claimed;
 end
 $$;
 
@@ -18365,14 +18429,19 @@ declare
   v_status text := p_result_status;
   v_next_attempt_at timestamptz := p_next_attempt_at;
 begin
-  if p_result_status not in ('published', 'retry_scheduled', 'failed', 'dead_letter') then
+  -- 'failed' is not a status the order_outbox_events_status_check CHECK constraint permits — the
+  -- table's explicit lifecycle is pending/processing/retry_scheduled/published/dead_letter, and a
+  -- worker-observed publish failure is always translated by the caller into either
+  -- 'retry_scheduled' (more attempts left) or 'dead_letter' (attempt budget exhausted), never a
+  -- bare 'failed' the table itself would reject.
+  if p_result_status not in ('published', 'retry_scheduled', 'dead_letter') then
     raise exception using errcode = '22023', message = 'invalid outbox result status';
   end if;
   if p_worker_id is null or char_length(p_worker_id) not between 1 and 160 then
     raise exception using errcode = '22023', message = 'invalid outbox worker id';
   end if;
-  if p_result_status in ('failed', 'dead_letter') and p_error_code is null then
-    raise exception using errcode = '22023', message = 'outbox failure requires error code';
+  if p_result_status in ('retry_scheduled', 'dead_letter') and p_error_code is null then
+    raise exception using errcode = '22023', message = 'outbox retry/dead-letter requires error code';
   end if;
 
   select event.* into v_event
@@ -18385,10 +18454,13 @@ begin
 
   -- Fencing: a worker whose lease already expired (and was reclaimed by another worker) is
   -- rejected even if it eventually calls finish, so two workers can never both believe they
-  -- published the same event.
+  -- published the same event. p_worker_id must also match the current lease_holder, not just the
+  -- token/epoch/expiry — a worker id mismatch under an otherwise-valid token would mean a worker
+  -- is reporting on a lease it never actually held.
   if v_event.status <> 'processing'
     or v_event.lease_epoch <> p_expected_epoch
     or v_event.claim_token is distinct from p_claim_token
+    or v_event.lease_holder <> p_worker_id
     or v_event.lease_until <= v_now then
     raise exception using errcode = '55000', message = 'stale or invalid outbox lease';
   end if;
@@ -18547,14 +18619,217 @@ comment on function commerce_runtime.transition_order(
   uuid, uuid, bigint, text, text, text, text, jsonb, text
 ) is 'Fenced FSM transition: expected state_version, FK-enforced transition legality, outbox event.';
 comment on function commerce_runtime.reserve_inventory(uuid, uuid, bigint, jsonb, text, text, text) is
-  'All-or-nothing multi-SKU reservation: deterministic lock order, then the created -> reserved transition.';
+  'All-or-nothing multi-SKU reservation: deterministic lock order, then created -> inventory_reserved '
+  'on success or created -> inventory_rejected on missing/insufficient stock.';
 comment on function commerce_runtime.claim_order_outbox_events(text, integer, integer) is
-  'SKIP LOCKED leased claim batch; never holds a lock across a Kafka publish call.';
+  'Single atomic CTE claim (SKIP LOCKED + UPDATE ... FROM), self-dead-lettering exhausted expired leases.';
 comment on function commerce_runtime.finish_order_outbox_event(
   uuid, uuid, bigint, uuid, text, text, timestamptz, text, text
 ) is 'Fenced settlement: claim_token + lease_epoch + unexpired lease required; bounded backoff, auto dead-letter.';
 comment on function commerce_runtime.consume_order_event(
   uuid, text, text, uuid, bigint, text, text, text, text, jsonb, text
 ) is 'Atomic consumer-inbox dedupe + FSM mutation; no exactly-once delivery claim, only effect application.';
+
+-- ---------------------------------------------------------------------------------------------
+-- public.commerce_* — stable RPC-exposure wrappers (ADR 004 §5.6). Supabase/PostgREST only exposes
+-- the schemas named in the project's `db.schemas` config, which is `public` (and `graphql_public`)
+-- by default and does not include `commerce_runtime`; a function that exists only in
+-- `commerce_runtime`, however carefully it is written, is unreachable through a normal
+-- `supabase.rpc(...)` call or any other PostgREST client. These wrappers are thin pass-throughs —
+-- same argument shapes, no added logic — that live in `public` purely so the closed schema's RPCs
+-- have a callable public contract. Each is `security definer` with `set search_path = ''` exactly
+-- like its `commerce_runtime` counterpart, and is revoked from `public`/`anon`/`authenticated` and
+-- granted only to `service_role`, so exposure through PostgREST does not loosen the closed-schema
+-- access model: only service_role callers (server-side, e.g. an Edge Function) can invoke either
+-- the wrapper or the function it wraps.
+-- ---------------------------------------------------------------------------------------------
+
+create function public.commerce_create_order(
+  p_account_id uuid,
+  p_idempotency_key text,
+  p_currency text,
+  p_total_amount_minor bigint,
+  p_customer_ref text default null,
+  p_order_payload jsonb default '{}'::jsonb,
+  p_correlation_id text default null
+)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select commerce_runtime.create_order(
+    p_account_id, p_idempotency_key, p_currency, p_total_amount_minor,
+    p_customer_ref, p_order_payload, p_correlation_id
+  )
+$$;
+
+create function public.commerce_transition_order(
+  p_account_id uuid,
+  p_order_id uuid,
+  p_expected_state_version bigint,
+  p_to_state text,
+  p_actor_type text,
+  p_actor_id text,
+  p_correlation_id text default null,
+  p_transition_payload jsonb default '{}'::jsonb,
+  p_reason_code text default null
+)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select commerce_runtime.transition_order(
+    p_account_id, p_order_id, p_expected_state_version, p_to_state,
+    p_actor_type, p_actor_id, p_correlation_id, p_transition_payload, p_reason_code
+  )
+$$;
+
+create function public.commerce_reserve_inventory(
+  p_account_id uuid,
+  p_order_id uuid,
+  p_expected_state_version bigint,
+  p_items jsonb,
+  p_actor_type text default 'system',
+  p_actor_id text default 'reserve_inventory',
+  p_correlation_id text default null
+)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select commerce_runtime.reserve_inventory(
+    p_account_id, p_order_id, p_expected_state_version, p_items,
+    p_actor_type, p_actor_id, p_correlation_id
+  )
+$$;
+
+create function public.commerce_claim_order_outbox_events(
+  p_worker_id text,
+  p_lease_duration_seconds integer default 300,
+  p_limit integer default 20
+)
+returns table (
+  account_id uuid,
+  outbox_event_id uuid,
+  order_id uuid,
+  event_type text,
+  event_version text,
+  schema_version text,
+  payload jsonb,
+  dedupe_key text,
+  claim_token uuid,
+  lease_epoch bigint,
+  lease_until timestamptz,
+  attempt_count integer
+)
+language sql
+security definer
+set search_path = ''
+as $$
+  select * from commerce_runtime.claim_order_outbox_events(
+    p_worker_id, p_lease_duration_seconds, p_limit
+  )
+$$;
+
+create function public.commerce_finish_order_outbox_event(
+  p_account_id uuid,
+  p_outbox_event_id uuid,
+  p_expected_epoch bigint,
+  p_claim_token uuid,
+  p_result_status text,
+  p_worker_id text,
+  p_next_attempt_at timestamptz default null,
+  p_error_code text default null,
+  p_sanitized_error_message text default null
+)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select commerce_runtime.finish_order_outbox_event(
+    p_account_id, p_outbox_event_id, p_expected_epoch, p_claim_token, p_result_status,
+    p_worker_id, p_next_attempt_at, p_error_code, p_sanitized_error_message
+  )
+$$;
+
+create function public.commerce_consume_order_event(
+  p_account_id uuid,
+  p_source_topic text,
+  p_external_message_id text,
+  p_order_id uuid,
+  p_expected_state_version bigint,
+  p_to_state text,
+  p_actor_type text,
+  p_actor_id text,
+  p_correlation_id text default null,
+  p_transition_payload jsonb default '{}'::jsonb,
+  p_reason_code text default null
+)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select commerce_runtime.consume_order_event(
+    p_account_id, p_source_topic, p_external_message_id, p_order_id, p_expected_state_version,
+    p_to_state, p_actor_type, p_actor_id, p_correlation_id, p_transition_payload, p_reason_code
+  )
+$$;
+
+revoke all on function public.commerce_create_order(
+  uuid, text, text, bigint, text, jsonb, text
+) from public, anon, authenticated;
+revoke all on function public.commerce_transition_order(
+  uuid, uuid, bigint, text, text, text, text, jsonb, text
+) from public, anon, authenticated;
+revoke all on function public.commerce_reserve_inventory(
+  uuid, uuid, bigint, jsonb, text, text, text
+) from public, anon, authenticated;
+revoke all on function public.commerce_claim_order_outbox_events(text, integer, integer)
+  from public, anon, authenticated;
+revoke all on function public.commerce_finish_order_outbox_event(
+  uuid, uuid, bigint, uuid, text, text, timestamptz, text, text
+) from public, anon, authenticated;
+revoke all on function public.commerce_consume_order_event(
+  uuid, text, text, uuid, bigint, text, text, text, text, jsonb, text
+) from public, anon, authenticated;
+
+grant execute on function public.commerce_create_order(
+  uuid, text, text, bigint, text, jsonb, text
+) to service_role;
+grant execute on function public.commerce_transition_order(
+  uuid, uuid, bigint, text, text, text, text, jsonb, text
+) to service_role;
+grant execute on function public.commerce_reserve_inventory(
+  uuid, uuid, bigint, jsonb, text, text, text
+) to service_role;
+grant execute on function public.commerce_claim_order_outbox_events(text, integer, integer)
+  to service_role;
+grant execute on function public.commerce_finish_order_outbox_event(
+  uuid, uuid, bigint, uuid, text, text, timestamptz, text, text
+) to service_role;
+grant execute on function public.commerce_consume_order_event(
+  uuid, text, text, uuid, bigint, text, text, text, text, jsonb, text
+) to service_role;
+
+comment on function public.commerce_create_order(uuid, text, text, bigint, text, jsonb, text) is
+  'Public RPC-exposure wrapper for commerce_runtime.create_order (service_role only).';
+comment on function public.commerce_transition_order(
+  uuid, uuid, bigint, text, text, text, text, jsonb, text
+) is 'Public RPC-exposure wrapper for commerce_runtime.transition_order (service_role only).';
+comment on function public.commerce_reserve_inventory(uuid, uuid, bigint, jsonb, text, text, text) is
+  'Public RPC-exposure wrapper for commerce_runtime.reserve_inventory (service_role only).';
+comment on function public.commerce_claim_order_outbox_events(text, integer, integer) is
+  'Public RPC-exposure wrapper for commerce_runtime.claim_order_outbox_events (service_role only).';
+comment on function public.commerce_finish_order_outbox_event(
+  uuid, uuid, bigint, uuid, text, text, timestamptz, text, text
+) is 'Public RPC-exposure wrapper for commerce_runtime.finish_order_outbox_event (service_role only).';
+comment on function public.commerce_consume_order_event(
+  uuid, text, text, uuid, bigint, text, text, text, text, jsonb, text
+) is 'Public RPC-exposure wrapper for commerce_runtime.consume_order_event (service_role only).';
 
 commit;
