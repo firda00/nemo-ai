@@ -125,6 +125,7 @@
     "test:vision": "node --experimental-strip-types tests/vision_gateway.test.ts",
     "test:grounding-evals": "node --experimental-strip-types tests/grounding_evals.test.ts",
     "test:ecosystem": "node --experimental-strip-types tests/ecosystem_integration.test.ts",
+    "test:a2a": "node --experimental-strip-types tests/a2a_wire_protocol.test.ts",
     "test:e2e": "vitest run tests/e2e_multimodal_flow.test.ts",
     "test:self-healing": "vitest run tests/self_healing_loop.test.ts",
     "test:edge": "vitest run tests/edge_sync_bridge.test.ts",
