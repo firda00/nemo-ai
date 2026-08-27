@@ -122,6 +122,7 @@
     "worker:documents": "node --experimental-strip-types agent-hub/workers/document-worker.ts",
     "test:media-worker": "node --experimental-strip-types tests/media_worker.test.ts",
     "test:forge-media-intake": "node --experimental-strip-types tests/forge_media_intake.test.ts",
+    "test:forge-whisper": "node --experimental-strip-types tests/forge_whisper_adapter.test.ts",
     "worker:media": "node --max-old-space-size=1024 --experimental-strip-types agent-hub/workers/media-worker.ts",
     "test:vision": "node --experimental-strip-types tests/vision_gateway.test.ts",
     "test:grounding-evals": "node --experimental-strip-types tests/grounding_evals.test.ts",
