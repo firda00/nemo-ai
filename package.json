@@ -164,7 +164,8 @@
     "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs",
     "prepare": "npm run build:cli",
     "test:pricing-contrast": "node agent-hub/pricing-contrast-smoke.mjs",
-    "test:forge-event-bridge": "node --experimental-strip-types tests/forge_event_bridge.test.ts"
+    "test:forge-event-bridge": "node --experimental-strip-types tests/forge_event_bridge.test.ts",
+    "test:forge-event-hooks": "node --experimental-strip-types tests/forge_event_hooks.test.ts"
   },
   "dependencies": {
     "@marp-team/marp-core": "^4.2.0",

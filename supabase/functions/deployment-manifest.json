@@ -1,6 +1,7 @@
 {
   "public": [
     "agent-worker",
+    "amocrm-event-hook",
     "automation-hook",
     "autonomous-worker",
     "autopost",
@@ -28,6 +29,8 @@
     "support-sla",
     "task-reminders",
     "telegram-webhook",
+    "telegram-forge-hook",
+    "uzum-event-hook",
     "uzum-merchant",
     "waitlist",
     "watch-sources",

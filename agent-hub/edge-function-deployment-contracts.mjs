@@ -25,7 +25,7 @@ assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory mus
 // необходимости: ни платёжный провайдер, ни незалогиненный посетитель формы не пришлют JWT
 // Supabase; авторизация своя — Basic/подпись у касс, honeypot + HMAC-лимит с обязательным перцем
 // у waitlist.
-assert.equal(publicFunctions.length, 34)
+assert.equal(publicFunctions.length, 37)
 assert.equal(authenticatedFunctions.length, 49)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
@@ -63,6 +63,17 @@ assert.match(computeApiSource, /runtime_claim_compute_jobs/, 'compute broker exp
 assert.match(computeApiSource, /runtime_finish_compute_job/, 'compute broker exposes the fenced finish RPC')
 assert.doesNotMatch(computeApiSource, /runtime_enqueue_compute_job/, 'render workers cannot enqueue arbitrary compute jobs')
 assert.match(computeApiSource, /constantTimeTokenMatch/, 'compute broker verifies scoped tokens in constant time')
+
+for (const [fn, provider] of [
+  ['amocrm-event-hook', 'amocrm'],
+  ['telegram-forge-hook', 'telegram'],
+  ['uzum-event-hook', 'uzum'],
+]) {
+  const source = fs.readFileSync(path.join(functionsRoot, fn, 'index.ts'), 'utf8')
+  assert.match(source, /handleForgeWebhook\(request,/, `${fn} must delegate to the tested Forge gateway`)
+  assert.match(source, new RegExp(`provider:\\s*['\"]${provider}['\"]`), `${fn} must bind the expected provider`)
+  assert.doesNotMatch(source, /JSON\.parse|request\.json\(/, `${fn} must not parse unverified payloads in its entry point`)
+}
 
 // Публичная форма waitlist: без перца достаточной длины функция обязана отказывать (503),
 // а не принимать заявки с перебираемыми IP-хэшами.

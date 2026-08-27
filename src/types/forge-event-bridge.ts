@@ -4,8 +4,10 @@ export const ForgeEventProviderSchema = z.enum(['amocrm', 'telegram', 'uzum'])
 
 export const ForgeEventTypeSchema = z.enum([
   'crm.lead.created',
+  'crm.lead.updated',
   'telegram.command.received',
   'marketplace.order.status_changed',
+  'marketplace.stock.low',
 ])
 
 export const ForgeSignatureModeSchema = z.enum(['hmac_sha256', 'telegram_secret_token'])
@@ -45,11 +47,11 @@ export const ForgeEventTriggerSchema = z.object({
   active: z.boolean(),
 }).strict().superRefine((trigger, context) => {
   const expected = trigger.provider === 'amocrm'
-    ? 'crm.lead.created'
+    ? ['crm.lead.created', 'crm.lead.updated']
     : trigger.provider === 'telegram'
-      ? 'telegram.command.received'
-      : 'marketplace.order.status_changed'
-  if (trigger.eventType !== expected) {
+      ? ['telegram.command.received']
+      : ['marketplace.order.status_changed', 'marketplace.stock.low']
+  if (!expected.includes(trigger.eventType)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['eventType'],

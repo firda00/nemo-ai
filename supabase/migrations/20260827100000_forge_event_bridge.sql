@@ -21,12 +21,15 @@ create table runtime.event_triggers (
     references runtime.projects(account_id, id) on delete restrict,
   constraint forge_event_triggers_provider_check check (provider in ('amocrm', 'telegram', 'uzum')),
   constraint forge_event_triggers_type_check check (event_type in (
-    'crm.lead.created', 'telegram.command.received', 'marketplace.order.status_changed'
+    'crm.lead.created', 'crm.lead.updated', 'telegram.command.received',
+    'marketplace.order.status_changed', 'marketplace.stock.low'
   )),
   constraint forge_event_triggers_provider_type_check check (
-    (provider = 'amocrm' and event_type = 'crm.lead.created')
+    (provider = 'amocrm' and event_type in ('crm.lead.created', 'crm.lead.updated'))
     or (provider = 'telegram' and event_type = 'telegram.command.received')
-    or (provider = 'uzum' and event_type = 'marketplace.order.status_changed')
+    or (provider = 'uzum' and event_type in (
+      'marketplace.order.status_changed', 'marketplace.stock.low'
+    ))
   ),
   constraint forge_event_triggers_signature_check check (
     signature_mode in ('hmac_sha256', 'telegram_secret_token')

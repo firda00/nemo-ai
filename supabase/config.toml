@@ -238,3 +238,14 @@ verify_jwt = false
 
 [functions.compute-worker-api]
 verify_jwt = false
+
+# Forge ingress endpoints authenticate providers before parsing payloads.
+# Tenant identity is resolved from a service-only trigger record, never request data.
+[functions.amocrm-event-hook]
+verify_jwt = false
+
+[functions.telegram-forge-hook]
+verify_jwt = false
+
+[functions.uzum-event-hook]
+verify_jwt = false
