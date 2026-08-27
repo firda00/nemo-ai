@@ -1,6 +1,6 @@
 import {
   AlertCircle, Check, CheckCircle2, ChevronRight, Circle, Cpu, FileText, Gauge,
-  Image, Loader2, RefreshCw, Search, Send, ShieldCheck, Sparkles, X,
+  ExternalLink, Image, Loader2, RefreshCw, Search, Send, ShieldCheck, Sparkles, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
@@ -68,6 +68,14 @@ export default function ForgePage() {
               className="mt-3 w-full resize-y rounded-2xl border border-ice/10 bg-panel/70 px-4 py-3 text-sm leading-6 text-text outline-none transition placeholder:text-fog focus:border-accent-cyan/50 focus:ring-2 focus:ring-accent-cyan/15"
             />
             <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={forge.compileContentGrowthTemplate}
+                className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/30 bg-accent-cyan/10 px-3 py-2 text-left text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/15"
+              >
+                <Sparkles size={14} />
+                Пилот: Content Growth (Ustadi)
+              </button>
               {EXAMPLE_PROMPTS.map((example) => (
                 <button key={example} type="button" onClick={() => forge.setPrompt(example)} className="rounded-xl border border-ice/10 px-3 py-1.5 text-left text-[11px] text-muted transition hover:border-accent-cyan/30 hover:text-text">
                   {example}
@@ -155,6 +163,42 @@ export default function ForgePage() {
                   <article key={approval.id} className="rounded-2xl border border-ice/10 bg-panel/45 p-3">
                     <p className="text-xs font-medium leading-5 text-text">{approval.summary}</p>
                     <p className="mt-1 text-[10px] text-muted">{new Date(approval.createdAt).toLocaleString('ru-RU')}</p>
+                    {approval.artifacts.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {approval.artifacts.map((artifact) => (
+                          <div key={`${approval.id}:${artifact.sha256}`} className="overflow-hidden rounded-xl border border-ice/10 bg-bg/40">
+                            {artifact.mimeType === 'video/mp4' ? (
+                              <video
+                                controls
+                                preload="metadata"
+                                playsInline
+                                src={artifact.url}
+                                className="aspect-video w-full bg-black object-contain"
+                                aria-label={`Предпросмотр ${artifact.name}`}
+                              />
+                            ) : (
+                              <iframe
+                                src={artifact.url}
+                                title={`Предпросмотр ${artifact.name}`}
+                                sandbox=""
+                                referrerPolicy="no-referrer"
+                                className="h-40 w-full bg-white"
+                              />
+                            )}
+                            <a
+                              href={artifact.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              referrerPolicy="no-referrer"
+                              className="flex items-center justify-between gap-2 px-2.5 py-2 text-[10px] text-muted hover:text-text"
+                            >
+                              <span className="truncate">{artifact.name}</span>
+                              <ExternalLink size={12} className="shrink-0" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'approved')} className="inline-flex items-center justify-center gap-1 rounded-xl bg-teal/10 px-2 py-2 text-xs font-semibold text-teal disabled:opacity-50"><Check size={13} />Одобрить</button>
                       <button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'rejected')} className="inline-flex items-center justify-center gap-1 rounded-xl bg-danger/10 px-2 py-2 text-xs font-semibold text-danger disabled:opacity-50"><X size={13} />Отклонить</button>
