@@ -47,6 +47,8 @@ const TransitionSchema = z.object({
 
 const ClipSchema = z.object({
   asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  /** Start offset inside a source video. Still images must use zero. */
+  start_seconds: z.number().nonnegative().max(3_600).default(0),
   duration_seconds: z.number().positive().min(0.1).max(120),
   motion: MotionSchema.default('none'),
   transition: TransitionSchema.optional(),
@@ -87,6 +89,8 @@ export const MediaJobPayloadSchema = z.object({
   voice_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_audio_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_volume: z.number().min(0.02).max(0.8).default(0.18),
+  /** Optional EBU R128 integrated loudness target. When requested, loudnorm is mandatory. */
+  target_loudness_lufs: z.number().min(-24).max(-10).optional(),
   procedural_soundtrack: z.object({
     preset: z.enum(['subtle', 'upbeat', 'cinematic']).default('subtle'),
     volume: z.number().min(0.01).max(0.25).default(0.06),
@@ -111,6 +115,12 @@ export const MediaJobPayloadSchema = z.object({
   const assetsById = new Map(value.assets.map((asset) => [asset.id, asset]))
   if (ids.size !== value.assets.length) context.addIssue({ code: z.ZodIssueCode.custom, message: 'asset ids must be unique', path: ['assets'] })
   for (const clip of value.clips) if (!ids.has(clip.asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'clip asset is missing', path: ['clips'] })
+  for (const [index, clip] of value.clips.entries()) {
+    const asset = assetsById.get(clip.asset_id)
+    if (asset?.mime_type.startsWith('image/') && clip.start_seconds !== 0) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'still images cannot have a source offset', path: ['clips', index, 'start_seconds'] })
+    }
+  }
   if (value.audio_asset_id && !ids.has(value.audio_asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'audio asset is missing', path: ['audio_asset_id'] })
   for (const field of ['voice_asset_id', 'background_audio_asset_id'] as const) if (value[field] && !ids.has(value[field]!)) context.addIssue({ code: z.ZodIssueCode.custom, message: `${field} asset is missing`, path: [field] })
   for (const overlay of value.overlays) if (!ids.has(overlay.asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'overlay asset is missing', path: ['overlays'] })
@@ -240,6 +250,7 @@ export function buildFfmpegArgs(
     if (!asset || !localPath) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'materialized clip is missing')
     assertPathInside(inputs.workDirectory, localPath)
     if (asset.mime_type.startsWith('image/')) args.push('-loop', '1', '-framerate', String(payload.fps), '-t', String(clip.duration_seconds))
+    else args.push('-ss', String(clip.start_seconds), '-t', String(clip.duration_seconds))
     args.push('-i', localPath)
     const label = `clip${index}`
     const chain = [
@@ -357,6 +368,14 @@ export function buildFfmpegArgs(
       filters.push(`[${audioOut}][${proceduralOut}]amix=inputs=2:duration=first:normalize=0[aenhanced]`)
       audioOut = 'aenhanced'
     } else audioOut = proceduralOut
+  }
+
+  if (audioOut && payload.target_loudness_lufs !== undefined) {
+    if (!capabilities.has('loudnorm')) {
+      throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg loudnorm filter is required for the requested loudness target')
+    }
+    filters.push(`[${audioOut}]loudnorm=I=${payload.target_loudness_lufs}:TP=-1.5:LRA=11[anormalized]`)
+    audioOut = 'anormalized'
   }
 
   assertPathInside(inputs.workDirectory, inputs.outputPath)
