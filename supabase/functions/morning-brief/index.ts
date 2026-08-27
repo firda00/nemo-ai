@@ -5,14 +5,19 @@
 //   POST /functions/v1/morning-brief   (header: x-cron-secret: <CRON_SECRET>)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { tgSend } from '../_shared/telegram.ts'
+import { tgSend, tgSendVoice } from '../_shared/telegram.ts'
 import { L, normLang, fmtDate, overdueDays, type Lang } from '../_shared/planerkaLocale.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { elevenTTS, openaiTTS, uploadAudio } from '../_shared/media.ts'
+import { generateMorningBriefSummary } from '../../../src/lib/voice/morning-brief.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 const NEMO_URL = Deno.env.get('APP_URL') ?? 'https://nemo-ai-swart.vercel.app'
+const AUDIO_ENABLED = Deno.env.get('MORNING_BRIEF_AUDIO_ENABLED') === 'true'
+const ELEVEN_KEY = Deno.env.get('ELEVENLABS_API_KEY') ?? ''
+const OPENAI_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any
 // free-tier accounts carry a subtle "powered by Nemo" footer (PLG growth loop); paid = clean
@@ -91,6 +96,7 @@ Deno.serve(async (req) => {
   }
 
   let sent = 0
+  const audioByAccount = new Map<string, string>()
   for (const [key, list] of groups) {
     try {
       const [channelId, chatId] = key.split('::')
@@ -122,6 +128,37 @@ Deno.serve(async (req) => {
       }
       body += d.briefFooter
       if (isFreeTier(planByAcc.get(list[0].account_id))) body += d.poweredBy(NEMO_URL)
+      const accountId = String(list[0].account_id)
+      // Audio is opt-in and paid-plan only: scheduled TTS must never create surprise provider
+      // spend for a free workspace. One synthesized artifact is reused for all of the account's
+      // Telegram groups during this run.
+      if (AUDIO_ENABLED && !isFreeTier(planByAcc.get(accountId)) && (ELEVEN_KEY || OPENAI_KEY)) {
+        let audioUrl = audioByAccount.get(accountId) ?? ''
+        if (!audioUrl) {
+          const since = new Date(nowMs); since.setHours(0, 0, 0, 0)
+          const [leads, activeRuns, approvals] = await Promise.all([
+            db.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', since.toISOString()),
+            db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action']),
+            db.from('approval_requests').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'pending'),
+          ])
+          const summary = await generateMorningBriefSummary(accountId, {
+            getDailyMetrics: async () => ({
+              leadsToday: leads.count ?? 0,
+              activeCampaigns: activeRuns.count ?? 0,
+              completedAgentTasks: 0,
+              pendingAgentTasks: list.length,
+              approvalsWaiting: approvals.count ?? 0,
+            }),
+          })
+          let audio = ELEVEN_KEY ? await elevenTTS(ELEVEN_KEY, summary.text) : ''
+          if (!audio && OPENAI_KEY) audio = await openaiTTS(OPENAI_KEY, summary.text)
+          audioUrl = audio ? await uploadAudio(db, accountId, audio) : ''
+          if (audioUrl) audioByAccount.set(accountId, audioUrl)
+        }
+        if (audioUrl && !await blocksExternalActions(db, accountId)) {
+          await tgSendVoice(token, chatId, audioUrl, 'Утренняя бизнес-сводка Nemo')
+        }
+      }
       if (await sendLong(db, list[0].account_id, token, chatId, body)) sent++
     } catch { /* best effort per group */ }
   }

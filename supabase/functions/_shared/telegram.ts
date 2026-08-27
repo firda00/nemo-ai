@@ -71,6 +71,25 @@ export async function tgSendKeyboard(
   } catch { return false }
 }
 
+// Send a TTS artifact by HTTPS URL. Telegram fetches the file itself, so bot workers never need
+// to hold a second copy of the audio in memory. Only our already-uploaded HTTPS URLs are accepted.
+export async function tgSendVoice(
+  botToken: string,
+  chatId: number | string,
+  audioUrl: string,
+  caption = '',
+): Promise<boolean> {
+  if (!/^https:\/\/[^\s]+$/i.test(audioUrl)) return false
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendVoice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, voice: audioUrl, caption: caption.slice(0, 1024) }),
+    })
+    return res.ok
+  } catch { return false }
+}
+
 // Acknowledge a button press so Telegram stops showing the spinner on the client.
 export async function tgAnswerCallback(botToken: string, callbackId: string, text = ''): Promise<void> {
   try {

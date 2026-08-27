@@ -4,7 +4,7 @@
 // Extracted so the webhook can just enqueue and a rate-capped worker does the heavy LLM work.
 import { buildReply, buildSubAgentReply, type ReplyDiagnostics } from './agent.ts'
 import { PRIMARY_MODEL } from './llm.ts'
-import { tgSend, tgSendHtml, tgSendKeyboard } from './telegram.ts'
+import { tgSend, tgSendHtml, tgSendKeyboard, tgSendVoice } from './telegram.ts'
 import { escapeHtml } from './telegramFormat.ts'
 import { handleTaskBot, handleTeamCompletionDM } from './taskbot.ts'
 import {
@@ -23,9 +23,44 @@ import { resolveOpenRouterKey } from './keys.ts'
 import { planOf } from './plans.ts'
 import { transcribeAudio } from './transcribe.ts'
 import { isRegulatedAgent } from './riskPolicy.ts'
+import { handleTelegramVoiceTranscription } from '../../../src/server/telegram/voice-handler.ts'
+import { generateMorningBriefSummary } from '../../../src/lib/voice/morning-brief.ts'
+import { enqueueTelegramVoiceForge } from './telegramVoiceForge.ts'
+import { elevenTTS, openaiTTS, uploadAudio } from './media.ts'
 
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const MAX_MSG = 4000
+const VOICE_BUSINESS_SIGNAL = /утренн|сводк|отч[её]т.*день|конкурент|анализ.*отзыв|лид|квалифиц|заявк|crm|акци|скидк|рассылк|кампани|контент|ролик|reels|видео|пост|ertalab|raqobat|mijoz|chegirma|reklama|campaign|content|morning\s+brief/i
+
+async function morningBriefFor(db: any, accountId: string) {
+  const since = new Date()
+  since.setHours(0, 0, 0, 0)
+  const [leads, activeRuns, completedTasks, pendingTasks, approvals] = await Promise.all([
+    db.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', since.toISOString()),
+    db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action']),
+    db.from('tasks').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'done').gte('updated_at', since.toISOString()),
+    db.from('tasks').select('id', { count: 'exact', head: true }).eq('account_id', accountId).neq('status', 'done'),
+    db.from('approval_requests').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'pending'),
+  ])
+  return generateMorningBriefSummary(accountId, {
+    getDailyMetrics: async () => ({
+      leadsToday: leads.count ?? 0,
+      activeCampaigns: activeRuns.count ?? 0,
+      completedAgentTasks: completedTasks.count ?? 0,
+      pendingAgentTasks: pendingTasks.count ?? 0,
+      approvalsWaiting: approvals.count ?? 0,
+    }),
+  })
+}
+
+async function sendMorningBriefAudio(db: any, accountId: string, botToken: string, chatId: string, text: string) {
+  const elevenKey = Deno.env.get('ELEVENLABS_API_KEY') ?? ''
+  const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
+  let audio = elevenKey ? await elevenTTS(elevenKey, text) : ''
+  if (!audio && openaiKey) audio = await openaiTTS(openaiKey, text)
+  const url = audio ? await uploadAudio(db, accountId, audio) : ''
+  return url ? tgSendVoice(botToken, chatId, url, 'Утренняя бизнес-сводка Nemo') : false
+}
 
 // Friendly note when a voice message can't be turned into text (too big, or transcription failed).
 // Telegram lets a BOT download files only up to 20 MB — that's the hard ceiling for voice size.
@@ -290,6 +325,55 @@ export async function processTelegramUpdate(db: any, channelId: string, update: 
       if (/^\/start(?:@\w+)?$/i.test(text.trim())) {
         await tgSendHtml(botToken, chatId, COMMERCE_HELP)
         return
+      }
+      // Voice-to-Forge is deliberately limited to recognizable business commands. Dictated
+      // commerce values keep flowing through the existing deterministic SKU/cost handlers below.
+      if (voice && VOICE_BUSINESS_SIGNAL.test(text)) {
+        try {
+          const result = await handleTelegramVoiceTranscription(text, {
+            userId: String(msg.from?.id ?? chatId),
+            workspaceId: owner.accountId,
+            channelId,
+            chatId,
+            messageId: Number(msg.message_id),
+            messageThreadId: msg.message_thread_id ? Number(msg.message_thread_id) : undefined,
+          }, {
+            executeForge: async (payload) => enqueueTelegramVoiceForge(db, owner.accountId, payload),
+            generateMorningBrief: async () => morningBriefFor(db, owner.accountId),
+          })
+          if (result.status === 'clarification_required') {
+            await tgSend(botToken, chatId, result.replyText)
+            return
+          }
+          if (result.status === 'approval_required') {
+            const { error } = await db.from('telegram_voice_intents').upsert({
+              id: result.intent.intentId,
+              account_id: owner.accountId,
+              channel_id: channelId,
+              chat_id: chatId,
+              message_id: msg.message_id,
+              intent: result.intent,
+              forge_payload: result.forgePayload,
+              status: 'pending',
+              expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+            }, { onConflict: 'account_id,channel_id,chat_id,message_id' })
+            if (error) throw new Error('VOICE_APPROVAL_STORE_FAILED')
+            await tgSendKeyboard(botToken, chatId, result.replyText, result.keyboard)
+            return
+          }
+          if (result.status === 'morning_brief') {
+            if (!await sendMorningBriefAudio(db, owner.accountId, botToken, chatId, result.summary.text)) {
+              await tgSend(botToken, chatId, result.summary.text)
+            }
+            return
+          }
+          await tgSend(botToken, chatId, result.replyText)
+          return
+        } catch (error) {
+          console.error('telegram voice intent failed:', error)
+          await tgSend(botToken, chatId, 'Не удалось безопасно запустить задачу. Проверьте подключение Telegram к Nemo Forge и лимит бюджета.')
+          return
+        }
       }
       // BEFORE the economics branch on purpose. "новый товар, себестоимость 18000" satisfies
       // looksLikeEconomics too, and taking that path would hunt for an existing SKU to edit
