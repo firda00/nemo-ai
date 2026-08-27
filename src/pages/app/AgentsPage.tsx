@@ -17,6 +17,8 @@ import { BUSINESS_AGENT_PRESETS, guardedPresetRoles, type BusinessAgentPreset, t
 import { TeamOfficeView } from '../../components/office/TeamOfficeView'
 import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
 import type { AgentNodeData, OperationalAgentStatus } from '../../types/orchestrator'
+import { AgentQuickEditDrawer, type AgentQuickEditDraft } from '../../components/agents/AgentQuickEditDrawer'
+import type { PlatformAgent } from '../../types/platform'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
@@ -73,14 +75,26 @@ function artifactUrls(result: string): string[] {
     .slice(0, 6)
 }
 
+function teamDisplayName(agent: PlatformAgent): string {
+  const raw = agent.name.trim()
+  if (raw && raw.length <= 52 && !/^(team|команда|создай|create)\s*:/i.test(raw)) return raw
+  const context = `${raw} ${agent.niche ?? ''} ${agent.purpose ?? ''} ${agent.prompt.tasks}`.toLowerCase()
+  if (/uzum|marketplace|маркетплейс/.test(context)) return 'Uzum Growth Team'
+  if (/video|reels|content|контент|медиа/.test(context)) return 'Content & Reels Factory'
+  if (/sales|crm|продаж|лид/.test(context)) return 'Sales & CRM Team'
+  if (/support|поддерж|клиент/.test(context)) return 'Customer Support Team'
+  return 'AI Operations Team'
+}
+
 export default function AgentsPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
   const toast = useToast()
-  const { agents, toggleAgent, duplicateAgent, deleteAgent } = useAgentStore()
+  const { agents, toggleAgent, duplicateAgent, deleteAgent, updateAgent } = useAgentStore()
   const setPresetRuntimeTeam = useTeamOfficeStore((state) => state.setPresetRuntimeTeam)
   const [menu, setMenu] = useState<string | null>(null)
+  const [quickEditAgentId, setQuickEditAgentId] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<string | null>(null)
   const [activePresetId, setActivePresetId] = useState<BusinessPresetId | null>(null)
   const [goal, setGoal] = useState('')
@@ -104,6 +118,25 @@ export default function AgentsPage() {
   const activeSavedTeamRosterLoading = isSupabaseEnabled && Boolean(teamsView && selectedOfficeTeamId)
     && (savedTeamRoster.teamId !== selectedOfficeTeamId || savedTeamRoster.loading)
   const activeSavedTeamRosterError = savedTeamRoster.teamId === selectedOfficeTeamId ? savedTeamRoster.error : ''
+  const quickEditAgent = agents.find((agent) => agent.id === quickEditAgentId) ?? null
+
+  const saveQuickEdit = async (agent: PlatformAgent, draft: AgentQuickEditDraft) => updateAgent(agent.id, {
+    name: draft.name.trim(),
+    role: draft.role.trim(),
+    model: draft.model,
+    temperature: draft.temperature,
+    language: draft.language,
+    actionPolicy: draft.actionPolicy,
+    prompt: {
+      ...agent.prompt,
+      role: draft.role.trim(),
+      tasks: draft.tasks.trim(),
+      tone: draft.tone.trim(),
+      rules: draft.rules.trim(),
+    },
+    configRevision: (agent.configRevision ?? 1) + 1,
+    status: agent.status === 'active' ? 'draft' : agent.status,
+  })
 
   useEffect(() => {
     if (!teamsView || !selectedOfficeTeamId || !isSupabaseEnabled || !supabase) return
@@ -316,7 +349,7 @@ export default function AgentsPage() {
                       : 'border-ice/10 bg-bg/50 text-muted hover:border-ice/20 hover:text-text',
                   )}
                 >
-                  {team.name}
+                  {teamDisplayName(team)}
                 </button>
               ))}
             </div>
@@ -353,7 +386,7 @@ export default function AgentsPage() {
                 <div className="flex items-center gap-3">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet/15 text-violet"><Users size={20} /></span>
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-text">{a.name}</p>
+                    <p className="truncate font-medium text-text">{teamDisplayName(a)}</p>
                     <span className={cn('mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-normal', agentStatusStyle[a.status])}>{t(`platform.agentStatus.${a.status}`)}</span>
                   </div>
                 </div>
@@ -392,7 +425,7 @@ export default function AgentsPage() {
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />
                       <div className="card absolute right-0 z-20 mt-1 w-44 rounded-xl p-1.5">
-                        <MenuBtn icon={Pencil} label={a.type === 'workflow' ? t('agentsPage.openAiTeam') : t('agentsPage.editEmployee')} onClick={() => navigate(a.type === 'workflow' ? `/app/teams/${a.id}` : `/app/agents/${a.id}`)} />
+                        <MenuBtn icon={Pencil} label={a.type === 'workflow' ? t('agentsPage.openAiTeam') : t('agentsPage.editEmployee')} onClick={() => { setMenu(null); if (a.type === 'workflow') navigate(`/app/teams/${a.id}`); else setQuickEditAgentId(a.id) }} />
                         <MenuBtn
                           icon={Copy}
                           label={t('platform.agents.duplicate')}
@@ -440,7 +473,7 @@ export default function AgentsPage() {
               </div>
 
               <div className="mt-4 flex items-center gap-2">
-                <Button size="sm" variant="ghost" className="flex-1" onClick={() => navigate(a.type === 'workflow' ? `/app/teams/${a.id}` : `/app/agents/${a.id}`)}>
+                <Button size="sm" variant="ghost" className="flex-1" onClick={() => { if (a.type === 'workflow') navigate(`/app/teams/${a.id}`); else setQuickEditAgentId(a.id) }}>
                   <Pencil size={14} /> {a.type === 'workflow' ? t('agentsPage.openAiTeam') : t('agentsPage.editEmployee')}
                 </Button>
                 <button
@@ -474,6 +507,12 @@ export default function AgentsPage() {
           }
           setToDelete(null)
         }}
+      />
+
+      <AgentQuickEditDrawer
+        agent={quickEditAgent}
+        onClose={() => setQuickEditAgentId(null)}
+        onSave={saveQuickEdit}
       />
 
       {activePreset && (

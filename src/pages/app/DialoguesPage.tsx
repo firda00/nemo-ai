@@ -10,6 +10,7 @@ import { isChatMessage, parseAgentTrace } from '../../lib/agentTrace'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
 import type { AgentTraceStep, ChannelType, Dialogue, DialogueMessage, DialogueStatus } from '../../types/platform'
+import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
 
 // per-dialogue trace layout: parsed traces by their row id, plus reply-id -> trace-id links
 interface TraceLayout {
@@ -232,7 +233,11 @@ export default function DialoguesPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
+    <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden">
+      <div className="shrink-0 px-3 pt-3">
+        <KnowledgeIntegrationNav active="dialogues" />
+      </div>
+      <div className="flex min-h-0 flex-1">
       {/* list */}
       <aside className={cn('w-full shrink-0 flex-col border-r border-ice/[0.07] bg-panel sm:w-[320px] sm:flex', selected ? 'hidden sm:flex' : 'flex')}>
         <div className="space-y-2.5 border-b border-ice/[0.07] p-3">
@@ -401,6 +406,7 @@ export default function DialoguesPage() {
 
       {/* customer panel */}
       {selected && <CustomerPanel dialogue={selected} agentName={agentName} open={custOpen} onClose={() => setCustOpen(false)} />}
+      </div>
     </div>
   )
 }
