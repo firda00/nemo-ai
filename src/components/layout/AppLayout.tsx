@@ -16,6 +16,7 @@ import {
   LineChart,
   Megaphone,
   Sparkles,
+  Cpu,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -100,6 +101,7 @@ export function AppLayout() {
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
       { to: '/app/dialogues', label: t('appLayout.navDialogues'), icon: MessageSquare },
       { to: '/app/teams', label: t('teamOffice.navTeams'), icon: Users },
+      { to: '/app/forge', label: 'Nemo Forge', icon: Cpu },
       { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
       { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
       { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },

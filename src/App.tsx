@@ -51,6 +51,7 @@ import SetupPage from './pages/SetupPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPage'
 import EmailAssistantPage from './pages/app/EmailAssistantPage'
 import CommercePage from './pages/app/CommercePage'
+import ForgePage from './pages/app/ForgePage'
 import { MfaChallengeGate } from './components/auth/MfaChallengeGate'
 import { AdminMfaGate } from './components/auth/AdminMfaGate'
 
@@ -128,6 +129,7 @@ export default function App() {
         <Route path="marketing" element={<MarketingStrategyPage />} />
         <Route path="autopost" element={<AutopostPage />} />
         <Route path="commerce" element={<CommercePage />} />
+        <Route path="forge" element={<ForgePage />} />
         <Route path="followups" element={<FollowUpsPage />} />
         <Route path="monitor" element={<ObservabilityPage />} />
         <Route path="activity" element={<ActivityPage />} />

@@ -135,12 +135,21 @@ await assert.rejects(() => new SubagentSupervisor(defensiveExecutor).run([
 ]), /SUBAGENT_TASK_ID_DUPLICATE/)
 
 const accountId = '01917b12-3a5c-7d9e-bf33-9118c7e7b801'
+const verifiedRights = {
+  source_type: 'owned' as const,
+  license_identifier: 'NEMO-OWNED-ASSET-v1',
+  proof_ref: 'rights://nemo/ecosystem-fixture',
+  commercial_use_allowed: true as const,
+  derivatives_allowed: true as const,
+  verified_at: '2026-08-27T12:00:00+05:00',
+}
 const asset = (id: string, name: string) => ({
   id,
   download_url: `https://storage.example.test/tenants/${accountId}/assets/${name}.png`,
   mime_type: 'image/png' as const,
   size_bytes: 1_024,
   sha256: 'a'.repeat(64),
+  rights: verifiedRights,
 })
 const storyboardTemplate = {
   account_id: accountId,
@@ -162,6 +171,10 @@ assert.equal(storyboard.clips.length, 2)
 assert.equal(storyboard.clips.reduce((sum, clip) => sum + clip.duration_seconds, 0), 8)
 assert.equal(storyboard.width, 1920)
 assert.equal(storyboard.height, 1080)
+assert.equal(storyboard.clips[0].motion, 'push_in')
+assert.equal(storyboard.clips[0].transition?.type, 'crossfade')
+assert.equal(storyboard.procedural_soundtrack?.preset, 'subtle')
+assert.equal(storyboard.rights_policy, 'require_for_all_assets')
 assert.ok(storyboard.output.storage_path.startsWith(`tenants/${accountId}/artifacts/`))
 
 const proStoryboard = createStoryboardManifest({
