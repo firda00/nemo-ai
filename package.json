@@ -168,7 +168,8 @@
     "test:pricing-contrast": "node agent-hub/pricing-contrast-smoke.mjs",
     "test:forge-event-bridge": "node --experimental-strip-types tests/forge_event_bridge.test.ts",
     "test:forge-event-hooks": "node --experimental-strip-types tests/forge_event_hooks.test.ts",
-    "test:forge-content-growth": "node --experimental-strip-types tests/forge_content_growth_e2e.test.ts"
+    "test:forge-content-growth": "node --experimental-strip-types tests/forge_content_growth_e2e.test.ts",
+    "test:forge-settings": "node --experimental-strip-types tests/forge_settings.test.ts"
   },
   "dependencies": {
     "@marp-team/marp-core": "^4.2.0",
