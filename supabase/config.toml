@@ -133,6 +133,7 @@ verify_jwt = false
 verify_jwt = false
 
 # Morning stand-up brief. PUBLIC so pg_cron can call it with x-cron-secret.
+# Daily 08:00 Asia/Tashkent schedule: migration 20260827180000_morning_brief_cron.sql.
 [functions.morning-brief]
 verify_jwt = false
 

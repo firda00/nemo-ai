@@ -21,64 +21,12 @@ import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { handleForgeVoiceCallback } from '../_shared/telegramVoiceCallback.ts'
 import { enqueueTelegramVoiceForge } from '../_shared/telegramVoiceForge.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-async function handleForgeVoiceCallback(db: any, channelId: string, botToken: string, cb: any): Promise<void> {
-  const match = /^forge_voice:(approve|reject):([0-9a-f-]{36})$/i.exec(String(cb?.data ?? ''))
-  if (!match) return
-  const chatId = String(cb?.message?.chat?.id ?? '')
-  const messageId = Number(cb?.message?.message_id)
-  const owner = await ownerChatFor(db, channelId, chatId)
-  const { data: pending } = await db.from('telegram_voice_intents')
-    .select('id, account_id, channel_id, chat_id, status, expires_at, intent, forge_payload')
-    .eq('id', match[2]).maybeSingle()
-  if (!owner || !pending || pending.account_id !== owner.accountId || pending.channel_id !== channelId || pending.chat_id !== chatId) {
-    await tgAnswerCallback(botToken, cb.id, 'Это подтверждение недоступно.')
-    return
-  }
-  if (pending.status !== 'pending') {
-    await tgAnswerCallback(botToken, cb.id, 'Уже обработано.')
-    return
-  }
-  if (Date.parse(pending.expires_at) <= Date.now()) {
-    await db.from('telegram_voice_intents').update({ status: 'expired', decided_at: new Date().toISOString() })
-      .eq('id', pending.id).eq('account_id', owner.accountId).eq('status', 'pending')
-    await tgAnswerCallback(botToken, cb.id, 'Срок подтверждения истёк.')
-    return
-  }
-  if (match[1] === 'reject') {
-    await db.from('telegram_voice_intents').update({ status: 'rejected', decided_at: new Date().toISOString() })
-      .eq('id', pending.id).eq('account_id', owner.accountId).eq('status', 'pending')
-    await tgAnswerCallback(botToken, cb.id, 'Отменено')
-    await tgEditMessage(botToken, chatId, messageId, '❌ <b>Запуск отменён.</b>')
-    return
-  }
-  try {
-    const { data: claimed } = await db.from('telegram_voice_intents').update({ status: 'processing' })
-      .eq('id', pending.id).eq('account_id', owner.accountId).eq('status', 'pending')
-      .select('id').maybeSingle()
-    if (!claimed) {
-      await tgAnswerCallback(botToken, cb.id, 'Уже обрабатывается.')
-      return
-    }
-    // The Forge bridge is idempotent by Telegram message identity. Two simultaneous button
-    // presses cannot both claim the row, and the bridge independently deduplicates the event.
-    const execution = await enqueueTelegramVoiceForge(db, owner.accountId, pending.forge_payload)
-    await db.from('telegram_voice_intents').update({
-      status: 'approved', execution_id: execution.executionId, decided_at: new Date().toISOString(),
-    }).eq('id', pending.id).eq('account_id', owner.accountId).eq('status', 'processing')
-    await tgAnswerCallback(botToken, cb.id, 'Задача запущена')
-    await tgEditMessage(botToken, chatId, messageId, '✅ <b>Подтверждено.</b> Задача передана в Nemo Forge.')
-  } catch (error) {
-    console.error('forge voice approval failed:', error)
-    await db.from('telegram_voice_intents').update({ status: 'pending' })
-      .eq('id', pending.id).eq('account_id', owner.accountId).eq('status', 'processing')
-    await tgAnswerCallback(botToken, cb.id, 'Не удалось запустить. Проверьте лимит и подключение Forge.')
-  }
-}
 const CRON_SECRET = Deno.env.get('WATCH_CRON_SECRET') ?? Deno.env.get('CRON_SECRET') ?? ''
 const TG_QUEUE = Deno.env.get('TG_QUEUE') === '1'
 const WORKER_URL = `${SUPABASE_URL}/functions/v1/agent-worker`
@@ -447,7 +395,12 @@ Deno.serve(async (req) => {
       await handleListingCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handleCostBatchCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handlePriceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
-      await handleForgeVoiceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      await handleForgeVoiceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query, {
+        findOwner: ownerChatFor,
+        answer: tgAnswerCallback,
+        edit: tgEditMessage,
+        enqueue: enqueueTelegramVoiceForge,
+      })
       return new Response('ok')
     }
 
