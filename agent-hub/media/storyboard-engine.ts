@@ -6,7 +6,8 @@ const SceneSchema = z.object({
   duration_seconds: z.number().min(0.1).max(120),
   narration: z.string().max(1_000).optional(),
   overlay: z.string().max(300).optional(),
-  transition: z.object({ type: z.enum(['cut', 'fade', 'crossfade']), duration_seconds: z.number().min(0.1).max(3).default(0.5) }).strict().optional(),
+  motion: z.enum(['none', 'push_in', 'pan_left', 'pan_right', 'float']).optional(),
+  transition: z.object({ type: z.enum(['cut', 'fade', 'crossfade', 'wipe_left', 'slide_left', 'smooth_left']), duration_seconds: z.number().min(0.1).max(3).default(0.5) }).strict().optional(),
   image_overlays: z.array(z.object({ asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive(), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), width: z.number().int().positive(), height: z.number().int().positive() }).strict()).max(8).default([]),
   word_timings: z.array(z.object({ text: z.string().min(1).max(80), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive() }).strict()).max(80).optional(),
 }).strict()
@@ -37,6 +38,12 @@ export const StoryboardTemplateSchema = z.object({
   voice_asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_audio_asset_id: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_volume: z.number().min(0.02).max(0.8).default(0.18),
+  procedural_soundtrack: z.object({
+    preset: z.enum(['subtle', 'upbeat', 'cinematic']).default('subtle'),
+    volume: z.number().min(0.01).max(0.25).default(0.06),
+    transition_accents: z.boolean().default(true),
+  }).strict().default({ preset: 'subtle', volume: 0.06, transition_accents: true }),
+  rights_policy: z.enum(['require_for_audio', 'require_for_all_assets']).default('require_for_all_assets'),
   seed: z.union([z.number().int(), z.string().max(128)]).default(0),
   seconds_per_scene: z.number().min(0.1).max(30).default(5),
 }).strict().superRefine((value, context) => {
@@ -82,6 +89,10 @@ function fromText(script: string, template: z.output<typeof StoryboardTemplateSc
       duration_seconds: template.seconds_per_scene,
       narration: block.slice(0, 1_000),
       overlay: block.split(/[.!?]/)[0].trim().slice(0, 300) || undefined,
+      motion: (['push_in', 'pan_left', 'pan_right', 'float'] as const)[index % 4],
+      transition: index < blocks.length - 1
+        ? { type: (['crossfade', 'wipe_left', 'smooth_left'] as const)[index % 3], duration_seconds: 0.45 }
+        : undefined,
     })),
   })
 }
@@ -132,12 +143,19 @@ export function createStoryboardManifest(
       expires_at: template.expires_at,
     },
     assets: template.assets,
-    clips: script.scenes.map((scene) => ({ asset_id: scene.asset_id, duration_seconds: scene.duration_seconds, transition: scene.transition })),
+    clips: script.scenes.map((scene, index) => ({
+      asset_id: scene.asset_id,
+      duration_seconds: scene.duration_seconds,
+      motion: scene.motion ?? (['push_in', 'pan_left', 'pan_right', 'float'] as const)[index % 4],
+      transition: scene.transition ?? (index < script.scenes.length - 1 ? { type: 'crossfade' as const, duration_seconds: 0.45 } : undefined),
+    })),
     overlays,
     subtitles,
     voice_asset_id: template.voice_asset_id,
     background_audio_asset_id: template.background_audio_asset_id,
     background_volume: template.background_volume,
+    procedural_soundtrack: template.procedural_soundtrack,
+    rights_policy: template.rights_policy,
     format_preset: template.format_preset,
     width: template.width,
     height: template.height,

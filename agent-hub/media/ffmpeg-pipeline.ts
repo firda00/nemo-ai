@@ -16,18 +16,40 @@ const SafeNameSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.
 const StoragePathSchema = z.string().max(512).regex(/^tenants\/[0-9a-f-]{36}\/artifacts\/\d{4}\/\d{2}\/\d{2}\/[A-Za-z0-9._-]{1,160}$/)
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
+export const MediaRightsSchema = z.object({
+  source_type: z.enum(['owned', 'commissioned', 'cc0', 'licensed_stock', 'provider_generated']),
+  license_identifier: z.string().min(1).max(160),
+  proof_ref: z.string().min(1).max(512),
+  commercial_use_allowed: z.literal(true),
+  derivatives_allowed: z.literal(true),
+  verified_at: z.string().datetime({ offset: true }),
+  attribution_text: z.string().max(500).optional(),
+}).strict().superRefine((rights, context) => {
+  if (rights.source_type === 'cc0' && rights.license_identifier !== 'CC0-1.0') {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'CC0 assets require license_identifier CC0-1.0', path: ['license_identifier'] })
+  }
+})
+
 export const MediaAssetSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
   download_url: z.string().url().refine((value) => new URL(value).protocol === 'https:', 'HTTPS is required'),
   mime_type: z.enum(['image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'video/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4']),
   size_bytes: z.number().int().positive().max(512 * 1024 * 1024),
   sha256: Sha256Schema,
+  rights: MediaRightsSchema.optional(),
+}).strict()
+
+const MotionSchema = z.enum(['none', 'push_in', 'pan_left', 'pan_right', 'float'])
+const TransitionSchema = z.object({
+  type: z.enum(['cut', 'fade', 'crossfade', 'wipe_left', 'slide_left', 'smooth_left']),
+  duration_seconds: z.number().min(0.1).max(3).default(0.5),
 }).strict()
 
 const ClipSchema = z.object({
   asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
   duration_seconds: z.number().positive().min(0.1).max(120),
-  transition: z.object({ type: z.enum(['cut', 'fade', 'crossfade']), duration_seconds: z.number().min(0.1).max(3).default(0.5) }).strict().optional(),
+  motion: MotionSchema.default('none'),
+  transition: TransitionSchema.optional(),
 }).strict()
 
 const WordTimingSchema = z.object({ text: z.string().min(1).max(80), start_ms: z.number().int().nonnegative(), end_ms: z.number().int().positive() }).strict()
@@ -65,6 +87,12 @@ export const MediaJobPayloadSchema = z.object({
   voice_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_audio_asset_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
   background_volume: z.number().min(0.02).max(0.8).default(0.18),
+  procedural_soundtrack: z.object({
+    preset: z.enum(['subtle', 'upbeat', 'cinematic']).default('subtle'),
+    volume: z.number().min(0.01).max(0.25).default(0.06),
+    transition_accents: z.boolean().default(true),
+  }).strict().optional(),
+  rights_policy: z.enum(['require_for_audio', 'require_for_all_assets']).default('require_for_audio'),
   overlays: z.array(OverlaySchema).max(32).default([]),
   subtitles: z.array(SubtitleSchema).max(2_000).default([]),
   format_preset: z.enum(['LANDSCAPE_16_9', 'VERTICAL_9_16', 'CUSTOM']).default('CUSTOM'),
@@ -80,6 +108,7 @@ export const MediaJobPayloadSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'resolution exceeds 1080p', path: ['width'] })
   }
   const ids = new Set(value.assets.map((asset) => asset.id))
+  const assetsById = new Map(value.assets.map((asset) => [asset.id, asset]))
   if (ids.size !== value.assets.length) context.addIssue({ code: z.ZodIssueCode.custom, message: 'asset ids must be unique', path: ['assets'] })
   for (const clip of value.clips) if (!ids.has(clip.asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'clip asset is missing', path: ['clips'] })
   if (value.audio_asset_id && !ids.has(value.audio_asset_id)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'audio asset is missing', path: ['audio_asset_id'] })
@@ -98,6 +127,17 @@ export const MediaJobPayloadSchema = z.object({
   }
   if (value.codec !== 'vp9' && !value.output_name.toLowerCase().endsWith('.mp4')) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'H.264/H.265 require MP4 output', path: ['output_name'] })
+  }
+  const audioIds = [value.audio_asset_id, value.voice_asset_id, value.background_audio_asset_id].filter((id): id is string => Boolean(id))
+  for (const assetId of audioIds) {
+    const asset = assetsById.get(assetId)
+    if (asset && !asset.mime_type.startsWith('audio/')) context.addIssue({ code: z.ZodIssueCode.custom, message: 'audio reference must point to an audio asset', path: ['assets'] })
+    if (asset && !asset.rights) context.addIssue({ code: z.ZodIssueCode.custom, message: 'audio asset requires verified rights provenance', path: ['assets'] })
+  }
+  if (value.rights_policy === 'require_for_all_assets') {
+    for (const [index, asset] of value.assets.entries()) if (!asset.rights) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'asset requires verified rights provenance', path: ['assets', index, 'rights'] })
+    }
   }
 }).refine((value) => value.output.storage_path.endsWith(`/${value.output_name}`), {
   message: 'storage path must end with the output name', path: ['output', 'storage_path'],
@@ -161,6 +201,30 @@ function codecArgs(payload: MediaJobPayload): string[] {
   return ['-c:v', 'libx264']
 }
 
+function motionFilter(
+  motion: z.infer<typeof MotionSchema>,
+  width: number,
+  height: number,
+  fps: number,
+  durationSeconds: number,
+): string | null {
+  const frames = Math.max(1, Math.round(fps * durationSeconds))
+  const common = `d=1:s=${width}x${height}:fps=${fps}`
+  if (motion === 'push_in') return `zoompan=z='min(zoom+0.0012,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':${common}`
+  if (motion === 'pan_left') return `zoompan=z=1.08:x='(iw-iw/zoom)*on/${frames}':y='ih/2-(ih/zoom/2)':${common}`
+  if (motion === 'pan_right') return `zoompan=z=1.08:x='(iw-iw/zoom)*(1-on/${frames})':y='ih/2-(ih/zoom/2)':${common}`
+  if (motion === 'float') return `zoompan=z=1.05:x='iw/2-(iw/zoom/2)+sin(on/12)*6':y='ih/2-(ih/zoom/2)+cos(on/15)*4':${common}`
+  return null
+}
+
+function xfadeName(type: z.infer<typeof TransitionSchema>['type']): string {
+  if (type === 'fade') return 'fadeblack'
+  if (type === 'wipe_left') return 'wipeleft'
+  if (type === 'slide_left') return 'slideleft'
+  if (type === 'smooth_left') return 'smoothleft'
+  return 'fade'
+}
+
 export function buildFfmpegArgs(
   payload: MediaJobPayload,
   inputs: LocalMediaInputs,
@@ -182,6 +246,12 @@ export function buildFfmpegArgs(
       `scale=${payload.width}:${payload.height}:force_original_aspect_ratio=increase`,
       `crop=${payload.width}:${payload.height}`,
     ]
+    const motion = motionFilter(clip.motion, payload.width, payload.height, payload.fps, clip.duration_seconds)
+    if (motion) {
+      if (!asset.mime_type.startsWith('image/')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'motion presets are limited to still-image clips')
+      if (!capabilities.has('zoompan')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg zoompan filter is required for requested motion')
+      chain.push(motion)
+    }
     if (capabilities.has('fps')) chain.push(`fps=${payload.fps}`)
     chain.push('format=yuv420p')
     if (capabilities.has('setsar')) chain.push('setsar=1')
@@ -202,7 +272,7 @@ export function buildFfmpegArgs(
       const transition = payload.clips[index - 1].transition
       const transitionDuration = transition?.type === 'cut' || !transition ? 0.001 : transition.duration_seconds
       const output = index === payload.clips.length - 1 ? videoOut : `x${index}`
-      const transitionName = transition?.type === 'fade' ? 'fadeblack' : 'fade'
+      const transitionName = xfadeName(transition?.type ?? 'crossfade')
       const offset = Math.max(0, cursor - transitionDuration)
       filters.push(`[${previous}][clip${index}]xfade=transition=${transitionName}:duration=${transitionDuration}:offset=${offset}[${output}]`)
       cursor = offset + payload.clips[index].duration_seconds
@@ -256,6 +326,37 @@ export function buildFfmpegArgs(
     const audioIndex = addAudio((voiceId ?? musicId)!)
     const volume = musicId ? `volume=${payload.background_volume},` : ''
     filters.push(`[${audioIndex}:a]${volume}apad,atrim=duration=${durationSeconds}[aout]`); audioOut = 'aout'
+  }
+
+  if (payload.procedural_soundtrack) {
+    for (const required of ['sine', 'afade']) if (!capabilities.has(required)) {
+      throw new MediaPipelineError('MEDIA_RENDER_FAILED', `FFmpeg ${required} filter is required for procedural sound design`)
+    }
+    const frequency = payload.procedural_soundtrack.preset === 'cinematic' ? 82 : payload.procedural_soundtrack.preset === 'upbeat' ? 196 : 110
+    const fadeOutStart = Math.max(0, durationSeconds - 0.8)
+    filters.push(`sine=frequency=${frequency}:sample_rate=48000:duration=${durationSeconds},volume=${payload.procedural_soundtrack.volume},afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOutStart}:d=0.8[ambient]`)
+    const accentLabels: string[] = []
+    if (payload.procedural_soundtrack.transition_accents && payload.clips.length > 1) {
+      if (!capabilities.has('adelay')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg adelay filter is required for transition sound accents')
+      let cursorMs = 0
+      for (let index = 0; index < payload.clips.length - 1; index += 1) {
+        cursorMs += Math.round(payload.clips[index].duration_seconds * 1_000)
+        const label = `accent${index}`
+        filters.push(`sine=frequency=${frequency * 4}:sample_rate=48000:duration=0.12,volume=0.025,afade=t=out:st=0:d=0.12,adelay=${cursorMs}|${cursorMs}[${label}]`)
+        accentLabels.push(`[${label}]`)
+      }
+    }
+    let proceduralOut = 'ambient'
+    if (accentLabels.length) {
+      if (!capabilities.has('amix')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg amix filter is required for procedural sound accents')
+      filters.push(`[ambient]${accentLabels.join('')}amix=inputs=${accentLabels.length + 1}:duration=first:normalize=0[procedural]`)
+      proceduralOut = 'procedural'
+    }
+    if (audioOut) {
+      if (!capabilities.has('amix')) throw new MediaPipelineError('MEDIA_RENDER_FAILED', 'FFmpeg amix filter is required for soundtrack mixing')
+      filters.push(`[${audioOut}][${proceduralOut}]amix=inputs=2:duration=first:normalize=0[aenhanced]`)
+      audioOut = 'aenhanced'
+    } else audioOut = proceduralOut
   }
 
   assertPathInside(inputs.workDirectory, inputs.outputPath)

@@ -31,6 +31,14 @@ assert.deepEqual(capabilities.missingRequired, [])
 const png = makeSolidPng(320, 180, [20, 110, 220])
 const pngHash = createHash('sha256').update(png).digest('hex')
 const expiresAt = new Date(Date.now() + 4 * 60_000).toISOString()
+const verifiedRights = {
+  source_type: 'owned' as const,
+  license_identifier: 'NEMO-OWNED-ASSET-v1',
+  proof_ref: 'rights://nemo/test-fixture',
+  commercial_use_allowed: true as const,
+  derivatives_allowed: true as const,
+  verified_at: '2026-08-27T12:00:00+05:00',
+}
 const payload = MediaJobPayloadSchema.parse({
   kind: 'ffmpeg_assembly',
   output_name: 'stage2.mp4',
@@ -63,11 +71,11 @@ try {
   // expansion markers and command separators via line breaks must never occur.
   assert.equal(plan.args.some((arg) => /[`\r\n]|\$\(/.test(arg)), false)
 
-  const proCapabilities = { filters: new Set([...capabilities.filters, 'xfade', 'overlay', 'sidechaincompress', 'amix']), has(name: string) { return this.filters.has(name) }, missingRequired: [] }
+  const proCapabilities = { filters: new Set([...capabilities.filters, 'xfade', 'overlay', 'sidechaincompress', 'amix', 'zoompan', 'sine', 'afade', 'adelay']), has(name: string) { return this.filters.has(name) }, missingRequired: [] }
   const proPayload = MediaJobPayloadSchema.parse({
     ...payload,
-    assets: [...payload.assets, { ...payload.assets[0], id: 'badge' }, { ...payload.assets[0], id: 'voice', mime_type: 'audio/wav' }, { ...payload.assets[0], id: 'music', mime_type: 'audio/mpeg' }],
-    clips: [{ asset_id: 'scene1', duration_seconds: 1, transition: { type: 'crossfade', duration_seconds: 0.2 } }, { asset_id: 'scene1', duration_seconds: 1 }],
+    assets: [...payload.assets, { ...payload.assets[0], id: 'badge' }, { ...payload.assets[0], id: 'voice', mime_type: 'audio/wav', rights: verifiedRights }, { ...payload.assets[0], id: 'music', mime_type: 'audio/mpeg', rights: verifiedRights }],
+    clips: [{ asset_id: 'scene1', duration_seconds: 1, motion: 'push_in', transition: { type: 'wipe_left', duration_seconds: 0.2 } }, { asset_id: 'scene1', duration_seconds: 1, motion: 'float' }],
     overlays: [{ asset_id: 'badge', start_ms: 100, end_ms: 900, x: 10, y: 10, width: 80, height: 40 }],
     voice_asset_id: 'voice', background_audio_asset_id: 'music', background_volume: 0.2,
     format_preset: 'CUSTOM',
@@ -76,9 +84,27 @@ try {
   const proPlan = buildFfmpegArgs(proPayload, proInputs, proCapabilities)
   const filterGraph = proPlan.args[proPlan.args.indexOf('-filter_complex') + 1]
   assert.match(filterGraph, /xfade=/)
+  assert.match(filterGraph, /transition=wipeleft/)
+  assert.match(filterGraph, /zoompan=/)
   assert.match(filterGraph, /overlay=/)
   assert.match(filterGraph, /sidechaincompress=/)
   assert.ok(proPlan.durationSeconds < 2)
+
+  const soundDesignedPayload = MediaJobPayloadSchema.parse({
+    ...payload,
+    clips: [{ asset_id: 'scene1', duration_seconds: 1 }, { asset_id: 'scene1', duration_seconds: 1 }],
+    procedural_soundtrack: { preset: 'cinematic', volume: 0.05, transition_accents: true },
+  })
+  const soundDesignedPlan = buildFfmpegArgs(soundDesignedPayload, inputs, proCapabilities)
+  const soundGraph = soundDesignedPlan.args[soundDesignedPlan.args.indexOf('-filter_complex') + 1]
+  assert.match(soundGraph, /sine=frequency=82/)
+  assert.match(soundGraph, /adelay=1000\|1000/)
+  assert.match(soundGraph, /amix=inputs=2/)
+  assert.throws(() => MediaJobPayloadSchema.parse({
+    ...payload,
+    assets: [...payload.assets, { ...payload.assets[0], id: 'unlicensed', mime_type: 'audio/mpeg' }],
+    background_audio_asset_id: 'unlicensed',
+  }), /verified rights provenance/)
 
   const karaoke = [{ startMs: 0, endMs: 900, text: 'Nemo works', style: 'karaoke' as const, words: [{ text: 'Nemo', startMs: 0, endMs: 400 }, { text: 'works', startMs: 400, endMs: 900 }] }]
   assert.match(buildAssFile(karaoke), /\\k40.*Nemo.*\\k50.*works/)
@@ -90,6 +116,19 @@ try {
   assert.equal(rendered.probe.height, 180)
   assert.ok(rendered.probe.fps <= 10.01)
   assert.ok(rendered.durationSeconds > 0 && rendered.durationSeconds <= 0.85)
+
+  if (['sine', 'afade', 'adelay', 'amix'].every((filter) => capabilities.has(filter))) {
+    const enhancedOutput = path.join(directDirectory, 'sound-designed.mp4')
+    const enhanced = await runFfmpegPipeline({
+      payload: soundDesignedPayload,
+      inputs: { ...inputs, outputPath: enhancedOutput },
+      capabilities,
+      ffmpegPath,
+      ffprobePath,
+    })
+    assert.ok(enhanced.bytes.byteLength > 1_000)
+    assert.ok(enhanced.durationSeconds > 1.7 && enhanced.durationSeconds <= 2.25)
+  }
 
   assert.throws(() => assertPathInside(directDirectory, path.join(directDirectory, '..', 'escape.mp4')), /escapes/)
   assert.throws(() => MediaJobPayloadSchema.parse({ ...payload, width: 1920, height: 1920 }), /1080p/)
