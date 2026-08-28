@@ -126,7 +126,10 @@ const cases = [
     && amoNative.includes("workflowType: 'amocrm_native_enrichment'")
     && amoNative.includes("executionMode: 'shadow'")
     && gateway.includes("p_subdomain: parsed.accountSubdomain")
-    && gateway.includes("app.addContentTypeParser(\n    'application/x-www-form-urlencoded'")],
+    // Перенос строки ищется как \r?\n: рабочее дерево на Windows хранится в CRLF,
+    // и литерал с одним \n не совпадает с файлом, который на самом деле в порядке.
+    // Проверка падала именно на разметке строк, а не на разборе формы.
+    && /app\.addContentTypeParser\(\r?\n\s*'application\/x-www-form-urlencoded'/.test(gateway)],
 
   // ── Согласие CHECK-ограничений и Zod ─────────────────────────────────────────────────────────
   //

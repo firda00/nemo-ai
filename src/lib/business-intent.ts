@@ -43,7 +43,7 @@ function detectChannels(text: string): BusinessIntent['channels'] {
 }
 
 function extractUrl(text: string): string | undefined {
-  const candidate = text.match(/https?:\/\/[^\s<>'\"]+/i)?.[0]
+  const candidate = text.match(/https?:\/\/[^\s<>'"]+/i)?.[0]
   if (!candidate) return undefined
   try { return new URL(candidate).toString() } catch { return undefined }
 }
