@@ -3,6 +3,20 @@ import { Minus, CreditCard, Loader2, MessagesSquare, Users, Cpu, Image as ImageI
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
 import { PLANS, PLAN_ORDER, formatUzs, planLabelKey } from '../../lib/plans'
+
+/**
+ * Самообслуживаемая оплата выключена намеренно.
+ *
+ * Оплата через Stripe сейчас пишет только `accounts.plan`, а рантайм проверяет доступ по
+ * `billing_subscriptions` (см. supabase/functions/_shared/entitlement.ts): человек платит и
+ * остаётся заблокированным, причём без единой ошибки в логах. Payme/Click в проекте не
+ * настроены, поэтому «запасной» путь Stripe оказался единственным.
+ *
+ * Пока это так, кнопка ведёт к живому человеку: счёт выставляется вручную, доступ включается
+ * вручную. Вернуть на true — только после того, как оплата начнёт создавать активную строку в
+ * `billing_subscriptions` и обрабатываться событие invoice.paid.
+ */
+const SELF_SERVICE_CHECKOUT_ENABLED = false
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 
@@ -56,6 +70,10 @@ export default function BillingPage() {
       setNotice(t('billingPage.enterpriseContact'))
       return
     }
+    if (!SELF_SERVICE_CHECKOUT_ENABLED) {
+      setNotice(t('billingPage.checkoutDisabled'))
+      return
+    }
     if (!supabase || checkoutBusy) return
     setCheckoutBusy(id); setNotice(null)
     try {
@@ -71,10 +89,10 @@ export default function BillingPage() {
         return
       }
 
-      const { data } = await supabase.functions.invoke('create-checkout', { body: { plan: id } })
-      const p = data as { ok?: boolean; url?: string; detail?: string } | null
-      if (p?.url) { window.location.assign(p.url); return }
-      setNotice(p?.detail ? t('billingPage.paymentUnavailable', { detail: p.detail }) : t('billingPage.paymentNotConfigured'))
+      // Раньше здесь стоял переход в Stripe, если местная касса не настроена. Это и был путь,
+      // на котором клиент платил и не получал доступ: Stripe-вебхук не создаёт активную
+      // подписку, которую проверяет рантайм. Лучше честно сказать «касса не настроена».
+      setNotice(t('billingPage.paymentNotConfigured'))
     } catch { setNotice(t('billingPage.paymentError')) } finally { setCheckoutBusy('') }
   }
   const kfmt = (n: number) =>
@@ -161,7 +179,7 @@ export default function BillingPage() {
                 <Button fullWidth className="mt-6" variant="outline" disabled>{t('billingPage.current')}</Button>
               ) : (
                 <Button fullWidth className="mt-6" variant={popular ? 'primary' : 'outline'} onClick={() => choose(id)} disabled={checkoutBusy === id}>
-                  {checkoutBusy === id ? <><Loader2 size={15} className="animate-spin" /> …</> : id === 'enterprise' ? t('billingPage.contactSales') : t('billingPage.subscribe')}
+                  {checkoutBusy === id ? <><Loader2 size={15} className="animate-spin" /> …</> : (id === 'enterprise' || !SELF_SERVICE_CHECKOUT_ENABLED) ? t('billingPage.contactSales') : t('billingPage.subscribe')}
                 </Button>
               )}
             </div>
