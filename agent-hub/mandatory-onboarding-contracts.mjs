@@ -13,7 +13,7 @@ const migration = read('supabase/migrations/20260803130000_mandatory_onboarding.
 assert.match(app, /!user\?\.onboardingCompleted[\s\S]*Navigate to="\/setup"/, 'incomplete users must be gated into setup')
 assert.match(app, /path="\/privacy"/)
 assert.match(app, /path="\/terms"/)
-assert.match(setup, /\[1,2,3,4,5\]/, 'setup must use five short required steps')
+assert.match(setup, /\[1,2,3\]/, 'setup must use three short business-first steps')
 assert.match(setup, /form\.accept_privacy && form\.accept_terms/, 'legal acceptance must be required')
 assert.match(setup, /Рассылки необязательны/, 'marketing consent must remain optional')
 assert.match(api, /body\.accept_privacy !== true \|\| body\.accept_terms !== true/, 'the server must enforce legal acceptance')

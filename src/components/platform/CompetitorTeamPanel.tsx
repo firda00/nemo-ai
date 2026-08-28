@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Swords, Loader2, Check, ChevronDown, Bot, Users, Sparkles, Save, RotateCcw, MessageSquare, ShieldCheck, Link2, BookOpen, Plus, X } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
+import { PLANS } from '../../lib/plans'
 import { saveDynamicTeam } from '../../lib/dynamicTeams'
 import { useI18n } from '../../i18n'
 import { Markdown } from '../ui/Markdown'
@@ -13,8 +14,12 @@ import { QualityBar, DeliveryBar } from './AutonomousRunner'
 const live = isSupabaseEnabled
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
 const PLATFORMS = ['Instagram', 'Telegram', 'YouTube', 'TikTok'] as const
-// How many competitors one run can analyze, by plan (mirrors _shared/plans.ts competitors).
-const PLAN_COMPETITORS: Record<string, number> = { free: 1, starter: 2, pro: 3, business: 5, agency: 10, enterprise: 20, beta: 5 }
+
+// How many competitors one run can analyze, by plan. Читается ИЗ PLANS, а не дублируется:
+// прежняя локальная копия { free: 1, starter: 2, … } была четвёртым экземпляром лестницы и
+// молча расходилась бы с прайсом при каждой переоценке. `?? 1` оставлен: план приходит из
+// БД строкой, и неизвестное значение должно упираться в самый узкий лимит, а не в 20.
+const competitorCap = (plan: string): number => PLANS[plan]?.competitors ?? 1
 
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {
@@ -81,8 +86,7 @@ export function CompetitorTeamPanel({ model }: { model?: string }) {
     if (!live || !supabase || !accountId || accountId === 'demo') return
     ;(async () => {
       const { data } = await supabase!.from('accounts').select('plan').eq('id', accountId).maybeSingle()
-      const c = PLAN_COMPETITORS[String((data as { plan?: string } | null)?.plan ?? 'free')] ?? 1
-      setCap(c)
+      setCap(competitorCap(String((data as { plan?: string } | null)?.plan ?? 'free')))
     })()
   }, [accountId])
 

@@ -1,8 +1,8 @@
-import { Minus, Zap, Users, Cpu, Image as ImageIcon, Sparkles, Globe2, Video, Search } from 'lucide-react'
+import { Minus, MessagesSquare, Users, Cpu, Image as ImageIcon, Sparkles, Globe2, Video, Search, Phone } from 'lucide-react'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { Button } from '../components/ui/Button'
-import { PLANS, PLAN_ORDER, formatRunRange, teamRunsFromTokens } from '../lib/plans'
+import { PLANS, PLAN_ORDER, formatUzs, planLabelKey } from '../lib/plans'
 import { useAuth } from '../context/AuthContext'
 import { cn } from '../lib/cn'
 import { useI18n } from '../i18n'
@@ -12,6 +12,14 @@ import { useI18n } from '../i18n'
  * (src/lib/plans.ts) as the in-app Billing page so public prices and limits can
  * never drift from what the server enforces. No checkout here: CTAs lead to
  * signup (or the in-app billing page when already authenticated).
+ *
+ * Витрина считает в ДИАЛОГАХ и в СУМАХ — ровно как /app/billing. Расхождение между
+ * публичной и внутренней страницей читается как подмена цены, поэтому обе берут одни
+ * и те же поля из src/lib/plans.ts и показывают их одинаково:
+ *   • сумма крупно — её реально списывает Payme/Click;
+ *   • доллар мелкой подписью — ориентир, а не то, что уйдёт с карты;
+ *   • диалоги вместо токенов — «2 000 000 токенов» владельцу бизнеса не с чем сравнить;
+ *   • голос отдельной строкой — он не входит ни в один тариф (voiceMinutes: 0 везде).
  */
 export default function PricingPage() {
   const { t } = useI18n()
@@ -56,16 +64,28 @@ export default function PricingPage() {
             return (
               <div key={id} className={cn('relative flex flex-col rounded-3xl border p-6', popular ? 'border-violet/50 bg-violet/[0.07] shadow-btn' : 'border-white/10 bg-white/[0.035]')}>
                 {popular && <span className="absolute -top-3 left-6 rounded-pill bg-brand px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.popular')}</span>}
-                <h2 className="text-lg font-bold text-text">{p.label}</h2>
-                <p className="mt-2 text-3xl font-extrabold text-text">{id === 'enterprise' ? t('billingPage.customPrice') : `$${p.price}`}<span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span></p>
-                <div className="mt-5 flex-1 space-y-2.5 text-[13px] text-muted">
-                  <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-fog">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
+                <h2 className="text-lg font-bold text-text">{t(planLabelKey(id))}</h2>
+                {/* Сумма крупно — списывается именно она. Доллар мелкой подписью: он ориентир,
+                    а не то, что уйдёт с карты. Тот же порядок, что на /app/billing. */}
+                <p className="mt-2 text-3xl font-extrabold text-text">
+                  {id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(p.priceUzs)} ${t('billingPage.soum')}`}
+                  <span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span>
+                </p>
+                {id !== 'enterprise' && <p className="mt-0.5 text-xs text-fog">≈ ${p.price}{t('billingPage.perMonth')}</p>}
+                {/* Включённое идёт основным цветом, невключённое падает до `muted` внутри Feat.
+                    Этот перепад И ЕСТЬ иерархия: равномерно тусклый список заставляет читателя
+                    разбирать строку за строкой, чтобы понять, что он вообще получает. */}
+                <div className="mt-5 flex-1 space-y-2.5 text-[13px] text-text">
+                  <Feat icon={MessagesSquare} ok>{t('billingPage.dialoguesCount', { count: p.dialogues })}</Feat>
                   <Feat icon={Users} ok>{t('billingPage.teamsCount', { count: p.teams })}</Feat>
                   <Feat icon={Cpu} ok={p.premium}>{p.premium ? t('billingPage.premiumModel') : t('billingPage.basicModel')}</Feat>
                   <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : p.mediaTrialWeekly > 0 ? t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly }) : t('billingPage.mediaByo')}</Feat>
                   <Feat icon={Globe2} ok={p.browserMonthly > 0}>{t('billingPage.browserTasksCount', { count: p.browserMonthly })}</Feat>
                   <Feat icon={Video} ok={p.video}>{p.video ? t('billingPage.videoCount', { count: p.videoMonthly }) : t('billingPage.videoNotIncluded')}</Feat>
                   <Feat icon={Search} ok>{t('billingPage.competitorsCount', { count: p.competitors })}</Feat>
+                  {/* Голос честно помечен как не входящий в подписку: при $0,07–0,345 за минуту
+                      любой «включённый» пакет минут стоил бы дороже самого тарифа. */}
+                  <Feat icon={Phone} ok={false}>{t('billingPage.voiceSeparate')}</Feat>
                 </div>
                 {isAuthed ? (
                   <Button fullWidth className="mt-6" variant={popular ? 'primary' : 'outline'} to="/app/billing">{t('nav.openApp')}</Button>
@@ -91,14 +111,15 @@ export default function PricingPage() {
                 <tr className="border-b border-white/10 bg-white/[0.025]">
                   <th className="sticky left-0 z-10 min-w-48 bg-[#111526] px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
                   {PLAN_ORDER.map((id) => (
-                    <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-violet' : 'text-text')}>{PLANS[id].label}</th>
+                    <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-violet' : 'text-text')}>{t(planLabelKey(id))}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.07]">
-                <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `$${PLANS[id].price}${t('billingPage.perMonth')}`)} />
-                <CompareRow label={t('billingPage.compareRuns')} values={PLAN_ORDER.map((id) => formatRunRange(teamRunsFromTokens(PLANS[id].tokens)))} />
-                <CompareRow label={t('billingPage.compareTokens')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].tokens))} />
+                <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(PLANS[id].priceUzs)} ${t('billingPage.soum')}${t('billingPage.perMonth')}`)} />
+                <CompareRow label={t('billingPage.comparePriceUsd')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? '—' : `$${PLANS[id].price}${t('billingPage.perMonth')}`)} />
+                <CompareRow label={t('billingPage.compareDialogues')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].dialogues))} />
+                <CompareRow label={t('billingPage.compareVoice')} values={PLAN_ORDER.map(() => t('billingPage.voiceSeparateShort'))} />
                 <CompareRow label={t('billingPage.compareTeams')} values={PLAN_ORDER.map((id) => String(PLANS[id].teams))} />
                 <CompareRow label={t('billingPage.compareModel')} values={PLAN_ORDER.map((id) => PLANS[id].premium ? t('billingPage.premiumShort') : t('billingPage.basicShort'))} />
                 <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].media ? t('billingPage.mediaByoShort') : t('billingPage.notIncluded'))} />
@@ -129,11 +150,14 @@ function CompareRow({ label, values }: { label: string; values: string[] }) {
   )
 }
 
-function Feat({ icon: Icon, ok, children }: { icon: typeof Zap; ok?: boolean; children: React.ReactNode }) {
+function Feat({ icon: Icon, ok, children }: { icon: typeof MessagesSquare; ok?: boolean; children: React.ReactNode }) {
   return (
     <p className="flex items-start gap-2">
-      {ok ? <Icon size={15} className="mt-0.5 shrink-0 text-teal" /> : <Minus size={15} className="mt-0.5 shrink-0 text-fog" />}
-      <span className={ok ? '' : 'text-fog'}>{children}</span>
+      {ok ? <Icon size={15} className="mt-0.5 shrink-0 text-teal" /> : <Minus size={15} className="mt-0.5 shrink-0 text-muted" />}
+      {/* Невключённые строки остаются тусклее включённых, но на 'muted', а не 'fog':
+          на 13px 'fog' даёт 3.13:1 — ниже порога 4.5:1 для текста, который всё же
+          что-то сообщает (та же правка, что в BillingPage). */}
+      <span className={ok ? '' : 'text-muted'}>{children}</span>
     </p>
   )
 }

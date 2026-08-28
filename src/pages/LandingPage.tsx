@@ -103,7 +103,7 @@ const copy = {
       { q: "Какие каналы поддерживаются?", a: "Сейчас работают Telegram, веб-виджет и API. WhatsApp и Instagram — в разработке: вебхуки написаны, но канал не включаем, пока в продакшене не проверена подпись Meta. Статус каждого сервиса виден на странице «Интеграции»." },
       { q: "Что такое AI-команда?", a: "AI-команда — это несколько агентов с разными ролями, управляемых координатором. Например: один агент квалифицирует заявку, другой готовит ответ, третий обновляет CRM. Координатор распределяет работу автоматически." },
       { q: "Агенты работают без ошибок?", a: "Ни одна AI-система не гарантирует нулевой риск ошибок. Nemo снижает риск через историю действий, проверку результатов и автоматическую передачу сложных случаев человеку." },
-      { q: "Сколько это стоит?", a: "Сейчас идёт закрытая бета — доступ по коду приглашения. Участие в бете бесплатно: 150 000 токенов на старте. Платные планы — от $25/мес, лимиты и расход на странице тарифов." },
+      { q: "Сколько это стоит?", a: "Сейчас идёт закрытая бета — доступ по коду приглашения. Участие в бете бесплатно: 50 диалогов на старте. Платные планы — от $59/мес, лимиты и расход на странице тарифов." },
     ],
     previewSales: {
       process: "AI-команда Nemo", request: "Квалификация лида (B2B)", done: "В процессе", team: "Состав команды", message: "Входящий запрос",
@@ -197,7 +197,7 @@ const copy = {
       { q: "Qaysi kanallar qo'llab-quvvatlanadi?", a: "Hozir Telegram, veb-vidjet va API ishlaydi. WhatsApp va Instagram — ishlab chiqilmoqda: webhook kodi tayyor, lekin Meta imzosi produksiyada tekshirilmaguncha kanal yoqilmaydi. Har bir xizmat holati «Integratsiyalar» sahifasida ko'rinadi." },
       { q: "AI-jamoa nima?", a: "AI-jamoa — turli rollarga ega bir nechta agentlar, koordinator tomonidan boshqariladi. Masalan: bitta agent arizani saralaydi, ikkinchisi javob tayyorlaydi, uchinchisi CRM yangilaydi." },
       { q: "Agentlar xatosiz ishlaydimi?", a: "Hech bir AI tizimida xato xavfi nol emas. Nemo harakatlar tarixi, natijalarni tekshirish va murakkab holatlarni avtomatik insonga topshirish orqali xavfni kamaytiradi." },
-      { q: "Narxi qancha?", a: "Hozir yopiq beta — kirish taklif kodi bo'yicha. Betada ishtirok bepul: boshlanishida 150 000 token. Pullik rejalar — $25/oy dan, limitlar va sarf tariflar sahifasida." },
+      { q: "Narxi qancha?", a: "Hozir yopiq beta — kirish taklif kodi bo'yicha. Betada ishtirok bepul: boshlanishida 50 dialog. Pullik rejalar — $59/oy dan, limitlar va sarf tariflar sahifasida." },
     ],
     previewSales: {
       process: "Nemo AI-jamoasi", request: "Lid malakasi (B2B)", done: "Faol", team: "Jamoa tarkibi", message: "Kiruvchi so'rov",
@@ -291,7 +291,7 @@ const copy = {
       { q: "Which channels are supported?", a: "Telegram, the web widget and the API are live today. WhatsApp and Instagram are in development: the webhooks are written, but we keep the channel off until Meta signature verification is confirmed in production. Every service shows its status on the Integrations page." },
       { q: "What is an AI team?", a: "An AI team is multiple agents with different roles managed by a coordinator. For example: one agent qualifies a request, another prepares a reply, a third updates the CRM. The coordinator routes work automatically." },
       { q: "Do agents work without errors?", a: "No AI system guarantees zero errors. Nemo reduces risk through action history, result checks, and automatic handoff of complex cases to humans." },
-      { q: "How much does it cost?", a: "We are in closed beta — access is by invite code. Taking part is free: 150,000 tokens to start. Paid plans start at $25/mo; limits and usage are on the pricing page." },
+      { q: "How much does it cost?", a: "We are in closed beta — access is by invite code. Taking part is free: 50 dialogues to start. Paid plans start at $59/mo; limits and usage are on the pricing page." },
     ],
     previewSales: {
       process: "Nemo AI Team", request: "Lead Qualification (B2B)", done: "Active", team: "Team Swarm", message: "Inbound Inquiry",

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, sectionNav, dialoguesPage, leadsPage, app] = await Promise.all([
+const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, sectionNav, leadsPage, app] = await Promise.all([
   read('src/components/layout/AppLayout.tsx'),
   read('src/components/office/AgentDrawer.tsx'),
   read('src/components/agents/AgentQuickEditDrawer.tsx'),
@@ -12,14 +12,16 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/pages/app/AutonomousPage.tsx'),
   read('src/pages/app/AgentsPage.tsx'),
   read('src/components/platform/KnowledgeIntegrationNav.tsx'),
-  read('src/pages/app/DialoguesPage.tsx'),
   read('src/pages/app/LeadsPage.tsx'),
   read('src/App.tsx'),
 ])
 
-const normalDestinations = ['/app', '/app/dialogues', '/app/teams', '/app/content', '/app/knowledge', '/app/analytics', '/app/settings']
+const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/content', '/app/knowledge', '/app/analytics', '/app/settings']
 for (const route of normalDestinations) assert.match(layout, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
-assert.equal((layout.match(/to: '\/app(?:'|\/dialogues'|\/teams'|\/content'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 7)
+assert.equal((layout.match(/to: '\/app(?:'|\/teams'|\/forge'|\/content'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 7)
+assert.doesNotMatch(layout, /to: '\/app\/dialogues'/)
+assert.doesNotMatch(app, /import DialoguesPage/)
+assert.match(app, /path="dialogues" element=\{<Navigate to="\/app" replace \/>\}/)
 
 assert.match(view, /reactflow/)
 assert.match(view, /md:hidden/)
@@ -43,10 +45,10 @@ assert.match(quickEditDrawer, /\/app\/agents\/\$\{agent\.id\}/)
 assert.doesNotMatch(quickEditDrawer, /chain.of.thought|raw.*log|service_role|secret/i)
 assert.doesNotMatch(drawer, /agent\.prompt|prompt\.rules|chain.of.thought|raw.*log/i)
 
-for (const route of ['/app/dialogues', '/app/lead-forms', '/app/integrations', '/app/knowledge', '/app/tools']) {
+for (const route of ['/app/lead-forms', '/app/integrations', '/app/knowledge', '/app/tools']) {
   assert.match(sectionNav, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
 }
-assert.match(dialoguesPage, /<KnowledgeIntegrationNav active="dialogues"/)
+assert.doesNotMatch(sectionNav, /\/app\/dialogues/)
 assert.match(leadsPage, /<KnowledgeIntegrationNav active="leads"/)
 
 // Hidden destinations remain valid deep links after sidebar compaction.
