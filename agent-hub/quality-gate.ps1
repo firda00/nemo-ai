@@ -122,7 +122,8 @@ $steps = @(
   @{ Name = 'Visual RAG pilot limits and isolation'; Command = { npm run test:visual-rag } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
-  @{ Name = 'Agent trace UI assertions'; Command = { npm run test:trace-ui } },
+  # Шаг trace-ui припаркован вместе с экраном /app/dialogues, который он проверял, — см. шапку
+  # agent-hub/trace-ui-smoke.mjs. Вернуть, когда карточка трейса получит новый экран.
   @{ Name = 'Integrations UI assertions'; Command = { npm run test:integrations-ui } },
   @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } },
   @{ Name = 'Pricing readability'; Command = { npm run test:pricing-contrast } },
