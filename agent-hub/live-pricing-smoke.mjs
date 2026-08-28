@@ -13,7 +13,11 @@ try {
   for (const [name, width, height] of [['desktop', 1440, 1100], ['mobile', 390, 844]]) {
     await page.setViewport({ width, height, isMobile: name === 'mobile' })
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    if (!response || response.status() !== 200) throw new Error(`${name}: HTTP ${response?.status()}`)
+    // 304 — это тоже успех: второй проход (мобильный вьюпорт) идёт по тому же адресу, и браузер
+    // отдаёт страницу из кеша. Строгая проверка на 200 роняла смоук всегда, начиная со второго
+    // разрешения, — то есть проверка мобильной витрины не выполнялась ни разу.
+    const status = response?.status()
+    if (!response || (status !== 200 && status !== 304)) throw new Error(`${name}: HTTP ${status}`)
     // $143 \u2014 \u0446\u0435\u043d\u0430 \u041d\u041e\u0412\u041e\u0419 \u043b\u0435\u0441\u0442\u043d\u0438\u0446\u044b: \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u043d\u0430 \u043d\u0435\u0439 \u0440\u043e\u043d\u044f\u0435\u0442 \u0441\u043c\u043e\u0443\u043a \u043d\u0430 \u0443\u0441\u0442\u0430\u0440\u0435\u0432\u0448\u0435\u043c \u0434\u0435\u043f\u043b\u043e\u0435 \u0441\u0440\u0430\u0437\u0443,
     // \u0430 \u043d\u0435 \u043f\u043e\u0441\u043b\u0435 \u0442\u043e\u0433\u043e, \u043a\u0430\u043a \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u043d\u0438\u0436\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u044f\u0442 \u0441\u0442\u0430\u0440\u044b\u0435 \u0446\u0435\u043d\u044b \u043a\u0430\u043a \u00ab\u0436\u0438\u0432\u044b\u0435\u00bb.
     await page.waitForFunction(() => document.body.innerText.includes('$350') && document.body.innerText.includes('$143'))
