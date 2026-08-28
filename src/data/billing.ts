@@ -90,25 +90,36 @@ export const TOKEN_PACKAGES: TokenPackage[] = [
   { id: 'business', usd: 250, tokens: 87_500 }, // +40% bonus
 ]
 
+// ВНИМАНИЕ: `usd` и `teams` здесь — ЗЕРКАЛО src/lib/plans.ts, а не независимый прайс.
+// Каноничны PLANS (и их серверный оригинал supabase/functions/_shared/plans.ts); цену и
+// названия тарифов витрина берёт ТОЛЬКО оттуда. При переоценке правится и этот массив.
+//
+// Доллар остаётся ориентиром: реально списывается сумма (PLANS[id].priceUzs) через
+// Payme/Click. `label` здесь намеренно НЕТ — название тарифа живёт в PLANS[id].label в
+// одном экземпляре, и заводить его копию тут значит гарантировать расхождение.
+//
+// `includedCredits` НЕ синхронизирован с PLANS[id].tokens и здесь не трогался: это другая
+// модель (1 кредит = 1000 токенов) от пакетов пополнения, и переводить её на новые квоты —
+// отдельное решение по биллингу, а не часть переоценки подписки.
 export const SAAS_PLANS: SaasPlan[] = [
   {
     id: 'starter',
-    usd: 25,
+    usd: 59,
     teams: 1,
     includedCredits: 500,
     features: ['team_builder', 'company_brain', 'agent_trace'],
   },
   {
     id: 'pro',
-    usd: 59,
-    teams: 2,
+    usd: 143,
+    teams: 3,
     includedCredits: 2_000,
     popular: true,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff'],
   },
   {
     id: 'business',
-    usd: 119,
+    usd: 254,
     teams: 10,
     includedCredits: 6_000,
     features: ['team_builder', 'company_brain', 'agent_trace', 'quality_checks', 'crm_handoff', 'priority_support'],

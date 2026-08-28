@@ -26,6 +26,7 @@ import {
   clickCheckoutUrl,
   PLAN_PRICE_UZS,
 } from '../supabase/functions/_shared/paymentProtocol.ts'
+import { PLAN_LIMITS } from '../supabase/functions/_shared/plans.ts'
 
 // --- Сумма разбирается по строке, а не умножением ---------------------------------------------
 // «290000.00» * 100 через Number однажды даст 28999999.999999996 и отвергнет верный платёж — или,
@@ -258,8 +259,21 @@ assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceNo: INV_NO, amountTiyin:
 assert.equal(paymeCheckoutUrl({ merchantId: 'M', invoiceNo: 0, amountTiyin: 100 }), null)
 assert.equal(clickCheckoutUrl({ serviceId: 'S', merchantId: 'M', invoiceNo: 0, amountTiyin: 100 }), null)
 
-// Цена в сумах не выдумывается из долларов по курсу, которого никто не утверждал.
+// Цена в сумах не выдумывается из долларов по курсу, которого никто не утверждал — и не расходится
+// с витриной. PLAN_PRICE_UZS — это сумма, которая СПИСЫВАЕТСЯ через Payme/Click; plans.priceUzs —
+// то, что человек ВИДИТ на карточке тарифа. Прошлая проверка утверждала лишь `typeof === object`
+// и пропустила бы любое расхождение: подняли цену на витрине, забыли в кассе — списывается старая.
 assert.equal(typeof PLAN_PRICE_UZS, 'object')
+
+const paidInUzs = Object.entries(PLAN_LIMITS).filter(([, plan]) => plan.priceUzs > 0)
+assert.ok(paidInUzs.length >= 4, 'платные тарифы в сумах не потерялись из лестницы')
+for (const [key, plan] of paidInUzs) {
+  assert.equal(PLAN_PRICE_UZS[key], plan.priceUzs, `касса и витрина расходятся по тарифу ${key}`)
+}
+// Обратная сторона: ключ в кассе, которого нет в лестнице, — это счёт на тариф, которого не продают.
+for (const key of Object.keys(PLAN_PRICE_UZS)) {
+  assert.ok(PLAN_LIMITS[key], `в кассе есть тариф ${key}, которого нет в лестнице`)
+}
 
 // --- Click сообщает исход платежа полем error ------------------------------------------------
 // Отрицательное значение в Complete означает отказ банка или отмену покупателем. Подпись при этом

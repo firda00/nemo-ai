@@ -169,15 +169,29 @@ check('landing never lists an unavailable Meta channel among working ones',
 check('landing does not sell credits the billing system does not implement',
   !/кредит|kredit|credits/i.test(landing))
 
-const freeTokens = Number((plans.match(/free:\s*\{[^}]*tokens:\s*([\d_]+)/)?.[1] ?? '0').replace(/_/g, ''))
-const paidPrices = [...plans.matchAll(/price:\s*(\d+)/g)].map((m) => Number(m[1])).filter((n) => n > 0)
+// Витрина считает в ДИАЛОГАХ, а не в токенах: токены остались внутренним потолком
+// злоупотребления и клиенту не показываются нигде, включая лендинг. Поэтому сверяем обещание
+// лендинга с полем dialogues, а не tokens — иначе контракт защищал бы число, которого
+// покупатель не видит, и пропускал бы расхождение в том, которое видит.
+const freeDialogues = Number((plans.match(/free:\s*\{[^}]*dialogues:\s*([\d_]+)/)?.[1] ?? '0').replace(/_/g, ''))
+// `[{,]\s*` требует, чтобы `price` был СВОИМ свойством объекта, а не хвостом чужого имени.
+// Рядом теперь лежит priceUzs со ЧЕТЫРЁХЗНАЧНО большими числами (690 000 против 59): он не
+// совпадает лишь потому, что после `price` у него идёт `U`, а не `:`. Любое будущее поле вида
+// `listprice:` совпало бы — и dearestPaid стал бы суммой в сумах, а лендинг с честной ценой
+// упал бы как «расходящийся с прайсом». Граница слева стоит дешевле такого разбора.
+const paidPrices = [...plans.matchAll(/[{,]\s*price:\s*(\d+)/g)].map((m) => Number(m[1])).filter((n) => n > 0)
 const cheapestPaid = Math.min(...paidPrices)
 const dearestPaid = Math.max(...paidPrices)
 check('landing quotes the real free-plan grant',
-  freeTokens > 0 &&
-  landing.includes(freeTokens.toLocaleString('ru-RU').replace(/ /g, ' ')) &&
-  landing.includes(freeTokens.toLocaleString('en-US')),
-  `plans.ts grants ${freeTokens}`)
+  freeDialogues > 0 &&
+  landing.includes(freeDialogues.toLocaleString('ru-RU').replace(/ /g, ' ')) &&
+  landing.includes(freeDialogues.toLocaleString('en-US')) &&
+  // Число само по себе слишком слабое условие: голое includes('50') прошло бы на любой
+  // странице, где встретится любое число, оканчивающееся на 50. Требуем, чтобы оно стояло
+  // рядом со словом «диалог» в каждой из трёх локалей.
+  [`${freeDialogues} диалог`, `${freeDialogues} dialog`, `${freeDialogues} dialogue`]
+    .every((s) => landing.includes(s)),
+  `plans.ts grants ${freeDialogues} dialogues`)
 check('landing quotes the cheapest paid plan that actually exists',
   Number.isFinite(cheapestPaid) &&
   [`$${cheapestPaid}/мес`, `$${cheapestPaid}/oy`, `$${cheapestPaid}/mo`].every((s) => landing.includes(s)),

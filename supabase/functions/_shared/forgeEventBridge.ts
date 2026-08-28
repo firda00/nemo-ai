@@ -10,7 +10,7 @@ export interface NormalizedForgeEvent {
   payload: Record<string, unknown>
 }
 
-interface TriggerRow {
+export interface TriggerRow {
   id: string
   account_id: string
   project_id: string
@@ -71,7 +71,7 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function sha256(value: Uint8Array | string): Promise<string> {
+export async function sha256(value: Uint8Array | string): Promise<string> {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
   const isolated = Uint8Array.from(bytes)
   return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', isolated.buffer)))
@@ -100,7 +100,7 @@ async function stableUuid(seed: string): Promise<string> {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`
 }
 
-async function compileSafePlan(trigger: TriggerRow, event: NormalizedForgeEvent) {
+export async function compileSafePlan(trigger: TriggerRow, event: NormalizedForgeEvent) {
   const definitions = [
     ['research', 'Проверить входные данные и собрать факты', 'evidence-research', 'PROFILE_A_WASI', false],
     ['quality_check', 'Проверить доказательства и ограничения', 'grounding-quality-gate', 'PROFILE_A_WASI', false],

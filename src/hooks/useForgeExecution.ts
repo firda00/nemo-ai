@@ -3,6 +3,8 @@ import { createContentGrowthWorkflow, CONTENT_GROWTH_USTADI_PROMPT } from '../li
 import { compileTask } from '../lib/forge-task-compiler'
 import { getAccessToken, isSupabaseEnabled, supabase } from '../lib/supabase'
 import { ProjectExecutionPlanSchema, type ProjectExecutionPlan } from '../types/forge-contracts'
+import { BusinessIntentSchema } from '../types/business-intent'
+import { BUSINESS_INTENT_STORAGE_KEY, businessIntentToForgePrompt } from '../lib/business-intent'
 
 export type ForgeRoutingMode = 'auto' | 'local_first' | 'gpu_enabled'
 
@@ -90,7 +92,21 @@ const LOCAL_CONNECTORS: ForgeConnectorState[] = [
 ]
 
 export function useForgeExecution() {
-  const [prompt, setPrompt] = useState('')
+  const [prompt, setPrompt] = useState(() => {
+    try {
+      const structured = window.sessionStorage.getItem(BUSINESS_INTENT_STORAGE_KEY)
+      window.sessionStorage.removeItem(BUSINESS_INTENT_STORAGE_KEY)
+      if (structured) {
+        const parsed = BusinessIntentSchema.safeParse(JSON.parse(structured))
+        if (parsed.success) return businessIntentToForgePrompt(parsed.data).slice(0, 16_384)
+      }
+      const incoming = window.sessionStorage.getItem('nemo.forge.incoming-brief') ?? ''
+      window.sessionStorage.removeItem('nemo.forge.incoming-brief')
+      return incoming.slice(0, 16_384)
+    } catch {
+      return ''
+    }
+  })
   const [budgetCapUsd, setBudgetCapUsd] = useState(5)
   const [routingMode, setRoutingMode] = useState<ForgeRoutingMode>('auto')
   const [plan, setPlan] = useState<ProjectExecutionPlan | null>(() => {

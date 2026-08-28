@@ -132,20 +132,40 @@ for (const file of usageWriters) {
 }
 
 // ─── Billing honesty ─────────────────────────────────────────────────────────
+// Измеренные константы остаются измеренными: они защищают от возврата к выдумке в 4 750 токенов
+// на прогон, из-за которой каждый тариф обещал примерно в восемь раз больше работы, чем мог.
 assert.ok(TEAM_RUN_TOKENS.median > 30_000, 'the measured median must not silently return to the 4,750 fiction')
 assert.ok(TEAM_RUN_TOKENS.max / TEAM_RUN_TOKENS.min > 5, 'a 5.6x spread is why one constant cannot be honest')
-const starter = teamRunsFromTokens(PLANS.starter.tokens)
-assert.ok(starter.low >= 5 && starter.high <= 28, `Starter must land in the measured band, got ${starter.low}-${starter.high}`)
-assert.ok(starter.high < 105, 'Starter must no longer advertise ~105 runs')
-assert.ok(starter.low < starter.typical && starter.typical < starter.high, 'the range must bracket the typical run')
-assert.equal(formatRunRange(starter), `${starter.low}–${starter.high}`)
-assert.ok(shortTasksFromTokens(PLANS.starter.tokens) > starter.high * 5, 'short tasks are ~15x cheaper than team runs')
 assert.ok(SHORT_TASK_TOKENS.mean > 0)
+assert.ok(teamRunsFromTokens(PLANS.starter.tokens).low > 0, 'the run estimate must stay computable')
+assert.equal(formatRunRange(teamRunsFromTokens(PLANS.starter.tokens)), `${teamRunsFromTokens(PLANS.starter.tokens).low}–${teamRunsFromTokens(PLANS.starter.tokens).high}`)
+assert.ok(shortTasksFromTokens(PLANS.starter.tokens) > teamRunsFromTokens(PLANS.starter.tokens).high * 5, 'short tasks are ~15x cheaper than team runs')
 
+// Единица тарифа — диалог. Токен остался ВНУТРЕННИМ предохранителем, и у него ровно одна
+// обязанность: сработать позже диалогового лимита. Если клиент купил 1 000 диалогов и упёрся
+// в токены на восьмисотом — это нарушенное обещание, а не защита от злоупотребления.
+const GUARD_TOKENS_PER_DIALOGUE = 45_000
+const WORKING_ESTIMATE_PER_DIALOGUE = 15_000
+assert.ok(
+  GUARD_TOKENS_PER_DIALOGUE >= WORKING_ESTIMATE_PER_DIALOGUE * 3,
+  'the guard must keep a threefold margin over the working estimate, or a heavy honest customer trips it',
+)
+for (const [key, plan] of Object.entries(PLANS)) {
+  if (!plan.dialogues) continue
+  assert.equal(
+    plan.tokens,
+    plan.dialogues * GUARD_TOKENS_PER_DIALOGUE,
+    `${key}: токенный потолок разошёлся с диалогами — предохранитель сработает раньше проданного лимита`,
+  )
+}
+
+// Витрина считает в диалогах и молчит про токены: владелец бизнеса не может планировать расход
+// в токенах, и именно эта единица измерения останавливала людей сильнее самой цены.
 for (const file of ['src/pages/app/BillingPage.tsx', 'src/pages/PricingPage.tsx']) {
   const body = read(file)
   assert.doesNotMatch(body, /runsFromTokens\(/, `${file} still quotes the single-constant estimate`)
-  assert.match(body, /formatRunRange\(teamRunsFromTokens\(/, `${file} must quote a measured range`)
+  assert.doesNotMatch(body, /\.tokens\b/, `${file} still shows a token quota to the customer`)
+  assert.match(body, /\.dialogues\b/, `${file} must price the plan in dialogues`)
 }
 const extra = read('src/i18n/extra.ts')
 assert.doesNotMatch(extra, /4 750|4,750/, 'the per-run constant must be gone from every language')

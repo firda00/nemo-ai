@@ -21,9 +21,12 @@ import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { handleForgeVoiceCallback } from '../_shared/telegramVoiceCallback.ts'
+import { enqueueTelegramVoiceForge } from '../_shared/telegramVoiceForge.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
 const CRON_SECRET = Deno.env.get('WATCH_CRON_SECRET') ?? Deno.env.get('CRON_SECRET') ?? ''
 const TG_QUEUE = Deno.env.get('TG_QUEUE') === '1'
 const WORKER_URL = `${SUPABASE_URL}/functions/v1/agent-worker`
@@ -392,6 +395,12 @@ Deno.serve(async (req) => {
       await handleListingCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handleCostBatchCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
       await handlePriceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query)
+      await handleForgeVoiceCallback(db, channelId, channel.credentials?.bot_token, update.callback_query, {
+        findOwner: ownerChatFor,
+        answer: tgAnswerCallback,
+        edit: tgEditMessage,
+        enqueue: enqueueTelegramVoiceForge,
+      })
       return new Response('ok')
     }
 

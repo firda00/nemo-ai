@@ -1,20 +1,43 @@
 import { useEffect, useState } from 'react'
-import { Minus, CreditCard, Loader2, Zap, Users, Cpu, Image as ImageIcon, Sparkles, Globe2, Video, Search } from 'lucide-react'
+import { Minus, CreditCard, Loader2, MessagesSquare, Users, Cpu, Image as ImageIcon, Sparkles, Globe2, Video, Search, Phone } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../../components/ui/Button'
-import { PLANS, PLAN_ORDER, formatRunRange, teamRunsFromTokens } from '../../lib/plans'
+import { PLANS, PLAN_ORDER, formatUzs, planLabelKey } from '../../lib/plans'
+
+/**
+ * Самообслуживаемая оплата выключена намеренно.
+ *
+ * Оплата через Stripe сейчас пишет только `accounts.plan`, а рантайм проверяет доступ по
+ * `billing_subscriptions` (см. supabase/functions/_shared/entitlement.ts): человек платит и
+ * остаётся заблокированным, причём без единой ошибки в логах. Payme/Click в проекте не
+ * настроены, поэтому «запасной» путь Stripe оказался единственным.
+ *
+ * Пока это так, кнопка ведёт к живому человеку: счёт выставляется вручную, доступ включается
+ * вручную. Вернуть на true — только после того, как оплата начнёт создавать активную строку в
+ * `billing_subscriptions` и обрабатываться событие invoice.paid.
+ */
+const SELF_SERVICE_CHECKOUT_ENABLED = false
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 
 /**
  * Billing & limits — real B2B tiers driven by the plan config, with the account's live
  * monthly usage vs quota. Quotas enforced server-side (orchestrate → QUOTA_EXCEEDED).
+ *
+ * Витрина считает в ДИАЛОГАХ, не в токенах: владелец бизнеса сравнивает лимит с числом
+ * обращений, которые к нему реально приходят, а «2 000 000 токенов» ему не с чем сравнить.
+ * Токены остались внутренним предохранителем и на этой странице не показываются.
+ *
+ * Цена показывается в сумах: счёт выставляется через Payme/Click в сумах, Stripe в РУз не
+ * работает. Доллар остаётся мелкой подписью для тех, кому так понятнее.
  */
 export default function BillingPage() {
   const { t } = useI18n()
   const [plan, setPlan] = useState('free')
-  const [used, setUsed] = useState(0)
-  const [quota, setQuota] = useState(150_000)
+  // null = счётчик недоступен. Показываем прочерк, а не ноль: ноль читается как «вы ничего
+  // не потратили» и вводит в заблуждение ровно там, где человек проверяет расход.
+  const [used, setUsed] = useState<number | null>(0)
+  const [quota, setQuota] = useState(PLANS.free.dialogues)
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [checkoutBusy, setCheckoutBusy] = useState('')
   // Выставленный счёт с двумя ссылками. Выбор кассы — за покупателем: у Payme и Click разное
@@ -29,17 +52,26 @@ export default function BillingPage() {
     ;(async () => {
       try {
         const { data } = await supabase!.functions.invoke('plan-status', { body: {} })
-        const p = data as { plan?: string; used?: number; quota?: number } | null
-        if (p) { setPlan(p.plan ?? 'free'); setUsed(p.used ?? 0); setQuota(p.quota ?? 150_000) }
+        const p = data as { plan?: string; dialoguesUsed?: number | null; dialoguesQuota?: number } | null
+        if (p) {
+          const planId = p.plan ?? 'free'
+          setPlan(planId)
+          setUsed(p.dialoguesUsed ?? null)
+          setQuota(p.dialoguesQuota ?? (PLANS[planId] ?? PLANS.free).dialogues)
+        }
       } catch { /* ignore */ }
       setLoading(false)
     })()
   }, [])
 
-  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0
+  const pct = used !== null && quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0
   const choose = async (id: string) => {
     if (id === 'enterprise') {
       setNotice(t('billingPage.enterpriseContact'))
+      return
+    }
+    if (!SELF_SERVICE_CHECKOUT_ENABLED) {
+      setNotice(t('billingPage.checkoutDisabled'))
       return
     }
     if (!supabase || checkoutBusy) return
@@ -57,10 +89,10 @@ export default function BillingPage() {
         return
       }
 
-      const { data } = await supabase.functions.invoke('create-checkout', { body: { plan: id } })
-      const p = data as { ok?: boolean; url?: string; detail?: string } | null
-      if (p?.url) { window.location.assign(p.url); return }
-      setNotice(p?.detail ? t('billingPage.paymentUnavailable', { detail: p.detail }) : t('billingPage.paymentNotConfigured'))
+      // Раньше здесь стоял переход в Stripe, если местная касса не настроена. Это и был путь,
+      // на котором клиент платил и не получал доступ: Stripe-вебхук не создаёт активную
+      // подписку, которую проверяет рантайм. Лучше честно сказать «касса не настроена».
+      setNotice(t('billingPage.paymentNotConfigured'))
     } catch { setNotice(t('billingPage.paymentError')) } finally { setCheckoutBusy('') }
   }
   const kfmt = (n: number) =>
@@ -89,17 +121,21 @@ export default function BillingPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted">{t('billingPage.currentPlan')}</p>
-                <p className="mt-1 text-xl font-bold text-text">{(PLANS[plan] ?? PLANS.free).label}</p>
+                <p className="mt-1 text-xl font-bold text-text">{t(planLabelKey(PLANS[plan] ? plan : "free"))}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs text-muted">{t('billingPage.usedThisMonth')}</p>
-                <p className="mt-1 font-mono text-sm text-text">{kfmt(used)} / {kfmt(quota)} {t('billingPage.tokens')} <span className="text-fog">≈ {formatRunRange(teamRunsFromTokens(quota - used))} {t('billingPage.runsLeft')}</span></p>
+                <p className="mt-1 font-mono text-sm text-text">
+                  {used === null ? '—' : `${kfmt(used)} / ${kfmt(quota)}`} {t('billingPage.dialogues')}
+                  {used !== null && <span className="text-fog"> · {t('billingPage.dialoguesLeft', { count: Math.max(0, quota - used) })}</span>}
+                </p>
               </div>
             </div>
             <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
               <div className={cn('h-full rounded-full transition-all', pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-amber' : 'bg-flow-gradient')} style={{ width: `${pct}%` }} />
             </div>
-            {pct >= 90 && <p className="mt-2 text-xs text-danger">{t('billingPage.limitNearlyReached')}</p>}
+            {used === null && <p className="mt-2 text-xs text-fog">{t('billingPage.usageUnavailable')}</p>}
+            {used !== null && pct >= 90 && <p className="mt-2 text-xs text-danger">{t('billingPage.limitNearlyReached')}</p>}
           </>
         )}
       </div>
@@ -117,24 +153,33 @@ export default function BillingPage() {
               {popular && !current && <span className="absolute -top-3 left-6 rounded-pill bg-gradient-to-r from-accent-cyan to-accent-indigo px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.popular')}</span>}
               {current && <span className="absolute -top-3 left-6 rounded-pill bg-teal px-3 py-1 text-[11px] font-semibold text-white">{t('billingPage.yourPlan')}</span>}
               <h2 className="text-lg font-bold text-text">{p.label}</h2>
-              <p className="mt-2 text-3xl font-extrabold text-text">{id === 'enterprise' ? t('billingPage.customPrice') : `$${p.price}`}<span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span></p>
+              {/* Цена в сумах — крупно, потому что списывается именно она. Доллар мелкой
+                  подписью: он ориентир, а не то, что уйдёт с карты. */}
+              <p className="mt-2 text-3xl font-extrabold text-text">
+                {id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(p.priceUzs)} ${t('billingPage.soum')}`}
+                <span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span>
+              </p>
+              {id !== 'enterprise' && <p className="mt-0.5 text-xs text-fog">≈ ${p.price}{t('billingPage.perMonth')}</p>}
               {/* Included features carry primary text, excluded ones drop to `muted` inside
                   Feat. That step IS the hierarchy — a uniformly dim list makes the reader
                   compare rows one by one to work out what they actually get. */}
               <div className="mt-5 space-y-2.5 text-[13px] text-text">
-                <Feat icon={Zap} ok>{formatRunRange(teamRunsFromTokens(p.tokens))} {t('billingPage.runsPerMonth')} <span className="text-muted">({kfmt(p.tokens)} {t('billingPage.tokens')})</span></Feat>
+                <Feat icon={MessagesSquare} ok>{t('billingPage.dialoguesCount', { count: p.dialogues })}</Feat>
                 <Feat icon={Users} ok>{t('billingPage.teamsCount', { count: p.teams })}</Feat>
                 <Feat icon={Cpu} ok={p.premium}>{p.premium ? t('billingPage.premiumModel') : t('billingPage.basicModel')}</Feat>
                 <Feat icon={ImageIcon} ok={p.media}>{p.mediaIncluded ? t('billingPage.mediaIncludedCount', { count: p.mediaMonthly }) : p.mediaTrialWeekly > 0 ? t('billingPage.mediaTrialCount', { count: p.mediaTrialWeekly }) : t('billingPage.mediaByo')}</Feat>
                 <Feat icon={Globe2} ok={p.browserMonthly > 0}>{t('billingPage.browserTasksCount', { count: p.browserMonthly })}</Feat>
                 <Feat icon={Video} ok={p.video}>{p.video ? t('billingPage.videoCount', { count: p.videoMonthly }) : t('billingPage.videoNotIncluded')}</Feat>
                 <Feat icon={Search} ok>{t('billingPage.competitorsCount', { count: p.competitors })}</Feat>
+                {/* Голос честно помечен как не входящий в подписку: при $0,07–0,345 за минуту
+                    любой «включённый» пакет минут стоил бы дороже самого тарифа. */}
+                <Feat icon={Phone} ok={false}>{t('billingPage.voiceSeparate')}</Feat>
               </div>
               {current ? (
                 <Button fullWidth className="mt-6" variant="outline" disabled>{t('billingPage.current')}</Button>
               ) : (
                 <Button fullWidth className="mt-6" variant={popular ? 'primary' : 'outline'} onClick={() => choose(id)} disabled={checkoutBusy === id}>
-                  {checkoutBusy === id ? <><Loader2 size={15} className="animate-spin" /> …</> : id === 'enterprise' ? t('billingPage.contactSales') : t('billingPage.subscribe')}
+                  {checkoutBusy === id ? <><Loader2 size={15} className="animate-spin" /> …</> : (id === 'enterprise' || !SELF_SERVICE_CHECKOUT_ENABLED) ? t('billingPage.contactSales') : t('billingPage.subscribe')}
                 </Button>
               )}
             </div>
@@ -154,14 +199,15 @@ export default function BillingPage() {
               <tr className="border-b border-ice/10 bg-panel/70">
                 <th className="sticky left-0 z-10 min-w-48 bg-panel px-5 py-4 font-semibold text-text">{t('billingPage.compareFeature')}</th>
                 {PLAN_ORDER.map((id) => (
-                  <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-accent-indigo' : 'text-text')}>{PLANS[id].label}</th>
+                  <th key={id} className={cn('min-w-32 px-4 py-4 font-semibold', id === 'pro' ? 'text-accent-indigo' : 'text-text')}>{t(planLabelKey(id))}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.07]">
-              <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `$${PLANS[id].price}${t('billingPage.perMonth')}`)} />
-              <CompareRow label={t('billingPage.compareRuns')} values={PLAN_ORDER.map((id) => formatRunRange(teamRunsFromTokens(PLANS[id].tokens)))} />
-              <CompareRow label={t('billingPage.compareTokens')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].tokens))} />
+              <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(PLANS[id].priceUzs)} ${t('billingPage.soum')}${t('billingPage.perMonth')}`)} />
+              <CompareRow label={t('billingPage.comparePriceUsd')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? '—' : `$${PLANS[id].price}${t('billingPage.perMonth')}`)} />
+              <CompareRow label={t('billingPage.compareDialogues')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].dialogues))} />
+              <CompareRow label={t('billingPage.compareVoice')} values={PLAN_ORDER.map(() => t('billingPage.voiceSeparateShort'))} />
               <CompareRow label={t('billingPage.compareTeams')} values={PLAN_ORDER.map((id) => String(PLANS[id].teams))} />
               <CompareRow label={t('billingPage.compareModel')} values={PLAN_ORDER.map((id) => PLANS[id].premium ? t('billingPage.premiumShort') : t('billingPage.basicShort'))} />
               <CompareRow label={t('billingPage.compareMedia')} values={PLAN_ORDER.map((id) => PLANS[id].mediaIncluded ? String(PLANS[id].mediaMonthly) : PLANS[id].media ? t('billingPage.mediaByoShort') : t('billingPage.notIncluded'))} />
@@ -233,7 +279,7 @@ function CompareRow({ label, values }: { label: string; values: string[] }) {
   )
 }
 
-function Feat({ icon: Icon, ok, children }: { icon: typeof Zap; ok?: boolean; children: React.ReactNode }) {
+function Feat({ icon: Icon, ok, children }: { icon: typeof MessagesSquare; ok?: boolean; children: React.ReactNode }) {
   return (
     <p className="flex items-start gap-2">
       {ok ? <Icon size={15} className="mt-0.5 shrink-0 text-teal" /> : <Minus size={15} className="mt-0.5 shrink-0 text-muted" />}
