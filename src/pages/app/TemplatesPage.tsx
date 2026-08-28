@@ -39,6 +39,16 @@ const TEAM_TEMPLATES = [mediaLearningTeamTemplate,
     tools: ['research', 'content', 'image', 'publishing'],
     roi: 'контент-план за минуты вместо часов',
   },
+  {
+    id: 'uzum-review-telegram-followup',
+    title: 'Uzum Reviews + Telegram Follow-up',
+    market: 'Uzum sellers / E-commerce',
+    score: '93',
+    desc: 'Классифицирует новый отзыв, готовит grounded-ответ по данным товара и создаёт персональный follow-up в Telegram. Отправка остаётся на согласовании владельца.',
+    agents: ['Team Leader', 'Review Classifier', 'Product Knowledge Agent', 'Reply Writer', 'Telegram Follow-up', 'Approval Reviewer'],
+    tools: ['uzum', 'knowledge', 'telegram', 'approval'],
+    roi: 'быстрее отвечает на отзывы и не теряет повторные продажи',
+  },
 ]
 
 export default function TemplatesPage() {

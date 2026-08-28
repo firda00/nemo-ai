@@ -4,6 +4,7 @@ import { AlertCircle, Check, ExternalLink, Loader2, ShieldCheck, X } from 'lucid
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useI18n } from '../../i18n'
 import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
+import { useTelegramMiniApp } from '../../hooks/useTelegramMiniApp'
 
 type Request = {
   id: string
@@ -23,6 +24,7 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const insideTelegram = useTelegramMiniApp()
 
   useEffect(() => {
     if (!supabase) return
@@ -56,6 +58,7 @@ export default function ApprovalsPage() {
       <span className="rounded-xl bg-amber/15 p-3 text-amber"><ShieldCheck size={22} /></span>
       <div><h1 className="text-2xl font-semibold text-text">{t('approvals.title')}</h1><p className="mt-1 text-sm text-muted">{t('approvals.subtitle')}</p></div>
     </div>
+    {insideTelegram && <div className="mt-4 rounded-2xl border border-cyan/20 bg-cyan/10 px-4 py-3 text-sm text-cyan">Telegram Mini App · решения сохраняются в том же tenant-контексте и требуют вашей активной сессии.</div>}
     {error && <div className="mt-6 flex items-start gap-2 rounded-2xl border border-danger/25 bg-danger/10 p-4 text-sm text-danger"><AlertCircle className="mt-0.5 shrink-0" size={17} />{error}</div>}
     {loading ? <div className="card mt-6 flex items-center gap-2 p-5 text-sm text-muted"><Loader2 className="animate-spin" size={16} />{t('approvals.loading')}</div> : (
       <div className="mt-6 space-y-3">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Activity, Bot, MessageSquare, PlayCircle, Plus, Users, Zap } from 'lucide-react'
+import { Activity, Bot, CheckSquare, CircleDollarSign, MessageSquare, PlayCircle, Plus, Users, WalletCards, Zap } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n'
 import { useBackendStatus } from '../../hooks/useBackendStatus'
 import { QuickStart } from '../../components/platform/QuickStart'
 import { RecentActivity } from '../../components/platform/RecentActivity'
+import { BusinessBriefLauncher } from '../../components/platform/BusinessBriefLauncher'
 
 function readLocalStorage(key: string): string {
   try {
@@ -29,18 +30,21 @@ export default function DashboardPage() {
   const savedTeamName = readLocalStorage('nemo-team-name')
 
   // real dashboard metrics (was localStorage/hard-coded demo numbers)
-  const [stats, setStats] = useState({ runs: 0, leads: 0, dialogues: 0 })
+  const [stats, setStats] = useState({ runs: 0, leads: 0, dialogues: 0, approvals: 0 })
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase) return
     let alive = true
     ;(async () => {
       try {
-        const [r, l, d] = await Promise.all([
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0)
+        const [r, l, d, a] = await Promise.all([
           supabase!.from('research_runs').select('id', { count: 'exact', head: true }),
-          supabase!.from('leads').select('id', { count: 'exact', head: true }),
+          supabase!.from('leads').select('id', { count: 'exact', head: true }).gte('created_at', startOfDay.toISOString()),
           supabase!.from('dialogues').select('id', { count: 'exact', head: true }),
+          supabase!.functions.invoke('approval-queue', { body: { action: 'list' } }),
         ])
-        if (alive) setStats({ runs: r.count ?? 0, leads: l.count ?? 0, dialogues: d.count ?? 0 })
+        const approvalPayload = a.data as { requests?: { status: string }[] } | null
+        if (alive) setStats({ runs: r.count ?? 0, leads: l.count ?? 0, dialogues: d.count ?? 0, approvals: approvalPayload?.requests?.filter((item) => item.status === 'pending').length ?? 0 })
       } catch { /* ignore */ }
     })()
     return () => { alive = false }
@@ -88,6 +92,21 @@ export default function DashboardPage() {
       </div>
 
       <QuickStart />
+
+      <BusinessBriefLauncher />
+
+      <section className="mt-8" aria-labelledby="owner-metrics-title">
+        <div className="flex items-end justify-between gap-3">
+          <div><p className="mono-label">Для владельца</p><h2 id="owner-metrics-title" className="mt-1 text-xl font-bold text-text">Сегодня в бизнесе</h2></div>
+          <Link to="/app/approvals" className="text-xs font-semibold text-cyan hover:text-text">Открыть согласования</Link>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric icon={CircleDollarSign} label="Подтверждённая экономия" value="—" hint="Появится после настройки стоимости ручного процесса" />
+          <Metric icon={Users} label="Новые лиды сегодня" value={String(stats.leads)} />
+          <Metric icon={WalletCards} label="Расход на контент" value="—" hint="Только после фактического запуска Forge" />
+          <Metric icon={CheckSquare} label="Ждут подтверждения" value={String(stats.approvals)} />
+        </div>
+      </section>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Metric icon={Users} label={t('mvp.dashboard.activeTeams')} value={String(Math.max(teams.length, savedTeamId ? 1 : 0))} />
@@ -171,8 +190,8 @@ export default function DashboardPage() {
   )
 }
 
-function Metric({ icon: Icon, label, value }: { icon: typeof Zap; label: string; value: string }) {
-  return <div className="card rounded-3xl p-4 sm:p-5"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15 text-violet"><Icon size={18} /></span><p className="mt-4 text-3xl font-extrabold text-text">{value}</p><p className="mt-1 text-sm text-muted">{label}</p></div>
+function Metric({ icon: Icon, label, value, hint }: { icon: typeof Zap; label: string; value: string; hint?: string }) {
+  return <div className="card rounded-3xl p-4 sm:p-5"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet/15 text-violet"><Icon size={18} /></span><p className="mt-4 text-3xl font-extrabold text-text">{value}</p><p className="mt-1 text-sm text-muted">{label}</p>{hint && <p className="mt-2 text-[11px] leading-4 text-fog">{hint}</p>}</div>
 }
 
 function Status({ label, ok, good, bad }: { label: string; ok: boolean; good: string; bad: string }) {

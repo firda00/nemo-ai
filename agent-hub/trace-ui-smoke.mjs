@@ -1,3 +1,12 @@
+// ПРИПАРКОВАН. Этот смоук проверяет отрисовку карточки трейса на экране /app/dialogues, а сам
+// экран убран из продукта: контракт team-office-ui-contracts.mjs требует, чтобы маршрут был
+// редиректом, а импорт DialoguesPage отсутствовал. TraceCard больше нигде не используется,
+// поэтому у проверки не осталось предмета — запускать её сейчас значит гарантированно падать.
+//
+// Файл СОХРАНЁН, а не удалён: одиннадцать утверждений про то, как трейс показывается человеку
+// (локализованные подписи шагов, отсутствие сырого JSON в переписке, превью последнего
+// сообщения), писались не зря. Когда карточка трейса получит новый дом — вернуть проверку
+// в agent-hub/quality-gate.ps1, поменяв адрес в page.goto ниже.
 // Agent Trace UI assertions (permanent, wired into the quality gate).
 // Boots the app in DEMO mode and verifies the operator-facing trace rendering
 // contract on /app/dialogues against the seeded dialogue d1, which carries a
