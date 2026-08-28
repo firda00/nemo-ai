@@ -172,7 +172,8 @@
     "test:forge-settings": "node --experimental-strip-types tests/forge_settings.test.ts",
     "test:business-intent": "node --experimental-strip-types tests/business_intent.test.ts",
     "test:telegram-voice-intent": "node --experimental-strip-types tests/telegram_voice_intent.test.ts",
-    "test:telegram-voice-e2e": "node --experimental-strip-types tests/telegram_voice_webhook_e2e.test.ts"
+    "test:telegram-voice-e2e": "node --experimental-strip-types tests/telegram_voice_webhook_e2e.test.ts",
+    "test:i18n-hardcoded": "node agent-hub/i18n-hardcoded-contracts.mjs"
   },
   "dependencies": {
     "@marp-team/marp-core": "^4.2.0",
