@@ -86,3 +86,8 @@ agent-hub/ui-stability-contracts-report.json
 .env*
 
 .tmp/
+
+# Побочные файлы инструментов, которые пересоздаются: дамп разбора презентации и проба глифов.
+# Держать их в истории незачем, но и удалять с диска не нужно — отсюда ignore, а не rm.
+*.pptx.inspect.ndjson
+docs/research/_probe.txt
