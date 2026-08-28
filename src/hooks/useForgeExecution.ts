@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useI18n } from '../i18n'
 import { createContentGrowthWorkflow, CONTENT_GROWTH_USTADI_PROMPT } from '../lib/content-growth-workflow'
 import { compileTask } from '../lib/forge-task-compiler'
 import { getAccessToken, isSupabaseEnabled, supabase } from '../lib/supabase'
@@ -91,7 +92,37 @@ const LOCAL_CONNECTORS: ForgeConnectorState[] = [
   { id: 'voice-worker', label: 'Nemo Voice Worker', detail: 'Piper TTS', state: 'unverified' },
 ]
 
+/*
+ * Ошибка хранится КОДОМ, а не готовым текстом.
+ *
+ * Текст, положенный в состояние, замерзает на языке, который был в момент сбоя: человек переключает
+ * интерфейс на английский, а сообщение остаётся русским — ровно та несостыковка, ради которой это и
+ * правится. Код же переводится на рендере и меняется вместе с языком.
+ *
+ * Строка, пришедшая от сервера, в словаре не значится и пропускается как есть: конкретная причина
+ * отказа полезнее общей заглушки.
+ */
+export const FORGE_ERROR_CODES = [
+  'errNeedMedia', 'errTooShort', 'errOverBudget', 'errNoPlan',
+  'errTemplate', 'errProviders', 'errApprovals', 'errDecision',
+] as const
+
+const ERROR_KEYS = new Set<string>(FORGE_ERROR_CODES)
+
+export function forgeErrorText(code: string, t: (path: string) => string): string {
+  if (!code) return ''
+  return ERROR_KEYS.has(code) ? t(`forgePage.${code}`) : code
+}
+
+/** Сбой компилятора задачи → код сообщения. Вынесено из хука, чтобы проверялось без DOM. */
+export function compileErrorCodeFor(message: string): string {
+  if (message === 'FORGE_PROMPT_TOO_SHORT') return 'errTooShort'
+  if (message.includes('estimated cost exceeds budget cap')) return 'errOverBudget'
+  return 'errNoPlan'
+}
+
 export function useForgeExecution() {
+  const { t } = useI18n()
   const [prompt, setPrompt] = useState(() => {
     try {
       const structured = window.sessionStorage.getItem(BUSINESS_INTENT_STORAGE_KEY)
@@ -116,34 +147,30 @@ export function useForgeExecution() {
       return raw ? ProjectExecutionPlanSchema.parse(JSON.parse(raw)) : null
     } catch { return null }
   })
-  const [compileError, setCompileError] = useState('')
+  const [compileErrorCode, setCompileErrorCode] = useState('')
   const [connectedProviders, setConnectedProviders] = useState<string[]>([])
   const [approvals, setApprovals] = useState<ForgeApproval[]>([])
   const [loadingOperations, setLoadingOperations] = useState(isSupabaseEnabled)
-  const [operationsError, setOperationsError] = useState('')
+  const [operationsErrorCode, setOperationsErrorCode] = useState('')
   const [approvalBusy, setApprovalBusy] = useState('')
 
   const compile = useCallback(() => {
-    setCompileError('')
+    setCompileErrorCode('')
     try {
       const next = compileTask(prompt, { totalBudgetCapUsd: budgetCapUsd })
       if (routingMode === 'local_first' && next.steps.some((step) => step.computeProfile === 'PROFILE_C_BROWSER' || step.computeProfile === 'PROFILE_D_GPU')) {
-        setCompileError('План требует медиа-профиль. Подключите локальный media worker или выберите автоматическую маршрутизацию.')
+        setCompileErrorCode('errNeedMedia')
       }
       setPlan(next)
       try { window.localStorage.setItem('nemo.forge.last-plan', JSON.stringify(next)) } catch { /* storage is optional */ }
     } catch (error) {
       const code = error instanceof Error ? error.message : 'FORGE_COMPILE_FAILED'
-      setCompileError(code === 'FORGE_PROMPT_TOO_SHORT'
-        ? 'Опишите задачу минимум тремя символами.'
-        : code.includes('estimated cost exceeds budget cap')
-          ? 'Расчётная стоимость превышает установленный лимит.'
-          : 'Не удалось собрать безопасный план. Проверьте задачу и бюджет.')
+      setCompileErrorCode(compileErrorCodeFor(code))
     }
   }, [budgetCapUsd, prompt, routingMode])
 
   const compileContentGrowthTemplate = useCallback(() => {
-    setCompileError('')
+    setCompileErrorCode('')
     try {
       const templateBudget = Math.max(5, budgetCapUsd)
       const next = createContentGrowthWorkflow({ totalBudgetCapUsd: templateBudget })
@@ -152,7 +179,7 @@ export function useForgeExecution() {
       setPlan(next)
       try { window.localStorage.setItem('nemo.forge.last-plan', JSON.stringify(next)) } catch { /* storage is optional */ }
     } catch {
-      setCompileError('Не удалось собрать шаблон Content Growth.')
+      setCompileErrorCode('errTemplate')
     }
   }, [budgetCapUsd])
 
@@ -161,7 +188,7 @@ export function useForgeExecution() {
       setLoadingOperations(false)
       return
     }
-    setOperationsError('')
+    setOperationsErrorCode('')
     const [providersResult, approvalsResult] = await Promise.all([
       supabase.functions.invoke('connect-provider', { body: { action: 'status' } }),
       API_GATEWAY
@@ -175,10 +202,10 @@ export function useForgeExecution() {
       approvals?: DashboardApprovalItem[]
       error?: string
     } | null
-    if (providersResult.error) setOperationsError('Не удалось проверить часть подключений.')
+    if (providersResult.error) setOperationsErrorCode('errProviders')
     setConnectedProviders(providersPayload?.connected ?? [])
     if (approvalsResult.error || !approvalsPayload?.ok) {
-      setOperationsError((current) => current || approvalsPayload?.error || 'Не удалось загрузить согласования.')
+      setOperationsErrorCode((current) => current || approvalsPayload?.error || 'errApprovals')
     } else {
       const items = approvalsPayload.approvals ?? approvalsPayload.requests ?? []
       setApprovals(items.filter((item) => item.status === 'pending').map((item) => ({
@@ -206,7 +233,7 @@ export function useForgeExecution() {
   const decideApproval = useCallback(async (id: string, decision: 'approved' | 'rejected') => {
     if (!supabase) return
     setApprovalBusy(id)
-    setOperationsError('')
+    setOperationsErrorCode('')
     try {
       if (API_GATEWAY) {
         await dashboardRequest(`/v1/dashboard/approvals/${encodeURIComponent(id)}/decide`, {
@@ -221,7 +248,7 @@ export function useForgeExecution() {
       }
       setApprovals((items) => items.filter((item) => item.id !== id))
     } catch {
-      setOperationsError('Решение не сохранено. Проверьте доступ и повторите попытку.')
+      setOperationsErrorCode('errDecision')
     } finally {
       setApprovalBusy('')
     }
@@ -233,6 +260,10 @@ export function useForgeExecution() {
     { id: 'replicate', label: 'Replicate', detail: 'GPU provider', state: connectedProviders.includes('replicate') ? 'ready' : 'unavailable' },
     { id: 'telegram', label: 'Telegram', detail: 'Delivery channel', state: connectedProviders.includes('telegram') ? 'ready' : 'unavailable' },
   ], [connectedProviders])
+
+  // Перевод именно здесь, а не в момент сбоя: смена языка перерисовывает уже показанную ошибку.
+  const compileError = useMemo(() => forgeErrorText(compileErrorCode, t), [compileErrorCode, t])
+  const operationsError = useMemo(() => forgeErrorText(operationsErrorCode, t), [operationsErrorCode, t])
 
   return {
     prompt, setPrompt, budgetCapUsd, setBudgetCapUsd, routingMode, setRoutingMode,

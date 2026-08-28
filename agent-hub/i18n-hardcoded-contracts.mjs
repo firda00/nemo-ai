@@ -17,8 +17,16 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (file) => readFileSync(path.join(root, file), 'utf8')
 
-/** Экраны, переведённые полностью. Добавили сюда — обратной дороги нет. */
+/**
+ * Экраны, переведённые полностью. Добавили сюда — обратной дороги нет.
+ *
+ * Хуки в списке не для полноты: экран может быть чист, а текст ему подавать хук. Forge ровно так и
+ * протёк — `ForgePage.tsx` числился здесь и был честно чист, а восемь русских сообщений об ошибках
+ * лежали в `useForgeExecution.ts` и всплывали поверх английского интерфейса. Проверять надо всё,
+ * что доносит строку до экрана, а не только сам экран.
+ */
 const CLEAN = [
+  'src/hooks/useForgeExecution.ts',
   'src/pages/app/ForgePage.tsx',
   'src/pages/app/SettingsPage.tsx',
   'src/pages/app/BillingPage.tsx',

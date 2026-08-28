@@ -122,6 +122,8 @@ $steps = @(
   @{ Name = 'Visual RAG pilot limits and isolation'; Command = { npm run test:visual-rag } },
   @{ Name = 'Thirty-point UI and stability contracts'; Command = { npm run test:ui-stability } },
   @{ Name = 'Hardcoded UI text'; Command = { npm run test:i18n-hardcoded } },
+  @{ Name = 'I18n keys exist'; Command = { npm run test:i18n-keys } },
+  @{ Name = 'Forge error i18n'; Command = { npm run test:forge-i18n } },
   @{ Name = 'Website smoke test'; Command = { npm run test:ui } },
   # Шаг trace-ui припаркован вместе с экраном /app/dialogues, который он проверял, — см. шапку
   # agent-hub/trace-ui-smoke.mjs. Вернуть, когда карточка трейса получит новый экран.

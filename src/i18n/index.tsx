@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { Lang } from '../types'
 import { translations, type Dict } from './translations'
+import { makeT } from './translate'
 
 const STORAGE_KEY = 'nemo.lang'
 const PAGE_TITLES: Record<Lang, string> = {
@@ -27,15 +28,6 @@ interface I18nContextValue {
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null)
-
-function resolve(obj: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((acc, key) => {
-    if (acc && typeof acc === 'object' && key in (acc as Record<string, unknown>)) {
-      return (acc as Record<string, unknown>)[key]
-    }
-    return undefined
-  }, obj)
-}
 
 function getInitialLang(): Lang {
   if (typeof window !== 'undefined') {
@@ -62,20 +54,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     document.title = PAGE_TITLES[lang]
   }, [lang])
 
-  const t = useCallback(
-    (path: string, vars?: Record<string, string | number>) => {
-      const value = resolve(translations[lang], path)
-      if (typeof value !== 'string') {
-        // Fall back to the key so missing strings are visible, not blank.
-        return path
-      }
-      if (!vars) return value
-      return value.replace(/\{(\w+)\}/g, (_, k: string) =>
-        k in vars ? String(vars[k]) : `{${k}}`,
-      )
-    },
-    [lang],
-  )
+  const t = useMemo(() => makeT(lang), [lang])
 
   const value = useMemo<I18nContextValue>(
     () => ({ lang, setLang, t, dict: translations[lang] }),

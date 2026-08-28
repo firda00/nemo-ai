@@ -192,9 +192,15 @@ const checks = [
   // night. Every language must still say it, and the CSV path must still read as optional.
   ['UI marks estimates and explains the alert cap', /commerce\.autofill/.test(commercePage) && /commerce\.economicsHint/.test(commercePage) && /commerce\.sku\.estimatedTitle/.test(skuTable) && /commerce\.bulkHint/.test(commercePage)
     && /never trigger critical alerts until you confirm them/.test(i18nExtra) && /не вызывает срочных оповещений, пока вы её не подтвердите/.test(i18nExtra) && /shoshilinch ogohlantirish yubormaydi/.test(i18nExtra)],
+  // Ищем внутри самого словаря, а не в первых N символах после его начала. Окно в 6000 символов
+  // проверяло не наличие ключа, а его место в файле: словари растут, ключ уезжал за границу — и
+  // проверка краснела на переводе, который ничего не ломал. Так она и покраснела: на main, до
+  // всякой правки, потому что "commerce" уже стоял на 11-й тысяче символов.
   ['commerce copy exists in all three languages', ['extraUz', 'extraRu', 'extraEn'].every((name) => {
     const at = i18nExtra.indexOf(`export const ${name} = {`)
-    return at >= 0 && i18nExtra.slice(at, at + 6000).includes('"commerce":')
+    if (at < 0) return false
+    const next = i18nExtra.indexOf('export const ', at + 1)
+    return i18nExtra.slice(at, next < 0 ? undefined : next).includes('"commerce":')
   })],
   ['inline editing keeps money in tiyin', /Math\.round\(Number\(value\) \* 100\)/.test(skuTable) && /sku\.unit_cost_tiyin \/ 100/.test(skuTable)],
 
