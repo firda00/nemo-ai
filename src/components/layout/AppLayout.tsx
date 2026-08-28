@@ -12,7 +12,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Brain,
-  MessageSquare,
   LineChart,
   Megaphone,
   Sparkles,
@@ -99,7 +98,6 @@ export function AppLayout() {
   const navGroups: { title: string; items: NavItem[] }[] = [
     { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
-      { to: '/app/dialogues', label: t('appLayout.navDialogues'), icon: MessageSquare },
       { to: '/app/teams', label: t('teamOffice.navTeams'), icon: Users },
       { to: '/app/forge', label: 'Nemo Forge', icon: Cpu },
       { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },

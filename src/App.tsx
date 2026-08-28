@@ -13,7 +13,6 @@ import DashboardPage from './pages/app/DashboardPage'
 import AgentsPage from './pages/app/AgentsPage'
 import AgentEditorPage from './pages/app/AgentEditorPage'
 import ResearchPage from './pages/app/ResearchPage'
-import DialoguesPage from './pages/app/DialoguesPage'
 import AnalyticsPage from './pages/app/AnalyticsPage'
 import SettingsPage from './pages/app/SettingsPage'
 import IntegrationsPage from './pages/app/IntegrationsPage'
@@ -157,7 +156,7 @@ export default function App() {
         <Route path="agents" element={<AgentsPage />} />
         <Route path="agents/:id" element={<AgentEditorPage />} />
         <Route path="research" element={<ResearchPage />} />
-        <Route path="dialogues" element={<DialoguesPage />} />
+        <Route path="dialogues" element={<Navigate to="/app" replace />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="email-assistant" element={<EmailAssistantPage />} />
         <Route path="settings" element={<SettingsPage />} />

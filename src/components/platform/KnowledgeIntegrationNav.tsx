@@ -1,4 +1,4 @@
-import { BookOpen, Blocks, MessageSquare, Users, Wrench } from 'lucide-react'
+import { BookOpen, Blocks, Users, Wrench } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -6,7 +6,6 @@ import { cn } from '../../lib/cn'
 export function KnowledgeIntegrationNav({ active }: { active: 'dialogues' | 'leads' | 'knowledge' | 'integrations' | 'tools' }) {
   const { t } = useI18n()
   const items = [
-    { id: 'dialogues' as const, to: '/app/dialogues', label: t('platform.nav.dialogues'), icon: MessageSquare },
     { id: 'leads' as const, to: '/app/lead-forms', label: t('platform.nav.leadForms'), icon: Users },
     { id: 'integrations' as const, to: '/app/integrations', label: t('appLayout.navTools'), icon: Blocks },
     { id: 'knowledge' as const, to: '/app/knowledge', label: t('platform.nav.knowledge'), icon: BookOpen },
