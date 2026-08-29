@@ -2,14 +2,12 @@
 #
 #   irm https://nemo-ai-swart.vercel.app/install.ps1 | iex
 #
-# СТАВИМ ИЗ GIT, А НЕ ИЗ РЕЕСТРА NPM. Имя `nemo-ai` в npm занято ПОСТОРОННИМ пакетом (автор
-# emadjumaah). `npm i -g nemo-ai` установил бы чужой код глобально — это не опечатка в тексте, а
-# выполнение чужого кода с правами пользователя. Пока своё имя в реестре не занято, единственный
-# честный источник — репозиторий проекта.
+# Репозиторий приватный, поэтому установщик берёт собранный пакет с публичного домена Nemo.
+# Голое имя `nemo-ai` использовать нельзя: в npm оно принадлежит постороннему пакету.
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = 'github:firda00/nemo-ai'
+$PackageUrl = 'https://nemo-ai-swart.vercel.app/nemo-cli.tgz'
 $NodeMinMajor = 20
 $NodeMinMinor = 6
 
@@ -52,12 +50,12 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 
 # ── Установка ───────────────────────────────────────────────────────────────────────────────
-Say "  Ставлю из $Repo (сборка занимает около минуты)..."
+Say '  Скачиваю официальный пакет Nemo...'
 Say ''
 
 # 2>&1 к native-команде в PowerShell 5.1 оборачивает каждую строку stderr в ошибку и сбивает $?,
 # поэтому поток НЕ перенаправляется, а результат проверяется по $LASTEXITCODE.
-npm install -g $Repo --no-audit --no-fund
+npm install -g $PackageUrl --no-audit --no-fund
 if ($LASTEXITCODE -ne 0) {
   Say ''
   Say '  Установка не прошла. Чаще всего это права на каталог глобальных пакетов npm.'

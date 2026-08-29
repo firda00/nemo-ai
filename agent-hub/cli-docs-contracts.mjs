@@ -12,6 +12,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { spawnSync } from 'node:child_process'
 
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n')
@@ -69,23 +70,15 @@ check('ссылка в шапке лендинга', /\/docs\/cli/.test(header))
    * То есть документация честно совпадала сама с собой и при этом велела людям ставить чужой код
    * глобально. Совпадение с package.json ничего не говорит о том, кому принадлежит имя снаружи.
    *
-   * Пока своё имя в реестре не занято, единственный безопасный источник — репозиторий проекта.
-   * Проверяется явно: спецификация обязана быть github:firda00/... либо областью, которой мы
-   * владеем. Голое имя пакета запрещено.
+ * Репозиторий приватный, поэтому публичная документация не должна отправлять клиента на GitHub.
+ * Оба установщика обязаны брать один и тот же готовый архив с домена Nemo.
    */
-  const specs = [...docs.matchAll(/command: '(?:npm i -g|npm install -g|npx) ([^ ']+)/g)].map((m) => m[1])
-  const OWN = /^(?:github:firda00\/|@nemoai\/|@firda00\/)/
-  const bare = specs.filter((spec) => !OWN.test(spec))
-  check('установка ведёт в наш источник, а не в чужой пакет реестра', bare.length === 0,
-    bare.length ? `голые имена: ${[...new Set(bare)].join(', ')} — в npm они могут принадлежать кому угодно` : `${specs.length} команд`)
+  const assetUrl = 'https://nemo-ai-swart.vercel.app/nemo-cli.tgz'
+  check('публичная документация не раскрывает приватный GitHub', !/github:firda00|github\.com\/firda00/.test(docs))
 
-  // Скрипты установки не должны обходить это правило своим путём.
   for (const [name, text] of [['install.sh', read('public/install.sh')], ['install.ps1', read('public/install.ps1')]]) {
-    const inScript = [...text.matchAll(/npm install -g ["'$]?([^ "'$\n]+)/g)].map((m) => m[1])
-    const suspicious = inScript.filter((spec) => !OWN.test(spec) && !spec.includes('Repo') && !spec.includes('REPO'))
-    check(`${name} ставит из нашего источника`, suspicious.length === 0,
-      suspicious.length ? suspicious.join(', ') : 'из переменной с github: спецификацией')
-    check(`${name} называет наш репозиторий`, /github:firda00\/nemo-ai/.test(text))
+    check(`${name} ставит публичный архив Nemo`, text.includes(assetUrl))
+    check(`${name} не требует доступ к приватному GitHub`, !/github:firda00|github\.com\/firda00/.test(text))
   }
 }
 
@@ -100,13 +93,20 @@ check('сборка CLI привязана к prepare', pkg.scripts?.prepare?.in
   pkg.scripts?.prepare ?? 'prepare отсутствует')
 check('prepack не подменяет prepare', !pkg.scripts?.prepack,
   pkg.scripts?.prepack ? 'prepack при установке из git не вызывается' : 'нет')
+check('production build обновляет публичный CLI-архив', pkg.scripts?.build?.includes('build:cli-release') === true)
 
 // ── Нативные установщики опубликованы и доступны по адресу из документации ──────────────────
 {
   const shPath = path.join(root, 'public/install.sh')
   const psPath = path.join(root, 'public/install.ps1')
+  const archivePath = path.join(root, 'public/nemo-cli.tgz')
   check('install.sh лежит в public', fs.existsSync(shPath))
   check('install.ps1 лежит в public', fs.existsSync(psPath))
+  check('готовый CLI-архив лежит в public', fs.existsSync(archivePath) && fs.statSync(archivePath).size > 1024)
+  if (fs.existsSync(archivePath)) {
+    const listed = spawnSync('tar', ['-tzf', archivePath], { encoding: 'utf8', windowsHide: true })
+    check('публичный архив содержит исполняемый CLI', listed.status === 0 && /package\/dist\/cli\.js/.test(listed.stdout ?? ''))
+  }
 
   const urls = [...docs.matchAll(/(https:\/\/[^ '|]+\/install\.(?:sh|ps1))/g)].map((m) => m[1])
   check('в документации есть обе однострочные команды', urls.length >= 2, urls.join(', '))
@@ -158,24 +158,17 @@ check('prepack не подменяет prepare', !pkg.scripts?.prepack,
    * упомянут как раз затем, чтобы объяснить, почему его там нельзя. Проверка ловила собственную
    * документацию — четвёртый случай этого класса в репозитории.
    */
-  const commandOf = (id, next) => {
-    const block = docs.slice(docs.indexOf(`id: '${id}'`), docs.indexOf(`id: '${next}'`))
+  const commandOf = (id) => {
+    const block = docs.slice(docs.indexOf(`id: '${id}'`))
     return block.match(/command: '([^']*)'/)?.[1] ?? ''
   }
 
-  const psNative = commandOf('native-windows', 'npm-unix')
+  const psNative = commandOf('native-windows')
   check('однострочник для Windows идёт через irm | iex', /irm .*\| iex/.test(psNative), psNative)
 
-  const psNpm = commandOf('npm-windows', 'source')
-  check('в команде npm для PowerShell нет &&', psNpm.includes('&&') === false,
-    psNpm.includes('&&') ? `скопированная строка там не выполнится: ${psNpm}` : psNpm)
-  check('в команде npm для PowerShell есть ;', psNpm.includes(';'), psNpm)
-
-  const unixNative = commandOf('native-unix', 'native-windows')
+  const unixNative = commandOf('native-unix')
   check('однострочник для macOS/Linux идёт через curl | bash', /curl -fsSL .*\| bash/.test(unixNative), unixNative)
-
-  const unixNpm = commandOf('npm-unix', 'npm-windows')
-  check('в команде npm для macOS/Linux есть &&', unixNpm.includes('&&'), unixNpm)
+  check('на странице оставлены только две публичные установки', (docs.match(/id: 'native-/g) ?? []).length === 2 && !/id: '(?:npm-|source)'/.test(docs))
 
   /*
    * НАТИВНАЯ УСТАНОВКА — ПЕРВАЯ. Её и рекомендуем: она проверяет Node, ставит и честно говорит,
@@ -184,7 +177,7 @@ check('prepack не подменяет prepare', !pkg.scripts?.prepack,
   const firstTab = docs.slice(docs.indexOf('INSTALL_TABS')).match(/id: '([a-z-]+)'/)?.[1]
   check('нативная установка стоит первой', firstTab?.startsWith('native') === true, firstTab ?? '?')
 
-  check('предупреждение о PowerShell видно на странице', /PowerShell/.test(page) && /TriangleAlert|Alert/.test(page))
+  check('устаревшее предупреждение про разделители команд удалено', !/TriangleAlert/.test(page))
 }
 
 /*

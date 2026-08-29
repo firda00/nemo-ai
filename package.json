@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:cli-release && tsc -b && vite build",
     "lint": "eslint .",
     "test": "tsc -b && eslint .",
     "test:contracts": "node agent-hub/validate-agent-contracts.mjs",
@@ -160,6 +160,7 @@
     "test:hud": "node --experimental-strip-types agent-hub/hud-behavior.mjs",
     "test:legal": "node --experimental-strip-types agent-hub/legal-contracts.mjs",
     "build:cli": "node scripts/build-cli.mjs",
+    "build:cli-release": "node scripts/package-cli-release.mjs",
     "test:cli-install": "node agent-hub/cli-install-smoke.mjs",
     "test:cli-auth": "node --experimental-strip-types agent-hub/cli-auth-behavior.mjs",
     "test:marketing-skills": "node --experimental-strip-types agent-hub/marketing-skills-behavior.mjs",

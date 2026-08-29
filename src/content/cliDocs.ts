@@ -24,16 +24,9 @@ export interface InstallTab {
 /*
  * СПОСОБЫ УСТАНОВКИ, ПЕРВЫЙ — РЕКОМЕНДОВАННЫЙ.
  *
- * ИМЯ nemo-ai В РЕЕСТРЕ NPM ЗАНЯТО ПОСТОРОННИМ ПАКЕТОМ (автор emadjumaah, «Evolving semantic
- * memory and intent router»). Команда `npm i -g nemo-ai` поставила бы ЧУЖОЙ код глобально — это
- * не опечатка в инструкции, а выполнение постороннего кода с правами пользователя. Поэтому все
- * способы ведут в репозиторий проекта, а не в реестр.
- *
- * Когда своё имя в npm будет занято (скорее всего под областью вида @nemoai/cli), команды здесь
- * меняются на него — и только тогда.
- *
- * Разделитель команд в PowerShell — тоже не придирка: `&&` там работает не так, как в bash, и
- * строка, скопированная из инструкции для macOS, выдаёт ошибку разбора.
+ * Репозиторий проекта приватный. Поэтому пользователь получает только две публичные команды:
+ * curl для macOS/Linux и PowerShell для Windows. Оба установщика скачивают готовый архив CLI с
+ * домена Nemo; доступ к GitHub и исходному коду не требуется.
  */
 export const INSTALL_TABS: InstallTab[] = [
   {
@@ -54,36 +47,6 @@ export const INSTALL_TABS: InstallTab[] = [
       ru: 'То же для PowerShell: проверит Node.js, поставит и обновит PATH текущей сессии.',
       uz: 'PowerShell uchun shu narsa: Node.js ni tekshiradi, oʻrnatadi va joriy sessiya PATH ini yangilaydi.',
       en: 'The same for PowerShell: checks Node.js, installs, and refreshes PATH for the current session.',
-    },
-  },
-  {
-    id: 'npm-unix',
-    label: { ru: 'npm · macOS · Linux', uz: 'npm · macOS · Linux', en: 'npm · macOS · Linux' },
-    command: 'npm i -g github:firda00/nemo-ai && nemo',
-    note: {
-      ru: 'Без скрипта, вручную. Ставится из репозитория: имя nemo-ai в реестре npm занято чужим пакетом.',
-      uz: 'Skriptsiz, qoʻlda. Repozitoriydan oʻrnatiladi: npm reestrida nemo-ai nomi begona paketga tegishli.',
-      en: 'Manual, without the script. Installs from the repository: the npm name nemo-ai belongs to someone else.',
-    },
-  },
-  {
-    id: 'npm-windows',
-    label: { ru: 'npm · Windows PowerShell', uz: 'npm · Windows PowerShell', en: 'npm · Windows PowerShell' },
-    command: 'npm i -g github:firda00/nemo-ai; nemo',
-    note: {
-      ru: 'В PowerShell команды разделяются точкой с запятой — «&&» там работает не так, как в bash.',
-      uz: 'PowerShell’da buyruqlar nuqtali vergul bilan ajratiladi — «&&» u yerda bash’dagidek ishlamaydi.',
-      en: 'PowerShell separates commands with a semicolon — “&&” does not behave like it does in bash.',
-    },
-  },
-  {
-    id: 'source',
-    label: { ru: 'Из исходников', uz: 'Manbadan', en: 'From source' },
-    command: 'git clone https://github.com/firda00/nemo-ai.git\ncd nemo-ai\nnpm i\nnpm link',
-    note: {
-      ru: 'Для разработки. npm link делает команду nemo глобальной из локальной копии.',
-      uz: 'Ishlab chiqish uchun. npm link nemo buyrugʻini lokal nusxadan global qiladi.',
-      en: 'For development. npm link makes nemo global from your local copy.',
     },
   },
 ]

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, Terminal, TriangleAlert } from 'lucide-react'
+import { Check, Copy, Terminal } from 'lucide-react'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
 import { useI18n } from '../i18n'
@@ -104,21 +104,6 @@ export default function CliDocsPage() {
             </div>
             <p className="mt-2.5 text-sm leading-relaxed text-muted">{current.note[active]}</p>
 
-            {/*
-              Предупреждение стоит ПОСТОЯННО, а не только на вкладке PowerShell.
-              Человек копирует команду с вкладки macOS на рабочем Windows-ноутбуке — это самый
-              частый способ получить ошибку разбора и решить, что продукт сломан.
-            */}
-            <div className="mt-6 flex gap-3 rounded-2xl border border-orange/25 bg-orange/[0.06] p-4">
-              <TriangleAlert size={17} className="mt-0.5 shrink-0 text-orange" />
-              <p className="text-sm leading-relaxed text-muted">
-                <span className="font-medium text-text">{UI.warnTitle[active]}</span>{' '}
-                <code className="rounded bg-black/40 px-1.5 py-0.5 text-cyan">;</code>{' '}
-                <span className="text-fog">≠</span>{' '}
-                <code className="rounded bg-black/40 px-1.5 py-0.5 text-cyan">&amp;&amp;</code>{' '}
-                — {UI.warnBody[active]}
-              </p>
-            </div>
           </section>
 
           {/* ── Команды ───────────────────────────────────────────────────────────── */}

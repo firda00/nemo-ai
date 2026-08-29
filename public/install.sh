@@ -4,14 +4,12 @@
 #
 #   curl -fsSL https://nemo-ai-swart.vercel.app/install.sh | bash
 #
-# СТАВИМ ИЗ GIT, А НЕ ИЗ РЕЕСТРА NPM. Имя `nemo-ai` в npm занято ПОСТОРОННИМ пакетом (автор
-# emadjumaah, «Evolving semantic memory and intent router»). `npm i -g nemo-ai` установил бы чужой
-# код глобально — не опечатка в тексте, а выполнение чужого кода с правами пользователя. Пока
-# собственное имя в реестре не занято, единственный честный источник — репозиторий проекта.
+# Репозиторий приватный, поэтому установщик берёт собранный пакет с публичного домена Nemo.
+# Голое имя `nemo-ai` использовать нельзя: в npm оно принадлежит постороннему пакету.
 
 set -euo pipefail
 
-REPO="github:firda00/nemo-ai"
+PACKAGE_URL="https://nemo-ai-swart.vercel.app/nemo-cli.tgz"
 NODE_MIN_MAJOR=20
 NODE_MIN_MINOR=6
 
@@ -49,14 +47,14 @@ say "  Node.js ${NODE_VERSION} — годится"
 command -v npm >/dev/null 2>&1 || fail "npm не найден: обычно он идёт вместе с Node.js"
 
 # ── Установка ───────────────────────────────────────────────────────────────────────────────
-say "  Ставлю из ${REPO} (сборка занимает около минуты)…"
+say "  Скачиваю официальный пакет Nemo…"
 say ""
 
-if ! npm install -g "$REPO" --no-audit --no-fund; then
+if ! npm install -g "$PACKAGE_URL" --no-audit --no-fund; then
   say ""
   say "  Установка не прошла. Чаще всего это права на глобальный каталог npm."
   say ""
-  say "    вариант 1:  sudo npm install -g ${REPO}"
+  say "    вариант 1:  sudo npm install -g ${PACKAGE_URL}"
   say "    вариант 2:  npm config set prefix ~/.npm-global   и добавить ~/.npm-global/bin в PATH"
   say ""
   fail "остановлено"
