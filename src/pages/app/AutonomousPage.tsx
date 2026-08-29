@@ -21,7 +21,9 @@ export default function AutonomousPage() {
     } catch { return '' }
   })
   const [selectedDepartment, setSelectedDepartment] = useState<DurableTeamTemplate | null>(null)
+  const [runState, setRunState] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle')
   const isTeam = mode === 'team'
+  const showTeamSetup = isTeam && (runState === 'idle' || runState === 'failed')
 
   const examples = isTeam
     ? [t('autonomousPage.teamEx1'), t('autonomousPage.teamEx2'), t('autonomousPage.teamEx3')]
@@ -53,7 +55,7 @@ export default function AutonomousPage() {
         >
           <ArrowLeft size={19} />
         </button>
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
+        <span className="team-builder-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
           {isTeam ? <Wand2 size={20} /> : <Bot size={20} />}
         </span>
         <div>
@@ -93,12 +95,14 @@ export default function AutonomousPage() {
             goalValue={starterGoal}
             onGoalChange={setStarterGoal}
             presetSpecs={selectedDepartment?.roles}
+            builderMode
+            onRunStateChange={setRunState}
             contextHint={selectedDepartment ? `Durable team template ${selectedDepartment.id}@${selectedDepartment.version}. Routing: ${selectedDepartment.routingProtocol}. Persist the roster only through the atomic team creation boundary; the user's written task remains the exact goal.` : undefined}
           />
         ) : <SingleAgentRunner />}
       </div>
 
-      {isTeam && (
+      {showTeamSetup && (
         <div className="mt-8">
           <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Выберите отдел — роли подставятся автоматически' : lang === 'uz' ? 'Boʻlimni tanlang — rollar avtomatik tanlanadi' : 'Choose a department — roles are selected automatically'}</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -113,14 +117,14 @@ export default function AutonomousPage() {
         </div>
       )}
 
-      <div className="mt-8">
+      {(showTeamSetup || !isTeam) && <div className="mt-8">
         <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">{t('autonomousPage.examplesLabel')}</p>
         <div className="grid gap-2 sm:grid-cols-2">
           {examples.map((e) => (
             <button key={e} onClick={() => isTeam && setStarterGoal(e)} className="rounded-2xl border border-ice/10 bg-white/[0.02] p-3 text-left text-sm leading-relaxed text-muted transition hover:border-violet/30 hover:text-text">{e}</button>
           ))}
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUp, Loader2, Users, Check, ChevronDown, RotateCcw, Bot, Save, Sparkles, Image as ImageIcon, Send, Download, X, MessageSquare, Paperclip, FileSpreadsheet, AlertTriangle } from 'lucide-react'
+import { ArrowUp, Loader2, Users, Check, RotateCcw, Save, Sparkles, Image as ImageIcon, Send, Download, X, Paperclip, FileSpreadsheet, AlertTriangle, ExternalLink } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/dynamicTeams'
@@ -22,8 +22,6 @@ import {
 } from '../../lib/autonomousInputs'
 
 const live = isSupabaseEnabled
-const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
-
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {
   role: string
@@ -96,6 +94,7 @@ export function AutonomousRunner({
   goalValue,
   onGoalChange,
   contextKey,
+  builderMode = false,
   onRunStateChange,
   onComplete,
 }: {
@@ -117,6 +116,8 @@ export function AutonomousRunner({
   onGoalChange?: (value: string) => void
   /** Stable runtime namespace for reusable launchers that are not persisted departments. */
   contextKey?: string
+  /** Focused create-team UX: hide the internal agent trace and offer a direct save/open action. */
+  builderMode?: boolean
   onRunStateChange?: (status: 'idle' | 'queued' | 'running' | 'completed' | 'failed') => void
   onComplete?: (result: string) => void
 }) {
@@ -134,10 +135,8 @@ export function AutonomousRunner({
   const [phase, setPhase] = useState<'idle' | 'architect' | 'team' | 'review' | 'synth'>('idle')
   const [specs, setSpecs] = useState<Spec[]>([])
   const [result, setResult] = useState<string | null>(null)
-  const [escalatedCount, setEscalatedCount] = useState(0)
   const [error, setError] = useState('')
   const [dataWarning, setDataWarning] = useState('')
-  const [openStep, setOpenStep] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   // team save options: chosen LLM (provider+model) and business sphere;
   // premium models remain plan-gated server-side on every reply
@@ -245,7 +244,6 @@ export function AutonomousRunner({
     }
     setInputArtifacts(state?.inputArtifacts ?? [])
     setSpecs(visibleSpecs)
-    setEscalatedCount(Number((state as CheckpointState & { escalatedCount?: number })?.escalatedCount) || restoredSpecs.filter((spec) => spec.escalated).length)
     if (workerRun.status === 'completed') {
       setResult(String((state as CheckpointState & { result?: string })?.result ?? ''))
       setRunning(false)
@@ -256,7 +254,8 @@ export function AutonomousRunner({
       return true
     }
     if (workerRun.status === 'failed' || workerRun.status === 'cancelled') {
-      setError(workerRun.status === 'cancelled' ? t('autonomousRunner.runCancelled') : workerRun.last_error || t('autonomousRunner.workerFailed'))
+      // Internal worker codes are useful in logs, not in the customer-facing product.
+      setError(workerRun.status === 'cancelled' ? t('autonomousRunner.runCancelled') : t('autonomousRunner.workerFailed'))
       setRunning(false)
       setPhase('idle')
       if (workerRun.status === 'cancelled') {
@@ -293,7 +292,6 @@ export function AutonomousRunner({
     setDataWarning(!storeConnected && marketplaceInputMissing(task, inputArtifacts, contextHint) ? t('autonomousRunner.marketplacePlanningWithoutData') : '')
     setResult(null)
     setSpecs([])
-    setEscalatedCount(0)
     setRunning(true)
     setPhase(presetSpecs?.length ? 'team' : 'architect')
     const response = await call({
@@ -398,7 +396,6 @@ export function AutonomousRunner({
     setDataWarning(marketplaceDataMissing ? t('autonomousRunner.marketplacePlanningWithoutData') : '')
     setResult(null)
     setSpecs([])
-    setEscalatedCount(0)
     setRunning(true)
     try {
       if (!live || !supabase) {
@@ -545,11 +542,6 @@ export function AutonomousRunner({
         }
       }
 
-      // real human-fallback: a piece the reviewer never approved (escalated) is NOT presented as
-      // clean — it's counted, flagged to the manager, and surfaced as a warning on the deliverable.
-      const escN = done.filter((d) => d.escalated).length
-      setEscalatedCount(escN)
-
       if (!await persistCheckpoint('synth', {
         goal: task,
         orchestratedGoal: g,
@@ -575,7 +567,9 @@ export function AutonomousRunner({
           review: d.review,
           revised: Boolean(d.revised),
           revisions: d.revisions ?? 0,
-          needsHumanReview: Boolean(d.escalated),
+          // Peer-review convergence is internal quality telemetry. It must not turn into
+          // a fake customer approval step; external mutations still keep their own gates.
+          needsHumanReview: false,
         })),
         sources: [...runSources].slice(0, 30),
       })
@@ -621,6 +615,15 @@ export function AutonomousRunner({
     setResumeCheckpoint(null)
   }
   const canResume = Boolean(resumeCheckpoint && resumeCheckpoint.state.goal.trim() === goal.trim())
+  const phaseOrder = ['architect', 'team', 'review', 'synth'] as const
+  const activePhaseIndex = Math.max(0, phaseOrder.indexOf(phase === 'idle' ? 'architect' : phase))
+  const phaseLabel = phase === 'architect'
+    ? t('autonomousRunner.phaseArchitect')
+    : phase === 'team'
+      ? t('autonomousRunner.phaseTeam')
+      : phase === 'review'
+        ? t('autonomousRunner.phaseReview')
+        : t('autonomousRunner.phaseSynth')
 
   return (
     <div>
@@ -712,64 +715,29 @@ export function AutonomousRunner({
         </button>
       )}
 
-      {running && phase === 'architect' && (
-        <div className="card mt-5 flex items-center gap-3 rounded-2xl p-5">
-          <Loader2 size={18} className="animate-spin text-violet" />
-          <p className="text-sm font-medium text-text">Manager is designing the team for this goal…</p>
-        </div>
-      )}
-
-      {specs.length > 0 && (
-        <div className="card mt-5 rounded-2xl p-5">
-          <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text">
-            <Users size={15} className="text-violet" /> {t('autonomousRunner.managerCreated', { n: specs.length })}
-            {running && phase === 'review' && <span className="ml-2 inline-flex items-center gap-1 text-xs text-cyan"><Loader2 size={12} className="animate-spin" /> {t('autonomousRunner.crossChecking')}</span>}
-            {running && phase === 'synth' && <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted"><Loader2 size={12} className="animate-spin" /> {t('autonomousRunner.combiningResults')}</span>}
-          </p>
-          <div className="space-y-2">
-            {specs.map((s, i) => {
-              const color = COLORS[i % COLORS.length]
-              return (
-                <div key={i} className="rounded-xl border border-ice/[0.07]">
-                  <button onClick={() => s.status === 'done' && setOpenStep(openStep === i ? null : i)} className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg" style={{ background: `${color}22`, color }}><Bot size={13} /></span>
-                    <span className="shrink-0 text-sm font-medium text-text">{s.name}</span>
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: `${color}1a`, color }}>{s.role}</span>
-                    {s.skills?.length ? <span className="hidden shrink-0 text-[10px] text-cyan sm:inline">{s.skills.length} {t('autonomousRunner.skillsEnabled')}</span> : null}
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted">{s.prompt.tasks}</span>
-                    {s.status === 'running' ? (
-                      <Loader2 size={14} className="shrink-0 animate-spin text-violet" />
-                    ) : s.status === 'review' ? (
-                      <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-cyan"><Loader2 size={13} className="animate-spin" /> {t('autonomousRunner.reviewing')}</span>
-                    ) : s.status === 'fixing' ? (
-                      <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-amber"><Loader2 size={13} className="animate-spin" /> {t('autonomousRunner.fixing')}</span>
-                    ) : s.status === 'done' ? (
-                      <><Check size={14} className="shrink-0 text-teal" /><ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', openStep === i && 'rotate-180')} /></>
-                    ) : (
-                      <span className="shrink-0 text-[11px] text-muted">…</span>
-                    )}
-                  </button>
-                  {/* peer-review verdict: which teammate checked this, score, issues, revision */}
-                  {s.review && (
-                    <div className="mx-3.5 mb-2.5 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-2">
-                      <p className="flex items-center gap-1.5 text-[11.5px] font-medium text-amber">
-                        <MessageSquare size={12} /> {t('autonomousRunner.reviewedBy', { name: s.reviewedBy ?? '' })} · {s.review.score}/100 · {s.review.approved ? t('autonomousRunner.approved') : t('autonomousRunner.hasIssues')}
-                      </p>
-                      {s.review.issues.length > 0 && (
-                        <ul className="mt-1 space-y-0.5">
-                          {s.review.issues.slice(0, 4).map((it, k) => <li key={k} className="text-[11px] text-muted">• {it}</li>)}
-                        </ul>
-                      )}
-                      {s.revised && <p className="mt-1 text-[11px] font-medium text-teal">{t('autonomousRunner.revisedNote')}</p>}
-                      {s.escalated && <p className="mt-1 text-[11px] font-medium text-amber">{t('autonomousRunner.escalatedNote')}</p>}
-                    </div>
-                  )}
-                  {openStep === i && s.status === 'done' && (
-                    <div className="border-t border-ice/[0.07] px-3.5 py-3"><Markdown content={s.output || '—'} /></div>
-                  )}
+      {running && (
+        <div className="team-run-stage card mt-5 overflow-hidden rounded-3xl p-5 sm:p-6" role="status" aria-live="polite">
+          <div className="relative z-10 flex items-center gap-4">
+            <div className="team-run-orbit relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
+              <Sparkles size={24} />
+              <span className="team-run-pulse absolute inset-0 rounded-2xl border border-cyan/60" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan">{t('autonomousRunner.workingTitle')}</p>
+              <p className="mt-1 text-lg font-bold text-text">{phaseLabel}</p>
+              <p className="mt-1 text-sm text-muted">{t('autonomousRunner.workingHint')}</p>
+            </div>
+            <Loader2 size={20} className="hidden animate-spin text-violet sm:block" />
+          </div>
+          <div className="relative z-10 mt-5 grid grid-cols-4 gap-2">
+            {phaseOrder.map((item, index) => (
+              <div key={item} className="space-y-2">
+                <div className={cn('h-1.5 overflow-hidden rounded-full bg-white/[0.06]', index <= activePhaseIndex && 'bg-violet/20')}>
+                  {index <= activePhaseIndex && <span className={cn('block h-full rounded-full bg-brand', index === activePhaseIndex && 'team-run-progress')} />}
                 </div>
-              )
-            })}
+                <span className={cn('block text-[10px] font-medium text-muted', index === activePhaseIndex && 'text-text')}>{index + 1}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -782,14 +750,27 @@ export function AutonomousRunner({
               <RotateCcw size={13} /> {t('autonomousRunner.newGoal')}
             </button>
           </div>
-          {escalatedCount > 0 && (
-            <div className="rounded-xl border border-amber/30 bg-amber/10 px-4 py-3 text-[13px] text-amber">⚠ {t('autonomousRunner.escalatedBanner', { count: escalatedCount })}</div>
+          {builderMode && (
+            <div className="team-result-ready flex flex-col gap-3 rounded-2xl border border-teal/25 bg-teal/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-text"><Check size={16} className="text-teal" /> {t('autonomousRunner.resultReady')}</p>
+                <p className="mt-1 text-xs text-muted">{t('autonomousRunner.resultLocation')}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => navigate('/app/teams')} className="inline-flex items-center gap-2 rounded-xl border border-ice/12 px-3.5 py-2 text-sm font-medium text-muted transition hover:text-text">
+                  <Users size={15} /> {t('autonomousRunner.openTeams')}
+                </button>
+                <button type="button" onClick={saveTeam} disabled={saving || !specs.length} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-glow transition hover:-translate-y-0.5 disabled:opacity-40">
+                  {saving ? <Loader2 size={15} className="animate-spin" /> : <ExternalLink size={15} />} {t('autonomousRunner.saveAndOpen')}
+                </button>
+              </div>
+            </div>
           )}
           <div className="card rounded-2xl p-6"><Markdown content={result} /></div>
           <DocExport content={result} title={goal} />
           {postActions && <QualityBar goal={goal} content={result} model={model} lang={lang} onRevised={setResult} />}
           {postActions && <DeliveryBar content={result} />}
-          {!presetSpecs?.length && (
+          {!builderMode && !presetSpecs?.length && (
             <div className="flex flex-wrap items-end gap-2">
               <label className="space-y-1">
                 <span className="block text-[10px] font-medium uppercase tracking-wide text-muted">{t('autonomousRunner.saveModel')}</span>

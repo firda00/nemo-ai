@@ -37,7 +37,7 @@ export function MarketingFooter() {
       <div className="container-page py-16">
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-5">
           <div className="lg:col-span-2">
-            <Logo />
+            <Logo variant="neon" size={38} />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">{t('marketingFooter.tagline')}</p>
             <div className="mt-5 inline-flex items-center gap-2 rounded-pill border border-white/10 bg-white/5 px-3 py-1">
               <span className="h-1.5 w-1.5 rounded-full bg-teal" />

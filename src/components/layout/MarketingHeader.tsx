@@ -41,7 +41,7 @@ export function MarketingHeader() {
       <div className="container-page px-4">
         <div className="flex h-16 items-center justify-between">
           <Link to="/" className="flex items-center" onClick={() => setOpen(false)}>
-            <Logo />
+            <Logo variant="neon" size={36} />
           </Link>
 
           <nav className="hidden items-center gap-7 lg:flex">
@@ -63,7 +63,7 @@ export function MarketingHeader() {
                 <Link to="/app" className="text-sm font-medium text-muted transition-colors hover:text-text">
                   {t('nav.login')}
                 </Link>
-                <Button to="/app" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
+                <Button to="/app" size="sm" className="!bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_12px_32px_-16px_rgba(66,237,245,0.9)] hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </>
@@ -85,7 +85,7 @@ export function MarketingHeader() {
               ))}
               <div className="mt-2 flex items-center justify-between gap-3 px-1">
                 <LanguageToggle />
-                <Button to="/app" size="sm" className="!bg-cyan !bg-none !text-[#041018] shadow-none hover:brightness-110">
+                <Button to="/app" size="sm" className="!bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_12px_32px_-16px_rgba(66,237,245,0.9)] hover:brightness-110">
                   {t('marketingHeader.book')}
                 </Button>
               </div>

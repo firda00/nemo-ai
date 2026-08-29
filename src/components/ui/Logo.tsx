@@ -5,13 +5,38 @@ interface LogoProps {
   size?: number
   showWordmark?: boolean
   tone?: 'light' | 'dark'
+  variant?: 'flow' | 'neon'
 }
 
 // Brand Identity 2026.1. Two stems hold position, the 45° diagonal carries work between
 // them in the direction it flows — cyan where a task starts, indigo where it lands. The
 // round stroke caps read as the nodes, so the mark survives at 16px with nothing added.
 // Flat by contract: the previous mark's drop shadow is gone and does not come back.
-export function Logo({ className, size = 30, showWordmark = true }: LogoProps) {
+export function Logo({ className, size = 30, showWordmark = true, variant = 'flow' }: LogoProps) {
+  if (variant === 'neon') {
+    return (
+      <span className={cn('inline-flex items-center gap-3 select-none', className)}>
+        <span
+          className="relative shrink-0 overflow-hidden rounded-[28%] border border-[#48ecf4]/25 bg-[#090c19] shadow-[0_0_24px_rgba(72,236,244,0.14)]"
+          style={{ width: size, height: size }}
+        >
+          <img
+            src="/brand/nemo-logo-neon.jpeg"
+            alt=""
+            aria-hidden="true"
+            className="absolute left-1/2 top-1/2 max-w-none"
+            style={{ width: '160%', transform: 'translate(-50%, -43%)' }}
+          />
+        </span>
+        {showWordmark && (
+          <span className="font-brand text-[18px] font-light leading-none tracking-[0.18em] text-[#e8fbff]">
+            NEMO
+          </span>
+        )}
+      </span>
+    )
+  }
+
   return (
     <span className={cn('inline-flex items-center gap-2.5 select-none', className)}>
       <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>

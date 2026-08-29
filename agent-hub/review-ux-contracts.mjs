@@ -23,11 +23,13 @@ const check = (name, ok) => {
 
 // \r?\n: working-tree files may be CRLF on Windows (core.autocrlf), LF in CI
 const autonomousBlocks = [...i18n.matchAll(/"autonomousRunner":\s*\{([\s\S]*?)\r?\n\s*\},\r?\n\s*"autopostPage"/g)].map((m) => m[1])
-check('all three autonomous-runner dictionaries contain escalation copy', autonomousBlocks.length === 3 && autonomousBlocks.every((b) => b.includes('"escalatedNote"') && b.includes('"escalatedBanner"')))
-check('department choice replaces the generated prompt for the newly selected department', page.includes('setStarterGoal(p.goal)'))
+check('all three autonomous-runner dictionaries contain concise progress and result-location copy', autonomousBlocks.length === 3 && autonomousBlocks.every((b) => b.includes('"workingHint"') && b.includes('"resultLocation"') && b.includes('"saveAndOpen"')))
+check('department choice replaces the generated prompt for the newly selected department', page.includes('setStarterGoal(p.goal[templateLanguage])'))
 check('example choice replaces the generated prompt predictably', page.includes('setStarterGoal(e)'))
 check('autonomous goal input is controlled without remounting', page.includes('goalValue={starterGoal}') && page.includes('onGoalChange={setStarterGoal}') && !page.includes("key={starterGoal || 'blank-team'}"))
 check('review loop keeps the highest-scoring version', runner.includes('bestReview') && runner.includes('review.score > bestReview.score') && runner.includes('done[i].output = bestOutput'))
+check('create-team UI hides internal agent reviews and exposes a focused progress stage', runner.includes('team-run-stage') && !runner.includes("t('autonomousRunner.reviewedBy'") && !runner.includes("t('autonomousRunner.escalatedBanner'") && page.includes('builderMode'))
+check('internal peer-review disagreement does not create a fake customer approval gate', runner.includes('needsHumanReview: false') && orchestrate.includes('Show only the client-facing deliverable'))
 check('revision review receives the prior verdict', runner.includes('previous_score: previousReview?.score') && orchestrate.includes('prior verdict scored'))
 check('displayed review score is monotonic while approval stays current', orchestrate.includes('Math.max(previousScore, currentScore)') && orchestrate.includes('current_score: currentScore') && orchestrate.includes('currentScore >= 80'))
 check('researcher explicitly enables grounded web search', runner.includes("web_research: role === 'researcher'") && orchestrate.includes("plugins: [{ id: 'web'"))
@@ -38,7 +40,7 @@ check('content, autoposting and funnel share reversible navigation', contentNav.
 check('coordinator is compact by default and expands workflow stages on demand', coordinator.includes('const [expanded, setExpanded]') && coordinator.includes('aria-expanded={expanded}') && coordinator.includes('line-clamp-2'))
 check('dashboard always exposes separate team and standalone-agent counts', dashboard.includes('standaloneAgents') && dashboard.includes("mvp.dashboard.activeAgents"))
 check('business profile collects company email and employee count without showing Google Sheet setup', companyBrain.includes("'company_email'") && companyBrain.includes("'employee_count'") && !/FIELDS[\s\S]{0,220}tasks_sheet_id/.test(companyBrain))
-check('collapsed desktop sidebar keeps a rotated Nemo logo', appLayout.includes('showWordmark={false}') && appLayout.includes('rotate-90') && appLayout.includes("'--sb': collapsed ? '64px'"))
+check('collapsed desktop sidebar keeps the compact Nemo mark', appLayout.includes('showWordmark={false}') && appLayout.includes("'--sb': collapsed ? '64px'"))
 
 if (failed) {
   console.error(`Review/UX contracts failed: ${failed}`)

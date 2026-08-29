@@ -384,6 +384,36 @@ function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
   )
 }
 
+function NeonBrandShowcase() {
+  return (
+    <div className="relative mx-auto w-full max-w-[540px]" aria-label="Nemo AI brand">
+      <div className="absolute -inset-12 rounded-full bg-[#b94cff]/12 blur-3xl" />
+      <div className="absolute -inset-8 translate-x-10 translate-y-10 rounded-full bg-[#42edf5]/10 blur-3xl" />
+      <div className="relative aspect-[4/5] overflow-hidden rounded-[2.25rem] border border-[#7ceef4]/20 bg-[#080b18] shadow-[0_40px_100px_-48px_rgba(64,232,244,0.7)]">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:42px_42px]" />
+        <img
+          src="/brand/nemo-logo-neon.jpeg"
+          alt="Nemo AI"
+          width="1792"
+          height="2400"
+          fetchPriority="high"
+          className="absolute left-1/2 top-1/2 w-[122%] max-w-none -translate-x-1/2 -translate-y-[47%]"
+        />
+        <div className="absolute inset-x-5 bottom-5 flex items-center justify-between rounded-2xl border border-white/10 bg-[#0a0d1c]/80 px-4 py-3 backdrop-blur-xl">
+          <div>
+            <p className="font-brand text-[10px] font-semibold uppercase tracking-[0.22em] text-[#51e9f2]">Nemo workspace</p>
+            <p className="mt-1 text-xs text-[#b9c4d8]">Agents · workflows · human control</p>
+          </div>
+          <span className="relative flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#51e9f2] opacity-50" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-[#51e9f2]" />
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function LandingPage() {
   const { lang } = useI18n()
   const c = copy[lang]
@@ -405,20 +435,20 @@ export default function LandingPage() {
      * `clip` обрезает то же горизонтальное переполнение, но контейнера прокрутки НЕ создаёт, и
      * sticky продолжает считать от окна.
      */
-    <div className="theme-dark-scope min-h-screen overflow-x-clip">
+    <div className="theme-dark-scope landing-brand min-h-screen overflow-x-clip">
       <MarketingHeader />
 
       <main>
         {/* ─── HERO ─── */}
-        <section className="relative overflow-hidden border-b border-white/8">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(34,211,238,0.13),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(139,124,248,0.10),transparent_32%)]" />
+        <section className="relative overflow-hidden border-b border-white/8 bg-[#090c19]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(66,237,245,0.16),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(185,76,255,0.14),transparent_34%)]" />
           <div className="container-page relative grid min-h-[calc(100vh-76px)] items-center gap-12 py-14 lg:grid-cols-[0.96fr_1.04fr] lg:py-20">
             <div className="max-w-2xl">
-              <p className="text-sm font-bold uppercase tracking-[0.16em] text-cyan">{c.heroKicker}</p>
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[#51e9f2]">{c.heroKicker}</p>
               <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
               <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
-                <Button to="/app" size="lg" className="cta-glow lift !bg-accent-cyan !bg-none !text-[#041018] hover:!brightness-110">
+                <Button to="/app" size="lg" className="lift !bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_18px_50px_-20px_rgba(66,237,245,0.9)] hover:!brightness-110">
                   {c.primaryCta}<ArrowRight size={17} />
                 </Button>
                 <Button href="#workflow" variant="outline" size="lg">{c.secondaryCta}</Button>
@@ -427,7 +457,7 @@ export default function LandingPage() {
                 {c.notes.map((note) => <span key={note} className="inline-flex items-center gap-2"><Check size={14} className="text-emerald-300" />{note}</span>)}
               </div>
             </div>
-            <WorkflowPreview copy={c.previewSales} />
+            <NeonBrandShowcase />
           </div>
         </section>
 

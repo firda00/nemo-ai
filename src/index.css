@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Manrope:wght@300;400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -193,6 +193,17 @@
     color: rgb(var(--color-text));
   }
 
+  /* Marketing typography follows the thin geometric NEMO wordmark while the
+     product UI keeps Inter for dense operational screens. */
+  .landing-brand,
+  .landing-brand h1,
+  .landing-brand h2,
+  .landing-brand h3,
+  .landing-brand h4,
+  .font-brand {
+    font-family: 'Manrope', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+
   /* Buttons: radius 12 (spec §3). Primary = brand gradient (set in Button.tsx).
      No transition here: `.lift` owns it. This rule is declared after `.lift`, so at equal
      specificity its `transition-all` would win the cascade and re-introduce the layout
@@ -358,11 +369,64 @@
   50% { border-color: rgba(139, 124, 248, 0.85); }
 }
 
+@keyframes team-stage-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes team-orbit-float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-5px) rotate(2deg); }
+}
+
+@keyframes team-pulse-ring {
+  0% { opacity: 0.65; transform: scale(1); }
+  80%, 100% { opacity: 0; transform: scale(1.35); }
+}
+
+@keyframes team-progress-sweep {
+  0% { transform: translateX(-75%); }
+  50% { transform: translateX(0); }
+  100% { transform: translateX(75%); }
+}
+
+.team-run-stage {
+  position: relative;
+  animation: team-stage-in 420ms cubic-bezier(.22, 1, .36, 1) both;
+  background:
+    radial-gradient(circle at 12% 25%, rgba(34, 211, 238, 0.11), transparent 34%),
+    radial-gradient(circle at 88% 5%, rgba(139, 124, 248, 0.15), transparent 38%),
+    rgb(var(--color-card) / 0.05);
+}
+
+.team-run-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255,255,255,.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(90deg, #000, transparent 82%);
+  opacity: .28;
+}
+
+.team-run-orbit { animation: team-orbit-float 2.8s ease-in-out infinite; }
+.team-run-pulse { animation: team-pulse-ring 1.8s ease-out infinite; }
+.team-run-progress { width: 65%; animation: team-progress-sweep 1.7s ease-in-out infinite alternate; }
+.team-result-ready { animation: team-stage-in 460ms cubic-bezier(.22, 1, .36, 1) both; }
+.team-builder-icon { animation: team-orbit-float 4s ease-in-out infinite; }
+
 .office-node-active { animation: office-status-pulse 1.8s ease-in-out infinite; }
 .office-node-attention { animation: office-attention-pulse 1.5s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   .office-node-active,
-  .office-node-attention { animation: none; }
+  .office-node-attention,
+  .team-run-stage,
+  .team-run-orbit,
+  .team-run-pulse,
+  .team-run-progress,
+  .team-result-ready,
+  .team-builder-icon { animation: none; }
   .react-flow__edge-path { animation: none !important; }
 }

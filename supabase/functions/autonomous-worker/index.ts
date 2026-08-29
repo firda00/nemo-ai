@@ -243,7 +243,9 @@ Deno.serve(async (req) => {
       const sources = [...new Set(specs.flatMap((spec) => spec.sources ?? []))].slice(0, 30)
       const result = await invoke({
         action: 'synth', billing_key: `${run.id}:synth`, execution_mode: quickPath ? 'quick' : 'team', goal, input_artifacts: artifacts, ...(input.departmentId ? { department_id: input.departmentId } : {}),
-        steps: quickPath ? [] : specs.map((spec) => ({ role: spec.role, task: spec.prompt.tasks, output: spec.output, sources: spec.sources, reviewedBy: spec.reviewedBy, review: spec.review, revised: Boolean(spec.revised), revisions: spec.revisions ?? 0, needsHumanReview: Boolean(spec.escalated) })),
+        // A failed internal peer-review convergence is quality telemetry, not a new
+        // customer approval gate. Real external effects keep their dedicated policies.
+        steps: quickPath ? [] : specs.map((spec) => ({ role: spec.role, task: spec.prompt.tasks, output: spec.output, sources: spec.sources, reviewedBy: spec.reviewedBy, review: spec.review, revised: Boolean(spec.revised), revisions: spec.revisions ?? 0, needsHumanReview: false })),
         sources,
       })
       state.result = String(result.result ?? '')

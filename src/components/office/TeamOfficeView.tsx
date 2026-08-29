@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import ReactFlow, { Background, Controls, MarkerType, type Edge, type Node, type NodeChange, type ReactFlowInstance } from 'reactflow'
+import ReactFlow, { Background, Controls, MarkerType, useNodesState, type Edge, type Node, type NodeChange, type ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { LayoutGrid, Network, WifiOff } from 'lucide-react'
+import { Focus, LayoutGrid, Network, WifiOff } from 'lucide-react'
 import type { PlatformAgent } from '../../types/platform'
 import type { AgentNodeData } from '../../types/orchestrator'
 import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
@@ -54,13 +54,21 @@ export function TeamOfficeView({
     for (const agent of supplementalAgents ?? []) merged.set(agent.id, agent)
     return [...merged.values()]
   }, [agentsMap, platformAgents, supplementalAgents])
-  const nodes = useMemo<Node<AgentNodeData & { onSelect?: () => void }>[]>(() => agents.map((agent, index) => ({
+  const generatedNodes = useMemo<Node<AgentNodeData & { onSelect?: () => void }>[]>(() => agents.map((agent, index) => ({
     id: agent.id,
     type: mode === 'office' ? 'agentDesk' : 'pipeline',
     position: nodePositions[mode][agent.id] ?? position(index, agents.length, mode),
     selected: selected?.id === agent.id,
     data: { ...agent, onSelect: () => setSelected(agent) },
   })), [agents, mode, nodePositions, selected?.id])
+  const [nodes, setNodes, applyLocalNodeChanges] = useNodesState<AgentNodeData & { onSelect?: () => void }>(generatedNodes)
+
+  useEffect(() => {
+    setNodes((current) => generatedNodes.map((generated) => {
+      const measured = current.find((node) => node.id === generated.id && node.type === generated.type)
+      return measured ? { ...measured, ...generated } : generated
+    }))
+  }, [generatedNodes, setNodes])
   const edges = useMemo<Edge[]>(() => agents.slice(1).map((agent) => {
     const source = agent.parentId && agents.some((candidate) => candidate.id === agent.parentId) ? agent.parentId : agents[0]?.id ?? agent.id
     const sourceAgent = agents.find((candidate) => candidate.id === source)
@@ -79,23 +87,30 @@ export function TeamOfficeView({
       },
     }
   }), [agents, mode])
+  const nodeSignature = useMemo(() => nodes.map((node) => node.id).sort().join('|'), [nodes])
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    applyNodeChangesForMode(mode, changes, nodes)
-  }, [applyNodeChangesForMode, mode, nodes])
+    applyLocalNodeChanges(changes)
+    const positionChanges = changes.filter((change) => change.type === 'position')
+    if (positionChanges.length > 0) applyNodeChangesForMode(mode, positionChanges, nodes)
+  }, [applyLocalNodeChanges, applyNodeChangesForMode, mode, nodes])
+
+  const centerNodes = useCallback(() => {
+    if (!flow || nodes.length === 0) return
+    const timer = window.setTimeout(() => void flow.fitView({ padding: 0.2, duration: 280 }), 120)
+    return timer
+  }, [flow, nodes.length])
 
   useEffect(() => {
-    if (!flow || nodes.length === 0) return
-    const timer = window.setTimeout(() => {
-      void flow.fitView({ padding: 0.2, duration: 250 })
-    }, 80)
+    const timer = centerNodes()
+    if (timer === undefined) return
     return () => window.clearTimeout(timer)
-  }, [flow, mode, nodes.length])
+  }, [centerNodes, mode, nodeSignature])
 
   return (
     <section className="mt-7 rounded-3xl border border-ice/10 bg-panel/45 p-4 sm:p-5" aria-labelledby="team-office-heading">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="team-office-heading" className="text-lg font-semibold text-text">{t('teamOffice.title')}</h2><p className="mt-1 text-sm text-muted">{t('teamOffice.subtitle')}</p></div><div className="flex items-center gap-2"><span className="inline-flex items-center gap-1.5 text-xs text-fog"><WifiOff size={13} />{connected ? t('teamOffice.live') : t('teamOffice.local')}</span><div className="flex rounded-xl border border-ice/10 p-1"><button type="button" onClick={() => setMode('office')} aria-pressed={mode === 'office'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'office' ? 'bg-white/8 text-text' : 'text-muted')}><LayoutGrid size={13} className="mr-1 inline" />{t('teamOffice.office')}</button><button type="button" onClick={() => setMode('graph')} aria-pressed={mode === 'graph'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'graph' ? 'bg-white/8 text-text' : 'text-muted')}><Network size={13} className="mr-1 inline" />{t('teamOffice.graph')}</button></div></div></div>
-      {loading ? <div className="mt-5 h-64 animate-pulse rounded-2xl bg-white/[0.03]" /> : error ? <p role="alert" className="mt-5 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger">{error}</p> : !agents.length ? <p className="mt-5 rounded-2xl border border-dashed border-ice/15 p-8 text-center text-sm text-muted">{t('teamOffice.empty')}</p> : <><div className="mt-5 md:hidden"><AgentCardList agents={agents} onSelect={setSelected} /></div><div className="mt-5 hidden h-[600px] overflow-hidden rounded-2xl border border-ice/10 bg-bg/70 md:block"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onInit={setFlow} onNodesChange={onNodesChange} nodesDraggable nodesConnectable={false} elementsSelectable panOnDrag zoomOnScroll minZoom={0.55} maxZoom={1.25} onNodeClick={(_, node) => setSelected(node.data)} proOptions={{ hideAttribution: true }}><Background color="#263149" gap={24} size={1} /><Controls showInteractive={false} /></ReactFlow></div></>}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="team-office-heading" className="text-lg font-semibold text-text">{t('teamOffice.title')}</h2><p className="mt-1 text-sm text-muted">{t('teamOffice.subtitle')}</p></div><div className="flex flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1.5 text-xs text-fog"><WifiOff size={13} />{connected ? t('teamOffice.live') : t('teamOffice.local')}</span>{agents.length > 0 && <button type="button" onClick={() => centerNodes()} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('teamOffice.center')}><Focus size={13} />{t('teamOffice.center')}</button>}<div className="flex rounded-xl border border-ice/10 p-1"><button type="button" onClick={() => setMode('office')} aria-pressed={mode === 'office'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'office' ? 'bg-white/8 text-text' : 'text-muted')}><LayoutGrid size={13} className="mr-1 inline" />{t('teamOffice.office')}</button><button type="button" onClick={() => setMode('graph')} aria-pressed={mode === 'graph'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'graph' ? 'bg-white/8 text-text' : 'text-muted')}><Network size={13} className="mr-1 inline" />{t('teamOffice.graph')}</button></div></div></div>
+      {loading ? <div className="mt-5 h-64 animate-pulse rounded-2xl bg-white/[0.03]" /> : error ? <p role="alert" className="mt-5 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger">{error}</p> : !agents.length ? <p className="mt-5 rounded-2xl border border-dashed border-ice/15 p-8 text-center text-sm text-muted">{t('teamOffice.empty')}</p> : <><div className="mt-5 md:hidden"><AgentCardList agents={agents} onSelect={setSelected} /></div><div className="mt-5 hidden h-[600px] overflow-hidden rounded-2xl border border-ice/10 bg-bg/70 md:block"><ReactFlow key={`${mode}:${nodeSignature}`} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onInit={setFlow} onNodesChange={onNodesChange} fitView fitViewOptions={{ padding: 0.2 }} nodesDraggable nodesConnectable={false} elementsSelectable panOnDrag zoomOnScroll minZoom={0.55} maxZoom={1.25} onNodeClick={(_, node) => setSelected(node.data)} proOptions={{ hideAttribution: true }}><Background color="#263149" gap={24} size={1} /><Controls showInteractive={false} /></ReactFlow></div></>}
       <AgentDrawer agent={selected} onClose={() => setSelected(null)} />
     </section>
   )
