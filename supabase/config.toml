@@ -227,6 +227,10 @@ verify_jwt = false
 [functions.visual-rag]
 verify_jwt = true
 
+# Structured Marketing Engine 2.0 campaign generation (authenticated, tenant-scoped Brand Kit).
+[functions.generate-campaign]
+verify_jwt = true
+
 # Commerce import staging and owner confirmation (panel, authenticated).
 [functions.commerce-control]
 verify_jwt = true

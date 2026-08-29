@@ -66,6 +66,7 @@
     "edit-file",
     "fetch-url",
     "generate-avatar",
+    "generate-campaign",
     "generate-image",
     "generate-video",
     "generate-voice",

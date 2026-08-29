@@ -132,6 +132,7 @@ $steps = @(
   @{ Name = 'Pricing readability'; Command = { npm run test:pricing-contrast } },
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
   @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
+  @{ Name = 'Structured marketing campaign backend'; Command = { npm run test:marketing-campaign } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },
   @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )

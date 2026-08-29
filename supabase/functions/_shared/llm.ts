@@ -24,6 +24,24 @@ export interface ChatMsg {
   content: string | ContentPart[]
 }
 
+export interface OpenRouterUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  costUsd: number | null
+  reasoningTokens: number
+  cachedTokens: number
+}
+
+export interface OpenRouterResult {
+  content: string
+  tokens: number
+  citations: string[]
+  usage: OpenRouterUsage
+  model: string
+  generationId: string | null
+}
+
 // Primary model for platform workflows (team orchestration, research, test chat).
 // Defaults to a cheap, RELIABLE paid model so multi-step runs don't 502 on
 // free-tier rate limits. FALLBACK_MODEL is a free model used only if the primary
@@ -53,10 +71,13 @@ async function attemptModel(opts: {
   maxTokens?: number
   // e.g. { type: 'json_object' } to force valid JSON output (used by lead extraction)
   responseFormat?: Record<string, unknown>
+  // Provider routing constraints. Structured-output callers set require_parameters=true so
+  // OpenRouter never silently routes to a backend that ignores json_schema.
+  provider?: Record<string, unknown>
   // OpenRouter plugins are opt-in per request. Research agents use the web plugin
   // so current claims arrive with URL citations instead of plausible filler.
   plugins?: Array<Record<string, unknown>>
-}): Promise<{ content: string; tokens: number; citations: string[] }> {
+}): Promise<OpenRouterResult> {
   const breakerKey = `${opts.apiKey}:${opts.model}`
   if (Date.now() < (breakerUntil.get(breakerKey) ?? 0)) throw new Error(`OpenRouter temporarily throttled for ${opts.model} (circuit open)`)
   await acquireSlot()
@@ -79,6 +100,7 @@ async function attemptModel(opts: {
         temperature: opts.temperature ?? 0.6,
         max_tokens: opts.maxTokens ?? 800,
         ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
+        ...(opts.provider ? { provider: opts.provider } : {}),
         ...(opts.plugins?.length ? { plugins: opts.plugins } : {}),
       }),
       // A hung provider connection otherwise holds the isolate until the platform kills it, and
@@ -105,14 +127,30 @@ async function attemptModel(opts: {
   const data = await res.json()
   breakerUntil.delete(breakerKey) // success — reset only this model
   const content = data?.choices?.[0]?.message?.content?.trim() ?? ''
-  const tokens = data?.usage?.total_tokens ?? 0
+  const usage: OpenRouterUsage = {
+    promptTokens: Number(data?.usage?.prompt_tokens) || 0,
+    completionTokens: Number(data?.usage?.completion_tokens) || 0,
+    totalTokens: Number(data?.usage?.total_tokens) || 0,
+    costUsd: data?.usage?.cost != null && Number.isFinite(Number(data.usage.cost))
+      ? Number(data.usage.cost)
+      : null,
+    reasoningTokens: Number(data?.usage?.completion_tokens_details?.reasoning_tokens) || 0,
+    cachedTokens: Number(data?.usage?.prompt_tokens_details?.cached_tokens) || 0,
+  }
   // Perplexity "online" models return the sources they used here.
   const citations: string[] = Array.isArray(data?.citations)
     ? data.citations
     : Array.isArray(data?.choices?.[0]?.message?.annotations)
       ? data.choices[0].message.annotations.map((a: { url_citation?: { url?: string } }) => a?.url_citation?.url).filter(Boolean)
       : []
-  return { content, tokens, citations }
+  return {
+    content,
+    tokens: usage.totalTokens,
+    citations,
+    usage,
+    model: String(data?.model ?? opts.model),
+    generationId: typeof data?.id === 'string' ? data.id : null,
+  }
   } finally { releaseSlot() }
 }
 
@@ -123,10 +161,11 @@ export async function callOpenRouter(opts: {
   temperature?: number
   maxTokens?: number
   responseFormat?: Record<string, unknown>
+  provider?: Record<string, unknown>
   plugins?: Array<Record<string, unknown>>
   // Last resort in the degrade chain (see below).
   fallbackModel?: string
-}): Promise<{ content: string; tokens: number; citations: string[] }> {
+}): Promise<OpenRouterResult> {
   // The degrade chain used to be exactly two links: the requested model, then FALLBACK_MODEL —
   // which is a `:free` tier that OpenRouter rate-limits routinely. So the safety net was the least
   // reliable component in the system, and one 429 on it ended the whole reply in silence.
