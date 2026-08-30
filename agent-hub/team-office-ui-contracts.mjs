@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, sectionNav, leadsPage, app] = await Promise.all([
+const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, teamDetailPage, sectionNav, leadsPage, app] = await Promise.all([
   read('src/components/layout/AppLayout.tsx'),
   read('src/components/office/AgentDrawer.tsx'),
   read('src/components/agents/AgentQuickEditDrawer.tsx'),
@@ -11,6 +11,7 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/components/office/PipelineNode.tsx'),
   read('src/pages/app/AutonomousPage.tsx'),
   read('src/pages/app/AgentsPage.tsx'),
+  read('src/pages/app/TeamDetailPage.tsx'),
   read('src/components/platform/KnowledgeIntegrationNav.tsx'),
   read('src/pages/app/LeadsPage.tsx'),
   read('src/App.tsx'),
@@ -38,8 +39,15 @@ assert.match(pipeline, /A2A Wire v1/)
 assert.match(autonomous, /navigate\('\/app\/agents'\)/)
 assert.match(agentsPage, /from\('departments'\)/)
 assert.match(agentsPage, /from\('sub_agents'\)/)
-assert.match(agentsPage, /supplementalAgents=\{teamsView \? activeSavedTeamRoster : undefined\}/)
-assert.match(agentsPage, /savedTeams\[0\]\?\.id \?\? null/)
+assert.match(agentsPage, /!teamsView && <TeamOfficeView platformAgents=\{visibleAgents\}/)
+assert.doesNotMatch(agentsPage, /Команда на холсте|selectedOfficeTeamId|activeOfficeTeam/)
+assert.match(agentsPage, /placeholder=\{registryCopy\.search\}/)
+assert.match(agentsPage, /teamRoster\[a\.id\]\?\.count/)
+assert.match(teamDetailPage, /activeTab.*'overview'.*'graph'.*'runs'/)
+assert.match(teamDetailPage, /initialMode="graph"/)
+assert.match(teamDetailPage, /supplementalAgents=\{graphAgents\}/)
+assert.match(teamDetailPage, /\.eq\('main_agent_id', id\)/)
+assert.match(teamDetailPage, /\.eq\('department_id', deptId\)/)
 assert.match(agentsPage, /<AgentQuickEditDrawer/)
 assert.match(agentsPage, /status: agent\.status === 'active' \? 'draft' : agent\.status/)
 assert.match(quickEditDrawer, /approval_required/)

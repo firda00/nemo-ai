@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck, Loader2 } from 'lucide-react'
+import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck, Loader2, LayoutDashboard, Network, History } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { PROVIDERS } from '../../data/platform'
@@ -16,6 +16,8 @@ import { PlannerCommandCenter } from '../../components/platform/PlannerCommandCe
 import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/dynamicTeams'
 import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
+import { TeamOfficeView } from '../../components/office/TeamOfficeView'
+import type { AgentNodeData } from '../../types/orchestrator'
 
 interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
@@ -59,6 +61,7 @@ export default function TeamDetailPage() {
   const [tgConnected, setTgConnected] = useState(false)
   const [groupConnected, setGroupConnected] = useState(false)
   const [subBots, setSubBots] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'runs'>('overview')
 
   const loadResults = useCallback(async (deptId: string) => {
     if (!supabase) return
@@ -105,6 +108,26 @@ export default function TeamDetailPage() {
 
   const teamName = team?.name || dept?.name || 'Operations Team'
   const goal = team?.purpose || 'Automate routine operations: payments, admin escalation, meetings-to-tasks and manager reports.'
+  const graphAgents: AgentNodeData[] = (dept?.subs ?? []).map((sub, index) => ({
+    id: sub.id,
+    name: sub.name,
+    role: sub.role,
+    avatar: COLORS[index % COLORS.length],
+    status: 'idle',
+    tools: sub.skills ?? [],
+    metrics: { tasksCompleted: 0, avgExecutionTimeMs: 0 },
+    model: sub.model,
+    provider: sub.model?.includes('/') ? sub.model.split('/')[0] : 'configured',
+    configurationSummary: sub.prompt?.tasks || sub.prompt?.role || sub.role,
+    parentId: id,
+  }))
+  const tabCopy = lang === 'uz' ? {
+    overview: 'Boshqaruv va vazifalar', graph: 'Hamkorlik sxemasi', runs: 'Ishga tushirish tarixi',
+  } : lang === 'en' ? {
+    overview: 'Management & tasks', graph: 'A2A orchestration', runs: 'Runs & traces',
+  } : {
+    overview: 'Управление и задачи', graph: 'Схема взаимодействия', runs: 'История запусков',
+  }
 
   // Show operational workflows only for teams that were created for that work.
   // Content, sales and store teams keep the universal "task the team" runner.
@@ -187,9 +210,42 @@ export default function TeamDetailPage() {
         </div>
       </div>
 
-      <div className="mt-8 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <nav className="mt-7 flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-ice/10 bg-panel/55 p-1" aria-label="Разделы команды">
+        {([
+          { id: 'overview' as const, label: tabCopy.overview, icon: LayoutDashboard },
+          { id: 'graph' as const, label: tabCopy.graph, icon: Network },
+          { id: 'runs' as const, label: tabCopy.runs, icon: History },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            aria-pressed={activeTab === tab.id}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan/30',
+              activeTab === tab.id ? 'bg-bg text-text shadow-sm' : 'text-muted hover:bg-white/[0.04] hover:text-text',
+            )}
+          >
+            <tab.icon size={15} className={activeTab === tab.id ? 'text-cyan' : undefined} />
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'graph' && (
+        <TeamOfficeView
+          key={id}
+          platformAgents={team ? [team] : []}
+          supplementalAgents={graphAgents}
+          loading={loading}
+          initialMode="graph"
+          showModeSwitcher={false}
+        />
+      )}
+
+      <div className={cn('mt-8 min-w-0 gap-6', activeTab === 'overview' ? 'grid lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : activeTab === 'runs' ? 'block' : 'hidden')}>
         {/* LEFT — team structure + workflow runner */}
-        <div className="min-w-0 space-y-6">
+        <div className={cn('min-w-0 space-y-6', activeTab !== 'overview' && 'hidden')}>
           <section className="card rounded-3xl p-6">
             <div className="flex items-center gap-2"><Users size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.teamStructure')}</h2></div>
             {dept && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{t('teamDetailPage.subBotOptionalNote')}</p>}
@@ -349,7 +405,8 @@ export default function TeamDetailPage() {
         </div>
 
         {/* RIGHT — live results from the DB */}
-        <div className="min-w-0 space-y-6">
+        <div className={cn('min-w-0', activeTab === 'runs' ? 'mx-auto max-w-5xl' : 'space-y-6')}>
+          <div className={cn('space-y-6', activeTab !== 'overview' && 'hidden')}>
           <CoordinatorAgentPanel
             mode={isOps ? 'planner' : 'general'}
             context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
@@ -397,7 +454,9 @@ export default function TeamDetailPage() {
             </div>
           </section>}
 
-          <section className="card min-w-0 overflow-hidden rounded-3xl p-6">
+          </div>
+
+          <section className={cn('card min-w-0 overflow-hidden rounded-3xl p-6', activeTab !== 'runs' && 'hidden')}>
             <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
             <div className="mt-4 space-y-2">
               {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}
