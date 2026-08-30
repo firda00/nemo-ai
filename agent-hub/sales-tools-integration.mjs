@@ -610,7 +610,7 @@ await checkAsync(async () => {
   const dialer = buildDialer({
     NEMO_DIALER_SALT: 'с', NEMO_DIALER_ENABLED: '1',
     NEMO_DIALER_ALLOWLIST: `${PHONE}, +998 90 111 22 33; +998901112234`,
-  })
+  }, { now: inHours })
   assert.equal(dialer.status().allowlistSize, 3)
   assert.equal(JSON.stringify(dialer.status()).includes('998901234567'), false)
 
