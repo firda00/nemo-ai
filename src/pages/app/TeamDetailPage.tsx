@@ -200,7 +200,7 @@ export default function TeamDetailPage() {
   return (
     <div className="container-page max-w-7xl py-8">
       <div className="flex flex-col gap-3">
-        <p className="mono-label">AI Team</p>
+        <p className="mono-label">{t('teamDetailPage.aiTeam')}</p>
         <h1 className="text-3xl font-extrabold text-text">{teamName}</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted">{goal}</p>
         <div className="flex flex-wrap gap-2">
@@ -280,7 +280,7 @@ export default function TeamDetailPage() {
               {!dept && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noSavedStructure')}</p>}
             </div>
 
-            <p className="mt-4 text-[11px] leading-relaxed text-fog">Each specialist has an independent model. Plan limits are enforced by the server when the team runs.</p>
+            <p className="mt-4 text-[11px] leading-relaxed text-fog">{t('teamDetailPage.independentModels')}</p>
             {modelMsg && <p className={cn('mt-2 text-[11px]', modelOk ? 'text-teal' : 'text-danger')}>{modelMsg}</p>}
           </section>
 
@@ -457,7 +457,7 @@ export default function TeamDetailPage() {
           </div>
 
           <section className={cn('card min-w-0 overflow-hidden rounded-3xl p-6', activeTab !== 'runs' && 'hidden')}>
-            <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
+            <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.runsTrace')}</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
             <div className="mt-4 space-y-2">
               {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}
               {runs.map((run) => {

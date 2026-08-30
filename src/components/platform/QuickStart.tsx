@@ -84,21 +84,25 @@ export function QuickStart() {
       <div className="mt-5 space-y-2.5">
         {steps.map((s) => (
           <div key={s.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              {s.done ? <CheckCircle2 size={20} className="shrink-0 text-teal" /> : <Circle size={20} className="shrink-0 text-muted/50" />}
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet/10 text-violet"><s.icon size={15} /></span>
-              <div className="min-w-0 flex-1">
-                <p className={cn('text-sm font-semibold', s.done ? 'text-muted line-through' : 'text-text')}>{s.title}</p>
-                <p className="mt-0.5 text-xs text-muted">{s.desc}</p>
+            <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+              <div className="flex shrink-0 items-center gap-2">
+                {s.done ? <CheckCircle2 size={20} className="shrink-0 text-teal" /> : <Circle size={20} className="shrink-0 text-muted/50" />}
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet/10 text-violet"><s.icon size={15} /></span>
               </div>
-              {s.help && (
-                <button onClick={() => setOpenHelp(openHelp === s.key ? null : s.key)} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-ice/12 px-2 py-1.5 text-[11px] text-muted hover:text-text">
-                  <HelpCircle size={13} /> {t('quickStart.how')} <ChevronDown size={13} className={cn('transition-transform', openHelp === s.key && 'rotate-180')} />
-                </button>
-              )}
-              {!s.done && (
-                <Link to={s.to} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-brand px-3 py-1.5 text-xs font-medium text-white">{s.cta}</Link>
-              )}
+              <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+                <p className={cn('text-sm font-semibold', s.done ? 'text-muted line-through' : 'text-text')}>{s.title}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted">{s.desc}</p>
+              </div>
+              <div className="col-start-2 flex min-w-0 flex-col gap-2 sm:col-start-auto sm:flex-row sm:items-center">
+                {s.help && (
+                  <button onClick={() => setOpenHelp(openHelp === s.key ? null : s.key)} className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-ice/12 px-2 py-2 text-[11px] text-muted hover:text-text sm:w-auto sm:shrink-0 sm:py-1.5">
+                    <HelpCircle size={13} /> {t('quickStart.how')} <ChevronDown size={13} className={cn('transition-transform', openHelp === s.key && 'rotate-180')} />
+                  </button>
+                )}
+                {!s.done && (
+                  <Link to={s.to} className="inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-brand px-3 py-2 text-xs font-medium text-white sm:w-auto sm:shrink-0 sm:py-1.5">{s.cta}</Link>
+                )}
+              </div>
             </div>
             {s.help && openHelp === s.key && (
               <p className="mt-3 rounded-xl border border-ice/[0.07] bg-black/20 p-3 text-[12px] leading-relaxed text-muted">{s.help}</p>

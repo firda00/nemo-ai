@@ -173,6 +173,7 @@
     "test:finance-ingestion": "node --experimental-strip-types agent-hub/finance-ingestion-behavior.mjs",
     "test:finance-dashboard-ui": "node agent-hub/finance-dashboard-ui-contracts.mjs",
     "test:research-notebook": "node --experimental-strip-types agent-hub/research-notebook-behavior.mjs",
+    "test:research-notebook-ui": "node agent-hub/research-notebook-ui-contracts.mjs",
     "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs",
     "prepare": "npm run build:cli",
     "test:pricing-contrast": "node agent-hub/pricing-contrast-smoke.mjs",

@@ -20,6 +20,7 @@ import {
   Command,
   ArrowUpRight,
   Landmark,
+  BookOpenText,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -112,7 +113,7 @@ export function AppLayout() {
   }, [isAuthed, user?.id])
 
   // The sidebar is a map, not a feature inventory. Deep links remain routable while the
-  // eight daily destinations stay visible here.
+  // daily destinations stay visible here.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const financeLabel = lang === 'uz' ? 'Buxgalteriya va moliya' : lang === 'en' ? 'Accounting & finance' : 'Бухгалтерия и финансы'
   const navGroups: { title: string; items: NavItem[] }[] = [
@@ -122,6 +123,7 @@ export function AppLayout() {
       { to: '/app/forge', label: 'Nemo Forge', icon: Cpu },
       { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
       { to: '/app/finance', label: financeLabel, icon: Landmark },
+      { to: '/app/research', label: t('researchHub.nav'), icon: BookOpenText },
       { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
       { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
       { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },

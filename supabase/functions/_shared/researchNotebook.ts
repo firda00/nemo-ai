@@ -287,6 +287,7 @@ export function buildResearchNotebookPrompt(request: z.infer<typeof ResearchNote
 }
 
 export type SourceIngestion = z.infer<typeof SourceIngestionSchema>
+export type ResearchEvidence = z.infer<typeof ResearchEvidenceSchema>
 export type MeetingIntelligence = z.infer<typeof MeetingIntelligenceSchema>
 export type AudioOverviewScript = z.infer<typeof AudioOverviewScriptSchema>
 export type ResearchNotebookRequest = z.infer<typeof ResearchNotebookRequestSchema>

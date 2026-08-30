@@ -97,14 +97,14 @@ export default function DashboardPage() {
 
       <section className="mt-8" aria-labelledby="owner-metrics-title">
         <div className="flex items-end justify-between gap-3">
-          <div><p className="mono-label">Для владельца</p><h2 id="owner-metrics-title" className="mt-1 text-xl font-bold text-text">Сегодня в бизнесе</h2></div>
-          <Link to="/app/approvals" className="text-xs font-semibold text-cyan hover:text-text">Открыть согласования</Link>
+          <div><p className="mono-label">{t('dashboardOwner.eyebrow')}</p><h2 id="owner-metrics-title" className="mt-1 text-xl font-bold text-text">{t('dashboardOwner.title')}</h2></div>
+          <Link to="/app/approvals" className="text-xs font-semibold text-cyan hover:text-text">{t('dashboardOwner.openApprovals')}</Link>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric icon={CircleDollarSign} label="Подтверждённая экономия" value="—" hint="Появится после настройки стоимости ручного процесса" />
-          <Metric icon={Users} label="Новые лиды сегодня" value={String(stats.leads)} />
-          <Metric icon={WalletCards} label="Расход на контент" value="—" hint="Только после фактического запуска Forge" />
-          <Metric icon={CheckSquare} label="Ждут подтверждения" value={String(stats.approvals)} />
+          <Metric icon={CircleDollarSign} label={t('dashboardOwner.savings')} value="-" hint={t('dashboardOwner.savingsHint')} />
+          <Metric icon={Users} label={t('dashboardOwner.newLeads')} value={String(stats.leads)} />
+          <Metric icon={WalletCards} label={t('dashboardOwner.contentSpend')} value="-" hint={t('dashboardOwner.contentSpendHint')} />
+          <Metric icon={CheckSquare} label={t('dashboardOwner.awaitingApproval')} value={String(stats.approvals)} />
         </div>
       </section>
 
