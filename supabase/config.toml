@@ -235,6 +235,10 @@ verify_jwt = true
 [functions.finance-analyze-cashflow]
 verify_jwt = true
 
+# Research Notebook structured analysis (authenticated and tenant-scoped).
+[functions.research-analyze-multimodal]
+verify_jwt = true
+
 # Commerce import staging and owner confirmation (panel, authenticated).
 [functions.commerce-control]
 verify_jwt = true
