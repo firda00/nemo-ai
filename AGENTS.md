@@ -29,3 +29,8 @@ powershell -ExecutionPolicy Bypass -File .\smoke-ops.ps1
 ```
 
 Never print or commit `.env.local`, `.secrets.local`, access tokens, service-role keys, channel credentials, or customer data.
+
+When a diagnostic command can echo environment values, credentials, headers, connection strings, or
+configuration files, run it through `npm run safe:exec -- <command> [args...]`. Never dump an entire
+secret-bearing file to stdout; inspect names and metadata only. The wrapper redacts token formats,
+secret assignments, connection passwords and multiline private keys.

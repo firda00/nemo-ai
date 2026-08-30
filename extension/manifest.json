@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr2wae/FdxQuuaVwwPTcCv/wlgCChbTdKwh81Zy5Kxks4kYdnkm3j+J5XDDQS35jf1+mq2egikt7UaNU7FWaC0EeszenrOdZYgervwMbKmbFUg3ClatDxnXOSjntTnOV+FE2zlcorM5VFokLtmXpnFR5Q72/UTTdNFHyj22doPB7yUt9pHxNSKqhzxlP008gAWDL5bN4GAciGPQPY5Svwc0qdsm2YxQGwO/xzbifmRWTDSHc7A1bldUxNVUwX4NMu7iWG9jn9n9uyQdY+CvwLRA4PFI+y1BeORw6nJCIRdhThJ0OF7apiBrf5QRtgxqQcHIKEvJHyayMN4EZd7PfZawIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1NDKQJ1YWTIxW3EZQK5cRuZhFRUiImG+KSwz0MlhIp9dlqSi+DQk6qrh+UD9+bA1P63xJ0D9GxZovI3A1W8JjdihJCf/MOizTtE5HJVuRO5SAYU0jzJc5rLujKhb4IZlpc7aWfy8GPTHMG/d5k//cFzjZqzjSLrNminMjNFToExmilrJ+HwTnL2wptSqvobT4ke726vDCcykwRlxtO+YJjSnkm/EcAfoLEyNmIEZb2w+8ZRBg4ulWB6b9/FidqJTcVJ+dBTqai7SVfg/spcSmkG26+sf7X/SflMmQHB0nm8japN4vdfrAyMFHAIjfkymyLYKlTpaT8jtMD/R/zNhTwIDAQAB",
   "name": "Nemo — загрузчик товаров в Uzum",
   "version": "0.1.0",
   "description": "Переносит готовый черновик карточки из Nemo в кабинет Uzum Seller и отправляет его на модерацию.",

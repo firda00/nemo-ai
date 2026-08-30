@@ -78,6 +78,7 @@ $steps = @(
   @{ Name = 'Platform API token security'; Command = { npm run test:api-tokens } },
   @{ Name = 'SDR contracts'; Command = { npm run test:sdr-contracts } },
   @{ Name = 'Secrets scan'; Command = { npm run test:secrets } },
+  @{ Name = 'Runtime log secret sanitizer'; Command = { npm run test:log-sanitizer } },
   @{ Name = 'Paywall behavior'; Command = { npm run test:paywall } },
   @{ Name = 'Listing vision behavior'; Command = { npm run test:listing-vision } },
   @{ Name = 'Listing images behavior'; Command = { npm run test:listing-images } },
@@ -133,6 +134,7 @@ $steps = @(
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
   @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
   @{ Name = 'Structured marketing campaign backend'; Command = { npm run test:marketing-campaign } },
+  @{ Name = 'Finance cash-flow data contracts'; Command = { npm run test:finance-cash-flow } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },
   @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )

@@ -20,7 +20,7 @@
  * своё, и менять придётся одну строку окружения, а не код.
  */
 export const EXTENSION_ID =
-  (import.meta.env.VITE_NEMO_EXTENSION_ID as string | undefined) ?? 'mafjjfinnlpigcbmhiabkiamnhnmgcca'
+  (import.meta.env.VITE_NEMO_EXTENSION_ID as string | undefined) ?? 'efgffoegaefoommemkgmnafeaakbjloi'
 
 type ExtensionReply = { ok?: boolean; error?: string; linked?: boolean; expired?: boolean }
 
