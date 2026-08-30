@@ -137,6 +137,7 @@ $steps = @(
   @{ Name = 'Marketing campaign studio UI'; Command = { npm run test:marketing-campaign-ui } },
   @{ Name = 'Finance cash-flow data contracts'; Command = { npm run test:finance-cash-flow } },
   @{ Name = 'Finance ingestion and grounded analysis'; Command = { npm run test:finance-ingestion } },
+  @{ Name = 'Finance dashboard UI'; Command = { npm run test:finance-dashboard-ui } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },
   @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )

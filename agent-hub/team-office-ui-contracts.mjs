@@ -17,9 +17,9 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/App.tsx'),
 ])
 
-const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/content', '/app/knowledge', '/app/analytics', '/app/settings']
+const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/content', '/app/finance', '/app/knowledge', '/app/analytics', '/app/settings']
 for (const route of normalDestinations) assert.match(layout, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
-assert.equal((layout.match(/to: '\/app(?:'|\/teams'|\/forge'|\/content'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 7)
+assert.equal((layout.match(/to: '\/app(?:'|\/teams'|\/forge'|\/content'|\/finance'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 8)
 assert.doesNotMatch(layout, /to: '\/app\/dialogues'/)
 assert.doesNotMatch(app, /import DialoguesPage/)
 assert.match(app, /path="dialogues" element=\{<Navigate to="\/app" replace \/>\}/)

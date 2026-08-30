@@ -19,6 +19,7 @@ import {
   Search,
   Command,
   ArrowUpRight,
+  Landmark,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -31,7 +32,7 @@ import { FeedbackWidget } from '../platform/FeedbackWidget'
 import { featureEnabled, trackEvent } from '../../lib/telemetry'
 
 export function AppLayout() {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const { user, logout, isAuthed } = useAuth()
   const isAdmin = useAgentStore((s) => s.isAdmin)
   const navigate = useNavigate()
@@ -111,14 +112,16 @@ export function AppLayout() {
   }, [isAuthed, user?.id])
 
   // The sidebar is a map, not a feature inventory. Deep links remain routable while the
-  // seven daily destinations stay visible here.
+  // eight daily destinations stay visible here.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
+  const financeLabel = lang === 'uz' ? 'Buxgalteriya va moliya' : lang === 'en' ? 'Accounting & finance' : 'Бухгалтерия и финансы'
   const navGroups: { title: string; items: NavItem[] }[] = [
     { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
       { to: '/app/teams', label: t('teamOffice.navTeams'), icon: Users },
       { to: '/app/forge', label: 'Nemo Forge', icon: Cpu },
       { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
+      { to: '/app/finance', label: financeLabel, icon: Landmark },
       { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
       { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
       { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },

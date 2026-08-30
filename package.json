@@ -171,6 +171,7 @@
     "test:marketing-campaign-ui": "node agent-hub/marketing-campaign-ui-contracts.mjs",
     "test:finance-cash-flow": "node --experimental-strip-types agent-hub/finance-cash-flow-behavior.mjs",
     "test:finance-ingestion": "node --experimental-strip-types agent-hub/finance-ingestion-behavior.mjs",
+    "test:finance-dashboard-ui": "node agent-hub/finance-dashboard-ui-contracts.mjs",
     "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs",
     "prepare": "npm run build:cli",
     "test:pricing-contrast": "node agent-hub/pricing-contrast-smoke.mjs",
