@@ -231,6 +231,10 @@ verify_jwt = true
 [functions.generate-campaign]
 verify_jwt = true
 
+# Finance & Accounting Swarm cash-flow analysis (authenticated and tenant-scoped).
+[functions.finance-analyze-cashflow]
+verify_jwt = true
+
 # Commerce import staging and owner confirmation (panel, authenticated).
 [functions.commerce-control]
 verify_jwt = true

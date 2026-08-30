@@ -143,32 +143,14 @@ export const CashFlowAnalyticsRequestSchema = z.object({
   })
 })
 
-const GroundedFindingBaseSchema = z.object({
+export const GroundedFindingBaseSchema = z.object({
   title: z.string().trim().min(1).max(240),
   explanation: z.string().trim().min(1).max(2000),
   confidence: z.number().finite().min(0).max(1),
   evidence: z.array(FinanceEvidenceRefSchema).min(1).max(20),
 }).strict()
 
-export const CashFlowAnalyticsOutputSchema = z.object({
-  period: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }) }).strict(),
-  currency: CurrencySchema,
-  summary: z.object({
-    opening_balance_minor: z.number().int().safe(),
-    inflow_minor: MinorAmountSchema,
-    outflow_minor: MinorAmountSchema,
-    net_cash_flow_minor: z.number().int().safe(),
-    closing_balance_minor: z.number().int().safe(),
-    transfer_volume_minor: MinorAmountSchema,
-  }).strict(),
-  category_breakdown: z.array(z.object({
-    category_id: EntityIdSchema,
-    category_name: z.string().trim().min(1).max(160),
-    direction: z.enum(['inflow', 'outflow']),
-    amount_minor: MinorAmountSchema,
-    share_of_direction: z.number().finite().min(0).max(1),
-    transaction_count: z.number().int().nonnegative(),
-  }).strict()).max(500),
+export const FinanceNarrativeSchema = z.object({
   impact_assessments: z.array(GroundedFindingBaseSchema.extend({
     initiative_id: EntityIdSchema.optional(),
     category_id: EntityIdSchema,
@@ -197,6 +179,30 @@ export const CashFlowAnalyticsOutputSchema = z.object({
     priority: z.enum(['low', 'medium', 'high']),
     requires_human_approval: z.literal(true),
   }).strict()).max(100),
+}).strict()
+
+export const CashFlowAnalyticsOutputSchema = z.object({
+  period: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }) }).strict(),
+  currency: CurrencySchema,
+  summary: z.object({
+    opening_balance_minor: z.number().int().safe(),
+    inflow_minor: MinorAmountSchema,
+    outflow_minor: MinorAmountSchema,
+    net_cash_flow_minor: z.number().int().safe(),
+    closing_balance_minor: z.number().int().safe(),
+    transfer_volume_minor: MinorAmountSchema,
+  }).strict(),
+  category_breakdown: z.array(z.object({
+    category_id: EntityIdSchema,
+    category_name: z.string().trim().min(1).max(160),
+    direction: z.enum(['inflow', 'outflow']),
+    amount_minor: MinorAmountSchema,
+    share_of_direction: z.number().finite().min(0).max(1),
+    transaction_count: z.number().int().nonnegative(),
+  }).strict()).max(500),
+  impact_assessments: FinanceNarrativeSchema.shape.impact_assessments,
+  inefficiencies: FinanceNarrativeSchema.shape.inefficiencies,
+  recommendations: FinanceNarrativeSchema.shape.recommendations,
   data_quality: z.object({
     completeness_score: z.number().finite().min(0).max(1),
     uncategorized_transaction_ids: z.array(EntityIdSchema).max(2000),
