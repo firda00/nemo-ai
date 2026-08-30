@@ -333,7 +333,7 @@ export function AppLayout() {
                     {user?.name?.charAt(0).toUpperCase() ?? 'U'}
                   </span>
                 </span>
-                <span className="hidden min-w-0 text-left xl:block">
+                <span className="hidden min-w-0 text-left 2xl:block">
                   <span className="block max-w-32 truncate text-xs font-semibold text-text">{user?.name ?? t('appLayout.workspaceName')}</span>
                   <span className="mt-0.5 flex items-center gap-1 text-[10px] text-fog">
                     {t('appLayout.workspaceName')}

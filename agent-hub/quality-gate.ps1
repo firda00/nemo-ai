@@ -134,6 +134,7 @@ $steps = @(
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
   @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
   @{ Name = 'Structured marketing campaign backend'; Command = { npm run test:marketing-campaign } },
+  @{ Name = 'Marketing campaign studio UI'; Command = { npm run test:marketing-campaign-ui } },
   @{ Name = 'Finance cash-flow data contracts'; Command = { npm run test:finance-cash-flow } },
   @{ Name = 'Finance ingestion and grounded analysis'; Command = { npm run test:finance-ingestion } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },

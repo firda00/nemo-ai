@@ -168,6 +168,7 @@
     "test:cli-auth": "node --experimental-strip-types agent-hub/cli-auth-behavior.mjs",
     "test:marketing-skills": "node --experimental-strip-types agent-hub/marketing-skills-behavior.mjs",
     "test:marketing-campaign": "node --experimental-strip-types agent-hub/marketing-campaign-behavior.mjs",
+    "test:marketing-campaign-ui": "node agent-hub/marketing-campaign-ui-contracts.mjs",
     "test:finance-cash-flow": "node --experimental-strip-types agent-hub/finance-cash-flow-behavior.mjs",
     "test:finance-ingestion": "node --experimental-strip-types agent-hub/finance-ingestion-behavior.mjs",
     "test:cli-docs": "node agent-hub/cli-docs-contracts.mjs",

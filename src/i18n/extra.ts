@@ -620,6 +620,10 @@ export const extraUz = {
     "teamsSubtitle": "Yetakchi agent va mutaxassis agentlar bilan saqlangan AI-jamoalar.",
     "teamsTitle": "AI-jamoalar"
   },
+  "marketingCampaignNav": {
+    "title": "Kontent strategi",
+    "hint": "Brand Kit → hooklar → storyboard → vizual"
+  },
   "appLayout": {
     "groupAccount": "Hisob",
     "groupAiTeams": "AI komandalar",
@@ -2567,6 +2571,10 @@ export const extraRu = {
     "teamsSubtitle": "Сохранённые AI-команды с ведущим агентом и агентами-специалистами.",
     "teamsTitle": "AI-команды"
   },
+  "marketingCampaignNav": {
+    "title": "Контент-стратег",
+    "hint": "Brand Kit → хуки → storyboard → визуал"
+  },
   "appLayout": {
     "groupAccount": "Аккаунт",
     "groupAiTeams": "Команды ИИ",
@@ -4513,6 +4521,10 @@ export const extraEn = {
     "teamCardFallback": "AI team: a lead agent plus specialist agents.",
     "teamsSubtitle": "Saved AI Teams with Team Lead Agent and Specialist Agents.",
     "teamsTitle": "AI Teams"
+  },
+  "marketingCampaignNav": {
+    "title": "Content strategist",
+    "hint": "Brand Kit → hooks → storyboard → visual"
   },
   "appLayout": {
     "groupAccount": "Account",
