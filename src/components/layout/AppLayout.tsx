@@ -16,6 +16,9 @@ import {
   Megaphone,
   Sparkles,
   Cpu,
+  Search,
+  Command,
+  ArrowUpRight,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -34,8 +37,11 @@ export function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const hydrate = useAgentStore((s) => s.hydrate)
+  const activeAgentCount = useAgentStore((s) => s.agents.filter((agent) => agent.status === 'active').length)
   const [open, setOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
   const [feedbackEnabled, setFeedbackEnabled] = useState(true)
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
@@ -84,6 +90,18 @@ export function AppLayout() {
   }, [])
 
   useEffect(() => {
+    const onCommandKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen((value) => !value)
+      }
+      if (event.key === 'Escape') setCommandOpen(false)
+    }
+    window.addEventListener('keydown', onCommandKey)
+    return () => window.removeEventListener('keydown', onCommandKey)
+  }, [])
+
+  useEffect(() => {
     if (isAuthed) void trackEvent('page_view')
   }, [location.pathname, isAuthed])
 
@@ -108,6 +126,7 @@ export function AppLayout() {
     ...(isAdmin ? [{ title: t('appLayout.groupAccount'), items: [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] }] : []),
   ]
   const nav = navGroups.flatMap((g) => g.items)
+  const commandResults = nav.filter((item) => item.label.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()))
 
   // Header title: fall back to the create pages' own headings when not in nav.
   const titleFallback: Record<string, string> = {
@@ -140,12 +159,27 @@ export function AppLayout() {
     navigate('/')
   }
 
+  const openCommandResult = (to: string) => {
+    setCommandOpen(false)
+    setCommandQuery('')
+    navigate(to)
+  }
+
   const SidebarBody = (
     <div className="flex h-full flex-col border-r border-ice/10 bg-bg">
-      <div className="flex h-16 items-center justify-between px-5">
-        <Link to="/" onClick={() => setOpen(false)}>
-          <Logo />
-        </Link>
+      <div className="flex min-h-24 items-start justify-between gap-3 border-b border-ice/[0.07] px-5 py-4">
+        <div className="min-w-0">
+          <Link to="/" onClick={() => setOpen(false)} className="group inline-flex rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50">
+            <Logo size={36} />
+          </Link>
+          <div className="mt-2.5 inline-flex items-center gap-2 rounded-lg border border-ice/[0.07] bg-card/[0.025] px-2.5 py-1.5 text-[10px] font-medium text-muted">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-50" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-teal" />
+            </span>
+            {t('appLayout.activeAgents', { count: activeAgentCount })}
+          </div>
+        </div>
         <button onClick={toggleCollapse} className="hidden rounded-full p-1.5 text-muted hover:bg-white/5 hover:text-text lg:inline-flex" aria-label={t('appLayout.hideSidebar')} title={t('appLayout.hideSidebar')}>
           <PanelLeftClose size={19} />
         </button>
@@ -269,7 +303,7 @@ export function AppLayout() {
             {t('common.offline')}
           </div>
         )}
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-ice/10 bg-bg/80 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 grid h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-ice/[0.08] bg-bg/80 px-4 shadow-[0_1px_0_rgba(255,255,255,0.025)] backdrop-blur-xl sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(300px,520px)_minmax(0,1fr)]">
           <div className="min-w-0 flex items-center gap-2 sm:gap-3">
             <button onClick={() => setOpen(true)} className="rounded-full p-2 text-muted hover:bg-white/5 lg:hidden" aria-label={t('common.menu')}>
               <Menu size={22} />
@@ -277,14 +311,37 @@ export function AppLayout() {
             <h1 className="truncate text-base font-semibold tracking-tight text-text sm:text-xl">{current?.label ?? 'Nemo AI'}</h1>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden sm:block"><LanguageToggle /></div>
+          <button
+            type="button"
+            onClick={() => setCommandOpen(true)}
+            className="group hidden h-10 w-full items-center gap-3 rounded-xl border border-ice/[0.09] bg-card/[0.035] px-3.5 text-left text-sm text-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-[border-color,background-color,box-shadow] duration-200 hover:border-ice/[0.16] hover:bg-card/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/35 xl:flex"
+          >
+            <Search size={16} className="text-fog transition-colors group-hover:text-accent-cyan" />
+            <span className="min-w-0 flex-1 truncate">{t('appLayout.searchPlaceholder')}</span>
+            <span className="inline-flex items-center gap-0.5 rounded-md border border-ice/[0.08] bg-panel/70 px-1.5 py-1 font-mono text-[10px] text-fog"><Command size={10} />K</span>
+          </button>
+
+          <div className="flex items-center justify-end gap-2 sm:gap-3">
+            <button type="button" onClick={() => setCommandOpen(true)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-ice/[0.08] bg-card/[0.03] text-muted transition hover:bg-card/[0.07] hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/40 xl:hidden" aria-label={t('appLayout.searchLabel')}>
+              <Search size={16} />
+            </button>
+            <div className="hidden md:block"><LanguageToggle /></div>
             <div className="relative">
-              <button onClick={() => setMenuOpen((v) => !v)} className="flex items-center gap-1.5 rounded-pill p-0.5 pr-1.5 hover:bg-white/5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-medium text-white">
-                  {user?.name?.charAt(0).toUpperCase() ?? 'U'}
+              <button onClick={() => setMenuOpen((v) => !v)} className="group flex items-center gap-2 rounded-xl border border-transparent p-1 pr-1.5 transition hover:border-ice/[0.08] hover:bg-card/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/40" aria-expanded={menuOpen} aria-label={t('appLayout.profileMenu')}>
+                <span className="rounded-[11px] bg-flow-gradient p-px shadow-[0_6px_18px_-8px_rgba(79,70,229,0.75)]">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-panel text-sm font-semibold text-text">
+                    {user?.name?.charAt(0).toUpperCase() ?? 'U'}
+                  </span>
                 </span>
-                <ChevronDown size={15} className="text-muted" />
+                <span className="hidden min-w-0 text-left xl:block">
+                  <span className="block max-w-32 truncate text-xs font-semibold text-text">{user?.name ?? t('appLayout.workspaceName')}</span>
+                  <span className="mt-0.5 flex items-center gap-1 text-[10px] text-fog">
+                    {t('appLayout.workspaceName')}
+                    <span className="text-ice/20">•</span>
+                    <span className="text-accent-cyan">{t('appLayout.planBeta')}</span>
+                  </span>
+                </span>
+                <ChevronDown size={14} className={cn('text-muted transition-transform duration-200', menuOpen && 'rotate-180')} />
               </button>
               {menuOpen && (
                 <>
@@ -306,6 +363,36 @@ export function AppLayout() {
             </div>
           </div>
         </header>
+
+        {commandOpen && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-bg/55 px-4 pt-[12vh] backdrop-blur-sm" onMouseDown={(event) => { if (event.currentTarget === event.target) setCommandOpen(false) }}>
+            <section role="dialog" aria-modal="true" aria-label={t('appLayout.searchLabel')} className="w-full max-w-xl overflow-hidden rounded-2xl border border-ice/[0.12] bg-panel/95 shadow-[0_30px_80px_-28px_rgba(15,23,42,0.9)] backdrop-blur-xl animate-fadeIn">
+              <div className="flex items-center gap-3 border-b border-ice/[0.08] px-4">
+                <Search size={18} className="shrink-0 text-accent-cyan" />
+                <input
+                  autoFocus
+                  value={commandQuery}
+                  onChange={(event) => setCommandQuery(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter' && commandResults[0]) openCommandResult(commandResults[0].to) }}
+                  placeholder={t('appLayout.searchPlaceholder')}
+                  className="h-14 min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-fog"
+                />
+                <kbd className="rounded-md border border-ice/[0.08] bg-bg/50 px-1.5 py-1 font-mono text-[10px] text-fog">ESC</kbd>
+              </div>
+              <div className="max-h-80 overflow-y-auto p-2">
+                {commandResults.length ? commandResults.map((item) => (
+                  <button key={item.to} type="button" onClick={() => openCommandResult(item.to)} className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-muted transition hover:bg-card/[0.06] hover:text-text focus-visible:bg-card/[0.06] focus-visible:text-text focus-visible:outline-none">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-ice/[0.07] bg-card/[0.03] text-fog transition group-hover:text-accent-cyan"><item.icon size={15} /></span>
+                    <span className="flex-1 font-medium">{item.label}</span>
+                    <ArrowUpRight size={14} className="opacity-0 transition-opacity group-hover:opacity-100" />
+                  </button>
+                )) : (
+                  <p className="px-3 py-8 text-center text-sm text-muted">{t('appLayout.searchEmpty')}</p>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
 
         <main className="relative flex-1">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-brand-radial opacity-50" />

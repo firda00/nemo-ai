@@ -1,13 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Nemo AI">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48" role="img" aria-label="Nemo AI">
   <title>Nemo AI mark</title>
   <defs>
-    <linearGradient id="nemoFlow" x1="13" y1="13" x2="35" y2="35" gradientUnits="userSpaceOnUse">
+    <linearGradient id="nemoFlow" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#06B6D4"/>
       <stop offset="1" stop-color="#6366F1"/>
     </linearGradient>
   </defs>
-  <!-- Stems: two agents holding position. -->
-  <path d="M13 35V13M35 35V13" stroke="#6366F1" stroke-width="5" stroke-linecap="round"/>
-  <!-- Diagonal: the handoff between them, drawn in the direction work flows. -->
-  <path d="M13 13L35 35" stroke="url(#nemoFlow)" stroke-width="5" stroke-linecap="round"/>
+  <rect width="24" height="24" rx="7" fill="url(#nemoFlow)"/>
+  <rect x="1" y="1" width="22" height="22" rx="6" fill="#1E293B"/>
+  <path d="M5.25 18.75V5.25L18.75 18.75V5.25" fill="none" stroke="#6366F1" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="5.25" cy="5.25" r="1.35" fill="#06B6D4"/>
+  <circle cx="18.75" cy="18.75" r="1.35" fill="#6366F1"/>
 </svg>
