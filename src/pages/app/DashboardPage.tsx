@@ -9,6 +9,7 @@ import { useBackendStatus } from '../../hooks/useBackendStatus'
 import { QuickStart } from '../../components/platform/QuickStart'
 import { RecentActivity } from '../../components/platform/RecentActivity'
 import { BusinessBriefLauncher } from '../../components/platform/BusinessBriefLauncher'
+import { SmartTaskDesk } from '../../components/platform/SmartTaskDesk'
 
 function readLocalStorage(key: string): string {
   try {
@@ -79,6 +80,15 @@ export default function DashboardPage() {
 
   return (
     <div className="container-page max-w-7xl !px-3 py-6 sm:!px-8 sm:py-8">
+      <SmartTaskDesk />
+
+      <details className="group mt-5">
+        <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl border border-ice/[0.07] bg-card/[0.02] px-4 py-3 text-sm font-semibold text-muted transition hover:border-ice/[0.13] hover:text-text marker:content-none">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet/10 text-violet"><Activity size={15} /></span>
+          <span className="min-w-0 flex-1"><span className="block">{t('smartTaskDesk.workspaceOverview')}</span><span className="mt-0.5 block text-[11px] font-normal text-fog">{t('smartTaskDesk.workspaceOverviewHint')}</span></span>
+          <span className="text-xs transition-transform group-open:rotate-180">⌄</span>
+        </summary>
+        <div className="pt-7 animate-fadeIn">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="mono-label">{t('mvp.dashboard.eyebrow')}</p>
@@ -186,6 +196,8 @@ export default function DashboardPage() {
           <RecentActivity />
         </section>
       </div>
+        </div>
+      </details>
     </div>
   )
 }

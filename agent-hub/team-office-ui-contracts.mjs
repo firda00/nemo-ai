@@ -17,9 +17,11 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/App.tsx'),
 ])
 
-const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/content', '/app/finance', '/app/knowledge', '/app/analytics', '/app/settings']
-for (const route of normalDestinations) assert.match(layout, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
-assert.equal((layout.match(/to: '\/app(?:'|\/teams'|\/forge'|\/content'|\/finance'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 8)
+const sidebarBlock = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
+const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/settings']
+for (const route of normalDestinations) assert.match(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
+for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) assert.doesNotMatch(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
+assert.equal((sidebarBlock.match(/to: '\/app(?:'|\/teams'|\/forge'|\/settings')/g) ?? []).length, 4)
 assert.doesNotMatch(layout, /to: '\/app\/dialogues'/)
 assert.doesNotMatch(app, /import DialoguesPage/)
 assert.match(app, /path="dialogues" element=\{<Navigate to="\/app" replace \/>\}/)

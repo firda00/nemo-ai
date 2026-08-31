@@ -16,6 +16,7 @@
     "test:ui-stability": "node agent-hub/ui-stability-contracts.mjs",
     "test:ui": "node agent-hub/site-smoke.mjs",
     "test:team-office": "node agent-hub/team-office-ui-contracts.mjs",
+    "test:smart-navigation": "node agent-hub/smart-navigation-contracts.mjs",
     "test:forge-studio-ui": "node agent-hub/forge-studio-ui-contracts.mjs",
     "test:trace-ui": "node agent-hub/trace-ui-smoke.mjs",
     "test:integrations-ui": "node agent-hub/integrations-ui-smoke.mjs",

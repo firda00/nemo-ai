@@ -33,7 +33,7 @@ import { FeedbackWidget } from '../platform/FeedbackWidget'
 import { featureEnabled, trackEvent } from '../../lib/telemetry'
 
 export function AppLayout() {
-  const { lang, t } = useI18n()
+  const { t } = useI18n()
   const { user, logout, isAuthed } = useAuth()
   const isAdmin = useAgentStore((s) => s.isAdmin)
   const navigate = useNavigate()
@@ -115,23 +115,29 @@ export function AppLayout() {
   // The sidebar is a map, not a feature inventory. Deep links remain routable while the
   // daily destinations stay visible here.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
-  const financeLabel = lang === 'uz' ? 'Buxgalteriya va moliya' : lang === 'en' ? 'Accounting & finance' : 'Бухгалтерия и финансы'
   const navGroups: { title: string; items: NavItem[] }[] = [
     { title: t('appLayout.groupMain'), items: [
-      { to: '/app', label: t('appLayout.navOverview'), icon: LayoutDashboard, end: true },
-      { to: '/app/teams', label: t('teamOffice.navTeams'), icon: Users },
-      { to: '/app/forge', label: 'Nemo Forge', icon: Cpu },
-      { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
-      { to: '/app/finance', label: financeLabel, icon: Landmark },
-      { to: '/app/research', label: t('researchHub.nav'), icon: BookOpenText },
-      { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
-      { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
-      { to: '/app/settings', label: t('mvp.sidebar.settings'), icon: SettingsIcon },
+      { to: '/app', label: t('appLayout.navChatTasks'), icon: LayoutDashboard, end: true },
+      { to: '/app/teams', label: t('appLayout.navAiTeams'), icon: Users },
+      { to: '/app/forge', label: t('appLayout.navVibeStudio'), icon: Cpu },
     ] },
-    ...(isAdmin ? [{ title: t('appLayout.groupAccount'), items: [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] }] : []),
+    { title: t('appLayout.groupSystem'), items: [
+      { to: '/app/settings', label: t('appLayout.navSettingsIntegrations'), icon: SettingsIcon },
+    ] },
   ]
   const nav = navGroups.flatMap((g) => g.items)
-  const commandResults = nav.filter((item) => item.label.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()))
+  // Specialist studios are progressive-disclosure destinations: agents open them as chat
+  // artifacts, while power users can still reach the intact routes through command search.
+  const commandOnly: NavItem[] = [
+    { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
+    { to: '/app/finance', label: t('appLayout.navFinance'), icon: Landmark },
+    { to: '/app/research', label: t('researchHub.nav'), icon: BookOpenText },
+    { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
+    { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
+    ...(isAdmin ? [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] : []),
+  ]
+  const commandItems = [...nav, ...commandOnly]
+  const commandResults = commandItems.filter((item) => item.label.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()))
 
   // Header title: fall back to the create pages' own headings when not in nav.
   const titleFallback: Record<string, string> = {
@@ -155,7 +161,7 @@ export function AppLayout() {
     '/app/library': t('appLayout.navLibrary'),
     '/app/billing': t('appLayout.navBilling'),
   }
-  const current = nav
+  const current = commandItems
     .filter((n) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)))
     .sort((a, b) => b.to.length - a.to.length)[0] ?? (titleFallback[location.pathname] ? { label: titleFallback[location.pathname] } : undefined)
 
@@ -359,6 +365,7 @@ export function AppLayout() {
                     <Link to="/app/settings" onClick={() => setMenuOpen(false)} className="block rounded-xl px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-text">
                       {t('platform.nav.settings')}
                     </Link>
+                    {isAdmin && <Link to="/app/admin" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-text"><ShieldCheck size={15} />{t('appLayout.navAdmin')}</Link>}
                     <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted hover:bg-white/5 hover:text-text">
                       <LogOut size={15} /> {t('nav.logout')}
                     </button>
