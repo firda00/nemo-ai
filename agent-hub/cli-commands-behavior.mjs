@@ -788,10 +788,9 @@ check(() => assert.ok(toolBadges(['своё_имя']).includes('своё_имя'
 
 await checkAsync(async () => {
   const health = await collectHealth({}, async () => ({ ok: false, detail: 'нет' }))
-  const openrouter = health.find((one) => one.name === 'OpenRouter')
-  assert.equal(openrouter.ok, false)
-  // Отказ называет НЕДОСТАЮЩИЙ КЛЮЧ. «Не настроен» без имени переменной заставляет читать код.
-  assert.ok(openrouter.detail.includes('OPENROUTER_API_KEY'), openrouter.detail)
+  const cloud = health.find((one) => one.name === 'Nemo Cloud')
+  assert.equal(cloud.ok, true)
+  assert.ok(/backend.*nemo login/i.test(cloud.detail), cloud.detail)
 })
 
 // Отказ одной проверки не отменяет остальные: «Supabase не настроен» не повод скрыть, что ffmpeg на

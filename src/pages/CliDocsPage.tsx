@@ -134,11 +134,7 @@ export default function CliDocsPage() {
             </div>
           </section>
 
-          {/*
-            Честная оговорка, а не мелкий шрифт. Вход опознаёт человека, но обращения к модели не
-            оплачивает: запросы идут по личному ключу. Умолчать об этом — значит, что человек
-            установит, войдёт и упрётся в отказ, не понимая, чего от него хотят.
-          */}
+          {/* Cloud usage is explicit: the account plan is metered server-side; local Ollama remains optional. */}
           <section className="mt-14 rounded-2xl border border-ice/10 bg-black/20 p-5">
             <h2 className="text-sm font-semibold text-text">{UI.billingTitle[active]}</h2>
             <p className="mt-2 text-sm leading-relaxed text-muted">{UI.billingBody[active]}</p>

@@ -132,6 +132,7 @@ $steps = @(
   @{ Name = 'Landing navigation assertions'; Command = { npm run test:landing-nav } },
   @{ Name = 'Pricing readability'; Command = { npm run test:pricing-contrast } },
   @{ Name = 'CLI auth behaviour'; Command = { npm run test:cli-auth } },
+  @{ Name = 'CLI cloud proxy behaviour'; Command = { npm run test:cli-cloud } },
   @{ Name = 'Marketing skills'; Command = { npm run test:marketing-skills } },
   @{ Name = 'Structured marketing campaign backend'; Command = { npm run test:marketing-campaign } },
   @{ Name = 'Marketing campaign studio UI'; Command = { npm run test:marketing-campaign-ui } },

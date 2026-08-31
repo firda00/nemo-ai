@@ -18,6 +18,10 @@
       "destination": "https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/research-analyze-multimodal"
     },
     {
+      "source": "/api/cli/chat",
+      "destination": "https://ogfmyjiuqmgroobckdyw.supabase.co/functions/v1/cli-chat"
+    },
+    {
       "source": "/download/cli",
       "destination": "/nemo-cli.tgz"
     },

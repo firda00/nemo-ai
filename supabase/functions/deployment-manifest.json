@@ -50,6 +50,7 @@
     "backend-status",
     "billing-invoice",
     "browser-task",
+    "cli-chat",
     "commerce-control",
     "complete-onboarding",
     "compose-agent",

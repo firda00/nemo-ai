@@ -129,7 +129,7 @@ export async function collectHealth(
   const chromium = playwrightInstalled
 
   return [
-    configured('OpenRouter', ['OPENROUTER_API_KEY'], 'без него модель недоступна'),
+    { name: 'Nemo Cloud', ok: true, detail: 'модель доступна через защищённый backend после nemo login' },
     configured('Supabase', ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'], 'лиды не сохраняются'),
     configured('Telegram', ['SDR_TELEGRAM_BOT_TOKEN', 'SDR_TELEGRAM_MANAGER_CHAT_ID'], 'карточки не уходят'),
     configured('CRM', ['CRM_WEBHOOK_URL'], 'выгрузка в CRM отключена'),

@@ -26,7 +26,8 @@ import {
   AGENT_ROLES, COMPACT_INSTRUCTION, DEFAULT_ROLE, LOCAL_MODEL_BASE, completeSlash, parseSlash, runSlash,
 } from './cli/commands.ts'
 import { missionFor } from './cli/roles.ts'
-import { collectHealth, fetchBalance, toolBadges } from './cli/wiring.ts'
+import { collectHealth, toolBadges } from './cli/wiring.ts'
+import { createNemoCloudStream, fetchNemoBalance } from './cli/cloud.ts'
 import {
   INPUT_PROMPT, divider, estimateHistoryTokens, hudLine, plural, reasoningLine, shortModel,
   statusBar, treeBlock, userBar,
@@ -98,28 +99,6 @@ const account = process.env.NEMO_SKIP_LOGIN
 
 if (!account && !process.env.NEMO_SKIP_LOGIN) {
   console.error('Без входа продолжать нечем. Регистрация — в веб-панели Nemo AI.')
-  process.exit(1)
-}
-
-/*
- * КЛЮЧ МОДЕЛИ — ОТДЕЛЬНАЯ ВЕЩЬ ОТ ВХОДА, И ОБ ЭТОМ НАДО СКАЗАТЬ ПРЯМО.
- *
- * Вход опознаёт человека и открывает его аккаунт на платформе. Обращаться к языковой модели он при
- * этом НЕ разрешает: запросы уходят напрямую в OpenRouter по личному ключу, потому что прокси,
- * который считал бы расход по балансу аккаунта, ещё не построен.
- *
- * Раньше здесь стоял выход с ошибкой. Для локального запуска это годилось, для установленной
- * командой — нет: человек, только что успешно вошедший, получал отказ без объяснения, что именно
- * от него хотят. Теперь названы оба пути, включая тот, где ключ не нужен вовсе.
- */
-if (!process.env.OPENROUTER_API_KEY) {
-  console.log('')
-  console.log(`  ${c.yellow('Ключ модели не найден.')} Вход выполнен, но обращаться к модели пока нечем.`)
-  console.log('  Расход модели идёт по ВАШЕМУ ключу, не по балансу аккаунта: прокси на платформе ещё нет.')
-  console.log('')
-  console.log(`    ${c.dim('вариант 1')}  OPENROUTER_API_KEY=... nemo        ${c.dim('— ключ с openrouter.ai')}`)
-  console.log(`    ${c.dim('вариант 2')}  nemo, затем /model local           ${c.dim('— своя модель через Ollama, ключ не нужен')}`)
-  console.log('')
   process.exit(1)
 }
 
@@ -227,8 +206,7 @@ const { registry: fullRegistry, skipped } = buildPlatformRegistry({
    * вытеснить оттуда всё остальное и платить за неё в каждом следующем сообщении. Здесь она уходит
    * одним запросом, обратно приходит отчёт, а в историю попадает только он.
    */
-  askModel: process.env.OPENROUTER_API_KEY
-    ? async (prompt, signal) => {
+  askModel: async (prompt, signal) => {
       // Сигнал приходит СВОЙ, от реестра: истёкший таймаут инструмента обязан оборвать и запрос к
       // модели, иначе он продолжает идти и тратить деньги за ответ, которого никто не ждёт.
       const own = signal ? null : new AbortController()
@@ -237,8 +215,7 @@ const { registry: fullRegistry, skipped } = buildPlatformRegistry({
         if (chunk.kind === 'text') text += chunk.delta
       }
       return text
-    }
-    : undefined,
+    },
   // Автодозвон — только когда задана соль для отпечатков. Без неё белый список пришлось бы хранить
   // открытыми номерами, а это перечень людей, которым собираются звонить.
   dialer: dialer ?? undefined,
@@ -256,7 +233,7 @@ const mcp = await connectMcpServers(fullRegistry, mcpConfig.servers)
 
 let role = AGENT_ROLES[DEFAULT_ROLE]
 let model = process.env.NEMO_AGENT_MODEL ?? DEFAULT_AGENT_MODEL
-let localModel = false
+let localModel = Boolean(process.env.NEMO_SKIP_LOGIN && !account)
 
 /*
  * Израсходованные токены.
@@ -266,12 +243,15 @@ let localModel = false
  */
 let usedTokens = null
 
-const buildStream = () => createOpenRouterStream({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  model,
-  baseUrl: localModel ? LOCAL_MODEL_BASE : undefined,
-  onUsage: (usage) => { usedTokens = usage.totalTokens },
-})
+const buildStream = () => localModel
+  ? createOpenRouterStream({
+      apiKey: '', model, baseUrl: LOCAL_MODEL_BASE,
+      onUsage: (usage) => { usedTokens = usage.totalTokens },
+    })
+  : createNemoCloudStream({
+      accessToken: account?.access_token ?? '', model,
+      onUsage: (usage) => { usedTokens = usage.totalTokens },
+    })
 
 /** Ширина окна. Терминал могут растянуть посреди сессии, поэтому спрашиваем каждый раз. */
 const width = () => Math.max(48, Math.min(process.stdout.columns || 80, 120))
@@ -393,7 +373,9 @@ const commandDeps = {
     })),
   ],
   health: () => collectHealth(process.env),
-  balance: () => fetchBalance(process.env.OPENROUTER_API_KEY),
+  balance: () => account
+    ? fetchNemoBalance({ accessToken: account.access_token })
+    : Promise.resolve({ ok: false, error: 'облачный баланс недоступен без nemo login' }),
   /** Прямой вызов инструмента: /browse зовёт браузер, минуя модель. */
   runTool: async (toolName, args) => await activeRegistry.call(toolName, args, { allowedActions: [] }),
   runQa: async (target) => {
