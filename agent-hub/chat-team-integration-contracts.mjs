@@ -53,5 +53,9 @@ assert.match(provider, /select\('provider'\)/)
 assert.doesNotMatch(provider, /select\(['"]api_key['"]\)/)
 assert.match(provider, /api\.telegram\.org\/bot\$\{encodeURIComponent\(key\)\}\/getMe/)
 assert.match(settings, /<BillingPage embedded/)
+assert.match(settings, /type TabId = 'profile' \| 'integrations' \| 'billing'/)
+for (const hiddenSystemUi of ['ComputeTab', 'SupportTab', 'FFmpeg Worker', 'Whisper Worker', 'Nemo Control Plane', 'Live tenant context']) {
+  assert.doesNotMatch(settings, new RegExp(hiddenSystemUi), `public settings must not expose ${hiddenSystemUi}`)
+}
 
 console.log('[OK] Chat team creation, scoped execution, encrypted integrations, and billing contracts')
