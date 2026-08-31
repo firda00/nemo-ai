@@ -83,8 +83,9 @@ export function AppLayout() {
 
   // load agents from the live backend (no-op in demo mode)
   useEffect(() => {
-    hydrate()
-  }, [hydrate])
+    if (!isAuthed && isSupabaseEnabled) return
+    void hydrate({ forceProfile: isSupabaseEnabled })
+  }, [hydrate, isAuthed, user?.id])
 
   useEffect(() => {
     const onOnline = () => setOnline(true)

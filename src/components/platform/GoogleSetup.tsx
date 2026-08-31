@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Copy, Check, ExternalLink, ShieldCheck, KeyRound, Unplug, CheckCircle2, Mail, Table2, CalendarDays, FileText, HardDrive } from 'lucide-react'
+import { Loader2, Copy, Check, ExternalLink, ShieldCheck, KeyRound, Unplug, CheckCircle2, Mail, Table2, CalendarDays, FileText, HardDrive, Info } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
@@ -124,6 +124,10 @@ export function GoogleSetup({ onConnected, simple = false }: { onConnected?: () 
           <Cap icon={FileText} text="Docs" />
           <Cap icon={Mail} text="Gmail" />
         </div>
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber/25 bg-amber/[0.08] px-3 py-2.5 text-xs leading-5 text-muted">
+          <Info size={15} className="mt-0.5 shrink-0 text-amber" />
+          <span>{t('googleSetup.unverifiedHint')}</span>
+        </div>
         {msg && <Note msg={msg} />}
         <p className="flex items-center gap-1.5 text-[11px] text-fog"><ShieldCheck size={13} className="text-teal" /> OAuth-токен шифруется на сервере и не показывается в браузере.</p>
       </div>
@@ -135,6 +139,11 @@ export function GoogleSetup({ onConnected, simple = false }: { onConnected?: () 
       <p className="text-sm leading-relaxed text-muted">
         {t('googleSetup.introPre')}<span className="text-text">{t('googleSetup.introH1')}</span>{t('googleSetup.introMid1')}<span className="text-text">{t('googleSetup.introH2')}</span>{t('googleSetup.introMid2')}<span className="text-text">{t('googleSetup.introH3')}</span>{t('googleSetup.introSuffix')}
       </p>
+
+      <div className="flex items-start gap-2.5 rounded-xl border border-amber/25 bg-amber/[0.08] px-3 py-2.5 text-xs leading-5 text-muted">
+        <Info size={15} className="mt-0.5 shrink-0 text-amber" />
+        <span>{t('googleSetup.unverifiedHint')}</span>
+      </div>
 
       {/* GUIDE — create the Google app once */}
       {!configured && (

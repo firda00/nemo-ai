@@ -1,6 +1,7 @@
 import { supabase, isSupabaseEnabled } from './supabase'
 import { blankAgent, useAgentStore } from '../store/useAgentStore'
 import type { PlatformAgent, AgentPrompt } from '../types/platform'
+import { notifyTeamRegistryChanged } from './teamRegistrySync'
 
 const OPS_MODEL = 'openai/gpt-4o-mini'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -196,7 +197,8 @@ export async function saveDynamicTeam(
   if (error || !result?.agent_id || !result.department_id || !UUID_RE.test(result.agent_id) || !UUID_RE.test(result.department_id)) {
     return { agentId: '', error: error?.message ?? 'atomic team creation failed' }
   }
-  await useAgentStore.getState().hydrate()
+  await useAgentStore.getState().hydrate({ forceProfile: true })
+  notifyTeamRegistryChanged({ agentId: result.agent_id, departmentId: result.department_id })
   return { agentId: result.agent_id, departmentId: result.department_id }
 }
 

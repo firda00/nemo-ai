@@ -1373,7 +1373,8 @@ export const extraUz = {
     "step1TestUsersSuffix": " ga qo‘shing.",
     "step1Title": "Google Cloud’da ilova yarating (5 daqiqa)",
     "step1Type": " → turi ",
-    "step2Title": "Google’dan Client ID va Client Secret’ni joylashtiring"
+    "step2Title": "Google’dan Client ID va Client Secret’ni joylashtiring",
+    "unverifiedHint": "Sinov davrida Google birinchi kirishda ilova tasdiqlanmaganini ko‘rsatishi mumkin. Davom etish uchun Advanced → Go to nemoai (unsafe) ni tanlang. Faqat ishonchli Nemo sahifasidan ulang."
   },
   "integrationsPage": {
     "googleConnected": "Google ulandi ✅",
@@ -3619,7 +3620,8 @@ export const extraRu = {
     "step1TestUsersSuffix": ".",
     "step1Title": "Создайте приложение в Google Cloud (5 минут)",
     "step1Type": " → тип ",
-    "step2Title": "Вставьте Client ID и Client Secret из Google"
+    "step2Title": "Вставьте Client ID и Client Secret из Google",
+    "unverifiedHint": "На этапе тестирования Google может показать предупреждение, что приложение не проверено. Для продолжения при первом входе нажмите Advanced → Go to nemoai (unsafe). Подключайтесь только со страницы Nemo, которой доверяете."
   },
   "integrationsPage": {
     "googleConnected": "Google подключён ✅",
@@ -5865,7 +5867,8 @@ export const extraEn = {
     "step1TestUsersSuffix": ".",
     "step1Title": "Create an app in Google Cloud (5 minutes)",
     "step1Type": " → type ",
-    "step2Title": "Paste the Client ID and Client Secret from Google"
+    "step2Title": "Paste the Client ID and Client Secret from Google",
+    "unverifiedHint": "During testing, Google may warn that the app is not verified. On the first sign-in, choose Advanced → Go to nemoai (unsafe) to continue. Connect only from a Nemo page you trust."
   },
   "integrationsPage": {
     "googleConnected": "Google connected ✅",

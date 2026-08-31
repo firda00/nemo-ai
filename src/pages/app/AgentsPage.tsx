@@ -19,6 +19,7 @@ import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
 import type { OperationalAgentStatus } from '../../types/orchestrator'
 import { AgentQuickEditDrawer, type AgentQuickEditDraft } from '../../components/agents/AgentQuickEditDrawer'
 import type { PlatformAgent } from '../../types/platform'
+import { subscribeTeamRegistryChanged } from '../../lib/teamRegistrySync'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
@@ -79,7 +80,7 @@ export default function AgentsPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const toast = useToast()
-  const { agents, toggleAgent, duplicateAgent, deleteAgent, updateAgent } = useAgentStore()
+  const { agents, toggleAgent, duplicateAgent, deleteAgent, updateAgent, hydrate, accountId } = useAgentStore()
   const setPresetRuntimeTeam = useTeamOfficeStore((state) => state.setPresetRuntimeTeam)
   const [menu, setMenu] = useState<string | null>(null)
   const [quickEditAgentId, setQuickEditAgentId] = useState<string | null>(null)
@@ -110,6 +111,33 @@ export default function AgentsPage() {
     search: 'Найти команду по названию, роли или задаче…', searchLabel: 'Поиск AI-команд', specialists: 'специалистов', noResults: 'Команды не найдены',
   }
   const quickEditAgent = agents.find((agent) => agent.id === quickEditAgentId) ?? null
+
+  useEffect(() => {
+    if (!teamsView) return
+    const refresh = () => void hydrate({ forceProfile: true })
+    refresh()
+    const unsubscribe = subscribeTeamRegistryChanged(refresh)
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh() }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [hydrate, teamsView])
+
+  useEffect(() => {
+    if (!teamsView || !isSupabaseEnabled || !supabase || !accountId || accountId === 'demo') return
+    const client = supabase
+    const channel = client
+      .channel(`team-registry:${accountId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'agents', filter: `account_id=eq.${accountId}` }, () => {
+        void hydrate()
+      })
+      .subscribe()
+    return () => { void client.removeChannel(channel) }
+  }, [accountId, hydrate, teamsView])
 
   const saveQuickEdit = async (agent: PlatformAgent, draft: AgentQuickEditDraft) => updateAgent(agent.id, {
     name: draft.name.trim(),
