@@ -128,9 +128,14 @@ check('production build обновляет публичный CLI-архив', p
   check('install.sh останавливается на первой ошибке', /set -euo pipefail/.test(sh))
 
   const ps = read('public/install.ps1')
+  check('install.ps1 включает UTF-8 до вывода текста', /^\[Console\]::OutputEncoding = \[System\.Text\.Encoding\]::UTF8\r?\n\$OutputEncoding = \[System\.Text\.Encoding\]::UTF8/.test(ps))
   check('install.ps1 проверяет наличие Node.js', /Get-Command node/.test(ps))
   check('install.ps1 проверяет команду nemo', /Get-Command nemo/.test(ps))
   check('install.ps1 обновляет PATH текущей сессии', /GetEnvironmentVariable\('Path'/.test(ps))
+  check('install.ps1 обновляет Machine и User PATH', /GetEnvironmentVariable\('Path', 'Machine'\)/.test(ps) && /GetEnvironmentVariable\('Path', 'User'\)/.test(ps))
+  check('install.ps1 ищет npm в стандартных Windows-каталогах', /ProgramFiles/.test(ps) && /nodejs\\npm\.cmd/.test(ps) && /APPDATA/.test(ps))
+  check('install.ps1 вызывает найденный npm, а не полагается на старый PATH', /& \$NpmCommand install -g/.test(ps) && /& \$NpmCommand prefix -g/.test(ps))
+  check('install.ps1 объясняет отсутствие npm на двух языках', /npm was not found/.test(ps) && /npm не найден/.test(ps))
   // 2>&1 к native-команде в PowerShell 5.1 ломает $? — результат обязан читаться по $LASTEXITCODE.
   check('install.ps1 читает код возврата npm', /\$LASTEXITCODE/.test(ps))
 }
