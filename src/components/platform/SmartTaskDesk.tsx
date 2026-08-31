@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowUp,
   Bot,
@@ -39,6 +39,35 @@ type ChatTurn = {
   error?: boolean
 }
 
+type DiscoveryState = {
+  step: 'goal' | 'channels' | 'format'
+  initialRequest: string
+  requestedKind: 'team' | 'agent' | null
+  goal?: string
+  channels?: string
+}
+
+const DISCOVERY_COPY = {
+  ru: {
+    goal: 'Начнём с цели. Какой конкретный результат должен давать агент или команда?',
+    channels: 'С какими каналами, файлами или сервисами нужно работать? Например: Telegram, Google Drive, CRM, CSV или сайт.',
+    format: 'Какой формат вам нужен: один узкий агент или команда специалистов?',
+    progress: 'Настройка команды · вопрос {step} из 3',
+  },
+  uz: {
+    goal: 'Maqsaddan boshlaymiz. Agent yoki jamoa qanday aniq natija berishi kerak?',
+    channels: 'Qaysi kanallar, fayllar yoki servislar bilan ishlash kerak? Masalan: Telegram, Google Drive, CRM, CSV yoki sayt.',
+    format: 'Qaysi format kerak: bitta maxsus agentmi yoki mutaxassislar jamoasimi?',
+    progress: 'Jamoani sozlash · 3 savoldan {step}-savol',
+  },
+  en: {
+    goal: 'Let’s start with the goal. What concrete outcome should the agent or team deliver?',
+    channels: 'Which channels, files, or services should it use? For example: Telegram, Google Drive, CRM, CSV, or a website.',
+    format: 'Which format do you need: one focused agent or a team of specialists?',
+    progress: 'Team setup · question {step} of 3',
+  },
+} as const
+
 const ARTIFACT_META = {
   marketing: { icon: Film, route: '/app/content', titleKey: 'smartTaskDesk.marketingTitle', tint: 'text-violet bg-violet/10' },
   finance: { icon: Landmark, route: '/app/finance', titleKey: 'smartTaskDesk.financeTitle', tint: 'text-teal bg-teal/10' },
@@ -47,8 +76,9 @@ const ARTIFACT_META = {
 } as const
 
 export function SmartTaskDesk() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const addAgent = useAgentStore((state) => state.addAgent)
   const deleteAgent = useAgentStore((state) => state.deleteAgent)
   const [draft, setDraft] = useState('')
@@ -56,7 +86,39 @@ export function SmartTaskDesk() {
   const [activeArtifactId, setActiveArtifactId] = useState<number | null>(null)
   const [activeEntity, setActiveEntity] = useState<ChatCreatedEntity | null>(null)
   const [creating, setCreating] = useState(false)
+  const [discovery, setDiscovery] = useState<DiscoveryState | null>(null)
   const turnId = useRef(0)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const discoveryStartedFromUrl = useRef(false)
+  const discoveryCopy = DISCOVERY_COPY[lang]
+
+  const askDiscoveryQuestion = (copy: string) => {
+    const id = ++turnId.current
+    setTurns((current) => [...current.slice(-10), { id, role: 'assistant', text: copy }])
+    window.setTimeout(() => composerRef.current?.focus(), 0)
+  }
+
+  const startDiscovery = (requestedKind: 'team' | 'agent' | null, initialRequest = '') => {
+    setActiveEntity(null)
+    setDiscovery({ step: 'goal', initialRequest, requestedKind })
+    askDiscoveryQuestion(discoveryCopy.goal)
+  }
+
+  useEffect(() => {
+    const create = searchParams.get('create')
+    if (create !== 'team' && create !== 'agent') {
+      discoveryStartedFromUrl.current = false
+      return
+    }
+    if (discoveryStartedFromUrl.current) return
+    discoveryStartedFromUrl.current = true
+    startDiscovery(create, '')
+    const next = new URLSearchParams(searchParams)
+    next.delete('create')
+    setSearchParams(next, { replace: true })
+    // This effect intentionally reacts only to the one-shot URL command.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams])
 
   const suggestions = useMemo(() => [
     { kind: 'marketing' as const, label: t('smartTaskDesk.suggestionMarketing') },
@@ -72,16 +134,39 @@ export function SmartTaskDesk() {
     const stamp = turnId.current += 2
     setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value }])
     setDraft('')
-    if (entityIntent) {
+    if (discovery) {
+      if (discovery.step === 'goal') {
+        setDiscovery({ ...discovery, step: 'channels', goal: value })
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.channels }])
+        window.setTimeout(() => composerRef.current?.focus(), 0)
+        return
+      }
+      if (discovery.step === 'channels') {
+        setDiscovery({ ...discovery, step: 'format', channels: value })
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.format }])
+        window.setTimeout(() => composerRef.current?.focus(), 0)
+        return
+      }
+      const soloAnswer = /(?:один|соло|агент|solo|single|bitta|agent)/i.test(value)
+      const teamAnswer = /(?:команд|team|jamoa|специалист)/i.test(value)
+      const kind = soloAnswer ? 'agent' : teamAnswer ? 'team' : discovery.requestedKind ?? 'team'
+      const creationPrompt = `${kind === 'team' ? 'Создай команду' : 'Создай агента'}. Цель: ${discovery.goal}. Каналы и источники: ${discovery.channels}. Формат: ${value}. Исходный запрос: ${discovery.initialRequest}`
+      setDiscovery(null)
       setCreating(true)
       try {
-        const entity = await createEntityFromChat(value, addAgent, deleteAgent)
+        const entity = await createEntityFromChat(creationPrompt, addAgent, deleteAgent)
         setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${entity.kind}Created`, entity }])
       } catch (error) {
         setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: error instanceof Error ? error.message : t('smartTaskDesk.creationFailed'), error: true }])
       } finally {
         setCreating(false)
       }
+      return
+    }
+    if (entityIntent) {
+      setDiscovery({ step: 'goal', initialRequest: value, requestedKind: entityIntent })
+      setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.goal }])
+      window.setTimeout(() => composerRef.current?.focus(), 0)
       return
     }
     const response: ChatTurn = activeEntity
@@ -168,11 +253,13 @@ export function SmartTaskDesk() {
       </div>
 
       <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-5">
+        {discovery && <div className="mb-3 flex items-center gap-2 rounded-xl border border-violet/20 bg-violet/[0.06] px-3 py-2 text-[11px] font-semibold text-violet"><Sparkles size={13} className="animate-pulse" />{discoveryCopy.progress.replace('{step}', discovery.step === 'goal' ? '1' : discovery.step === 'channels' ? '2' : '3')}</div>}
         {!turns.length && <div className="mb-3 flex flex-wrap gap-2">
           {suggestions.map((suggestion) => <button key={suggestion.kind} type="button" onClick={() => void runTask(suggestion.label, suggestion.kind)} className="rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-2 text-left text-xs text-muted transition hover:-translate-y-0.5 hover:border-accent-cyan/25 hover:text-text">{suggestion.label}</button>)}
         </div>}
         <form onSubmit={submit} className="relative rounded-2xl border border-ice/[0.1] bg-card/[0.04] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] focus-within:border-accent-cyan/30 focus-within:ring-2 focus-within:ring-accent-cyan/[0.06]">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onComposerKeyDown}

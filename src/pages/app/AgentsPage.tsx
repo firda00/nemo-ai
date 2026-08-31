@@ -222,7 +222,7 @@ export default function AgentsPage() {
           <h1 className="text-2xl font-normal tracking-tight text-text">{teamsView ? t('agentsPage.teamsTitle') : t('agentsPage.agentsTitle')}</h1>
           <p className="mt-1 text-sm text-muted">{teamsView ? t('agentsPage.teamsSubtitle') : t('agentsPage.agentsSubtitle')}</p>
         </div>
-        <Button to="/app/create-team" size="md">
+        <Button to="/app?create=team" size="md">
           <Plus size={16} /> {t('agentsPage.createTeam')}
         </Button>
       </div>
@@ -231,7 +231,7 @@ export default function AgentsPage() {
         {[
           { to: '/app/agents', label: t('teamOffice.office'), icon: LayoutGrid, active: officeView },
           { to: '/app/teams', label: t('teamOffice.navTeams'), icon: List, active: teamsView },
-          { to: '/app/create-team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
+          { to: '/app?create=team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
         ].map((tab) => (
           <NavLink
             key={tab.to}
@@ -328,7 +328,7 @@ export default function AgentsPage() {
             title={teamsView && normalizedTeamSearch ? registryCopy.noResults : teamsView ? t('agentsPage.emptyTeamsTitle') : t('agentsPage.emptyAgentsTitle')}
             desc={teamsView ? t('agentsPage.emptyTeamsDesc') : t('agentsPage.emptyAgentsDesc')}
             action={
-              <Button to={teamsView ? '/app/create-team' : '/app/create-agent'} size="sm">
+              <Button to={teamsView ? '/app?create=team' : '/app?create=agent'} size="sm">
                 <Plus size={15} /> {teamsView ? t('agentsPage.createTeam') : t('agentsPage.createAgent')}
               </Button>
             }

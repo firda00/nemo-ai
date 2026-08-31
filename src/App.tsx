@@ -31,7 +31,6 @@ import DemoDatasetsPage from './pages/app/DemoDatasetsPage'
 import TrustPage from './pages/app/TrustPage'
 import EducationSalesWorkflowPage from './pages/app/EducationSalesWorkflowPage'
 import WaitlistPage from './pages/app/WaitlistPage'
-import CreateAgentPage from './pages/app/CreateAgentPage'
 import TeamDetailPage from './pages/app/TeamDetailPage'
 import AutonomousPage from './pages/app/AutonomousPage'
 import MemoryPage from './pages/app/MemoryPage'
@@ -133,8 +132,8 @@ export default function App() {
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="tools" element={<IntegrationsToolsPage />} />
-        <Route path="create-agent" element={<CreateAgentPage />} />
-        <Route path="create-team" element={<AutonomousPage />} />
+        <Route path="create-agent" element={<Navigate to="/app?create=agent" replace />} />
+        <Route path="create-team" element={<Navigate to="/app?create=team" replace />} />
         <Route path="teams" element={<AgentsPage />} />
         <Route path="teams/education-sales" element={<EducationSalesWorkflowPage />} />
         <Route path="teams/:id" element={<TeamDetailPage />} />

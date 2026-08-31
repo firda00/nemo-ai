@@ -118,7 +118,7 @@ export function AppLayout() {
     void featureEnabled('feedback_agent', user?.id).then(setFeedbackEnabled)
   }, [isAuthed, user?.id])
 
-  // The sidebar and Command Palette expose the same four supported entry points.
+  // The sidebar and Command Palette expose the same three supported entry points.
   // Specialist tools are mounted only as chat artifacts, not as hidden navigation.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
@@ -136,8 +136,6 @@ export function AppLayout() {
 
   // Header title: fall back to the create pages' own headings when not in nav.
   const titleFallback: Record<string, string> = {
-    '/app/create-agent': t('mvp.sidebar.createAgent'),
-    '/app/create-team': t('mvp.sidebar.createTeam'),
     '/app/agents': t('mvp.sidebar.agents'),
     '/app/autonomous': t('appLayout.navAutonomous'),
     '/app/research': t('appLayout.navResearch'),
@@ -228,7 +226,7 @@ export function AppLayout() {
         ))}
       </nav>
       <div className="border-t border-ice/10 p-3">
-        <Button to="/app/create-team" fullWidth size="sm">
+        <Button to="/app?create=team" fullWidth size="sm">
           <Sparkles size={15} className="shrink-0" />
           {t('mvp.sidebar.createTeam')}
         </Button>
@@ -271,7 +269,7 @@ export function AppLayout() {
 
             <div className="w-full border-t border-ice/10 px-2 pt-3">
               <Link
-                to="/app/create-team"
+                to="/app?create=team"
                 title={t('mvp.sidebar.createTeam')}
                 aria-label={t('mvp.sidebar.createTeam')}
                 className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-r from-accent-cyan to-accent-indigo text-white shadow-sm transition hover:opacity-90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/60"

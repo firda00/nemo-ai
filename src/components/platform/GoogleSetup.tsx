@@ -11,7 +11,7 @@ import { useI18n } from '../../i18n'
  * Google account — after which agents can send Gmail, write Sheets and set Calendar events.
  * Falls back to the shared Nemo app when global GOOGLE_CLIENT_ID is configured server-side.
  */
-export function GoogleSetup({ onConnected }: { onConnected?: () => void }) {
+export function GoogleSetup({ onConnected, simple = false }: { onConnected?: () => void; simple?: boolean }) {
   const { t } = useI18n()
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [redirect, setRedirect] = useState('')
@@ -101,6 +101,31 @@ export function GoogleSetup({ onConnected }: { onConnected?: () => void }) {
           <Cap icon={HardDrive} text="Google Drive" />
         </div>
         {msg && <Note msg={msg} />}
+      </div>
+    )
+  }
+
+  if (simple) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 rounded-2xl border border-ice/[0.08] bg-black/10 p-4 sm:flex-row sm:items-center">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-xl font-bold text-[#4285f4] shadow-sm">G</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-text">Google Workspace</p>
+            <p className="mt-1 text-xs leading-5 text-muted">Gmail, Sheets, Drive и Docs — безопасная авторизация через Google OAuth 2.0.</p>
+          </div>
+          <Button onClick={authorize} disabled={busy || !isSupabaseEnabled} className="shrink-0">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <ExternalLink size={15} />} Connect Google Workspace
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Cap icon={Table2} text="Sheets" />
+          <Cap icon={HardDrive} text="Drive" />
+          <Cap icon={FileText} text="Docs" />
+          <Cap icon={Mail} text="Gmail" />
+        </div>
+        {msg && <Note msg={msg} />}
+        <p className="flex items-center gap-1.5 text-[11px] text-fog"><ShieldCheck size={13} className="text-teal" /> OAuth-токен шифруется на сервере и не показывается в браузере.</p>
       </div>
     )
   }

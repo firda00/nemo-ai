@@ -494,7 +494,7 @@ export default function EducationSalesWorkflowPage() {
           <span className={`mt-3 inline-flex rounded-pill border px-3 py-1 text-xs font-medium ${modeClass}`}>{modeLabel}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button to="/app/create-team" variant={page === 'create' ? 'primary' : 'secondary'}>Create Team</Button>
+          <Button to="/app?create=team" variant={page === 'create' ? 'primary' : 'secondary'}>Create Team</Button>
           <Button to="/app/run-workflow" variant={page === 'run' ? 'primary' : 'secondary'}>Run Workflow</Button>
           <Button to="/app/activity" variant={page === 'results' ? 'primary' : 'secondary'}>Activity</Button>
         </div>
@@ -591,7 +591,7 @@ export default function EducationSalesWorkflowPage() {
           <div className="card rounded-3xl p-6">
             <div className="flex items-center justify-between gap-3">
               <div><h2 className="text-xl font-bold text-text">Run workflow</h2><p className="mt-1 text-sm text-muted">Choose workflow type and paste input data. {liveReady ? 'Nemo will try live orchestrate: plan → specialist steps → synth.' : 'Live prerequisites are missing, so this run will use Local simulation and will not call orchestrate.'}</p></div>
-              {createdId ? <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">Team saved</span> : <Button to="/app/create-team" size="sm">Create team first</Button>}
+              {createdId ? <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">Team saved</span> : <Button to="/app?create=team" size="sm">Create team first</Button>}
             </div>
             <div className="mt-4 grid gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-xs text-muted sm:grid-cols-4">
               <StatusPill label="Auth" ok={backend.authReady} okText="connected" badText="missing" />

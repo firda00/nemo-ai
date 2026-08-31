@@ -18,10 +18,11 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
 ])
 
 const sidebarBlock = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
-const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/settings']
+const normalDestinations = ['/app', '/app/teams', '/app/settings']
 for (const route of normalDestinations) assert.match(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
 for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) assert.doesNotMatch(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
-assert.equal((sidebarBlock.match(/to: '\/app(?:'|\/teams'|\/forge'|\/settings')/g) ?? []).length, 4)
+assert.equal((sidebarBlock.match(/to: '\/app(?:'|\/teams'|\/settings')/g) ?? []).length, 3)
+assert.doesNotMatch(sidebarBlock, /to: '\/app\/forge'/)
 assert.doesNotMatch(layout, /to: '\/app\/dialogues'/)
 assert.doesNotMatch(app, /import DialoguesPage/)
 assert.match(app, /path="dialogues" element=\{<Navigate to="\/app" replace \/>\}/)

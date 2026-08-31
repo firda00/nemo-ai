@@ -59,7 +59,7 @@ export default function DashboardPage() {
       tasks: 'Recommend products or services based on customer goals, budget, and language preference. Collect contact details and next actions.',
       tone: 'Professional, friendly, and solution-oriented.',
     }))
-    navigate('/app/create-agent')
+    navigate('/app?create=agent')
   }
 
   const createOperationsTeam = () => {
@@ -70,7 +70,7 @@ export default function DashboardPage() {
       template: 'Operations Team',
       selectedAt: new Date().toISOString(),
     }))
-    navigate('/app/create-team')
+    navigate('/app?create=team')
   }
 
   const runDemo = (type: 'payment-control' | 'meeting-to-tasks') => {
@@ -96,7 +96,7 @@ export default function DashboardPage() {
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{t('mvp.dashboard.subtitle')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button to="/app/create-team"><Plus size={16} /> {t('mvp.dashboard.createTeam')}</Button>
+          <Button to="/app?create=team"><Plus size={16} /> {t('mvp.dashboard.createTeam')}</Button>
           <Button to="/app/run-workflow" variant="outline"><PlayCircle size={16} /> {t('mvp.dashboard.runDemo')}</Button>
         </div>
       </div>
@@ -176,7 +176,7 @@ export default function DashboardPage() {
             {teams.length === 0 && !savedTeamId ? (
               <div className="rounded-2xl border border-dashed border-white/10 p-8 text-center">
                 <p className="text-sm text-muted">{t('mvp.dashboard.empty')}</p>
-                <Button to="/app/create-team" size="sm" className="mt-4"><Plus size={14} /> {t('mvp.dashboard.createFirst')}</Button>
+                <Button to="/app?create=team" size="sm" className="mt-4"><Plus size={14} /> {t('mvp.dashboard.createFirst')}</Button>
               </div>
             ) : (
               <Link to={savedTeamId ? `/app/teams/${savedTeamId}` : '/app/teams'} className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 hover:border-violet/40">
