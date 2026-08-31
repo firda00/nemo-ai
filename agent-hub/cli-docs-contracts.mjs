@@ -30,6 +30,7 @@ const header = read('src/components/layout/MarketingHeader.tsx')
 const commands = read('agent-hub/cli/commands.ts')
 const roles = read('agent-hub/cli/roles.ts')
 const pkg = JSON.parse(read('package.json'))
+const vercel = JSON.parse(read('vercel.json'))
 
 // ── Страница доступна ────────────────────────────────────────────────────────────────────────
 check('маршрут /docs/cli объявлен', /path="\/docs\/cli"/.test(app))
@@ -102,6 +103,9 @@ check('production build обновляет публичный CLI-архив', p
   const archivePath = path.join(root, 'public/nemo-cli.tgz')
   check('install.sh лежит в public', fs.existsSync(shPath))
   check('install.ps1 лежит в public', fs.existsSync(psPath))
+  const psHeaders = vercel.headers?.find((entry) => entry.source === '/install.ps1')?.headers ?? []
+  const psContentType = psHeaders.find((header) => header.key.toLowerCase() === 'content-type')?.value ?? ''
+  check('Vercel отдаёт install.ps1 как UTF-8 текст для irm | iex', /^text\/plain;\s*charset=utf-8$/i.test(psContentType), psContentType || 'Content-Type отсутствует')
   check('готовый CLI-архив лежит в public', fs.existsSync(archivePath) && fs.statSync(archivePath).size > 1024)
   if (fs.existsSync(archivePath)) {
     const listed = spawnSync('tar', ['-tzf', archivePath], { encoding: 'utf8', windowsHide: true })
