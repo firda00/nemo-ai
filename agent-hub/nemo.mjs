@@ -34,7 +34,7 @@ import {
 import { theme } from './cli/theme.ts'
 import { header, shortenPath } from './cli/banner.ts'
 import { ensureSession, logout, readSession, writeSession } from './cli/login.ts'
-import { ask as askLine, askHidden } from './cli/prompt.ts'
+import { loginWithBrowser } from './cli/browser-login.ts'
 import { loadSkills, skillPromptBlock } from './cli/skills.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '..')
@@ -49,13 +49,6 @@ const debug = process.argv.includes('--debug')
  */
 const CLI_VERSION = JSON.parse(await fs.readFile(path.join(repoRoot, 'package.json'), 'utf8')).version || '0.0.0'
 
-if (!isInteractiveTerminal()) {
-  // Агент — диалоговый режим. В конвейере он повис бы на первом же вопросе, и выглядело бы это как
-  // зависший процесс. Для скриптов есть режим флагов у sdr:run.
-  console.error('Агенту нужен терминал. Для скриптов: npm run sdr:run -- --query "..." --city "..."')
-  process.exit(1)
-}
-
 // ── Вход в аккаунт ───────────────────────────────────────────────────────────────────────────────
 //
 // До всего остального: остальные шаги имеют смысл только для того, кто вошёл. Сессия лежит в
@@ -66,15 +59,40 @@ if (process.argv.includes('logout')) {
   process.exit(0)
 }
 
-const tty = { input: process.stdin, output: process.stdout }
+const browserLogin = async () => {
+  const result = await loginWithBrowser({ say: (line) => console.log(`  ${line}`) })
+  if (result.ok) {
+    const welcomeName = result.session.name?.trim() || result.session.email.split('@')[0] || 'пользователь'
+    console.log(`  ✅ Авторизация успешна! Добро пожаловать, ${welcomeName}.`)
+  }
+  return result
+}
+
+// Явный вход не запускает интерактивного агента и потому работает даже из конвейера/скрипта.
+if (process.argv.includes('login')) {
+  const result = await browserLogin()
+  if (!result.ok) {
+    console.error(`  Не вошли: ${result.error}`)
+    process.exit(1)
+  }
+  writeSession(result.session)
+  process.exit(0)
+}
+
+if (!isInteractiveTerminal()) {
+  // Агент — диалоговый режим. В конвейере он повис бы на первом же вопросе, и выглядело бы это как
+  // зависший процесс. Для скриптов есть режим флагов у sdr:run.
+  console.error('Агенту нужен терминал. Для скриптов: npm run sdr:run -- --query "..." --city "..."')
+  process.exit(1)
+}
+
 const account = process.env.NEMO_SKIP_LOGIN
   ? null
   : await ensureSession({
     read: () => readSession(),
     write: (value) => writeSession(value),
     clear: () => logout(),
-    askEmail: () => askLine(tty, `${c.dim('Почта')} `),
-    askPassword: () => askHidden(tty, `${c.dim('Пароль')} `),
+    browserLogin,
     say: (line) => console.log(`  ${line}`),
   })
 

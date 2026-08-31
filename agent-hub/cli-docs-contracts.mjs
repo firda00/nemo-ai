@@ -37,6 +37,7 @@ check('маршрут /docs/cli объявлен', /path="\/docs\/cli"/.test(app
 // Короткий адрес тоже: его набирают руками чаще, чем длинный.
 check('маршрут /docs объявлен', /path="\/docs"/.test(app))
 check('ссылка в шапке лендинга', /\/docs\/cli/.test(header))
+check('публичный callback-маршрут CLI объявлен', /path="\/cli\/auth"/.test(app))
 
 // ── Слеш-команды из документации существуют в CLI ────────────────────────────────────────────
 {
@@ -178,6 +179,7 @@ check('production build обновляет публичный CLI-архив', p
   const unixNative = commandOf('native-unix')
   check('однострочник для macOS/Linux идёт через curl | bash', /curl -fsSL .*\| bash/.test(unixNative), unixNative)
   check('на странице оставлены только две публичные установки', (docs.match(/id: 'native-/g) ?? []).length === 2 && !/id: '(?:npm-|source)'/.test(docs))
+  check('CLI-документация ведёт на browser login без пароля', /command: 'nemo login'/.test(docs) && /Google/.test(docs) && !/спросит почту и пароль|asks for email and password/.test(docs))
 
   /*
    * НАТИВНАЯ УСТАНОВКА — ПЕРВАЯ. Её и рекомендуем: она проверяет Node, ставит и честно говорит,

@@ -8,10 +8,9 @@
  * ни в журнал, ни в историю оболочки. Файл кладётся с правами 0600 — читать его может только
  * владелец; в общей системе иначе его прочтёт кто угодно.
  *
- * ПОЧЕМУ ПАРОЛЬ, А НЕ КОД ЧЕРЕЗ БРАУЗЕР. Кодовый вход надёжнее (пароль вообще не проходит через
- * терминал), но требует эндпоинта, который выдаёт и подтверждает код. Такого пока нет, а
- * придумывать его «на глазок» — это самодельная аутентификация, что хуже пароля по HTTPS.
- * Когда эндпоинт появится, здесь меняется одна функция.
+ * Пароль через CLI не проходит: новый вход выполняется в системном браузере, а сюда попадает уже
+ * проверенная Supabase-сессия. Старый password grant оставлен только как изолированная функция для
+ * совместимости служебных тестов; пользовательский путь его не вызывает.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -28,6 +27,7 @@ export interface Session {
   /** Секунды эпохи. Сравнивается с запасом: токен, истекающий через минуту, уже негоден. */
   expires_at: number
   email: string
+  name?: string
 }
 
 /**
@@ -50,6 +50,7 @@ export function readSession(file = authPath()): Session | null {
       refresh_token: String(parsed.refresh_token),
       expires_at: Number(parsed.expires_at ?? 0),
       email: String(parsed.email ?? ''),
+      ...(parsed.name ? { name: String(parsed.name) } : {}),
     }
   } catch { return null }
 }
@@ -147,6 +148,7 @@ export async function refresh(
       refresh_token: body.refresh_token,
       expires_at: nowSeconds + Number(body.expires_in ?? 3600),
       email: body.user?.email ?? session.email,
+      ...(session.name ? { name: session.name } : {}),
     },
   }
 }

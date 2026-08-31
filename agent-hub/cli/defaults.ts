@@ -28,7 +28,7 @@ export const SUPABASE_ANON_KEY = pick(
 )
 
 /** Веб-панель: туда CLI отправляет за тарифами и настройками. */
-export const APP_URL = pick('NEMO_APP_URL', 'https://nemo-ai-firda00s-projects.vercel.app')
+export const APP_URL = pick('NEMO_APP_URL', 'https://nemo-ai-swart.vercel.app')
 
 /** Шлюз: виджет и служебные ручки. */
 export const GATEWAY_URL = pick('NEMO_GATEWAY_URL', 'https://nemo-ai-swart.vercel.app')

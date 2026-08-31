@@ -13,6 +13,8 @@ import path from 'node:path'
 const { authPath, needsRefresh, readSession, writeSession, clearSession, signIn, refresh } =
   await import('./cli/auth.ts')
 const { ensureSession } = await import('./cli/login.ts')
+const { loginWithBrowser } = await import('./cli/browser-login.ts')
+const { parseCliAuthRequest } = await import('../src/lib/cliAuth.ts')
 
 let checks = 0
 const assert = new Proxy(assertStrict, {
@@ -25,6 +27,9 @@ const assert = new Proxy(assertStrict, {
 
 // ── Куда кладётся сессия ─────────────────────────────────────────────────────────────────────
 assert.equal(authPath('/home/x'), path.join('/home/x', '.nemo', 'auth.json'))
+const nemoEntry = fs.readFileSync(path.join(import.meta.dirname, 'nemo.mjs'), 'utf8')
+assert.ok(nemoEntry.indexOf("process.argv.includes('login')") < nemoEntry.indexOf('if (!isInteractiveTerminal())'), 'nemo login должен работать без TTY')
+assert.equal(/askPassword|askEmail|askHidden/.test(nemoEntry), false, 'пользовательский CLI всё ещё спрашивает пароль')
 
 /*
  * ЗАПАС ПЕРЕД ИСТЕЧЕНИЕМ.
@@ -85,6 +90,57 @@ assert.equal(needsRefresh({ expires_at: 0 }, 0), true)
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+// ── Browser OAuth + loopback callback ───────────────────────────────────────────────────────
+{
+  const goodState = 's'.repeat(43)
+  assert.deepEqual(
+    parseCliAuthRequest(`?callback=${encodeURIComponent('http://127.0.0.1:3333/callback')}&state=${goodState}`),
+    { callback: 'http://127.0.0.1:3333/callback', state: goodState },
+  )
+  assert.equal(parseCliAuthRequest(`?callback=${encodeURIComponent('https://attacker.test/callback')}&state=${goodState}`), null)
+  assert.equal(parseCliAuthRequest(`?callback=${encodeURIComponent('http://127.0.0.1:3333/other')}&state=${goodState}`), null)
+  assert.equal(parseCliAuthRequest('?callback=http://127.0.0.1:3333/callback&state=short'), null)
+
+  let openedUrl = ''
+  let validated = 0
+  const result = await loginWithBrowser({
+    appUrl: 'https://nemo.test',
+    state: goodState,
+    timeoutMs: 5_000,
+    validate: async (payload) => {
+      validated += 1
+      assert.equal(payload.access_token, 'ACCESS')
+      return { access_token: 'ACCESS', refresh_token: 'REFRESH', expires_at: 9_999, email: 'x@y.z', name: 'Test User' }
+    },
+    openUrl: async (url) => {
+      openedUrl = url
+      const authUrl = new URL(url)
+      const callback = authUrl.searchParams.get('callback')
+      assert.equal(authUrl.origin, 'https://nemo.test')
+      assert.equal(authUrl.pathname, '/cli/auth')
+      assert.equal(authUrl.searchParams.get('state'), goodState)
+
+      const deniedState = await fetch(callback, {
+        method: 'POST',
+        headers: { Origin: 'https://nemo.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: 'x'.repeat(43), access_token: 'ACCESS' }),
+      })
+      assert.equal(deniedState.status, 403, 'чужой state принят loopback-сервером')
+
+      const accepted = await fetch(callback, {
+        method: 'POST',
+        headers: { Origin: 'https://nemo.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: goodState, access_token: 'ACCESS', refresh_token: 'REFRESH', expires_at: 9_999 }),
+      })
+      assert.equal(accepted.status, 200)
+    },
+  })
+  assert.ok(openedUrl)
+  assert.equal(result.ok, true)
+  assert.equal(result.session.name, 'Test User')
+  assert.equal(validated, 1, 'неверный state дошёл до проверки токена')
+}
+
 // ── Порядок входа ────────────────────────────────────────────────────────────────────────────
 const okToken = (expiresIn = 3600) => ({
   ok: true, status: 200,
@@ -99,8 +155,7 @@ const denied = (message) => ({ ok: false, status: 400, json: async () => ({ erro
     read: () => ({ access_token: 'A', refresh_token: 'R', expires_at: 10_000, email: 'x@y.z' }),
     write: () => { throw new Error('перезапись не нужна') },
     clear: () => { throw new Error('очистка не нужна') },
-    askEmail: async () => { throw new Error('спрашивать не о чем') },
-    askPassword: async () => { throw new Error('спрашивать не о чем') },
+    browserLogin: async () => { throw new Error('открывать браузер не нужно') },
     say: () => {},
     now: () => 1_000,
     fetchImpl: async () => { calls += 1; return okToken() },
@@ -110,100 +165,82 @@ const denied = (message) => ({ ok: false, status: 400, json: async () => ({ erro
 }
 
 /*
- * ПРОДЛЕНИЕ ПРОБУЕТСЯ ДО ВОПРОСА О ПАРОЛЕ.
+ * ПРОДЛЕНИЕ ПРОБУЕТСЯ ДО ОТКРЫТИЯ БРАУЗЕРА.
  *
- * Иначе человек, оставивший CLI на ночь, утром получает форму входа при живом refresh-токене — и
- * решает, что «оно опять разлогинилось». Проверяется, что пароля НЕ спросили.
+ * Иначе человек, оставивший CLI на ночь, утром получает новый OAuth при живом refresh-токене.
  */
 {
-  let asked = 0
+  let opened = 0
   let written = null
   const session = await ensureSession({
     read: () => ({ access_token: 'old', refresh_token: 'R', expires_at: 1_000, email: 'x@y.z' }),
     write: (value) => { written = value },
     clear: () => { throw new Error('стирать нечего — продление удалось') },
-    askEmail: async () => { asked += 1; return 'x@y.z' },
-    askPassword: async () => { asked += 1; return 'p' },
+    browserLogin: async () => { opened += 1; throw new Error('браузер не нужен') },
     say: () => {},
     now: () => 2_000,
     fetchImpl: async () => okToken(),
   })
-  assert.equal(asked, 0, 'спросили пароль при годном refresh-токене')
+  assert.equal(opened, 0, 'открыли браузер при годном refresh-токене')
   assert.equal(session.access_token, 'A')
   assert.equal(written.expires_at, 2_000 + 3600, 'срок пересчитан от текущего времени')
 }
 
-// Отказ продления стирает файл и ведёт к обычному входу.
+// Отказ продления стирает файл и ведёт к browser login.
 {
   let cleared = 0
   const said = []
-  let stage = 0
+  let opened = 0
   const session = await ensureSession({
     read: () => ({ access_token: 'old', refresh_token: 'dead', expires_at: 1, email: 'x@y.z' }),
     write: () => {},
     clear: () => { cleared += 1 },
-    askEmail: async () => 'x@y.z',
-    askPassword: async () => 'p',
+    browserLogin: async () => {
+      opened += 1
+      return { ok: true, session: { access_token: 'B', refresh_token: 'BR', expires_at: 9_000, email: 'x@y.z' } }
+    },
     say: (line) => said.push(line),
     now: () => 2_000,
-    fetchImpl: async () => (stage++ === 0 ? denied('refresh token expired') : okToken()),
+    fetchImpl: async () => denied('refresh token expired'),
   })
   assert.equal(cleared, 1, 'мёртвый refresh-токен обязан быть стёрт: иначе CLI ходит за отказом каждый запуск')
-  assert.equal(session.access_token, 'A')
+  assert.equal(opened, 1)
+  assert.equal(session.access_token, 'B')
   assert.ok(said.some((line) => /истекла/i.test(line)), 'человеку не сказали, почему спрашивают заново')
 }
 
-// Неверный пароль — переспрос, а не выход. И причина отказа названа.
+// Отказ browser login не зацикливается и причина названа.
 {
   const said = []
-  let attempt = 0
   const session = await ensureSession({
     read: () => null,
     write: () => {},
     clear: () => {},
-    askEmail: async () => 'x@y.z',
-    askPassword: async () => 'p',
+    browserLogin: async () => ({ ok: false, error: 'пользователь отменил вход' }),
     say: (line) => said.push(line),
     now: () => 0,
-    fetchImpl: async () => (attempt++ === 0 ? denied('Invalid login credentials') : okToken()),
-  })
-  assert.equal(session.access_token, 'A', 'вторая попытка обязана сработать')
-  assert.ok(said.some((line) => /Invalid login credentials/.test(line)), 'причина отказа не показана')
-}
-
-// Попытки не бесконечны: CLI, спрашивающий пароль по кругу, невозможно прервать в скрипте.
-{
-  const session = await ensureSession({
-    read: () => null,
-    write: () => {},
-    clear: () => {},
-    askEmail: async () => 'x@y.z',
-    askPassword: async () => 'p',
-    say: () => {},
-    now: () => 0,
-    attempts: 2,
-    fetchImpl: async () => denied('Invalid login credentials'),
+    fetchImpl: async () => { throw new Error('сеть не нужна без сохранённой сессии') },
   })
   assert.equal(session, null)
+  assert.ok(said.some((line) => /отменил/.test(line)), 'причина отказа не показана')
 }
 
-/*
- * ПАРОЛЬ НЕ ВЫТЕКАЕТ В СООБЩЕНИЕ ОБ ОТКАЗЕ.
- *
- * Сообщение уходит в буфер прокрутки терминала, в запись демонстрации экрана и в переписку с
- * поддержкой. Пароль внутри него — утечка, растянутая во времени.
- */
+// Успешная browser-сессия сохраняется ровно один раз.
 {
-  const said = []
-  await ensureSession({
-    read: () => null, write: () => {}, clear: () => {},
-    askEmail: async () => 'x@y.z',
-    askPassword: async () => 'СуперСекрет123',
-    say: (line) => said.push(line),
-    now: () => 0, attempts: 1,
-    fetchImpl: async () => denied('Invalid login credentials'),
+  let writes = 0
+  const session = await ensureSession({
+    read: () => null,
+    write: () => { writes += 1 },
+    clear: () => {},
+    browserLogin: async () => ({
+      ok: true,
+      session: { access_token: 'A', refresh_token: 'R', expires_at: 3_600, email: 'x@y.z', name: 'Nemo User' },
+    }),
+    say: () => {},
+    now: () => 0,
   })
-  assert.equal(said.join(' ').includes('СуперСекрет123'), false, 'пароль попал в сообщение об отказе')
+  assert.equal(session.name, 'Nemo User')
+  assert.equal(writes, 1)
 }
 
 // Сетевой сбой и неверные учётные данные — разные беды, и лечатся они по-разному.
