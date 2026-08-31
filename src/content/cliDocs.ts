@@ -66,11 +66,19 @@ export const COMMAND_GROUPS: CommandGroup[] = [
     title: { ru: 'Вход', uz: 'Kirish', en: 'Signing in' },
     rows: [
       {
+        command: 'nemo login',
+        what: {
+          ru: 'Откроет безопасный вход через Google в браузере. Сессия сохранится в ~/.nemo/auth.json с правами только для владельца.',
+          uz: 'Brauzerda Google orqali xavfsiz kirishni ochadi. Sessiya ~/.nemo/auth.json faylida faqat egasi uchun saqlanadi.',
+          en: 'Opens secure Google sign-in in your browser. The session is stored in ~/.nemo/auth.json with owner-only permissions.',
+        },
+      },
+      {
         command: 'nemo',
         what: {
-          ru: 'Первый запуск спросит почту и пароль. Сессия ляжет в ~/.nemo/auth.json — больше не спросит.',
-          uz: 'Birinchi ishga tushirishda pochta va parol soʻraladi. Sessiya ~/.nemo/auth.json ga saqlanadi.',
-          en: 'The first run asks for email and password. The session goes to ~/.nemo/auth.json — it will not ask again.',
+          ru: 'Запустить агента. Если сессии ещё нет, CLI сам откроет вход в браузере — пароль в терминале не нужен.',
+          uz: 'Agentni ishga tushirish. Sessiya bo‘lmasa, CLI brauzerda kirishni o‘zi ochadi — terminalda parol kerak emas.',
+          en: 'Starts the agent. If no session exists, the CLI opens browser sign-in automatically—no terminal password required.',
         },
       },
       {

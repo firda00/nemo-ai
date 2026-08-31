@@ -8,6 +8,7 @@ import PricingPage from './pages/PricingPage'
 import CliDocsPage from './pages/CliDocsPage'
 import PitchPage from './pages/PitchPage'
 import AuthPage from './pages/AuthPage'
+import CliAuthPage from './pages/CliAuthPage'
 import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/app/DashboardPage'
 import AgentsPage from './pages/app/AgentsPage'
@@ -93,6 +94,7 @@ export default function App() {
       <Route path="/auth/signin" element={<AuthPage />} />
       <Route path="/auth/signup" element={<AuthPage />} />
       <Route path="/auth/reset" element={<AuthPage />} />
+      <Route path="/cli/auth" element={<CliAuthPage />} />
 
       <Route
         path="/setup"
