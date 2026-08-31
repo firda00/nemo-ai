@@ -132,11 +132,11 @@ export const COMMAND_GROUPS: CommandGroup[] = [
     title: { ru: 'Модель', uz: 'Model', en: 'Model' },
     rows: [
       {
-        command: 'OPENROUTER_API_KEY=... nemo',
+        command: 'nemo',
         what: {
-          ru: 'Свой ключ с openrouter.ai. Расход идёт по нему, а не по балансу аккаунта Nemo.',
-          uz: 'openrouter.ai dan oʻz kalitingiz. Sarf shu kalit boʻyicha, Nemo balansi boʻyicha emas.',
-          en: 'Your own key from openrouter.ai. Usage bills to it, not to your Nemo balance.',
+          ru: 'Облачная модель Nemo по умолчанию. Отдельный API-ключ не нужен; лимиты учитываются в вашем тарифе.',
+          uz: 'Standart Nemo bulut modeli. Alohida API kaliti kerak emas; limitlar tarifingiz bo‘yicha hisoblanadi.',
+          en: 'Uses Nemo Cloud by default. No separate API key is needed; usage counts against your plan.',
         },
       },
       {
@@ -229,8 +229,8 @@ export const UI: Record<string, Record<Lang, string>> = {
   },
   billingTitle: { ru: 'О расходе на модель', uz: 'Model xarajati haqida', en: 'About model spend' },
   billingBody: {
-    ru: 'Вход в аккаунт Nemo и оплата модели — разные вещи. CLI обращается к модели по вашему ключу OpenRouter, а не по балансу аккаунта. Если ключа нет, поднимите локальную модель через Ollama и переключитесь командой /model local — она бесплатна и работает без интернета.',
-    uz: 'Nemo hisobiga kirish va model uchun toʻlov — har xil narsalar. CLI modelga sizning OpenRouter kalitingiz orqali murojaat qiladi, hisob balansi orqali emas. Kalit boʻlmasa, Ollama orqali lokal modelni koʻtaring va /model local bilan almashing — u bepul va internetsiz ishlaydi.',
-    en: 'Signing in to Nemo and paying for the model are separate things. The CLI calls the model with your own OpenRouter key, not your account balance. With no key, run a local model through Ollama and switch with /model local — it is free and works offline.',
+    ru: 'После nemo login запросы идут через защищённый backend Nemo: он проверяет аккаунт и централизованно учитывает лимиты тарифа. Ключ OpenRouter в терминале не нужен. Для полностью локальной работы можно запустить Ollama и выбрать /model local.',
+    uz: 'nemo login dan keyin so‘rovlar Nemo himoyalangan backendi orqali yuboriladi: u hisobni tekshiradi va tarif limitlarini markaziy hisoblaydi. Terminalda OpenRouter kaliti kerak emas. To‘liq lokal ishlash uchun Ollama va /model local dan foydalaning.',
+    en: 'After nemo login, requests go through Nemo’s secured backend, which verifies the account and meters plan usage centrally. No OpenRouter key is needed in the terminal. For fully local use, run Ollama and select /model local.',
   },
 }

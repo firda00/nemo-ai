@@ -171,6 +171,7 @@
     "build:cli-release": "node scripts/package-cli-release.mjs",
     "test:cli-install": "node agent-hub/cli-install-smoke.mjs",
     "test:cli-auth": "node --experimental-strip-types agent-hub/cli-auth-behavior.mjs",
+    "test:cli-cloud": "node --experimental-strip-types agent-hub/cli-cloud-behavior.mjs",
     "test:marketing-skills": "node --experimental-strip-types agent-hub/marketing-skills-behavior.mjs",
     "test:marketing-campaign": "node --experimental-strip-types agent-hub/marketing-campaign-behavior.mjs",
     "test:marketing-campaign-ui": "node agent-hub/marketing-campaign-ui-contracts.mjs",

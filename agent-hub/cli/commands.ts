@@ -93,7 +93,7 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'qa', usage: '/qa <url|code>', summary: 'аудит сайта или прогон гейта качества' },
   { name: 'skill', usage: '/skill [id|off]', summary: 'подключить маркетинговую методику' },
   { name: 'health', usage: '/health', summary: 'состояние зависимостей' },
-  { name: 'balance', usage: '/balance', summary: 'остаток кредитов OpenRouter' },
+  { name: 'balance', usage: '/balance', summary: 'тариф и остаток облачных лимитов Nemo' },
   { name: 'clear', usage: '/clear', summary: 'забыть разговор, роль сохранить' },
   { name: 'exit', usage: '/exit', summary: 'выход' },
 ]

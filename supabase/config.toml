@@ -45,6 +45,11 @@ verify_jwt = true
 [functions.compose-agent]
 verify_jwt = true
 
+# Authenticated CLI model proxy. The caller sends its Supabase session JWT; provider credentials
+# and usage accounting stay server-side.
+[functions.cli-chat]
+verify_jwt = true
+
 [functions.agent-evals]
 verify_jwt = true
 
