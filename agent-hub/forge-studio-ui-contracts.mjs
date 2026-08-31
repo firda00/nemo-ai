@@ -5,17 +5,24 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (file) => readFileSync(path.join(root, file), 'utf8')
-const forge = read('src/pages/app/ForgePage.tsx')
+const sandbox = read('src/components/platform/LiveCodeSandboxArtifact.tsx')
+const desk = read('src/components/platform/SmartTaskDesk.tsx')
+const room = read('src/pages/app/TeamDetailPage.tsx')
+const app = read('src/App.tsx')
+const layout = read('src/components/layout/AppLayout.tsx')
 const settings = read('src/pages/app/SettingsPage.tsx')
+const translations = read('src/i18n/extra.ts')
 const vercel = JSON.parse(read('vercel.json'))
 
-for (const key of ['livePreview', 'fileCode', 'console', 'downloadZip', 'openCli', 'publishWeb']) {
-  assert.match(forge, new RegExp(`forgePage\\.${key}`), `Forge Studio must expose ${key}`)
-}
-assert.match(forge, /zipSync\(/, 'ZIP export must create a real archive')
-assert.match(forge, /projectFiles\(forge\.prompt, stack\)/, 'the selected stack must change exported files')
-assert.match(forge, /href="\/download\/cli"/, 'Forge must expose the direct CLI download')
-assert.doesNotMatch(forge, /deterministic|детерминирован|computeProfile|routingMode/, 'internal orchestration vocabulary must stay out of Forge UI')
+for (const key of ['preview', 'code', 'console']) assert.match(sandbox, new RegExp(`(?:id|key): '${key}'`), `Live Sandbox artifact must expose ${key}`)
+for (const key of ['downloadZip', 'cli']) assert.match(sandbox, new RegExp(`liveSandbox\\.${key}`), `Live Sandbox artifact must expose ${key}`)
+assert.match(sandbox, /zipSync\(/, 'ZIP export must create a real archive')
+assert.match(sandbox, /sandbox="allow-scripts"/, 'preview must run in an isolated iframe')
+assert.match(desk, /LiveCodeSandboxArtifact/, 'main chat must render the code artifact')
+assert.match(room, /isCodeCreationIntent\(latestRun\.task\)[\s\S]*LiveCodeSandboxArtifact/, 'team room must render the artifact for development runs')
+assert.match(app, /path="forge" element=\{<Navigate to="\/app\/teams" replace \/>\}/, 'Forge route must redirect to teams')
+assert.doesNotMatch(layout, /to: '\/app\/forge'/, 'Forge must not appear in navigation')
+for (const locale of ['extraUz', 'extraRu', 'extraEn']) assert.match(translations, new RegExp(`export const ${locale} = \\{[\\s\\S]*?"liveSandbox"`), `${locale} must translate Live Sandbox`)
 
 for (const field of ['companyContext', 'codingRules', 'communicationTone', 'forbiddenApproaches', 'workspaceName']) {
   assert.match(settings, new RegExp(`settingsPage\\.${field}`), `personalisation must include ${field}`)
@@ -29,4 +36,4 @@ assert.equal(cliRewrite?.destination, '/nemo-cli.tgz', 'the short CLI route must
 const cliHeaders = vercel.headers?.find((item) => item.source === '/download/cli')?.headers ?? []
 assert.ok(cliHeaders.some((item) => item.key === 'Content-Disposition' && /attachment/.test(item.value)), 'CLI route must download instead of opening as app HTML')
 
-console.log('Forge Studio, CLI route and personalization UI contracts passed')
+console.log('Live Code Sandbox, CLI route, navigation and personalization UI contracts passed')

@@ -16,6 +16,8 @@ import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
 import { TeamOfficeView } from '../../components/office/TeamOfficeView'
 import type { AgentNodeData } from '../../types/orchestrator'
+import { LiveCodeSandboxArtifact } from '../../components/platform/LiveCodeSandboxArtifact'
+import { isCodeCreationIntent } from '../../lib/codeCreationIntent'
 
 interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
@@ -271,6 +273,7 @@ export default function TeamDetailPage() {
                 <article className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-cyan/[0.08] px-4 py-3"><p className="mb-1 text-[10px] font-semibold text-cyan">{t('teamDetailPage.you')}</p><p className="break-words text-sm leading-6 text-text">{latestRun.task}</p></article>
                 <article className="max-w-[92%]"><div className="flex items-start gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet/[0.1] text-violet"><Bot size={15} /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-xs font-bold text-text">{t('teamDetailPage.coordinator')}</p><span className="text-[10px] text-fog">{new Date(latestRun.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div><p className="mt-1 text-sm leading-6 text-muted">{t('teamDetailPage.coordinatorAccepted')}</p><div className="mt-2 space-y-1.5">{(latestRun.steps ?? []).slice(0, 4).map((step, index) => <button type="button" key={`${step.query}-${index}`} onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="flex w-full min-w-0 items-center gap-2 rounded-xl bg-white/[0.025] px-3 py-2 text-left transition hover:bg-white/[0.05]"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal" /><span className="min-w-0 flex-1 truncate text-xs text-muted">{step.query}</span><span className="text-[10px] text-fog">{step.review?.approved ? t('teamDetailPage.ready') : t('teamDetailPage.inProgress')}</span></button>)}</div></div></div></article>
                 {latestRun.report && <button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="ml-11 flex max-w-[88%] items-start gap-3 rounded-2xl border border-teal/20 bg-teal/[0.055] p-4 text-left transition hover:bg-teal/[0.08]"><FileText size={18} className="mt-0.5 shrink-0 text-teal" /><span><span className="block text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</span><span className="mt-1 block text-xs leading-5 text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</span></span></button>}
+                {latestRun.report && isCodeCreationIntent(latestRun.task) && <div className="ml-0 min-w-0 sm:ml-11"><LiveCodeSandboxArtifact prompt={latestRun.task} compact /></div>}
               </>}
             </div>
 

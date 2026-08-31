@@ -12,9 +12,10 @@ const translations = read('src/i18n/extra.ts')
 const sidebar = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
 const commandItems = layout.slice(layout.indexOf('const commandItems'), layout.indexOf('const commandResults'))
 
-for (const route of ['/app', '/app/teams', '/app/forge', '/app/settings']) {
+for (const route of ['/app', '/app/teams', '/app/settings']) {
   assert.match(sidebar, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`), `${route} must remain a daily sidebar destination`)
 }
+assert.doesNotMatch(layout, /to: '\/app\/forge'/, 'Vibe Studio must not appear in sidebar or Command Palette')
 for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) {
   const routePattern = new RegExp(`to: '${route.replaceAll('/', '\\/')}'`)
   assert.doesNotMatch(sidebar, routePattern, `${route} must not inflate the sidebar`)
@@ -25,6 +26,7 @@ assert.match(commandItems, /const commandItems = nav/, 'Command Palette must exp
 for (const route of ['content', 'finance', 'research']) {
   assert.match(app, new RegExp(`path="${route}" element=\\{<Navigate to="\\/app" replace \\/>\\}`), `${route} must redirect to the chat with replace`)
 }
+assert.match(app, /path="forge" element=\{<Navigate to="\/app\/teams" replace \/>\}/, 'legacy Forge route must redirect to AI teams')
 
 assert.match(dashboard, /<SmartTaskDesk \/>/, 'the main workspace must mount Chat & Tasks')
 assert.match(desk, /classifyTaskArtifact/, 'the chat entry point must route plain-language intents')

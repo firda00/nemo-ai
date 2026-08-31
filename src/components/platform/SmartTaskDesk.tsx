@@ -14,6 +14,7 @@ import {
   UserRound,
   Workflow,
   Loader2,
+  Code2,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -24,6 +25,7 @@ import { ResearchNotebookHub } from '../research/ResearchNotebookHub'
 import { AutonomousRunner } from './AutonomousRunner'
 import { classifyChatEntityIntent, createEntityFromChat, type ChatCreatedEntity } from '../../lib/chatEntityFactory'
 import { useAgentStore } from '../../store/useAgentStore'
+import { LiveCodeSandboxArtifact } from './LiveCodeSandboxArtifact'
 
 type ChatTurn = {
   id: number
@@ -31,6 +33,7 @@ type ChatTurn = {
   text?: string
   copyKey?: string
   artifact?: SmartArtifactKind
+  artifactPrompt?: string
   entity?: ChatCreatedEntity
   teamRunGoal?: string
   error?: boolean
@@ -40,6 +43,7 @@ const ARTIFACT_META = {
   marketing: { icon: Film, route: '/app/content', titleKey: 'smartTaskDesk.marketingTitle', tint: 'text-violet bg-violet/10' },
   finance: { icon: Landmark, route: '/app/finance', titleKey: 'smartTaskDesk.financeTitle', tint: 'text-teal bg-teal/10' },
   research: { icon: NotebookTabs, route: '/app/research', titleKey: 'smartTaskDesk.researchTitle', tint: 'text-accent-cyan bg-accent-cyan/10' },
+  code: { icon: Code2, route: '/app/teams', titleKey: 'smartTaskDesk.codeTitle', tint: 'text-teal bg-teal/10' },
 } as const
 
 export function SmartTaskDesk() {
@@ -83,7 +87,7 @@ export function SmartTaskDesk() {
     const response: ChatTurn = activeEntity
       ? { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.teamRunReady', entity: activeEntity, teamRunGoal: value }
       : artifact
-        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact }
+        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact, artifactPrompt: value }
         : { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.generalReady' }
     setTurns((current) => [...current, response])
     setActiveArtifactId(artifact ? stamp + 1 : null)
@@ -145,6 +149,7 @@ export function SmartTaskDesk() {
               {turn.artifact && (
                 <ArtifactCard
                   kind={turn.artifact}
+                  prompt={turn.artifactPrompt ?? ''}
                   expanded={activeArtifactId === turn.id}
                   onToggle={() => setActiveArtifactId((current) => current === turn.id ? null : turn.id)}
                 />
@@ -200,7 +205,7 @@ function TeamRunArtifact({ entity, goal }: { entity: ChatCreatedEntity; goal: st
   return <section className="mt-3 overflow-hidden rounded-2xl border border-violet/20 bg-bg/45"><div className="flex items-center gap-3 border-b border-ice/[0.07] px-4 py-3"><span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-violet/10 text-violet"><Workflow size={16} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-teal" /></span><div><p className="text-xs font-bold text-text">{entity.name}</p><p className="text-[10px] text-muted">{t('smartTaskDesk.teamRunHandoff')}</p></div></div><div className="p-3 sm:p-4"><AutonomousRunner defaultGoal={goal} departmentId={entity.departmentId} contextKey={`chat:${entity.id}`} presetSpecs={entity.members.map((member) => ({ name: member.name, role: member.role, skills: member.skills, prompt: member.prompt }))} /></div></section>
 }
 
-function ArtifactCard({ kind, expanded, onToggle }: { kind: SmartArtifactKind; expanded: boolean; onToggle: () => void }) {
+function ArtifactCard({ kind, prompt, expanded, onToggle }: { kind: SmartArtifactKind; prompt: string; expanded: boolean; onToggle: () => void }) {
   const { t } = useI18n()
   const meta = ARTIFACT_META[kind]
   const Icon = meta.icon
@@ -216,6 +221,7 @@ function ArtifactCard({ kind, expanded, onToggle }: { kind: SmartArtifactKind; e
       {kind === 'marketing' && <MarketingCampaignStudio />}
       {kind === 'finance' && <FinanceCashFlowDashboard />}
       {kind === 'research' && <ResearchNotebookHub />}
+      {kind === 'code' && <LiveCodeSandboxArtifact prompt={prompt} />}
     </div>}
   </section>
 }

@@ -12,7 +12,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sparkles,
-  Cpu,
   Search,
   Command,
   ArrowUpRight,
@@ -126,7 +125,6 @@ export function AppLayout() {
     { title: t('appLayout.groupMain'), items: [
       { to: '/app', label: t('appLayout.navChatTasks'), icon: LayoutDashboard, end: true },
       { to: '/app/teams', label: t('appLayout.navAiTeams'), icon: Users },
-      { to: '/app/forge', label: t('appLayout.navVibeStudio'), icon: Cpu },
     ] },
     { title: t('appLayout.groupSystem'), items: [
       { to: '/app/settings', label: t('appLayout.navSettingsIntegrations'), icon: SettingsIcon },

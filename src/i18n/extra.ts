@@ -784,7 +784,14 @@ export const extraUz = {
     "activeContext": "shu dialogda faol",
     "leaveContext": "Kontekstdan chiqish",
     "teamRunReady": "Vazifa faol komanda kontekstiga uzatildi. Ishga tushirishni quyida boshqaring.",
-    "teamRunHandoff": "Vazifa koordinator va mutaxassislarga uzatiladi"
+    "teamRunHandoff": "Vazifa koordinator va mutaxassislarga uzatiladi",
+    "codeReady": "Live Code Sandbox tayyor. Preview, fayllar va konsolni shu dialogda tekshiring.",
+    "codeTitle": "Live Code Sandbox"
+  },
+  "liveSandbox": {
+    "eyebrow": "Komanda artefakti", "title": "Live Code Sandbox", "downloadZip": "ZIP yuklash", "cli": "CLI", "copied": "Nusxalandi",
+    "views": "Sandbox ko‘rinishlari", "preview": "Live Preview", "code": "Fayllar kodi", "console": "Konsol", "previewFrame": "Jonli loyiha ko‘rinishi", "files": "Loyiha fayllari",
+    "consoleGenerated": "{count} ta fayl yaratildi", "consolePreview": "Izolyatsiyalangan preview tayyor", "consoleGuard": "Internetga nashr qilish egasining tasdig‘ini talab qiladi"
   },
   "waitlistPage": {
     "replyNote": "Bir ish kuni ichida javob beramiz.",
@@ -3023,7 +3030,14 @@ export const extraRu = {
     "activeContext": "активна в этом диалоге",
     "leaveContext": "Выйти из контекста",
     "teamRunReady": "Задача передана в контекст активной команды. Управляйте реальным запуском ниже.",
-    "teamRunHandoff": "Задача передаётся координатору и специалистам"
+    "teamRunHandoff": "Задача передаётся координатору и специалистам",
+    "codeReady": "Live Code Sandbox готов. Проверяйте preview, файлы и консоль прямо в диалоге.",
+    "codeTitle": "Live Code Sandbox"
+  },
+  "liveSandbox": {
+    "eyebrow": "Артефакт команды", "title": "Live Code Sandbox", "downloadZip": "Скачать ZIP", "cli": "CLI", "copied": "Скопировано",
+    "views": "Представления Sandbox", "preview": "Live Preview", "code": "Код файлов", "console": "Консоль", "previewFrame": "Живой предпросмотр проекта", "files": "Файлы проекта",
+    "consoleGenerated": "Создано файлов: {count}", "consolePreview": "Изолированный preview готов", "consoleGuard": "Публикация в интернет требует подтверждения владельца"
   },
   "waitlistPage": {
     "replyNote": "Отвечаем в течение одного рабочего дня.",
@@ -5262,7 +5276,14 @@ export const extraEn = {
     "activeContext": "active in this conversation",
     "leaveContext": "Leave context",
     "teamRunReady": "The task is attached to the active team context. Control the real run below.",
-    "teamRunHandoff": "Task handoff to the coordinator and specialists"
+    "teamRunHandoff": "Task handoff to the coordinator and specialists",
+    "codeReady": "Live Code Sandbox is ready. Review the preview, files, and console inside this conversation.",
+    "codeTitle": "Live Code Sandbox"
+  },
+  "liveSandbox": {
+    "eyebrow": "Team artifact", "title": "Live Code Sandbox", "downloadZip": "Download ZIP", "cli": "CLI", "copied": "Copied",
+    "views": "Sandbox views", "preview": "Live Preview", "code": "File code", "console": "Console", "previewFrame": "Live project preview", "files": "Project files",
+    "consoleGenerated": "Generated {count} files", "consolePreview": "Isolated preview is ready", "consoleGuard": "Publishing to the web requires owner approval"
   },
   "waitlistPage": {
     "replyNote": "We reply within one business day.",
