@@ -142,6 +142,8 @@ Apply-Migration .\supabase\migrations\20260813160000_extension_submit.sql
 # Без этой строки функция задеплоится, а таблиц и RPC на сервере не будет — и первый же запрос
 # банка получит 99999 вместо оплаты. Функция в манифесте есть, миграция сама туда не попадает.
 Apply-Migration .\supabase\migrations\20260822140000_uzum_merchant.sql
+# Goal-conditioned team runtime: allow the durable worker's deterministic goal_check transition.
+Apply-Migration .\supabase\migrations\20260831100000_goal_conditioned_loop.sql
 
 $schemaCheckSql = @'
 select

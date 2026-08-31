@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUp, Loader2, Users, Check, RotateCcw, Save, Sparkles, Image as ImageIcon, Send, Download, X, Paperclip, FileSpreadsheet, AlertTriangle, ExternalLink } from 'lucide-react'
+import { ArrowUp, Loader2, Users, Check, RotateCcw, Save, Sparkles, Image as ImageIcon, Send, Download, X, Paperclip, FileSpreadsheet, AlertTriangle, ExternalLink, Square } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { saveDynamicTeam } from '../../lib/dynamicTeams'
@@ -20,6 +20,7 @@ import {
   MAX_AUTONOMOUS_TOTAL_CHARS,
   type AutonomousInputArtifact,
 } from '../../lib/autonomousInputs'
+import { defaultDefinitionOfDone, GoalSchema, type GoalContract, type GoalEvaluation } from '../../types/goal'
 
 const live = isSupabaseEnabled
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
@@ -44,6 +45,10 @@ interface CheckpointState {
   specs: Spec[]
   nextSpecialist: number
   nextReview: number
+  goalContract?: GoalContract
+  goalEvaluation?: GoalEvaluation | null
+  iterationContext?: string
+  result?: string
 }
 interface RunCheckpoint {
   id: string
@@ -51,7 +56,7 @@ interface RunCheckpoint {
   phase: 'team' | 'review' | 'synth'
   state: CheckpointState
   status?: 'active' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-  transition?: 'staff' | 'specialist' | 'review' | 'revision' | 'synth'
+  transition?: 'staff' | 'observe_plan' | 'specialist' | 'review' | 'revision' | 'goal_check' | 'synth'
   specialist_cursor?: number
   review_cursor?: number
   last_error?: string | null
@@ -97,6 +102,8 @@ export function AutonomousRunner({
   builderMode = false,
   onRunStateChange,
   onComplete,
+  definitionOfDone,
+  maxIterations = 10,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -120,6 +127,10 @@ export function AutonomousRunner({
   builderMode?: boolean
   onRunStateChange?: (status: 'idle' | 'queued' | 'running' | 'completed' | 'failed') => void
   onComplete?: (result: string) => void
+  /** Optional measurable completion contract; defaults are derived from the goal. */
+  definitionOfDone?: string[]
+  /** Hard safety cap for Observe → Execute → Goal Check cycles. */
+  maxIterations?: number
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -145,6 +156,7 @@ export function AutonomousRunner({
   const [inputArtifacts, setInputArtifacts] = useState<AutonomousInputArtifact[]>([])
   const [filesBusy, setFilesBusy] = useState(false)
   const [resumeCheckpoint, setResumeCheckpoint] = useState<RunCheckpoint | null>(null)
+  const [goalRuntime, setGoalRuntime] = useState<{ contract: GoalContract; evaluation: GoalEvaluation | null } | null>(null)
   // A connected marketplace IS source data — the server fetches the catalogue for the run. Asking
   // the owner to upload a file while their store is connected was the loudest wrong thing on this
   // screen, so the warning must know whether a connection exists.
@@ -244,6 +256,8 @@ export function AutonomousRunner({
     }
     setInputArtifacts(state?.inputArtifacts ?? [])
     setSpecs(visibleSpecs)
+    const restoredGoal = GoalSchema.safeParse(state?.goalContract)
+    if (restoredGoal.success) setGoalRuntime({ contract: restoredGoal.data, evaluation: state?.goalEvaluation ?? null })
     if (workerRun.status === 'completed') {
       setResult(String((state as CheckpointState & { result?: string })?.result ?? ''))
       setRunning(false)
@@ -259,6 +273,7 @@ export function AutonomousRunner({
       setRunning(false)
       setPhase('idle')
       if (workerRun.status === 'cancelled') {
+        setGoalRuntime((current) => current ? { ...current, contract: { ...current.contract, status: 'stopped' } } : current)
         setResumeCheckpoint(null)
         localStorage.removeItem(workerRunStorageKey)
       }
@@ -294,12 +309,24 @@ export function AutonomousRunner({
     setSpecs([])
     setRunning(true)
     setPhase(presetSpecs?.length ? 'team' : 'architect')
+    const goalContract = GoalSchema.parse({
+      goal_statement: task,
+      definition_of_done: definitionOfDone?.length ? definitionOfDone : defaultDefinitionOfDone(task),
+      max_iterations: maxIterations,
+      current_iteration: 1,
+      status: 'running',
+    })
+    setGoalRuntime({ contract: goalContract, evaluation: null })
     const response = await call({
       action: 'run_enqueue',
       goal: task,
       orchestrated_goal: orchestratedGoal,
       context_key: checkpointContext,
       input_artifacts: inputArtifacts,
+      goal_statement: goalContract.goal_statement,
+      goal_description: goalContract.goal_statement,
+      definition_of_done: goalContract.definition_of_done,
+      max_iterations: goalContract.max_iterations,
       ...(departmentId ? { department_id: departmentId } : {}),
       ...(presetSpecs?.length ? { preset_specs: presetSpecs } : {}),
     })
@@ -613,17 +640,28 @@ export function AutonomousRunner({
     setInputArtifacts([])
     setDataWarning('')
     setResumeCheckpoint(null)
+    setGoalRuntime(null)
   }
   const canResume = Boolean(resumeCheckpoint && resumeCheckpoint.state.goal.trim() === goal.trim())
   const phaseOrder = ['architect', 'team', 'review', 'synth'] as const
   const activePhaseIndex = Math.max(0, phaseOrder.indexOf(phase === 'idle' ? 'architect' : phase))
-  const phaseLabel = phase === 'architect'
+  const phaseLabel = resumeCheckpoint?.transition === 'goal_check'
+    ? (lang === 'ru' ? 'Проверка достижения цели' : lang === 'uz' ? 'Maqsadga erishishni tekshirish' : 'Checking goal completion')
+    : resumeCheckpoint?.transition === 'observe_plan'
+      ? (lang === 'ru' ? 'Наблюдение и план следующего шага' : lang === 'uz' ? 'Kuzatish va keyingi qadam rejasi' : 'Observe and plan next step')
+    : phase === 'architect'
     ? t('autonomousRunner.phaseArchitect')
     : phase === 'team'
       ? t('autonomousRunner.phaseTeam')
       : phase === 'review'
         ? t('autonomousRunner.phaseReview')
         : t('autonomousRunner.phaseSynth')
+
+  const goalCopy = lang === 'ru'
+    ? { step: 'Шаг', of: 'из', checking: 'Критерии завершения', pending: 'В процессе', done: 'Выполнено', achieved: 'Goal Achieved', limited: 'Достигнут лимит итераций', stop: 'Завершить досрочно' }
+    : lang === 'uz'
+      ? { step: 'Qadam', of: '/', checking: 'Yakunlash mezonlari', pending: 'Jarayonda', done: 'Bajarildi', achieved: 'Maqsadga erishildi', limited: 'Iteratsiya limiti tugadi', stop: 'Muddatidan oldin tugatish' }
+      : { step: 'Step', of: 'of', checking: 'Definition of done', pending: 'In progress', done: 'Completed', achieved: 'Goal Achieved', limited: 'Iteration limit reached', stop: 'Stop early' }
 
   return (
     <div>
@@ -705,16 +743,6 @@ export function AutonomousRunner({
           {dataWarning}
         </p>
       )}
-      {running && resumeCheckpoint?.status && ['queued', 'running'].includes(resumeCheckpoint.status) && (
-        <button
-          type="button"
-          onClick={() => void cancelWorkerRun()}
-          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-danger/30 px-3 py-2 text-xs font-medium text-danger transition hover:bg-danger/10"
-        >
-          <X size={13} /> {t('autonomousRunner.cancelRun')}
-        </button>
-      )}
-
       {running && (
         <div className="team-run-stage card mt-5 overflow-hidden rounded-3xl p-5 sm:p-6" role="status" aria-live="polite">
           <div className="relative z-10 flex items-center gap-4">
@@ -729,6 +757,29 @@ export function AutonomousRunner({
             </div>
             <Loader2 size={20} className="hidden animate-spin text-violet sm:block" />
           </div>
+          {goalRuntime && (
+            <div className="relative z-10 mt-5 rounded-2xl border border-violet/20 bg-violet/[0.055] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-text">{goalCopy.step} {goalRuntime.contract.current_iteration} {goalCopy.of} {goalRuntime.contract.max_iterations}: {phaseLabel}…</p>
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet">{goalCopy.checking}</p>
+                </div>
+                <button type="button" onClick={() => void cancelWorkerRun()} className="inline-flex items-center gap-1.5 rounded-xl border border-danger/25 px-3 py-2 text-xs font-semibold text-danger transition hover:bg-danger/10">
+                  <Square size={12} fill="currentColor" /> {goalCopy.stop}
+                </button>
+              </div>
+              <ul className="mt-3 space-y-2">
+                {goalRuntime.contract.definition_of_done.map((criterion, index) => {
+                  const check = goalRuntime.evaluation?.criteria[index]
+                  return <li key={`${criterion}-${index}`} className="flex items-start gap-2 rounded-xl border border-ice/[0.07] bg-black/10 px-3 py-2 text-xs text-muted">
+                    <span className={cn('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border', check?.achieved ? 'border-teal/40 bg-teal/15 text-teal' : 'border-amber/30 text-amber')}>{check?.achieved ? <Check size={10} /> : <Loader2 size={9} className="animate-spin" />}</span>
+                    <span className="min-w-0 flex-1"><span className="text-text">{criterion}</span>{check?.evidence && <span className="mt-0.5 block text-[10px] text-fog">{check.evidence}</span>}</span>
+                    <span className={cn('shrink-0 text-[9px] font-semibold uppercase', check?.achieved ? 'text-teal' : 'text-amber')}>{check?.achieved ? goalCopy.done : goalCopy.pending}</span>
+                  </li>
+                })}
+              </ul>
+            </div>
+          )}
           <div className="relative z-10 mt-5 grid grid-cols-4 gap-2">
             {phaseOrder.map((item, index) => (
               <div key={item} className="space-y-2">
@@ -744,6 +795,14 @@ export function AutonomousRunner({
 
       {result && !running && (
         <div className="mt-5 space-y-4">
+          {goalRuntime && (
+            <div className={cn('rounded-2xl border p-4', goalRuntime.contract.status === 'goal_achieved' ? 'border-teal/25 bg-teal/[0.07]' : 'border-amber/25 bg-amber/[0.07]')}>
+              <p className={cn('flex items-center gap-2 text-sm font-bold', goalRuntime.contract.status === 'goal_achieved' ? 'text-teal' : 'text-amber')}><Check size={16} />{goalRuntime.contract.status === 'goal_achieved' ? goalCopy.achieved : goalCopy.limited} · {goalCopy.step} {goalRuntime.contract.current_iteration} {goalCopy.of} {goalRuntime.contract.max_iterations}</p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                {goalRuntime.contract.definition_of_done.map((criterion, index) => <li key={`${criterion}-${index}`} className="flex items-start gap-2 text-xs text-muted"><span className={goalRuntime.evaluation?.criteria[index]?.achieved ? 'text-teal' : 'text-amber'}>{goalRuntime.evaluation?.criteria[index]?.achieved ? '✅' : '⏳'}</span><span>{criterion}</span></li>)}
+              </ul>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-medium text-text"><Sparkles size={16} className="text-violet" /> {t('autonomousRunner.resultTitle')}</h2>
             <button onClick={reset} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-ice/12 px-2.5 py-1.5 text-xs font-medium text-muted hover:text-text">

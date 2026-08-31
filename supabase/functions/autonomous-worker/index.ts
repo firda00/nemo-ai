@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { json } from '../_shared/cors.ts'
 import { blockedByFailedDependencies, dependenciesFor, readyNodeIndexes } from '../_shared/executionDag.ts'
+import { evaluateGoalConditions, GoalSchema, type GoalEvaluation } from '../_shared/goal.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -38,7 +39,7 @@ type Run = {
   user_id: string
   run_ref: string
   phase: 'team' | 'review' | 'synth'
-  transition: 'staff' | 'specialist' | 'review' | 'revision' | 'synth'
+  transition: 'staff' | 'observe_plan' | 'specialist' | 'review' | 'revision' | 'goal_check' | 'synth'
   specialist_cursor: number
   review_cursor: number
   revision_round: number
@@ -85,7 +86,7 @@ Deno.serve(async (req) => {
   const input = run.immutable_input ?? {}
   const executionPlan = (input.executionPlan ?? {}) as { path?: string; maxLogicalLlmCalls?: number }
   const quickPath = executionPlan.path === 'quick'
-  const state = { ...(run.state ?? {}) } as Record<string, unknown> & { specs?: Spec[] }
+  const state = { ...(run.state ?? {}) } as Record<string, unknown> & { specs?: Spec[]; goalContract?: unknown; goalEvaluation?: GoalEvaluation | null; iterationContext?: string }
   const specs = Array.isArray(state.specs) ? state.specs : []
   const common = {
     _worker: true,
@@ -137,6 +138,8 @@ Deno.serve(async (req) => {
     if (quickPath && run.transition !== 'synth') throw new Error('invalid_quick_transition')
     if (quickPath && executionPlan.maxLogicalLlmCalls !== 1) throw new Error('invalid_quick_budget')
     const goal = String(input.orchestratedGoal ?? input.goal ?? '')
+    const activeGoal = GoalSchema.safeParse(state.goalContract ?? input.goalContract)
+    const currentIteration = activeGoal.success ? activeGoal.data.current_iteration : 1
     const webResearchAllowed = !/(?:do not|don't|dont|never)\s+(?:use|browse|search)(?:\s+the)?\s+(?:web|internet|online)|(?:without|no)\s+(?:web(?:\s+research)?|internet)|\boffline\b|без\s+(?:поиска\s+в\s+)?интернет\S*|не\s+(?:использ\S*|ищ\S*)\s+(?:в\s+)?интернет\S*/i.test(goal)
     const artifacts = Array.isArray(input.inputArtifacts) ? input.inputArtifacts : []
     if (run.transition === 'staff') {
@@ -144,6 +147,22 @@ Deno.serve(async (req) => {
       const created: Spec[] = (Array.isArray(result.subagents) ? result.subagents : []).map((spec: Spec) => ({ ...spec, status: 'pending' }))
       if (!created.length) throw new Error('empty_team')
       state.specs = created
+      await finish({ state, phase: 'team', transition: 'observe_plan', specialist: 0, review: 0, revision: 0 })
+    } else if (run.transition === 'observe_plan') {
+      const goalContract = activeGoal.success ? activeGoal.data : null
+      if (!goalContract) throw new Error('invalid_goal_contract')
+      const remaining = state.goalEvaluation?.criteria.filter((criterion) => !criterion.achieved).map((criterion) => criterion.criterion) ?? goalContract.definition_of_done
+      const planned = await invoke({
+        action: 'step',
+        billing_key: `${run.id}:iteration:${currentIteration}:observe-plan`,
+        goal,
+        role: 'analyst',
+        task: 'Observe the current goal state and produce a concise execution plan for this iteration. Map each remaining definition-of-done criterion to a concrete specialist action or available tool. Do not produce the final deliverable.',
+        system: 'You are the goal-conditioned runtime planner. Return only the bounded plan for the current iteration. Never claim actions are already complete.',
+        context: `ITERATION ${currentIteration}/${goalContract.max_iterations}\nREMAINING CONDITIONS:\n${remaining.map((criterion) => `- ${criterion}`).join('\n')}\n\n${String(state.iterationContext ?? '')}`.slice(-18_000),
+        input_artifacts: artifacts,
+      })
+      state.iterationContext = `${String(state.iterationContext ?? '')}\n\nITERATION ${currentIteration} OBSERVE & PLAN:\n${String(planned.output ?? '').slice(0, 5_000)}`.slice(-18_000)
       await finish({ state, phase: 'team', transition: 'specialist', specialist: 0, review: 0, revision: 0 })
     } else if (run.transition === 'specialist') {
       const ready = readyNodeIndexes(specs, MAX_PARALLEL_SPECIALISTS)
@@ -153,7 +172,7 @@ Deno.serve(async (req) => {
           await finish({ state, phase: 'team', transition: 'specialist', specialist: specs.findIndex((spec) => spec.status === 'pending'), review: 0, revision: 0, status: 'failed', error: 'invalid_or_blocked_dependency_graph' })
           terminal = true
         } else {
-          await finish({ state, phase: specs.length >= 2 ? 'review' : 'synth', transition: specs.length >= 2 ? 'review' : 'synth', specialist: specs.length, review: 0, revision: 0 })
+          await finish({ state, phase: specs.length >= 2 ? 'review' : 'team', transition: specs.length >= 2 ? 'review' : 'goal_check', specialist: specs.length, review: 0, revision: 0 })
         }
       } else {
         const outcomes = await Promise.allSettled(ready.map(async (index) => {
@@ -161,8 +180,8 @@ Deno.serve(async (req) => {
           const role = mapRole(spec.role)
           const dependencyIndexes = dependenciesFor(spec, index)
           const result = await invoke({
-            action: 'step', billing_key: `${run.id}:specialist:${index}`, goal, role, task: spec.prompt.tasks || spec.role, system: subSystem(spec),
-            skills: spec.skills ?? [], context: handoff(dependencyIndexes.map((dependency) => specs[dependency])), input_artifacts: artifacts, web_research: role === 'researcher' && webResearchAllowed,
+            action: 'step', billing_key: `${run.id}:iteration:${currentIteration}:specialist:${index}`, goal, role, task: spec.prompt.tasks || spec.role, system: subSystem(spec),
+            skills: spec.skills ?? [], context: [String(state.iterationContext ?? ''), handoff(dependencyIndexes.map((dependency) => specs[dependency]))].filter(Boolean).join('\n\n'), input_artifacts: artifacts, web_research: role === 'researcher' && webResearchAllowed,
           })
           return { index, result }
         }))
@@ -185,7 +204,7 @@ Deno.serve(async (req) => {
           await finish({ state, phase: 'team', transition: 'specialist', specialist: Math.max(0, specs.findIndex((spec) => spec.status === 'failed' || spec.status === 'blocked')), review: 0, revision: 0, status: 'failed', error: 'specialist_dependency_failed' })
           terminal = true
         } else if (specs.every((spec) => spec.status === 'done')) {
-          await finish({ state, phase: specs.length >= 2 ? 'review' : 'synth', transition: specs.length >= 2 ? 'review' : 'synth', specialist: specs.length, review: 0, revision: 0 })
+          await finish({ state, phase: specs.length >= 2 ? 'review' : 'team', transition: specs.length >= 2 ? 'review' : 'goal_check', specialist: specs.length, review: 0, revision: 0 })
         } else {
           const cursor = specs.findIndex((spec) => spec.status === 'pending')
           const hadFailure = outcomes.some((outcome) => outcome.status === 'rejected')
@@ -198,7 +217,7 @@ Deno.serve(async (req) => {
       const reviewer = specs[(index + 1) % specs.length]
       if (!spec || !reviewer) throw new Error('invalid_review_cursor')
       const result = await invoke({
-        action: 'review', billing_key: `${run.id}:review:${index}:${run.revision_round}`, goal, work: spec.output ?? '', author_role: spec.role, author_task: spec.prompt.tasks,
+        action: 'review', billing_key: `${run.id}:iteration:${currentIteration}:review:${index}:${run.revision_round}`, goal, work: spec.output ?? '', author_role: spec.role, author_task: spec.prompt.tasks,
         input_artifacts: artifacts, reviewer_system: subSystem(reviewer),
         criteria: 'соответствие задаче; конкретика и факты; отсутствие воды и клише; готовность без доработки',
         previous_score: spec.review?.score ?? 0, previous_issues: spec.review?.issues ?? [], revision_round: run.revision_round,
@@ -224,14 +243,14 @@ Deno.serve(async (req) => {
         await finish({ state, phase: 'review', transition: 'revision', specialist: run.specialist_cursor, review: index, revision: run.revision_round })
       } else {
         const cursor = index + 1
-        await finish({ state, phase: cursor < specs.length ? 'review' : 'synth', transition: cursor < specs.length ? 'review' : 'synth', specialist: run.specialist_cursor, review: cursor, revision: 0 })
+        await finish({ state, phase: 'review', transition: cursor < specs.length ? 'review' : 'goal_check', specialist: run.specialist_cursor, review: cursor, revision: 0 })
       }
     } else if (run.transition === 'revision') {
       const index = run.review_cursor
       const spec = specs[index]
       if (!spec?.review) throw new Error('invalid_revision_cursor')
       const result = await invoke({
-        action: 'step', billing_key: `${run.id}:revision:${index}:${run.revision_round}`, goal, role: mapRole(spec.role),
+        action: 'step', billing_key: `${run.id}:iteration:${currentIteration}:revision:${index}:${run.revision_round}`, goal, role: mapRole(spec.role),
         task: 'Перепиши свою работу, устранив ВСЕ замечания коллеги. Верни улучшенную версию целиком, в том же формате.',
         system: subSystem(spec), skills: spec.skills ?? [], input_artifacts: artifacts,
         context: `ТВОЯ РАБОТА:\n${(spec.output ?? '').slice(0, 3000)}\n\nПРОШЛАЯ ОЦЕНКА: ${spec.review.score}/100.\nЗАМЕЧАНИЯ:\n${spec.review.fix}\n${spec.review.issues.join('\n')}\n\nСохрани всё сделанное хорошо. Не добавляй неподтвержденные факты.`,
@@ -239,10 +258,49 @@ Deno.serve(async (req) => {
       specs[index] = { ...spec, output: String(result.output ?? spec.output ?? ''), revised: true, revisions: run.revision_round + 1, status: 'review' }
       state.specs = specs
       await finish({ state, phase: 'review', transition: 'review', specialist: run.specialist_cursor, review: index, revision: run.revision_round + 1 })
+    } else if (run.transition === 'goal_check') {
+      const parsedGoal = GoalSchema.safeParse(state.goalContract ?? input.goalContract)
+      if (!parsedGoal.success) throw new Error('invalid_goal_contract')
+      const goalContract = parsedGoal.data
+      const combinedOutput = specs.map((spec) => `${spec.name}: ${spec.output ?? ''}`).join('\n\n')
+      const sources = [...new Set(specs.flatMap((spec) => spec.sources ?? []))]
+      const evaluation = evaluateGoalConditions(goalContract, combinedOutput, sources)
+      state.goalEvaluation = evaluation
+
+      if (evaluation.achieved) {
+        state.goalContract = { ...goalContract, status: 'goal_achieved' }
+        await finish({ state, phase: 'synth', transition: 'synth', specialist: specs.length, review: specs.length, revision: 0 })
+      } else if (goalContract.current_iteration >= goalContract.max_iterations) {
+        state.goalContract = { ...goalContract, status: 'max_iterations' }
+        await finish({ state, phase: 'synth', transition: 'synth', specialist: specs.length, review: specs.length, revision: 0 })
+      } else {
+        const unmet = evaluation.criteria.filter((criterion) => !criterion.achieved).map((criterion) => `- ${criterion.criterion}: ${criterion.evidence}`).join('\n')
+        state.iterationContext = `PREVIOUS ITERATION ${goalContract.current_iteration} DID NOT COMPLETE THE GOAL. Preserve useful work, then close these exact gaps:\n${unmet}\n\nPREVIOUS WORK:\n${combinedOutput.slice(-14_000)}`
+        state.goalContract = { ...goalContract, current_iteration: goalContract.current_iteration + 1, status: 'running' }
+        state.specs = specs.map((spec) => ({
+          ...spec,
+          output: undefined,
+          sources: [],
+          review: null,
+          reviewedBy: undefined,
+          revised: false,
+          revisions: 0,
+          escalated: false,
+          attempts: 0,
+          lastError: undefined,
+          blockedBy: undefined,
+          bestOutput: undefined,
+          bestReview: null,
+          status: 'pending' as const,
+        }))
+        await finish({ state, phase: 'team', transition: 'observe_plan', specialist: 0, review: 0, revision: 0 })
+      }
     } else {
       const sources = [...new Set(specs.flatMap((spec) => spec.sources ?? []))].slice(0, 30)
       const result = await invoke({
         action: 'synth', billing_key: `${run.id}:synth`, execution_mode: quickPath ? 'quick' : 'team', goal, input_artifacts: artifacts, ...(input.departmentId ? { department_id: input.departmentId } : {}),
+        goal_contract: state.goalContract,
+        goal_evaluation: state.goalEvaluation,
         // A failed internal peer-review convergence is quality telemetry, not a new
         // customer approval gate. Real external effects keep their dedicated policies.
         steps: quickPath ? [] : specs.map((spec) => ({ role: spec.role, task: spec.prompt.tasks, output: spec.output, sources: spec.sources, reviewedBy: spec.reviewedBy, review: spec.review, revised: Boolean(spec.revised), revisions: spec.revisions ?? 0, needsHumanReview: false })),
