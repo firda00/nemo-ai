@@ -11,16 +11,11 @@ import {
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
-  Brain,
-  LineChart,
-  Megaphone,
   Sparkles,
   Cpu,
   Search,
   Command,
   ArrowUpRight,
-  Landmark,
-  BookOpenText,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../context/AuthContext'
@@ -124,8 +119,8 @@ export function AppLayout() {
     void featureEnabled('feedback_agent', user?.id).then(setFeedbackEnabled)
   }, [isAuthed, user?.id])
 
-  // The sidebar is a map, not a feature inventory. Deep links remain routable while the
-  // daily destinations stay visible here.
+  // The sidebar and Command Palette expose the same four supported entry points.
+  // Specialist tools are mounted only as chat artifacts, not as hidden navigation.
   type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean; badge?: string }
   const navGroups: { title: string; items: NavItem[] }[] = [
     { title: t('appLayout.groupMain'), items: [
@@ -138,17 +133,7 @@ export function AppLayout() {
     ] },
   ]
   const nav = navGroups.flatMap((g) => g.items)
-  // Specialist studios are progressive-disclosure destinations: agents open them as chat
-  // artifacts, while power users can still reach the intact routes through command search.
-  const commandOnly: NavItem[] = [
-    { to: '/app/content', label: t('teamOffice.navMarketing'), icon: Megaphone },
-    { to: '/app/finance', label: t('appLayout.navFinance'), icon: Landmark },
-    { to: '/app/research', label: t('researchHub.nav'), icon: BookOpenText },
-    { to: '/app/knowledge', label: t('teamOffice.navKnowledge'), icon: Brain },
-    { to: '/app/analytics', label: t('appLayout.navAnalytics'), icon: LineChart },
-    ...(isAdmin ? [{ to: '/app/admin', label: t('appLayout.navAdmin'), icon: ShieldCheck }] : []),
-  ]
-  const commandItems = [...nav, ...commandOnly]
+  const commandItems = nav
   const commandResults = commandItems.filter((item) => item.label.toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()))
 
   // Header title: fall back to the create pages' own headings when not in nav.

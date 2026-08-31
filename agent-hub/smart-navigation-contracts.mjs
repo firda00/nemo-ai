@@ -10,7 +10,7 @@ const app = read('src/App.tsx')
 const translations = read('src/i18n/extra.ts')
 
 const sidebar = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
-const commandOnly = layout.slice(layout.indexOf('const commandOnly'), layout.indexOf('const commandItems'))
+const commandItems = layout.slice(layout.indexOf('const commandItems'), layout.indexOf('const commandResults'))
 
 for (const route of ['/app', '/app/teams', '/app/forge', '/app/settings']) {
   assert.match(sidebar, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`), `${route} must remain a daily sidebar destination`)
@@ -18,11 +18,12 @@ for (const route of ['/app', '/app/teams', '/app/forge', '/app/settings']) {
 for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) {
   const routePattern = new RegExp(`to: '${route.replaceAll('/', '\\/')}'`)
   assert.doesNotMatch(sidebar, routePattern, `${route} must not inflate the sidebar`)
-  assert.match(commandOnly, routePattern, `${route} must remain available through progressive disclosure`)
+  assert.doesNotMatch(layout, routePattern, `${route} must not appear in the Command Palette`)
 }
+assert.match(commandItems, /const commandItems = nav/, 'Command Palette must expose only active navigation')
 
-for (const route of ['content', 'finance', 'research', 'knowledge', 'analytics']) {
-  assert.match(app, new RegExp(`path="${route}"`), `${route} deep route must remain intact`)
+for (const route of ['content', 'finance', 'research']) {
+  assert.match(app, new RegExp(`path="${route}" element=\\{<Navigate to="\\/app" replace \\/>\\}`), `${route} must redirect to the chat with replace`)
 }
 
 assert.match(dashboard, /<SmartTaskDesk \/>/, 'the main workspace must mount Chat & Tasks')

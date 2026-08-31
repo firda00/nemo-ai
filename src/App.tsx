@@ -12,7 +12,6 @@ import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/app/DashboardPage'
 import AgentsPage from './pages/app/AgentsPage'
 import AgentEditorPage from './pages/app/AgentEditorPage'
-import ResearchPage from './pages/app/ResearchPage'
 import AnalyticsPage from './pages/app/AnalyticsPage'
 import SettingsPage from './pages/app/SettingsPage'
 import IntegrationsPage from './pages/app/IntegrationsPage'
@@ -37,7 +36,6 @@ import TeamDetailPage from './pages/app/TeamDetailPage'
 import AutonomousPage from './pages/app/AutonomousPage'
 import MemoryPage from './pages/app/MemoryPage'
 import AutomationsPage from './pages/app/AutomationsPage'
-import ContentStudioPage from './pages/app/ContentStudioPage'
 import MarketingStrategyPage from './pages/app/MarketingStrategyPage'
 import AutopostPage from './pages/app/AutopostPage'
 import ActivityPage from './pages/app/ActivityPage'
@@ -51,7 +49,6 @@ import { PrivacyPage, TermsPage } from './pages/LegalPage'
 import EmailAssistantPage from './pages/app/EmailAssistantPage'
 import CommercePage from './pages/app/CommercePage'
 import ForgePage from './pages/app/ForgePage'
-import FinancePage from './pages/app/FinancePage'
 import { MfaChallengeGate } from './components/auth/MfaChallengeGate'
 import { AdminMfaGate } from './components/auth/AdminMfaGate'
 
@@ -125,12 +122,12 @@ export default function App() {
         <Route path="autonomous" element={<AutonomousPage />} />
         <Route path="memory" element={<MemoryPage />} />
         <Route path="automations" element={<AutomationsPage />} />
-        <Route path="content" element={<ContentStudioPage />} />
+        <Route path="content" element={<Navigate to="/app" replace />} />
         <Route path="marketing" element={<MarketingStrategyPage />} />
         <Route path="autopost" element={<AutopostPage />} />
         <Route path="commerce" element={<CommercePage />} />
         <Route path="forge" element={<ForgePage />} />
-        <Route path="finance" element={<FinancePage />} />
+        <Route path="finance" element={<Navigate to="/app" replace />} />
         <Route path="followups" element={<FollowUpsPage />} />
         <Route path="monitor" element={<ObservabilityPage />} />
         <Route path="activity" element={<ActivityPage />} />
@@ -157,7 +154,7 @@ export default function App() {
         <Route path="trust" element={<TrustPage />} />
         <Route path="agents" element={<AgentsPage />} />
         <Route path="agents/:id" element={<AgentEditorPage />} />
-        <Route path="research" element={<ResearchPage />} />
+        <Route path="research" element={<Navigate to="/app" replace />} />
         <Route path="dialogues" element={<Navigate to="/app" replace />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="email-assistant" element={<EmailAssistantPage />} />
