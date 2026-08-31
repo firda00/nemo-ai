@@ -139,6 +139,7 @@ $steps = @(
   @{ Name = 'Finance ingestion and grounded analysis'; Command = { npm run test:finance-ingestion } },
   @{ Name = 'Finance dashboard UI'; Command = { npm run test:finance-dashboard-ui } },
   @{ Name = 'Research Notebook contracts and grounding'; Command = { npm run test:research-notebook } },
+  @{ Name = 'Forge Studio, CLI route and personalization UI'; Command = { npm run test:forge-studio-ui } },
   @{ Name = 'CLI documentation matches the CLI'; Command = { npm run test:cli-docs } },
   @{ Name = 'CLI install from a clean folder'; Command = { npm run test:cli-install } }
 )
