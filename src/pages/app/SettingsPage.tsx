@@ -1,13 +1,15 @@
 import {
-  Activity, AlertTriangle, Brain, Building2, CheckCircle2, Clipboard, CloudCog, Cpu, Download,
+  Activity, AlertTriangle, Brain, Building2, CheckCircle2, CloudCog, Cpu, Download,
   Eye, EyeOff, FileKey2, Gauge, Globe, HardDrive, HeartPulse, KeyRound,
-  LockKeyhole, Moon, RefreshCw, RotateCw, ShieldCheck, Sun, TerminalSquare,
+  LockKeyhole, Moon, RefreshCw, ShieldCheck, Sun, TerminalSquare,
   User as UserIcon, WalletCards, Webhook, Wrench, GitBranch, Save,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Button } from '../../components/ui/Button'
 import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
+import { IntegrationCenter } from '../../components/settings/IntegrationCenter'
+import BillingPage from './BillingPage'
 import { useAuth } from '../../context/AuthContext'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -15,13 +17,13 @@ import { DEFAULT_FORGE_SETTINGS, buildForgeDiagnosticBundle } from '../../lib/fo
 import { applyTheme, themePreference, type ThemePreference } from '../../lib/theme'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import {
-  ConnectorHealthSchema, ForgeGovernanceConfigSchema, ForgeIntegrationSecretInputSchema,
-  ForgeSecretRotationResultSchema, ForgeWorkerConfigSchema, type ConnectorHealth,
+  ConnectorHealthSchema, ForgeGovernanceConfigSchema,
+  ForgeWorkerConfigSchema, type ConnectorHealth,
   type ForgeGovernanceConfig, type ForgeWorkerConfig,
 } from '../../types/forge-settings'
 import type { Lang } from '../../types'
 
-type TabId = 'personalization' | 'connectors' | 'compute' | 'governance' | 'support'
+type TabId = 'personalization' | 'connectors' | 'billing' | 'compute' | 'governance' | 'support'
 type IconType = ComponentType<{ size?: number; className?: string }>
 
 // В массиве лежат ключи перевода, а не текст: массив создаётся один раз на модуле, а язык
@@ -29,6 +31,7 @@ type IconType = ComponentType<{ size?: number; className?: string }>
 const TABS: Array<{ id: TabId; labelKey: string; compactKey: string; icon: IconType }> = [
   { id: 'personalization', labelKey: 'settingsPage.tabPersonalization', compactKey: 'settingsPage.tabPersonalizationShort', icon: Brain },
   { id: 'connectors', labelKey: 'settingsPage.tabConnectors', compactKey: 'settingsPage.tabConnectorsShort', icon: Webhook },
+  { id: 'billing', labelKey: 'settingsPage.tabBilling', compactKey: 'settingsPage.tabBillingShort', icon: WalletCards },
   { id: 'compute', labelKey: 'settingsPage.tabCompute', compactKey: 'settingsPage.tabComputeShort', icon: Cpu },
   { id: 'governance', labelKey: 'settingsPage.tabGovernance', compactKey: 'settingsPage.tabGovernanceShort', icon: ShieldCheck },
   { id: 'support', labelKey: 'settingsPage.tabSupport', compactKey: 'settingsPage.tabSupportShort', icon: HeartPulse },
@@ -74,7 +77,7 @@ export default function SettingsPage() {
     const latencyMs = Math.max(0, Math.round(performance.now() - started))
     const connected = new Set((providerResult.data as { connected?: string[] } | null)?.connected ?? [])
     const backendOk = !backendResult.error && (backendResult.data as { ok?: boolean } | null)?.ok === true
-    const telegramOk = !telegramResult.error && (telegramResult.data?.length ?? 0) > 0
+    const telegramOk = connected.has('telegram') || (!telegramResult.error && (telegramResult.data?.length ?? 0) > 0)
     setHealth(initialHealth().map((item): ConnectorHealth => {
       if (item.connectorId === 'forge-runtime') return { ...item, status: backendOk ? 'healthy' : 'degraded', latencyMs, checkedAt, message: backendOk ? 'settingsPage.msgJwtConfirmed' : 'settingsPage.msgBackendDown' }
       if (item.connectorId === 'amocrm') return { ...item, status: connected.has('amocrm') ? 'healthy' : 'unconfigured', latencyMs, checkedAt }
@@ -101,7 +104,7 @@ export default function SettingsPage() {
       <div className="flex items-center gap-2 rounded-xl border border-ice/10 bg-panel/60 px-3 py-2 text-xs text-muted"><span className={cn('h-2 w-2 rounded-full', isSupabaseEnabled ? 'bg-teal' : 'bg-amber')} />{isSupabaseEnabled ? 'Live tenant context' : 'Demo mode'}</div>
     </header>
 
-    <nav className="mt-7 grid grid-cols-2 gap-2 rounded-2xl border border-ice/10 bg-panel/50 p-2 md:grid-cols-3 xl:grid-cols-5" aria-label={t('settingsPage.navAria')}>
+    <nav className="mt-7 grid grid-cols-2 gap-2 rounded-2xl border border-ice/10 bg-panel/50 p-2 md:grid-cols-3 xl:grid-cols-6" aria-label={t('settingsPage.navAria')}>
       {TABS.map(({ id, labelKey, compactKey, icon: Icon }) => <button key={id} type="button" onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined} className={cn('flex min-h-12 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition', tab === id ? 'bg-gradient-to-r from-accent-cyan/15 to-accent-indigo/15 text-text ring-1 ring-accent-cyan/30' : 'text-muted hover:bg-white/5 hover:text-text')}><Icon size={16} /><span className="hidden sm:inline lg:hidden xl:inline">{t(labelKey)}</span><span className="sm:hidden lg:inline xl:hidden">{t(compactKey)}</span></button>)}
     </nav>
 
@@ -109,6 +112,7 @@ export default function SettingsPage() {
     <div className="mt-5">
       {tab === 'personalization' && <PersonalizationTab />}
       {tab === 'connectors' && <ConnectorsTab health={health} onRefresh={refreshHealth} checking={checking} />}
+      {tab === 'billing' && <BillingPage embedded />}
       {tab === 'compute' && <ComputeTab health={health} />}
       {tab === 'governance' && <GovernanceTab />}
       {tab === 'support' && <SupportTab health={health} onRefresh={refreshHealth} checking={checking} />}
@@ -273,49 +277,7 @@ function GitHubKeyCard() {
 
 function ConnectorsTab({ health, onRefresh, checking }: { health: ConnectorHealth[]; onRefresh(): Promise<void>; checking: boolean }) {
   const { t } = useI18n()
-  const [amoSubdomain, setAmoSubdomain] = useState('')
-  const [secretDrafts, setSecretDrafts] = useState({ telegram: '', uzum: '' })
-  const [visible, setVisible] = useState<Record<string, boolean>>({})
-  const [notice, setNotice] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [oneTimeUrl, setOneTimeUrl] = useState('')
-
-  const rotateAmo = async () => {
-    setNotice(''); setOneTimeUrl('')
-    if (!supabase || !amoSubdomain.trim()) { setNotice(t('settingsPage.amoNeedBackend')); return }
-    setBusy(true)
-    const { data, error } = await supabase.functions.invoke('amocrm-webhook-secret', { body: { action: 'rotate', subdomain: amoSubdomain.trim().toLowerCase() } })
-    const payload = data as { webhook_url?: string; previous_valid_until?: string | null; shown_once?: boolean; error?: string } | null
-    if (error || !payload?.webhook_url || payload.shown_once !== true) setNotice(payload?.error || t('settingsPage.amoRotateFailed'))
-    else {
-      const validated = ForgeSecretRotationResultSchema.parse({ provider: 'amocrm', rotatedAt: new Date().toISOString(), previousValidUntil: payload.previous_valid_until ?? null, shownOnce: true, webhookUrl: payload.webhook_url })
-      setOneTimeUrl(validated.webhookUrl ?? '')
-      setNotice(t('settingsPage.amoRotated'))
-      void onRefresh()
-    }
-    setBusy(false)
-  }
-  const validateDraft = (provider: 'telegram' | 'uzum') => {
-    const result = ForgeIntegrationSecretInputSchema.safeParse({ provider, secret: secretDrafts[provider] })
-    setNotice(result.success ? t('settingsPage.secretFormatOk', { kind: provider === 'telegram' ? 'Telegram Secret Token' : 'Uzum HMAC' }) : result.error.issues[0]?.message ?? t('settingsPage.secretInvalid'))
-  }
-
-  return <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
-    <div className="space-y-5">
-      <Panel icon={KeyRound} title={t('settingsPage.webhooksTitle')} description={t('settingsPage.webhooksDesc')}>
-        <div className="space-y-4">
-          <IntegrationRow title="amoCRM" subtitle="Lifecycle endpoint · 24h grace" status={findStatus(health, 'amocrm')}>
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]"><input value={amoSubdomain} onChange={(event) => setAmoSubdomain(event.target.value)} className={inputCls} placeholder="your-company" autoComplete="off" /><Button size="sm" variant="secondary" loading={busy} onClick={() => void rotateAmo()} leftIcon={<RotateCw size={14} />}>{t('settingsPage.rotate')}</Button></div>
-          </IntegrationRow>
-          {(['telegram', 'uzum'] as const).map((provider) => <IntegrationRow key={provider} title={provider === 'telegram' ? 'Telegram Forge' : 'Uzum Event Bridge'} subtitle={provider === 'telegram' ? 'X-Telegram-Bot-Api-Secret-Token' : 'HMAC-SHA256 + replay window'} status={findStatus(health, provider)}>
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]"><div className="relative"><input type={visible[provider] ? 'text' : 'password'} value={secretDrafts[provider]} onChange={(event) => setSecretDrafts((current) => ({ ...current, [provider]: event.target.value }))} className={`${inputCls} pr-10`} placeholder="Write-only secret" autoComplete="new-password" spellCheck={false} /><button type="button" onClick={() => setVisible((current) => ({ ...current, [provider]: !current[provider] }))} aria-label={visible[provider] ? t('settingsPage.hideSecret') : t('settingsPage.showSecret')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text">{visible[provider] ? <EyeOff size={15} /> : <Eye size={15} />}</button></div><Button size="sm" variant="secondary" onClick={() => validateDraft(provider)}>{t('settingsPage.verify')}</Button></div>
-          </IntegrationRow>)}
-        </div>
-        {(notice || oneTimeUrl) && <div className="mt-4 rounded-xl border border-accent-cyan/20 bg-accent-cyan/5 p-3 text-xs leading-5 text-muted"><p>{notice}</p>{oneTimeUrl && <div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 truncate rounded-lg bg-black/20 px-2 py-1.5 text-accent-cyan">{oneTimeUrl}</code><button type="button" aria-label={t('settingsPage.copyUrl')} onClick={() => void navigator.clipboard.writeText(oneTimeUrl)} className="rounded-lg border border-ice/10 p-2 text-muted hover:text-text"><Clipboard size={14} /></button></div>}</div>}
-      </Panel>
-    </div>
-    <Panel icon={Activity} title={t('settingsPage.channelsTitle')} description={t('settingsPage.channelsDesc')}><HealthList health={health.filter((item) => ['forge-runtime', 'amocrm', 'telegram', 'uzum'].includes(item.connectorId))} /><Button variant="secondary" size="sm" fullWidth className="mt-4" loading={checking} onClick={() => void onRefresh()} leftIcon={<RefreshCw size={14} />}>{t('settingsPage.refreshStatuses')}</Button></Panel>
-  </div>
+  return <div className="space-y-5"><IntegrationCenter onChanged={onRefresh} /><Panel icon={Activity} title={t('settingsPage.channelsTitle')} description={t('settingsPage.channelsDesc')}><HealthList health={health.filter((item) => ['forge-runtime', 'amocrm', 'telegram', 'uzum'].includes(item.connectorId))} /><Button variant="secondary" size="sm" fullWidth className="mt-4" loading={checking} onClick={() => void onRefresh()} leftIcon={<RefreshCw size={14} />}>{t('settingsPage.refreshStatuses')}</Button></Panel></div>
 }
 
 function ComputeTab({ health }: { health: ConnectorHealth[] }) {
@@ -389,8 +351,6 @@ function SupportTab({ health, onRefresh, checking }: { health: ConnectorHealth[]
 
 function Panel({ icon: Icon, title, description, children }: { icon: IconType; title: string; description: string; children: ReactNode }) { return <section className="card rounded-2xl p-5 sm:p-6"><div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-cyan/15 to-accent-indigo/15 text-accent-cyan"><Icon size={18} /></span><div><h2 className="font-semibold text-text">{title}</h2><p className="mt-1 text-xs leading-5 text-muted">{description}</p></div></div><div className="mt-5">{children}</div></section> }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block"><span className={labelCls}>{label}</span>{children}</label> }
-function findStatus(health: ConnectorHealth[], connectorId: ConnectorHealth['connectorId']) { return health.find((item) => item.connectorId === connectorId)?.status ?? 'unknown' }
-function IntegrationRow({ title, subtitle, status, children }: { title: string; subtitle: string; status: ConnectorHealth['status']; children: ReactNode }) { return <div className="rounded-2xl border border-ice/10 bg-white/[0.025] p-4"><div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">{title}</p><p className="mt-0.5 text-[11px] text-muted">{subtitle}</p></div><StatusBadge status={status} /></div>{children}</div> }
 function StatusBadge({ status }: { status: ConnectorHealth['status'] }) { const style = status === 'healthy' ? 'bg-teal/10 text-teal border-teal/20' : status === 'degraded' || status === 'offline' ? 'bg-danger/10 text-danger border-danger/20' : 'bg-amber/10 text-amber border-amber/20'; return <span className={cn('rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide', style)}>{status}</span> }
 function HealthList({ health }: { health: ConnectorHealth[] }) {
   const { t } = useI18n()

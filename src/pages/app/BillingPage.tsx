@@ -31,7 +31,7 @@ import { useI18n } from '../../i18n'
  * Цена показывается в сумах: счёт выставляется через Payme/Click в сумах, Stripe в РУз не
  * работает. Доллар остаётся мелкой подписью для тех, кому так понятнее.
  */
-export default function BillingPage() {
+export default function BillingPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n()
   const [plan, setPlan] = useState('free')
   // null = счётчик недоступен. Показываем прочерк, а не ноль: ноль читается как «вы ничего
@@ -40,6 +40,7 @@ export default function BillingPage() {
   const [quota, setQuota] = useState(PLANS.free.dialogues)
   const [loading, setLoading] = useState(isSupabaseEnabled)
   const [checkoutBusy, setCheckoutBusy] = useState('')
+  const [period, setPeriod] = useState<'month' | 'year'>('month')
   // Выставленный счёт с двумя ссылками. Выбор кассы — за покупателем: у Payme и Click разное
   // покрытие карт, и «оплатить» одной кнопкой означало бы отказ половине рынка.
   const [invoice, setInvoice] = useState<{ planId: string; no: number | null; amountUzs: number; payme: string | null; click: string | null } | null>(null)
@@ -101,9 +102,10 @@ export default function BillingPage() {
       : n >= 1000
         ? Math.round(n / 1000) + 'k'
         : String(n)
+  const billedPrice = (price: number) => period === 'year' ? price * 10 : price
 
   return (
-    <div className="container-page max-w-6xl py-8">
+    <div className={cn(embedded ? 'max-w-6xl' : 'container-page max-w-6xl py-8')}>
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-indigo/15 text-accent-indigo"><CreditCard size={20} /></span>
         <div>
@@ -142,6 +144,11 @@ export default function BillingPage() {
 
       {notice && <p className="mt-4 rounded-xl bg-accent-indigo/10 px-4 py-2.5 text-sm text-text">{notice}</p>}
 
+      <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-ice/10 bg-panel/45 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-xs font-semibold text-text">{t('billingPage.billingPeriod')}</p><p className="mt-1 text-[11px] text-muted">{period === 'year' ? t('billingPage.annualSaving') : t('billingPage.monthlyFlexible')}</p></div>
+        <div className="grid grid-cols-2 rounded-xl border border-ice/10 bg-black/15 p-1"><button type="button" onClick={() => setPeriod('month')} className={cn('rounded-lg px-4 py-2 text-xs font-semibold transition', period === 'month' ? 'bg-white/[0.08] text-text shadow-sm' : 'text-muted')}>{t('billingPage.periodMonth')}</button><button type="button" onClick={() => setPeriod('year')} className={cn('rounded-lg px-4 py-2 text-xs font-semibold transition', period === 'year' ? 'bg-teal/15 text-teal shadow-sm' : 'text-muted')}>{t('billingPage.periodYear')}</button></div>
+      </div>
+
       {/* tiers */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {PLAN_ORDER.map((id) => {
@@ -156,8 +163,8 @@ export default function BillingPage() {
               {/* Цена в сумах — крупно, потому что списывается именно она. Доллар мелкой
                   подписью: он ориентир, а не то, что уйдёт с карты. */}
               <p className="mt-2 text-3xl font-extrabold text-text">
-                {id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(p.priceUzs)} ${t('billingPage.soum')}`}
-                <span className="text-sm font-normal text-muted">{id !== 'enterprise' ? t('billingPage.perMonth') : ''}</span>
+                {id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(billedPrice(p.priceUzs))} ${t('billingPage.soum')}`}
+                <span className="text-sm font-normal text-muted">{id !== 'enterprise' ? (period === 'year' ? t('billingPage.perYear') : t('billingPage.perMonth')) : ''}</span>
               </p>
               {id !== 'enterprise' && <p className="mt-0.5 text-xs text-fog">≈ ${p.price}{t('billingPage.perMonth')}</p>}
               {/* Included features carry primary text, excluded ones drop to `muted` inside
@@ -187,6 +194,8 @@ export default function BillingPage() {
         })}
       </div>
 
+      <section className="mt-6 rounded-2xl border border-ice/10 bg-panel/45 p-5"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-indigo/10 text-accent-indigo"><CreditCard size={16} /></span><div><h2 className="text-sm font-bold text-text">{t('billingPage.paymentMethods')}</h2><p className="mt-0.5 text-[11px] text-muted">{t('billingPage.paymentMethodsDesc')}</p></div></div><div className="mt-4 grid gap-2 sm:grid-cols-4">{(['Payme', 'Click'] as const).map((method) => <div key={method} className="rounded-xl border border-teal/15 bg-teal/[0.05] p-3"><p className="text-xs font-bold text-text">{method}</p><p className="mt-1 text-[10px] text-teal">{t('billingPage.methodInvoice')}</p></div>)}{(['Stripe', t('billingPage.bankCard')] as const).map((method) => <div key={method} className="rounded-xl border border-ice/10 bg-black/10 p-3"><p className="text-xs font-bold text-text">{method}</p><p className="mt-1 text-[10px] text-fog">{t('billingPage.methodUnavailable')}</p></div>)}</div></section>
+
       <section className="mt-8 overflow-hidden rounded-3xl border border-ice/10 bg-panel/50">
         <div className="border-b border-ice/10 px-5 py-5 sm:px-6">
           <h2 className="text-xl font-semibold text-text">{t('billingPage.compareTitle')}</h2>
@@ -204,7 +213,7 @@ export default function BillingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.07]">
-              <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(PLANS[id].priceUzs)} ${t('billingPage.soum')}${t('billingPage.perMonth')}`)} />
+              <CompareRow label={t('billingPage.comparePrice')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? t('billingPage.customPrice') : `${formatUzs(billedPrice(PLANS[id].priceUzs))} ${t('billingPage.soum')}${period === 'year' ? t('billingPage.perYear') : t('billingPage.perMonth')}`)} />
               <CompareRow label={t('billingPage.comparePriceUsd')} values={PLAN_ORDER.map((id) => id === 'enterprise' ? '—' : `$${PLANS[id].price}${t('billingPage.perMonth')}`)} />
               <CompareRow label={t('billingPage.compareDialogues')} values={PLAN_ORDER.map((id) => kfmt(PLANS[id].dialogues))} />
               <CompareRow label={t('billingPage.compareVoice')} values={PLAN_ORDER.map(() => t('billingPage.voiceSeparateShort'))} />

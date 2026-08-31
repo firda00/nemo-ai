@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowUp,
   Bot,
@@ -11,6 +11,9 @@ import {
   NotebookTabs,
   Sparkles,
   Users,
+  UserRound,
+  Workflow,
+  Loader2,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -18,6 +21,9 @@ import { classifyTaskArtifact, type SmartArtifactKind } from '../../lib/smartArt
 import { MarketingCampaignStudio } from './MarketingCampaignStudio'
 import { FinanceCashFlowDashboard } from '../finance/FinanceCashFlowDashboard'
 import { ResearchNotebookHub } from '../research/ResearchNotebookHub'
+import { AutonomousRunner } from './AutonomousRunner'
+import { classifyChatEntityIntent, createEntityFromChat, type ChatCreatedEntity } from '../../lib/chatEntityFactory'
+import { useAgentStore } from '../../store/useAgentStore'
 
 type ChatTurn = {
   id: number
@@ -25,6 +31,9 @@ type ChatTurn = {
   text?: string
   copyKey?: string
   artifact?: SmartArtifactKind
+  entity?: ChatCreatedEntity
+  teamRunGoal?: string
+  error?: boolean
 }
 
 const ARTIFACT_META = {
@@ -35,9 +44,14 @@ const ARTIFACT_META = {
 
 export function SmartTaskDesk() {
   const { t } = useI18n()
+  const navigate = useNavigate()
+  const addAgent = useAgentStore((state) => state.addAgent)
+  const deleteAgent = useAgentStore((state) => state.deleteAgent)
   const [draft, setDraft] = useState('')
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [activeArtifactId, setActiveArtifactId] = useState<number | null>(null)
+  const [activeEntity, setActiveEntity] = useState<ChatCreatedEntity | null>(null)
+  const [creating, setCreating] = useState(false)
   const turnId = useRef(0)
 
   const suggestions = useMemo(() => [
@@ -46,31 +60,44 @@ export function SmartTaskDesk() {
     { kind: 'research' as const, label: t('smartTaskDesk.suggestionResearch') },
   ], [t])
 
-  const runTask = (text: string, forcedKind?: SmartArtifactKind) => {
+  const runTask = async (text: string, forcedKind?: SmartArtifactKind) => {
     const value = text.trim()
-    if (!value) return
+    if (!value || creating) return
+    const entityIntent = classifyChatEntityIntent(value)
     const artifact = forcedKind ?? classifyTaskArtifact(value)
     const stamp = turnId.current += 2
-    const nextTurns: ChatTurn[] = [
-      { id: stamp, role: 'user', text: value },
-      artifact
-        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact }
-        : { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.generalReady' },
-    ]
-    setTurns((current) => [...current.slice(-6), ...nextTurns])
-    setActiveArtifactId(artifact ? stamp + 1 : null)
+    setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value }])
     setDraft('')
+    if (entityIntent) {
+      setCreating(true)
+      try {
+        const entity = await createEntityFromChat(value, addAgent, deleteAgent)
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${entity.kind}Created`, entity }])
+      } catch (error) {
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: error instanceof Error ? error.message : t('smartTaskDesk.creationFailed'), error: true }])
+      } finally {
+        setCreating(false)
+      }
+      return
+    }
+    const response: ChatTurn = activeEntity
+      ? { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.teamRunReady', entity: activeEntity, teamRunGoal: value }
+      : artifact
+        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact }
+        : { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.generalReady' }
+    setTurns((current) => [...current, response])
+    setActiveArtifactId(artifact ? stamp + 1 : null)
   }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    runTask(draft)
+    void runTask(draft)
   }
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      runTask(draft)
+      void runTask(draft)
     }
   }
 
@@ -98,6 +125,13 @@ export function SmartTaskDesk() {
           </div>
         </div>
 
+        {activeEntity && <div className="ml-11 flex flex-wrap items-center gap-2 rounded-xl border border-teal/20 bg-teal/[0.06] px-3 py-2 text-xs text-muted">
+          <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-teal" /></span>
+          <strong className="text-text">{activeEntity.name}</strong>
+          <span>{t('smartTaskDesk.activeContext')}</span>
+          <button type="button" onClick={() => setActiveEntity(null)} className="ml-auto font-semibold text-teal hover:text-text">{t('smartTaskDesk.leaveContext')}</button>
+        </div>}
+
         {turns.map((turn) => (
           <div key={turn.id} className={cn('flex items-start gap-3 animate-fadeIn', turn.role === 'user' && 'justify-end')}>
             {turn.role === 'assistant' && <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent-cyan/15 bg-accent-cyan/[0.06] text-accent-cyan"><Bot size={15} /></span>}
@@ -115,7 +149,9 @@ export function SmartTaskDesk() {
                   onToggle={() => setActiveArtifactId((current) => current === turn.id ? null : turn.id)}
                 />
               )}
-              {!turn.artifact && turn.role === 'assistant' && (
+              {turn.entity && !turn.teamRunGoal && <TeamArtifact entity={turn.entity} onOpen={() => navigate(turn.entity!.kind === 'team' ? `/app/teams/${turn.entity!.id}` : `/app/agents/${turn.entity!.id}`)} onWorkHere={() => setActiveEntity(turn.entity ?? null)} />}
+              {turn.entity && turn.teamRunGoal && <TeamRunArtifact entity={turn.entity} goal={turn.teamRunGoal} />}
+              {!turn.artifact && !turn.entity && turn.role === 'assistant' && !turn.error && (
                 <Link to="/app/teams" className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-ice/[0.08] px-3 py-2 text-xs font-semibold text-muted transition hover:border-accent-cyan/25 hover:text-text">
                   <Users size={14} />{t('smartTaskDesk.openTeams')}
                 </Link>
@@ -123,11 +159,12 @@ export function SmartTaskDesk() {
             </div>
           </div>
         ))}
+        {creating && <div className="flex items-center gap-3 animate-fadeIn"><span className="flex h-8 w-8 items-center justify-center rounded-xl border border-violet/20 bg-violet/10 text-violet"><Loader2 size={15} className="animate-spin" /></span><div className="rounded-2xl rounded-tl-md border border-ice/[0.07] bg-card/[0.035] px-4 py-3 text-sm text-muted"><span className="mr-2 inline-flex gap-1 align-middle"><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-cyan" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet [animation-delay:150ms]" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal [animation-delay:300ms]" /></span>{t('smartTaskDesk.assembling')}</div></div>}
       </div>
 
       <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-5">
         {!turns.length && <div className="mb-3 flex flex-wrap gap-2">
-          {suggestions.map((suggestion) => <button key={suggestion.kind} type="button" onClick={() => runTask(suggestion.label, suggestion.kind)} className="rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-2 text-left text-xs text-muted transition hover:-translate-y-0.5 hover:border-accent-cyan/25 hover:text-text">{suggestion.label}</button>)}
+          {suggestions.map((suggestion) => <button key={suggestion.kind} type="button" onClick={() => void runTask(suggestion.label, suggestion.kind)} className="rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-2 text-left text-xs text-muted transition hover:-translate-y-0.5 hover:border-accent-cyan/25 hover:text-text">{suggestion.label}</button>)}
         </div>}
         <form onSubmit={submit} className="relative rounded-2xl border border-ice/[0.1] bg-card/[0.04] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] focus-within:border-accent-cyan/30 focus-within:ring-2 focus-within:ring-accent-cyan/[0.06]">
           <textarea
@@ -138,12 +175,29 @@ export function SmartTaskDesk() {
             placeholder={t('smartTaskDesk.placeholder')}
             className="min-h-16 w-full resize-none bg-transparent px-2 py-2 pr-12 text-sm leading-6 text-text outline-none placeholder:text-fog"
           />
-          <button type="submit" disabled={!draft.trim()} aria-label={t('smartTaskDesk.send')} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-accent-cyan text-bg transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"><ArrowUp size={17} /></button>
+          <button type="submit" disabled={!draft.trim() || creating} aria-label={t('smartTaskDesk.send')} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-accent-cyan text-bg transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"><ArrowUp size={17} /></button>
         </form>
         <p className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-fog"><MessageSquareText size={12} />{t('smartTaskDesk.routingHint')}</p>
       </div>
     </section>
   )
+}
+
+function TeamArtifact({ entity, onOpen, onWorkHere }: { entity: ChatCreatedEntity; onOpen(): void; onWorkHere(): void }) {
+  const { t } = useI18n()
+  const Icon = entity.kind === 'team' ? Users : UserRound
+  return <section className="mt-3 overflow-hidden rounded-2xl border border-accent-cyan/20 bg-gradient-to-br from-accent-cyan/[0.07] via-bg/50 to-violet/[0.07] shadow-[0_18px_60px_-42px_rgba(34,211,238,0.7)]">
+    <div className="flex items-center gap-3 border-b border-ice/[0.07] p-4"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-flow-gradient text-white shadow-lg shadow-violet/20"><Icon size={19} /></span><div className="min-w-0 flex-1"><p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-accent-cyan">{t(entity.kind === 'team' ? 'smartTaskDesk.teamArtifact' : 'smartTaskDesk.agentArtifact')}</p><h2 className="truncate text-base font-bold text-text">{entity.name}</h2></div><span className="rounded-full border border-teal/20 bg-teal/10 px-2.5 py-1 text-[10px] font-semibold text-teal">{t('smartTaskDesk.ready')}</span></div>
+    <div className="p-4"><div className="grid gap-2 sm:grid-cols-3">{entity.members.map((member, index) => <div key={`${member.name}-${index}`} className="relative overflow-hidden rounded-xl border border-ice/[0.08] bg-black/10 p-3"><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-teal shadow-[0_0_12px_rgba(45,212,191,0.9)]" /><p className="truncate text-xs font-semibold text-text">{member.name}</p><p className="mt-1 truncate text-[10px] text-muted">{member.role}</p></div>)}</div>
+      {entity.members.length > 1 && <div className="my-4 flex items-center gap-2 text-[10px] text-fog"><Workflow size={13} className="text-violet" /><span className="h-px flex-1 overflow-hidden bg-gradient-to-r from-violet via-accent-cyan to-teal"><span className="block h-px w-1/3 animate-[pulse_1.4s_ease-in-out_infinite] bg-white" /></span>{t('smartTaskDesk.a2aReady')}</div>}
+      <div className="flex flex-col gap-2 sm:flex-row"><button type="button" onClick={onOpen} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent-cyan px-4 py-2.5 text-xs font-bold text-bg transition hover:brightness-105"><ExternalLink size={14} />{t(entity.kind === 'team' ? 'smartTaskDesk.openLobby' : 'smartTaskDesk.openAgent')}</button><button type="button" onClick={onWorkHere} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-ice/[0.1] bg-white/[0.03] px-4 py-2.5 text-xs font-bold text-text transition hover:border-violet/30 hover:bg-violet/[0.06]"><MessageSquareText size={14} />{t('smartTaskDesk.workHere')}</button></div>
+    </div>
+  </section>
+}
+
+function TeamRunArtifact({ entity, goal }: { entity: ChatCreatedEntity; goal: string }) {
+  const { t } = useI18n()
+  return <section className="mt-3 overflow-hidden rounded-2xl border border-violet/20 bg-bg/45"><div className="flex items-center gap-3 border-b border-ice/[0.07] px-4 py-3"><span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-violet/10 text-violet"><Workflow size={16} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-teal" /></span><div><p className="text-xs font-bold text-text">{entity.name}</p><p className="text-[10px] text-muted">{t('smartTaskDesk.teamRunHandoff')}</p></div></div><div className="p-3 sm:p-4"><AutonomousRunner defaultGoal={goal} departmentId={entity.departmentId} contextKey={`chat:${entity.id}`} presetSpecs={entity.members.map((member) => ({ name: member.name, role: member.role, skills: member.skills, prompt: member.prompt }))} /></div></section>
 }
 
 function ArtifactCard({ kind, expanded, onToggle }: { kind: SmartArtifactKind; expanded: boolean; onToggle: () => void }) {

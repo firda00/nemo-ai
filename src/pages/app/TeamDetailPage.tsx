@@ -77,6 +77,21 @@ export default function TeamDetailPage() {
 
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase || !id) {
+      if (id) {
+        try {
+          const raw = window.localStorage.getItem(`nemo-team-blueprint:${id}`)
+          if (raw) {
+            const saved = JSON.parse(raw) as { departmentId?: string; name?: string; goal?: string; members?: Array<{ name: string; role: string; skills?: string[]; prompt?: { role?: string; tasks?: string } }> }
+            const savedMembers = saved.members ?? []
+            if (savedMembers.length) window.setTimeout(() => setDept({
+              id: saved.departmentId || `demo-${id}`,
+              name: saved.name || 'AI Team',
+              niche: saved.goal,
+              subs: savedMembers.map((member, index) => ({ id: `${id}-member-${index}`, name: member.name, role: member.role, skills: member.skills, prompt: member.prompt ?? {}, model: 'openai/gpt-4o-mini' })),
+            }), 0)
+          }
+        } catch { /* optional demo persistence */ }
+      }
       window.setTimeout(() => setLoading(false), 0)
       return
     }

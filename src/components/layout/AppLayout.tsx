@@ -31,6 +31,8 @@ import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { FeedbackWidget } from '../platform/FeedbackWidget'
 import { featureEnabled, trackEvent } from '../../lib/telemetry'
+import { isSupabaseEnabled, supabase } from '../../lib/supabase'
+import { PLANS, planLabelKey } from '../../lib/plans'
 
 export function AppLayout() {
   const { t } = useI18n()
@@ -46,6 +48,16 @@ export function AppLayout() {
   const [commandQuery, setCommandQuery] = useState('')
   const [feedbackEnabled, setFeedbackEnabled] = useState(true)
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
+  const [workspacePlan, setWorkspacePlan] = useState('free')
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase || !isAuthed) return
+    let active = true
+    void supabase.functions.invoke('plan-status', { body: {} }).then(({ data }) => {
+      const plan = (data as { plan?: string } | null)?.plan
+      if (active && plan && PLANS[plan]) setWorkspacePlan(plan)
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [isAuthed])
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('nemo.sidebar') === 'collapsed' } catch { return false }
@@ -349,7 +361,7 @@ export function AppLayout() {
                   <span className="mt-0.5 flex items-center gap-1 text-[10px] text-fog">
                     {t('appLayout.workspaceName')}
                     <span className="text-ice/20">•</span>
-                    <span className="text-accent-cyan">{t('appLayout.planBeta')}</span>
+                    <span className="text-accent-cyan">{t(planLabelKey(workspacePlan))}</span>
                   </span>
                 </span>
                 <ChevronDown size={14} className={cn('text-muted transition-transform duration-200', menuOpen && 'rotate-180')} />
