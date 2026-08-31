@@ -11,7 +11,7 @@
 -- когда CLI недоступен. Для существующего проекта используйте db push: повторный прогон всего
 -- файла целиком безопаснее не стал — часть миграций не идемпотентна.
 --
--- Собрано из 165 миграций: 20260624090000_init.sql … 20260827100000_forge_event_bridge.sql
+-- Собрано из 168 миграций: 20260624090000_init.sql … 20260830120000_marketing_brand_kits.sql
 
 begin;
 -- ЛИЧНЫЕ АДРЕСА ЗАМЕНЕНЫ НА redacted@invalid.
@@ -20139,5 +20139,175 @@ comment on function public.runtime_resolve_forge_event_trigger(uuid, text) is
 comment on function public.runtime_enqueue_forge_event(
   uuid, uuid, text, text, timestamptz, jsonb, text, jsonb, bigint
 ) is 'Service-only atomic ADR 003 reservation, Durable Inbox ingestion, and Forge DAG creation.';
+
+-- ─── 20260827173000_telegram_voice_intents.sql ───────────────────────────────────────────────
+create table public.telegram_voice_intents (
+  id uuid primary key,
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  chat_id text not null,
+  message_id bigint not null,
+  intent jsonb not null,
+  forge_payload jsonb not null,
+  status text not null default 'pending',
+  execution_id uuid,
+  expires_at timestamptz not null default (clock_timestamp() + interval '15 minutes'),
+  created_at timestamptz not null default clock_timestamp(),
+  decided_at timestamptz,
+  constraint telegram_voice_intents_account_id_id_key unique (account_id, id),
+  constraint telegram_voice_intents_message_key unique (account_id, channel_id, chat_id, message_id),
+  constraint telegram_voice_intents_status_check check (status in ('pending', 'processing', 'approved', 'rejected', 'expired')),
+  constraint telegram_voice_intents_payload_check check (
+    jsonb_typeof(intent) = 'object' and jsonb_typeof(forge_payload) = 'object'
+    and octet_length(intent::text) <= 32768 and octet_length(forge_payload::text) <= 65536
+  )
+);
+
+create index telegram_voice_intents_pending_idx
+  on public.telegram_voice_intents (account_id, channel_id, chat_id, expires_at)
+  where status = 'pending';
+
+alter table public.telegram_voice_intents enable row level security;
+revoke all on table public.telegram_voice_intents from public, anon, authenticated;
+grant select, insert, update on table public.telegram_voice_intents to service_role;
+
+comment on table public.telegram_voice_intents is
+  'Short-lived tenant-scoped approval state for transcribed owner voice commands. Raw audio and secrets are never stored.';
+
+-- ─── 20260827180000_morning_brief_cron.sql ───────────────────────────────────────────────────
+-- Daily Telegram morning brief at 08:00 Asia/Tashkent (03:00 UTC).
+--
+-- Deployment must provision two Vault entries before the first scheduled run:
+--   nemo_functions_url = https://<project-ref>.supabase.co/functions/v1
+--   nemo_cron_secret   = the same value as the Edge Function CRON_SECRET
+-- The dispatcher fails closed when either value is absent and never stores a secret in cron.job.
+
+create extension if not exists pg_net with schema extensions;
+
+create or replace function runtime.invoke_morning_brief_cron()
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_functions_url text;
+  v_cron_secret text;
+  v_request_id bigint;
+begin
+  select decrypted_secret
+    into v_functions_url
+    from vault.decrypted_secrets
+   where name = 'nemo_functions_url'
+   order by created_at desc
+   limit 1;
+
+  select decrypted_secret
+    into v_cron_secret
+    from vault.decrypted_secrets
+   where name = 'nemo_cron_secret'
+   order by created_at desc
+   limit 1;
+
+  if nullif(btrim(v_functions_url), '') is null
+     or nullif(btrim(v_cron_secret), '') is null then
+    raise exception using
+      errcode = '22023',
+      message = 'MORNING_BRIEF_CRON_NOT_CONFIGURED';
+  end if;
+
+  select net.http_post(
+    url := rtrim(v_functions_url, '/') || '/morning-brief',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', v_cron_secret
+    ),
+    body := jsonb_build_object(
+      'source', 'pg_cron',
+      'scheduled_for', clock_timestamp()
+    ),
+    timeout_milliseconds := 30000
+  ) into v_request_id;
+
+  return v_request_id;
+end;
+$$;
+
+revoke all on function runtime.invoke_morning_brief_cron() from public, anon, authenticated;
+grant execute on function runtime.invoke_morning_brief_cron() to service_role;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid)
+      from cron.job
+     where jobname = 'nemo-morning-brief-asia-tashkent';
+    perform cron.schedule(
+      'nemo-morning-brief-asia-tashkent',
+      '0 3 * * *',
+      'select runtime.invoke_morning_brief_cron();'
+    );
+  end if;
+end;
+$$;
+
+-- ─── 20260830120000_marketing_brand_kits.sql ─────────────────────────────────────────────────
+-- Marketing Engine 2.0: tenant-scoped brand identity used by structured campaign generation.
+create table if not exists public.brand_kits (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null default public.current_account_id()
+    references public.accounts(id) on delete cascade,
+  name text not null,
+  colors text[] not null default array['#8B7CF8'::text, '#22D3EE'::text],
+  fonts jsonb not null default '{"heading":"Inter","body":"Inter"}'::jsonb,
+  tone_of_voice text not null,
+  stop_words text[] not null default '{}',
+  visual_preset text not null default 'minimal_tech_ui',
+  custom_visual_rules text not null default '',
+  created_at timestamptz not null default clock_timestamp(),
+  updated_at timestamptz not null default clock_timestamp(),
+  constraint brand_kits_account_id_id_key unique (account_id, id),
+  constraint brand_kits_account_name_key unique (account_id, name),
+  constraint brand_kits_name_check check (char_length(btrim(name)) between 1 and 120),
+  constraint brand_kits_colors_count_check check (cardinality(colors) between 1 and 8),
+  constraint brand_kits_colors_format_check check (
+    array_position(colors, null) is null
+    and array_to_string(colors, ',') ~ '^#[0-9A-Fa-f]{6}(,#[0-9A-Fa-f]{6})*$'
+  ),
+  constraint brand_kits_fonts_check check (
+    jsonb_typeof(fonts) = 'object'
+    and char_length(btrim(coalesce(fonts->>'heading', ''))) between 1 and 120
+    and char_length(btrim(coalesce(fonts->>'body', ''))) between 1 and 120
+  ),
+  constraint brand_kits_tone_check check (char_length(btrim(tone_of_voice)) between 1 and 1200),
+  constraint brand_kits_stop_words_check check (
+    cardinality(stop_words) <= 100 and array_position(stop_words, null) is null
+  ),
+  constraint brand_kits_visual_preset_check check (visual_preset in (
+    'editorial_photo_35mm',
+    'minimal_tech_ui',
+    '3d_modern_clay_isometric',
+    'flat_vector_infographic'
+  )),
+  constraint brand_kits_custom_visual_rules_check check (char_length(custom_visual_rules) <= 2000)
+);
+
+create index if not exists brand_kits_account_updated_idx
+  on public.brand_kits (account_id, updated_at desc);
+
+alter table public.brand_kits enable row level security;
+
+revoke all on table public.brand_kits from public, anon;
+grant select, insert, update, delete on table public.brand_kits to authenticated;
+grant all on table public.brand_kits to service_role;
+
+drop policy if exists brand_kits_tenant_access on public.brand_kits;
+create policy brand_kits_tenant_access
+  on public.brand_kits for all to authenticated
+  using (account_id = public.current_account_id())
+  with check (account_id = public.current_account_id());
+
+comment on table public.brand_kits is
+  'Tenant-scoped text and visual identity injected into Marketing Engine campaign generation.';
 
 commit;

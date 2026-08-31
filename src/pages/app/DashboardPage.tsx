@@ -9,6 +9,7 @@ import { useBackendStatus } from '../../hooks/useBackendStatus'
 import { QuickStart } from '../../components/platform/QuickStart'
 import { RecentActivity } from '../../components/platform/RecentActivity'
 import { BusinessBriefLauncher } from '../../components/platform/BusinessBriefLauncher'
+import { SmartTaskDesk } from '../../components/platform/SmartTaskDesk'
 
 function readLocalStorage(key: string): string {
   try {
@@ -58,7 +59,7 @@ export default function DashboardPage() {
       tasks: 'Recommend products or services based on customer goals, budget, and language preference. Collect contact details and next actions.',
       tone: 'Professional, friendly, and solution-oriented.',
     }))
-    navigate('/app/create-agent')
+    navigate('/app?create=agent')
   }
 
   const createOperationsTeam = () => {
@@ -69,7 +70,7 @@ export default function DashboardPage() {
       template: 'Operations Team',
       selectedAt: new Date().toISOString(),
     }))
-    navigate('/app/create-team')
+    navigate('/app?create=team')
   }
 
   const runDemo = (type: 'payment-control' | 'meeting-to-tasks') => {
@@ -79,6 +80,15 @@ export default function DashboardPage() {
 
   return (
     <div className="container-page max-w-7xl !px-3 py-6 sm:!px-8 sm:py-8">
+      <SmartTaskDesk />
+
+      <details className="group mt-5">
+        <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl border border-ice/[0.07] bg-card/[0.02] px-4 py-3 text-sm font-semibold text-muted transition hover:border-ice/[0.13] hover:text-text marker:content-none">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet/10 text-violet"><Activity size={15} /></span>
+          <span className="min-w-0 flex-1"><span className="block">{t('smartTaskDesk.workspaceOverview')}</span><span className="mt-0.5 block text-[11px] font-normal text-fog">{t('smartTaskDesk.workspaceOverviewHint')}</span></span>
+          <span className="text-xs transition-transform group-open:rotate-180">⌄</span>
+        </summary>
+        <div className="pt-7 animate-fadeIn">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="mono-label">{t('mvp.dashboard.eyebrow')}</p>
@@ -86,7 +96,7 @@ export default function DashboardPage() {
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{t('mvp.dashboard.subtitle')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button to="/app/create-team"><Plus size={16} /> {t('mvp.dashboard.createTeam')}</Button>
+          <Button to="/app?create=team"><Plus size={16} /> {t('mvp.dashboard.createTeam')}</Button>
           <Button to="/app/run-workflow" variant="outline"><PlayCircle size={16} /> {t('mvp.dashboard.runDemo')}</Button>
         </div>
       </div>
@@ -97,14 +107,14 @@ export default function DashboardPage() {
 
       <section className="mt-8" aria-labelledby="owner-metrics-title">
         <div className="flex items-end justify-between gap-3">
-          <div><p className="mono-label">Для владельца</p><h2 id="owner-metrics-title" className="mt-1 text-xl font-bold text-text">Сегодня в бизнесе</h2></div>
-          <Link to="/app/approvals" className="text-xs font-semibold text-cyan hover:text-text">Открыть согласования</Link>
+          <div><p className="mono-label">{t('dashboardOwner.eyebrow')}</p><h2 id="owner-metrics-title" className="mt-1 text-xl font-bold text-text">{t('dashboardOwner.title')}</h2></div>
+          <Link to="/app/approvals" className="text-xs font-semibold text-cyan hover:text-text">{t('dashboardOwner.openApprovals')}</Link>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric icon={CircleDollarSign} label="Подтверждённая экономия" value="—" hint="Появится после настройки стоимости ручного процесса" />
-          <Metric icon={Users} label="Новые лиды сегодня" value={String(stats.leads)} />
-          <Metric icon={WalletCards} label="Расход на контент" value="—" hint="Только после фактического запуска Forge" />
-          <Metric icon={CheckSquare} label="Ждут подтверждения" value={String(stats.approvals)} />
+          <Metric icon={CircleDollarSign} label={t('dashboardOwner.savings')} value="-" hint={t('dashboardOwner.savingsHint')} />
+          <Metric icon={Users} label={t('dashboardOwner.newLeads')} value={String(stats.leads)} />
+          <Metric icon={WalletCards} label={t('dashboardOwner.contentSpend')} value="-" hint={t('dashboardOwner.contentSpendHint')} />
+          <Metric icon={CheckSquare} label={t('dashboardOwner.awaitingApproval')} value={String(stats.approvals)} />
         </div>
       </section>
 
@@ -166,7 +176,7 @@ export default function DashboardPage() {
             {teams.length === 0 && !savedTeamId ? (
               <div className="rounded-2xl border border-dashed border-white/10 p-8 text-center">
                 <p className="text-sm text-muted">{t('mvp.dashboard.empty')}</p>
-                <Button to="/app/create-team" size="sm" className="mt-4"><Plus size={14} /> {t('mvp.dashboard.createFirst')}</Button>
+                <Button to="/app?create=team" size="sm" className="mt-4"><Plus size={14} /> {t('mvp.dashboard.createFirst')}</Button>
               </div>
             ) : (
               <Link to={savedTeamId ? `/app/teams/${savedTeamId}` : '/app/teams'} className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 hover:border-violet/40">
@@ -186,6 +196,8 @@ export default function DashboardPage() {
           <RecentActivity />
         </section>
       </div>
+        </div>
+      </details>
     </div>
   )
 }

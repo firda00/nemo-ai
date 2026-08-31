@@ -28,11 +28,15 @@ export function TeamOfficeView({
   supplementalAgents,
   loading = false,
   error,
+  initialMode = 'office',
+  showModeSwitcher = true,
 }: {
   platformAgents: PlatformAgent[]
   supplementalAgents?: AgentNodeData[]
   loading?: boolean
   error?: string
+  initialMode?: 'office' | 'graph'
+  showModeSwitcher?: boolean
 }) {
   const { t } = useI18n()
   const syncAgents = useTeamOfficeStore((state) => state.syncAgents)
@@ -40,7 +44,7 @@ export function TeamOfficeView({
   const connected = useTeamOfficeStore((state) => state.connected)
   const nodePositions = useTeamOfficeStore((state) => state.nodePositions)
   const applyNodeChangesForMode = useTeamOfficeStore((state) => state.applyNodeChangesForMode)
-  const [mode, setMode] = useState<'office' | 'graph'>('office')
+  const [mode, setMode] = useState<'office' | 'graph'>(initialMode)
   const [selected, setSelected] = useState<AgentNodeData | null>(null)
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   useEffect(() => { syncAgents(platformAgents) }, [platformAgents, syncAgents])
@@ -109,7 +113,7 @@ export function TeamOfficeView({
 
   return (
     <section className="mt-7 rounded-3xl border border-ice/10 bg-panel/45 p-4 sm:p-5" aria-labelledby="team-office-heading">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="team-office-heading" className="text-lg font-semibold text-text">{t('teamOffice.title')}</h2><p className="mt-1 text-sm text-muted">{t('teamOffice.subtitle')}</p></div><div className="flex flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1.5 text-xs text-fog"><WifiOff size={13} />{connected ? t('teamOffice.live') : t('teamOffice.local')}</span>{agents.length > 0 && <button type="button" onClick={() => centerNodes()} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('teamOffice.center')}><Focus size={13} />{t('teamOffice.center')}</button>}<div className="flex rounded-xl border border-ice/10 p-1"><button type="button" onClick={() => setMode('office')} aria-pressed={mode === 'office'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'office' ? 'bg-white/8 text-text' : 'text-muted')}><LayoutGrid size={13} className="mr-1 inline" />{t('teamOffice.office')}</button><button type="button" onClick={() => setMode('graph')} aria-pressed={mode === 'graph'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'graph' ? 'bg-white/8 text-text' : 'text-muted')}><Network size={13} className="mr-1 inline" />{t('teamOffice.graph')}</button></div></div></div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 id="team-office-heading" className="text-lg font-semibold text-text">{t('teamOffice.title')}</h2><p className="mt-1 text-sm text-muted">{t('teamOffice.subtitle')}</p></div><div className="flex flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1.5 text-xs text-fog"><WifiOff size={13} />{connected ? t('teamOffice.live') : t('teamOffice.local')}</span>{agents.length > 0 && <button type="button" onClick={() => centerNodes()} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted transition hover:bg-white/5 hover:text-text" aria-label={t('teamOffice.center')}><Focus size={13} />{t('teamOffice.center')}</button>}{showModeSwitcher && <div className="flex rounded-xl border border-ice/10 p-1"><button type="button" onClick={() => setMode('office')} aria-pressed={mode === 'office'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'office' ? 'bg-white/8 text-text' : 'text-muted')}><LayoutGrid size={13} className="mr-1 inline" />{t('teamOffice.office')}</button><button type="button" onClick={() => setMode('graph')} aria-pressed={mode === 'graph'} className={cn('rounded-lg px-3 py-1.5 text-xs', mode === 'graph' ? 'bg-white/8 text-text' : 'text-muted')}><Network size={13} className="mr-1 inline" />{t('teamOffice.graph')}</button></div>}</div></div>
       {loading ? <div className="mt-5 h-64 animate-pulse rounded-2xl bg-white/[0.03]" /> : error ? <p role="alert" className="mt-5 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger">{error}</p> : !agents.length ? <p className="mt-5 rounded-2xl border border-dashed border-ice/15 p-8 text-center text-sm text-muted">{t('teamOffice.empty')}</p> : <><div className="mt-5 md:hidden"><AgentCardList agents={agents} onSelect={setSelected} /></div><div className="mt-5 hidden h-[600px] overflow-hidden rounded-2xl border border-ice/10 bg-bg/70 md:block"><ReactFlow key={`${mode}:${nodeSignature}`} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onInit={setFlow} onNodesChange={onNodesChange} fitView fitViewOptions={{ padding: 0.2 }} nodesDraggable nodesConnectable={false} elementsSelectable panOnDrag zoomOnScroll minZoom={0.55} maxZoom={1.25} onNodeClick={(_, node) => setSelected(node.data)} proOptions={{ hideAttribution: true }}><Background color="#263149" gap={24} size={1} /><Controls showInteractive={false} /></ReactFlow></div></>}
       <AgentDrawer agent={selected} onClose={() => setSelected(null)} />
     </section>

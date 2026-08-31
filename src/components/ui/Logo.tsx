@@ -8,10 +8,9 @@ interface LogoProps {
   variant?: 'flow' | 'neon'
 }
 
-// Brand Identity 2026.1. Two stems hold position, the 45° diagonal carries work between
-// them in the direction it flows — cyan where a task starts, indigo where it lands. The
-// round stroke caps read as the nodes, so the mark survives at 16px with nothing added.
-// Flat by contract: the previous mark's drop shadow is gone and does not come back.
+// Product-shell mark: the glass inset keeps the small N legible while the outer gradient
+// carries the brand colour. The photographic neon logo stays reserved for large marketing
+// placements; navigation needs a compact vector that remains crisp at 24–40 px.
 export function Logo({ className, size = 30, showWordmark = true, variant = 'flow' }: LogoProps) {
   if (variant === 'neon') {
     return (
@@ -38,20 +37,24 @@ export function Logo({ className, size = 30, showWordmark = true, variant = 'flo
   }
 
   return (
-    <span className={cn('inline-flex items-center gap-2.5 select-none', className)}>
-      <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-        <defs>
-          <linearGradient id="nemoFlow" x1="13" y1="13" x2="35" y2="35" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#06B6D4" />
-            <stop offset="1" stopColor="#6366F1" />
-          </linearGradient>
-        </defs>
-        <path d="M13 35V13M35 35V13" stroke="#6366F1" strokeWidth="5" strokeLinecap="round" />
-        <path d="M13 13L35 35" stroke="url(#nemoFlow)" strokeWidth="5" strokeLinecap="round" />
-      </svg>
+    <span className={cn('inline-flex select-none items-center gap-2.5', className)}>
+      <span
+        className="relative inline-flex shrink-0 items-center justify-center rounded-[30%] bg-flow-gradient p-px shadow-[0_8px_24px_-10px_rgba(79,70,229,0.7)] transition-transform duration-200 ease-out group-hover:-translate-y-px"
+        style={{ width: size, height: size }}
+      >
+        <span className="absolute inset-[1px] rounded-[29%] bg-panel/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)] backdrop-blur-md" />
+        <svg className="relative h-[56%] w-[56%] text-accent-indigo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+          <path d="M5.25 18.75V5.25L18.75 18.75V5.25" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="5.25" cy="5.25" r="1.35" className="fill-accent-cyan" />
+          <circle cx="18.75" cy="18.75" r="1.35" className="fill-accent-indigo" />
+        </svg>
+      </span>
       {showWordmark && (
-        <span className="font-sans text-[19px] font-bold leading-none tracking-[-0.032em] text-text">
-          Nemo <span className="bg-gradient-to-br from-accent-cyan to-accent-indigo bg-clip-text text-transparent">AI</span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-brand text-[19px] font-extrabold leading-none tracking-[-0.045em] text-text">Nemo</span>
+          <span className="rounded-md border border-accent-indigo/20 bg-accent-indigo/[0.08] px-1.5 py-0.5 text-[9px] font-extrabold uppercase leading-none tracking-[0.12em] text-accent-indigo shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            AI
+          </span>
         </span>
       )}
     </span>

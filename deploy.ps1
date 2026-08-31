@@ -142,6 +142,8 @@ Apply-Migration .\supabase\migrations\20260813160000_extension_submit.sql
 # Без этой строки функция задеплоится, а таблиц и RPC на сервере не будет — и первый же запрос
 # банка получит 99999 вместо оплаты. Функция в манифесте есть, миграция сама туда не попадает.
 Apply-Migration .\supabase\migrations\20260822140000_uzum_merchant.sql
+# Goal-conditioned team runtime: allow the durable worker's deterministic goal_check transition.
+Apply-Migration .\supabase\migrations\20260831100000_goal_conditioned_loop.sql
 
 $schemaCheckSql = @'
 select
@@ -619,19 +621,20 @@ Write-Host "     tenant isolation verified." -ForegroundColor Green
 
 $failed = @()
 $edgeManifestPath = Join-Path $PSScriptRoot 'supabase\functions\deployment-manifest.json'
+$edgeImportMapPath = Join-Path $PSScriptRoot 'supabase\functions\import_map.json'
 $edgeManifest = Get-Content -LiteralPath $edgeManifestPath -Raw | ConvertFrom-Json
 
 Write-Host "2/3  Deploying public webhooks (verify_jwt=false)..." -ForegroundColor Cyan
 foreach ($fn in @($edgeManifest.public)) {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
-  npx supabase functions deploy $fn --project-ref $ref --use-api --no-verify-jwt
+  npx supabase functions deploy $fn --project-ref $ref --use-api --import-map $edgeImportMapPath --no-verify-jwt
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
 Write-Host "3/3  Deploying authenticated functions..." -ForegroundColor Cyan
 foreach ($fn in @($edgeManifest.authenticated)) {
   Write-Host "  -> $fn" -ForegroundColor DarkCyan
-  npx supabase functions deploy $fn --project-ref $ref --use-api
+  npx supabase functions deploy $fn --project-ref $ref --use-api --import-map $edgeImportMapPath
   if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 

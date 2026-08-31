@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { Button } from '../ui/Button'
 import { BUSINESS_INTENT_STORAGE_KEY, createBusinessIntent } from '../../lib/business-intent'
 import type { BusinessIntentSource } from '../../types/business-intent'
+import { useI18n } from '../../i18n'
 
 type SpeechRecognitionEventLike = { results: ArrayLike<{ 0: { transcript: string } }> }
 type SpeechRecognitionLike = {
@@ -20,6 +21,7 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike
 
 export function BusinessBriefLauncher() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [brief, setBrief] = useState('')
   const [listening, setListening] = useState(false)
@@ -74,8 +76,8 @@ export function BusinessBriefLauncher() {
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan/10 text-cyan"><Sparkles size={18} /></span>
         <div>
-          <h2 id="business-brief-title" className="text-lg font-bold text-text">Поставьте задачу обычными словами</h2>
-          <p className="mt-1 text-sm text-muted">Nemo соберёт роли, план и бюджет, а внешние действия остановит на согласовании.</p>
+          <h2 id="business-brief-title" className="text-lg font-bold text-text">{t('businessBrief.title')}</h2>
+          <p className="mt-1 text-sm text-muted">{t('businessBrief.subtitle')}</p>
         </div>
       </div>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -84,19 +86,19 @@ export function BusinessBriefLauncher() {
           onChange={(event) => { setBrief(event.target.value); setInputSource('web_text'); setClarification([]) }}
           rows={3}
           maxLength={4_000}
-          placeholder="Например: сделай акцию на пятницу для постоянных клиентов и подготовь рассылку"
+          placeholder={t('businessBrief.placeholder')}
           className="min-h-24 flex-1 resize-y rounded-2xl border border-ice/10 bg-panel/60 px-4 py-3 text-sm leading-6 text-text outline-none placeholder:text-fog focus:border-cyan/40"
         />
         <div className="flex gap-2 sm:w-44 sm:flex-col">
-          <Button onClick={launch} disabled={brief.trim().length < 8} className="flex-1"><Sparkles size={15} />Собрать план</Button>
-          <Button type="button" variant="outline" onClick={toggleVoice} disabled={!voiceAvailable} className="flex-1" title={voiceAvailable ? 'Продиктовать задачу' : 'Голосовой ввод не поддерживается браузером'}>
-            {listening ? <MicOff size={15} /> : <Mic size={15} />}{listening ? 'Стоп' : 'Голосом'}
+          <Button onClick={launch} disabled={brief.trim().length < 8} className="flex-1"><Sparkles size={15} />{t('businessBrief.build')}</Button>
+          <Button type="button" variant="outline" onClick={toggleVoice} disabled={!voiceAvailable} className="flex-1" title={voiceAvailable ? t('businessBrief.voiceTitle') : t('businessBrief.voiceUnavailable')}>
+            {listening ? <MicOff size={15} /> : <Mic size={15} />}{listening ? t('businessBrief.stop') : t('businessBrief.voice')}
           </Button>
         </div>
       </div>
       {clarification.length > 0 && (
         <p className="mt-3 text-xs leading-5 text-amber-300">
-          Для точного плана Nemo уточнит: {clarification.join(' ')}
+          {t('businessBrief.clarification')} {clarification.join(' ')}
         </p>
       )}
     </section>

@@ -446,7 +446,7 @@ export default function MarketplacePage() {
         tasks: tpl.desc,
         tone: 'Friendly, practical, admissions-focused.',
       }))
-      navigate('/app/create-agent')
+      navigate('/app?create=agent')
       return
     }
     // Operations Team — create the REAL team (lead agent + department + 6 sub-agents)
@@ -511,7 +511,7 @@ export default function MarketplacePage() {
       template: tpl.title,
       selectedAt: new Date().toISOString(),
     }))
-    navigate('/app/create-team')
+    navigate('/app?create=team')
   }
 
   return (
@@ -522,7 +522,7 @@ export default function MarketplacePage() {
           <h1 className="mt-2 text-3xl font-extrabold text-text">{t('marketplacePage.title')}</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{t('marketplacePage.subtitle')}</p>
         </div>
-        <Button to="/app/create-team">{t('marketplacePage.custom')}</Button>
+        <Button to="/app?create=team">{t('marketplacePage.custom')}</Button>
       </div>
 
       <div className="mt-5 space-y-3">

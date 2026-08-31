@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2, LayoutGrid, List, Sparkles } from 'lucide-react'
+import { Plus, Bot, Pencil, Copy, Trash2, MoreVertical, Users, ArrowRight, Play, Settings2, Film, Handshake, Calculator, MessagesSquare, ShieldCheck, ExternalLink, X, FileCheck2, LayoutGrid, List, Sparkles, Search } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useToast } from '../../components/ui/Toast'
@@ -16,9 +16,10 @@ import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { BUSINESS_AGENT_PRESETS, guardedPresetRoles, type BusinessAgentPreset, type BusinessPresetId } from '../../data/businessAgentPresets'
 import { TeamOfficeView } from '../../components/office/TeamOfficeView'
 import { useTeamOfficeStore } from '../../store/useTeamOfficeStore'
-import type { AgentNodeData, OperationalAgentStatus } from '../../types/orchestrator'
+import type { OperationalAgentStatus } from '../../types/orchestrator'
 import { AgentQuickEditDrawer, type AgentQuickEditDraft } from '../../components/agents/AgentQuickEditDrawer'
 import type { PlatformAgent } from '../../types/platform'
+import { subscribeTeamRegistryChanged } from '../../lib/teamRegistrySync'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
@@ -27,21 +28,9 @@ interface PresetRunState {
   artifacts: string[]
 }
 
-interface SavedSubAgentRow {
-  id: string
-  name: string
-  role: string
-  model?: string | null
-  skills?: string[] | null
-  status?: string | null
-}
-
-interface SavedTeamRosterState {
-  teamId: string | null
-  members: AgentNodeData[]
-  loading: boolean
-  error: string
-}
+interface TeamDepartmentRow { id: string; main_agent_id: string; created_at: string }
+interface TeamMemberRow { department_id: string; name: string; role: string }
+interface TeamRosterSummary { count: number; roles: string[] }
 
 const PRESET_ICON = {
   media: Film,
@@ -87,11 +76,11 @@ function teamDisplayName(agent: PlatformAgent): string {
 }
 
 export default function AgentsPage() {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
   const toast = useToast()
-  const { agents, toggleAgent, duplicateAgent, deleteAgent, updateAgent } = useAgentStore()
+  const { agents, toggleAgent, duplicateAgent, deleteAgent, updateAgent, hydrate, accountId } = useAgentStore()
   const setPresetRuntimeTeam = useTeamOfficeStore((state) => state.setPresetRuntimeTeam)
   const [menu, setMenu] = useState<string | null>(null)
   const [quickEditAgentId, setQuickEditAgentId] = useState<string | null>(null)
@@ -104,21 +93,51 @@ export default function AgentsPage() {
   const [requireCitations, setRequireCitations] = useState(true)
   const [requireApproval, setRequireApproval] = useState(true)
   const [runStates, setRunStates] = useState<Partial<Record<BusinessPresetId, PresetRunState>>>({})
-  const [activeOfficeTeamId, setActiveOfficeTeamId] = useState<string | null>(null)
-  const [savedTeamRoster, setSavedTeamRoster] = useState<SavedTeamRosterState>({ teamId: null, members: [], loading: false, error: '' })
+  const [teamSearch, setTeamSearch] = useState('')
+  const [teamRoster, setTeamRoster] = useState<Record<string, TeamRosterSummary>>({})
   const teamsView = location.pathname.startsWith('/app/teams')
   const officeView = location.pathname === '/app/agents'
   const visibleAgents = agents.filter((a) => teamsView ? a.type === 'workflow' : a.type !== 'workflow')
   const savedTeams = useMemo(() => agents.filter((agent) => agent.type === 'workflow'), [agents])
-  const selectedOfficeTeamId = activeOfficeTeamId && savedTeams.some((team) => team.id === activeOfficeTeamId)
-    ? activeOfficeTeamId
-    : savedTeams[0]?.id ?? null
-  const activeOfficeTeam = savedTeams.find((team) => team.id === selectedOfficeTeamId) ?? null
-  const activeSavedTeamRoster = savedTeamRoster.teamId === selectedOfficeTeamId ? savedTeamRoster.members : []
-  const activeSavedTeamRosterLoading = isSupabaseEnabled && Boolean(teamsView && selectedOfficeTeamId)
-    && (savedTeamRoster.teamId !== selectedOfficeTeamId || savedTeamRoster.loading)
-  const activeSavedTeamRosterError = savedTeamRoster.teamId === selectedOfficeTeamId ? savedTeamRoster.error : ''
+  const normalizedTeamSearch = teamSearch.trim().toLowerCase()
+  const filteredTeams = teamsView && normalizedTeamSearch
+    ? visibleAgents.filter((team) => `${teamDisplayName(team)} ${team.purpose} ${team.niche ?? ''} ${(teamRoster[team.id]?.roles ?? []).join(' ')}`.toLowerCase().includes(normalizedTeamSearch))
+    : visibleAgents
+  const registryCopy = lang === 'uz' ? {
+    search: 'Jamoani nomi, roli yoki vazifasi bo‘yicha qidiring…', searchLabel: 'AI jamoalarni qidirish', specialists: 'mutaxassis', noResults: 'Hech qanday jamoa topilmadi',
+  } : lang === 'en' ? {
+    search: 'Find a team by name, role, or task…', searchLabel: 'Search AI teams', specialists: 'specialists', noResults: 'No matching teams',
+  } : {
+    search: 'Найти команду по названию, роли или задаче…', searchLabel: 'Поиск AI-команд', specialists: 'специалистов', noResults: 'Команды не найдены',
+  }
   const quickEditAgent = agents.find((agent) => agent.id === quickEditAgentId) ?? null
+
+  useEffect(() => {
+    if (!teamsView) return
+    const refresh = () => void hydrate({ forceProfile: true })
+    refresh()
+    const unsubscribe = subscribeTeamRegistryChanged(refresh)
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh() }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [hydrate, teamsView])
+
+  useEffect(() => {
+    if (!teamsView || !isSupabaseEnabled || !supabase || !accountId || accountId === 'demo') return
+    const client = supabase
+    const channel = client
+      .channel(`team-registry:${accountId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'agents', filter: `account_id=eq.${accountId}` }, () => {
+        void hydrate()
+      })
+      .subscribe()
+    return () => { void client.removeChannel(channel) }
+  }, [accountId, hydrate, teamsView])
 
   const saveQuickEdit = async (agent: PlatformAgent, draft: AgentQuickEditDraft) => updateAgent(agent.id, {
     name: draft.name.trim(),
@@ -139,67 +158,54 @@ export default function AgentsPage() {
   })
 
   useEffect(() => {
-    if (!teamsView || !selectedOfficeTeamId || !isSupabaseEnabled || !supabase) return
+    if (!teamsView || savedTeams.length === 0 || !isSupabaseEnabled || !supabase) return
 
     let cancelled = false
 
     void (async () => {
       await Promise.resolve()
       if (cancelled) return
-      setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: true, error: '' })
-
       try {
-        const { data: department, error: departmentError } = await supabase
+        const { data: departments, error: departmentError } = await supabase
           .from('departments')
-          .select('id')
-          .eq('main_agent_id', selectedOfficeTeamId)
+          .select('id, main_agent_id, created_at')
+          .in('main_agent_id', savedTeams.map((team) => team.id))
           .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
 
         if (cancelled) return
         if (departmentError) {
-          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить состав команды.' })
           return
         }
-        if (!department?.id) {
-          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: '' })
+        const departmentRows = [...new Map([...((departments ?? []) as TeamDepartmentRow[])].reverse().map((department) => [department.main_agent_id, department])).values()]
+        if (departmentRows.length === 0) {
+          setTeamRoster({})
           return
         }
 
         const { data: members, error: membersError } = await supabase
           .from('sub_agents')
-          .select('id, name, role, model, skills, status')
-          .eq('department_id', department.id)
+          .select('department_id, name, role')
+          .in('department_id', departmentRows.map((department) => department.id))
           .order('created_at', { ascending: true })
 
         if (cancelled) return
-        if (membersError) {
-          setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить специалистов команды.' })
-          return
+        if (membersError) return
+        const teamByDepartment = new Map(departmentRows.map((department) => [department.id, department.main_agent_id]))
+        const next: Record<string, TeamRosterSummary> = {}
+        for (const member of (members ?? []) as TeamMemberRow[]) {
+          const teamId = teamByDepartment.get(member.department_id)
+          if (!teamId) continue
+          const summary = next[teamId] ?? { count: 0, roles: [] }
+          summary.count += 1
+          if (member.role && !summary.roles.includes(member.role) && summary.roles.length < 3) summary.roles.push(member.role)
+          next[teamId] = summary
         }
-
-        const roster: AgentNodeData[] = ((members ?? []) as SavedSubAgentRow[]).map((member) => ({
-          id: member.id,
-          name: member.name || 'AI specialist',
-          role: member.role || 'Specialist',
-          avatar: 'cyan',
-          status: 'idle',
-          tools: Array.isArray(member.skills) ? member.skills : [],
-          metrics: { tasksCompleted: 0, avgExecutionTimeMs: 0 },
-          model: member.model ?? undefined,
-          provider: member.model?.includes('/') ? member.model.split('/')[0] : 'configured',
-          configurationSummary: member.status === 'active' ? 'published' : member.status ?? 'saved',
-          parentId: selectedOfficeTeamId,
-        }))
-        setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: roster, loading: false, error: '' })
-      } catch {
-        if (!cancelled) setSavedTeamRoster({ teamId: selectedOfficeTeamId, members: [], loading: false, error: 'Не удалось загрузить специалистов команды.' })
-      }
+        setTeamRoster(next)
+      } catch { /* Cards remain usable when the optional roster query is unavailable. */ }
     })()
 
     return () => { cancelled = true }
-  }, [selectedOfficeTeamId, teamsView])
+  }, [savedTeams, teamsView])
 
   const modelLabel = (id: string) => MODELS.find((m) => m.id === id)?.label ?? id
   const activePreset = BUSINESS_AGENT_PRESETS.find((preset) => preset.id === activePresetId) ?? null
@@ -244,7 +250,7 @@ export default function AgentsPage() {
           <h1 className="text-2xl font-normal tracking-tight text-text">{teamsView ? t('agentsPage.teamsTitle') : t('agentsPage.agentsTitle')}</h1>
           <p className="mt-1 text-sm text-muted">{teamsView ? t('agentsPage.teamsSubtitle') : t('agentsPage.agentsSubtitle')}</p>
         </div>
-        <Button to="/app/create-team" size="md">
+        <Button to="/app?create=team" size="md">
           <Plus size={16} /> {t('agentsPage.createTeam')}
         </Button>
       </div>
@@ -253,7 +259,7 @@ export default function AgentsPage() {
         {[
           { to: '/app/agents', label: t('teamOffice.office'), icon: LayoutGrid, active: officeView },
           { to: '/app/teams', label: t('teamOffice.navTeams'), icon: List, active: teamsView },
-          { to: '/app/create-team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
+          { to: '/app?create=team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
         ].map((tab) => (
           <NavLink
             key={tab.to}
@@ -329,49 +335,28 @@ export default function AgentsPage() {
       )}
 
       {teamsView && savedTeams.length > 0 && (
-        <section className="mt-7 rounded-2xl border border-ice/10 bg-white/[0.02] p-3" aria-label="Выбор команды для холста">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-medium text-text">Команда на холсте</p>
-              <p className="mt-0.5 text-[11px] text-muted">Открывается последняя созданная команда; можно переключиться без потери расположения столов.</p>
-            </div>
-            <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1 sm:justify-end">
-              {savedTeams.map((team) => (
-                <button
-                  key={team.id}
-                  type="button"
-                  onClick={() => setActiveOfficeTeamId(team.id)}
-                  aria-pressed={selectedOfficeTeamId === team.id}
-                  className={cn(
-                    'shrink-0 rounded-xl border px-3 py-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan/40',
-                    selectedOfficeTeamId === team.id
-                      ? 'border-cyan/30 bg-cyan/10 text-cyan'
-                      : 'border-ice/10 bg-bg/50 text-muted hover:border-ice/20 hover:text-text',
-                  )}
-                >
-                  {teamDisplayName(team)}
-                </button>
-              ))}
-            </div>
-          </div>
-        </section>
+        <div className="relative mt-7 max-w-xl">
+          <Search size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={teamSearch}
+            onChange={(event) => setTeamSearch(event.target.value)}
+            placeholder={registryCopy.search}
+            aria-label={registryCopy.searchLabel}
+            className="w-full rounded-2xl border border-ice/10 bg-panel/60 py-3 pl-10 pr-4 text-sm text-text outline-none transition placeholder:text-fog focus:border-cyan/35 focus:ring-2 focus:ring-cyan/10"
+          />
+        </div>
       )}
 
-      <TeamOfficeView
-        platformAgents={teamsView ? (activeOfficeTeam ? [activeOfficeTeam] : []) : visibleAgents}
-        supplementalAgents={teamsView ? activeSavedTeamRoster : undefined}
-        loading={activeSavedTeamRosterLoading}
-        error={teamsView ? activeSavedTeamRosterError : undefined}
-      />
+      {!teamsView && <TeamOfficeView platformAgents={visibleAgents} />}
 
-      {visibleAgents.length === 0 ? (
+      {filteredTeams.length === 0 ? (
         <div className="mt-8">
           <EmptyState
             icon={Bot}
-            title={teamsView ? t('agentsPage.emptyTeamsTitle') : t('agentsPage.emptyAgentsTitle')}
+            title={teamsView && normalizedTeamSearch ? registryCopy.noResults : teamsView ? t('agentsPage.emptyTeamsTitle') : t('agentsPage.emptyAgentsTitle')}
             desc={teamsView ? t('agentsPage.emptyTeamsDesc') : t('agentsPage.emptyAgentsDesc')}
             action={
-              <Button to={teamsView ? '/app/create-team' : '/app/create-agent'} size="sm">
+              <Button to={teamsView ? '/app?create=team' : '/app?create=agent'} size="sm">
                 <Plus size={15} /> {teamsView ? t('agentsPage.createTeam') : t('agentsPage.createAgent')}
               </Button>
             }
@@ -379,7 +364,7 @@ export default function AgentsPage() {
         </div>
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleAgents.map((a) => (
+          {filteredTeams.map((a) => (
             teamsView ? (
               // Simple, browsable AI-team card: name, one-line description, status, Open.
               <div key={a.id} className="card group relative flex min-h-[188px] flex-col rounded-2xl p-5">
@@ -391,6 +376,14 @@ export default function AgentsPage() {
                   </div>
                 </div>
                 <p className="mt-3 flex-1 text-sm leading-relaxed text-muted line-clamp-3">{a.purpose || a.prompt.tasks || t('agentsPage.teamCardFallback')}</p>
+                <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-ice/[0.06] pt-3">
+                  <span className="rounded-full border border-cyan/15 bg-cyan/[0.06] px-2.5 py-1 text-[11px] text-cyan">
+                    {teamRoster[a.id]?.count ?? 0} {registryCopy.specialists}
+                  </span>
+                  {(teamRoster[a.id]?.roles ?? []).map((role) => (
+                    <span key={role} className="max-w-32 truncate rounded-full bg-white/[0.04] px-2.5 py-1 text-[10px] text-muted">{role}</span>
+                  ))}
+                </div>
                 <div className="mt-4 flex items-center gap-2">
                   <Button size="sm" className="flex-1" onClick={() => navigate(`/app/teams/${a.id}`)}>{t('agentsPage.openTeam')} <ArrowRight size={15} /></Button>
                   <button onClick={() => setToDelete(a.id)} className="rounded-lg p-2 text-muted hover:bg-ice/[0.06] hover:text-danger" aria-label={t('platform.agents.delete')}><Trash2 size={15} /></button>

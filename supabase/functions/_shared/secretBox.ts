@@ -12,6 +12,13 @@ function encodeBase64(value: Uint8Array): string {
   return btoa(raw)
 }
 
+// TS 6 models Uint8Array.buffer as ArrayBufferLike, while Web Crypto deliberately accepts only
+// an ArrayBuffer-backed BufferSource. Copying the exact view keeps SharedArrayBuffer out of the
+// crypto boundary and makes the contract identical in Deno and Node.
+function cryptoBuffer(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer
+}
+
 function configuredEncryptionKey(): string {
   const runtime = globalThis as typeof globalThis & {
     Deno?: { env?: { get?: (name: string) => string | undefined } }
@@ -27,7 +34,7 @@ async function encryptionKey(): Promise<CryptoKey> {
   if (!configured) throw new Error('CREDENTIAL_ENCRYPTION_KEY is not configured')
   const bytes = decodeBase64(configured)
   if (bytes.length !== 32) throw new Error('CREDENTIAL_ENCRYPTION_KEY must be 32 bytes')
-  return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+  return crypto.subtle.importKey('raw', cryptoBuffer(bytes), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
 export function providerSecretContext(accountId: string, provider: string): string {
@@ -46,9 +53,9 @@ export async function sealSecret(value: string, context = ''): Promise<string> {
   const plaintext = new TextEncoder().encode(value)
   try {
     const algorithm: AesGcmParams = context
-      ? { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(context) }
-      : { name: 'AES-GCM', iv }
-    const encrypted = new Uint8Array(await crypto.subtle.encrypt(algorithm, await encryptionKey(), plaintext))
+      ? { name: 'AES-GCM', iv: cryptoBuffer(iv), additionalData: cryptoBuffer(new TextEncoder().encode(context)) }
+      : { name: 'AES-GCM', iv: cryptoBuffer(iv) }
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt(algorithm, await encryptionKey(), cryptoBuffer(plaintext)))
     return `${context ? V2_PREFIX : V1_PREFIX}${encodeBase64(iv)}:${encodeBase64(encrypted)}`
   } finally {
     plaintext.fill(0)
@@ -62,9 +69,9 @@ export async function openSecret(value: string | null | undefined, context = '')
   const [, , iv64, encrypted64] = value.split(':')
   if (!iv64 || !encrypted64) throw new Error('Malformed encrypted credential')
   const algorithm: AesGcmParams = v2
-    ? { name: 'AES-GCM', iv: decodeBase64(iv64), additionalData: new TextEncoder().encode(context) }
-    : { name: 'AES-GCM', iv: decodeBase64(iv64) }
-  const decrypted = new Uint8Array(await crypto.subtle.decrypt(algorithm, await encryptionKey(), decodeBase64(encrypted64)))
+    ? { name: 'AES-GCM', iv: cryptoBuffer(decodeBase64(iv64)), additionalData: cryptoBuffer(new TextEncoder().encode(context)) }
+    : { name: 'AES-GCM', iv: cryptoBuffer(decodeBase64(iv64)) }
+  const decrypted = new Uint8Array(await crypto.subtle.decrypt(algorithm, await encryptionKey(), cryptoBuffer(decodeBase64(encrypted64))))
   try {
     return new TextDecoder().decode(decrypted)
   } finally {

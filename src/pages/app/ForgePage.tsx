@@ -1,229 +1,177 @@
 import {
-  AlertCircle, Check, CheckCircle2, ChevronRight, Circle, Cpu, FileText, Gauge,
-  ExternalLink, Image, Loader2, RefreshCw, Search, Send, ShieldCheck, Sparkles, X,
+  AlertCircle, Bot, Check, CheckCircle2, ChevronDown, Clipboard,
+  Code2, Download, ExternalLink, FileCode2, FileText, Folder, FolderOpen,
+  Globe2, Loader2, MonitorPlay, PackageOpen, Play, Send,
+  ShieldCheck, Sparkles, TerminalSquare, X,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { zipSync, strToU8 } from 'fflate'
 import { Button } from '../../components/ui/Button'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 import { useForgeExecution } from '../../hooks/useForgeExecution'
-import type { ExecutionStep, ForgeStepType } from '../../types/forge-contracts'
 
-const STEP_ICONS: Record<ForgeStepType, LucideIcon> = {
-  research: Search,
-  documents: FileText,
-  media: Image,
-  quality_check: ShieldCheck,
-  approval: CheckCircle2,
-  publish: Send,
+type StudioTab = 'preview' | 'code' | 'console'
+
+const INSTALL_COMMAND = 'curl -fsSL https://nemo-ai-swart.vercel.app/install.sh | bash'
+
+function projectFiles(prompt: string, stack: string): Record<string, string> {
+  const brief = prompt.trim() || 'Build a focused product page with one clear action.'
+  if (stack === 'html-css') return {
+    'index.html': `<!doctype html>\n<html lang="en">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="styles.css"><title>Nemo Forge</title></head>\n<body><main><p class="eyebrow">Product preview</p><h1>${brief.replace(/[<>&]/g, '')}</h1><button id="start">Start project</button></main><script src="app.js"></script></body>\n</html>\n`,
+    'styles.css': `:root { color-scheme: dark; font-family: system-ui, sans-serif; }\nbody { margin: 0; background: #07101d; color: #f8fafc; }\nmain { max-width: 64rem; margin: auto; padding: 8rem 2rem; }\n.eyebrow { color: #67e8f9; }\nh1 { max-width: 50rem; font-size: clamp(2.5rem, 7vw, 5rem); letter-spacing: -.05em; }\nbutton { border: 0; border-radius: .75rem; padding: .9rem 1.2rem; background: #67e8f9; color: #07101d; font-weight: 700; }\n`,
+    'app.js': `document.querySelector('#start').addEventListener('click', (event) => { event.currentTarget.textContent = 'Request received' })\n`,
+    'README.md': `# Nemo Forge HTML export\n\n${brief}\n`,
+  }
+  if (stack === 'next-tailwind') return {
+    'app/page.tsx': `export default function Page() {\n  return <main className="min-h-screen bg-slate-950 px-8 py-28 text-white"><p className="text-cyan-300">Product preview</p><h1 className="mt-4 max-w-4xl text-6xl font-semibold tracking-tight">${brief.replace(/[{}<>]/g, '')}</h1></main>\n}\n`,
+    'app/layout.tsx': `import './globals.css'\nexport default function Layout({ children }: { children: React.ReactNode }) { return <html lang="en"><body>{children}</body></html> }\n`,
+    'app/globals.css': `@tailwind base;\n@tailwind components;\n@tailwind utilities;\nbody { margin: 0; }\n`,
+    'README.md': `# Nemo Forge Next.js export\n\n${brief}\n`,
+  }
+  return {
+    'src/App.tsx': `import { useState } from 'react'\nimport { Hero } from './components/Hero'\nimport { RequestForm } from './components/RequestForm'\n\nexport default function App() {\n  const [sent, setSent] = useState(false)\n  return (\n    <main className="min-h-screen bg-slate-950 text-white">\n      <Hero brief={${JSON.stringify(brief)}} />\n      <RequestForm sent={sent} onSubmit={() => setSent(true)} />\n    </main>\n  )\n}\n`,
+    'src/components/Hero.tsx': `export function Hero({ brief }: { brief: string }) {\n  return (\n    <section className="mx-auto max-w-5xl px-6 pb-16 pt-24">\n      <p className="text-cyan-300">Product preview</p>\n      <h1 className="mt-4 max-w-3xl text-5xl font-semibold tracking-tight">{brief}</h1>\n    </section>\n  )\n}\n`,
+    'src/components/RequestForm.tsx': `type Props = { sent: boolean; onSubmit(): void }\n\nexport function RequestForm({ sent, onSubmit }: Props) {\n  return (\n    <section className="mx-auto max-w-5xl px-6 pb-24">\n      <button onClick={onSubmit} className="rounded-xl bg-cyan-300 px-5 py-3 text-slate-950">\n        {sent ? 'Request received' : 'Start project'}\n      </button>\n    </section>\n  )\n}\n`,
+    'src/styles.css': `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n:root { color-scheme: dark; font-family: Geist, sans-serif; }\n`,
+    'README.md': `# Nemo Forge export\n\n## Brief\n\n${brief}\n\nGenerated as an editable starter. Review dependencies and tests before publishing.\n`,
+  }
 }
-
-const PROFILE_LABELS = {
-  PROFILE_A_WASI: 'Profile A · Logic',
-  PROFILE_B_DOCS: 'Profile B · Docs',
-  PROFILE_C_BROWSER: 'Profile C · Media',
-  PROFILE_D_GPU: 'Profile D · GPU',
-} as const
 
 export default function ForgePage() {
   const { t, lang } = useI18n()
   const forge = useForgeExecution()
-  const examplePrompts = [t('forgePage.example1'), t('forgePage.example2')]
+  const [studioTab, setStudioTab] = useState<StudioTab>('preview')
+  const [selectedFile, setSelectedFile] = useState('src/App.tsx')
+  const [stack, setStack] = useState('react-tailwind')
+  const [copied, setCopied] = useState('')
+  const [previewSent, setPreviewSent] = useState(false)
+  const [publishMessage, setPublishMessage] = useState('')
+  const [tweak, setTweak] = useState('')
+  const [chatNotes, setChatNotes] = useState<string[]>([])
+  const files = useMemo(() => projectFiles(forge.prompt, stack), [forge.prompt, stack])
+  const hasDraft = Boolean(forge.plan)
+
+  const generate = () => {
+    forge.compile()
+    setStudioTab('preview')
+    setPublishMessage('')
+  }
+
+  const copy = async (value: string, kind: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(kind)
+      window.setTimeout(() => setCopied(''), 1_600)
+    } catch {
+      setCopied('failed')
+    }
+  }
+
+  const downloadZip = () => {
+    const archive = zipSync(Object.fromEntries(Object.entries(files).map(([name, body]) => [name, strToU8(body)])))
+    const url = URL.createObjectURL(new Blob([Uint8Array.from(archive)], { type: 'application/zip' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'nemo-forge-project.zip'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const preparePublish = () => {
+    setStudioTab('console')
+    setPublishMessage(t('forgePage.publishGuard'))
+  }
+
+  const submitTweak = () => {
+    const next = tweak.trim()
+    if (!next) return
+    setChatNotes((current) => [...current, next].slice(-4))
+    forge.setPrompt(`${forge.prompt.trim()}\n\n${next}`.trim())
+    setTweak('')
+  }
 
   return (
-    <div className="container-page max-w-[1440px] py-6 sm:py-8">
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="mx-auto flex min-h-[calc(100dvh-5.5rem)] w-full max-w-[1680px] flex-col px-3 py-4 sm:px-5">
+      <header className="flex flex-col gap-4 border-b border-ice/[0.08] pb-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-accent-cyan">
-                <Cpu size={17} />
-                <span className="mono-label text-accent-cyan">Nemo Compute Studio</span>
-              </div>
-              <h1 className="mt-2 text-2xl font-black text-text sm:text-3xl">{t('forgePage.heroTitle')}</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-                {t('forgePage.heroBody')}
-              </p>
-            </div>
-            <span className={cn(
-              'inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold',
-              forge.live ? 'border-teal/25 bg-teal/10 text-teal' : 'border-amber/25 bg-amber/10 text-amber',
-            )}>
-              <span className={cn('h-2 w-2 rounded-full', forge.live ? 'bg-teal' : 'bg-amber')} />
-              {forge.live ? 'Live API' : t('forgePage.localPreview')}
-            </span>
-          </div>
-
-          <div className="card mt-6 rounded-3xl p-4 sm:p-5">
-            <label htmlFor="forge-prompt" className="mono-label">{t('forgePage.taskLabel')}</label>
-            <textarea
-              id="forge-prompt"
-              value={forge.prompt}
-              onChange={(event) => forge.setPrompt(event.target.value)}
-              rows={4}
-              maxLength={16_384}
-              placeholder={t('forgePage.taskPlaceholder')}
-              className="mt-3 w-full resize-y rounded-2xl border border-ice/10 bg-panel/70 px-4 py-3 text-sm leading-6 text-text outline-none transition placeholder:text-fog focus:border-accent-cyan/50 focus:ring-2 focus:ring-accent-cyan/15"
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={forge.compileContentGrowthTemplate}
-                className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/30 bg-accent-cyan/10 px-3 py-2 text-left text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/15"
-              >
-                <Sparkles size={14} />
-                {t('forgePage.pilot')}
-              </button>
-              {examplePrompts.map((example) => (
-                <button key={example} type="button" onClick={() => forge.setPrompt(example)} className="rounded-xl border border-ice/10 px-3 py-1.5 text-left text-[11px] text-muted transition hover:border-accent-cyan/30 hover:text-text">
-                  {example}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:items-end">
-              <div>
-                <label htmlFor="forge-routing" className="mono-label">{t('forgePage.routing')}</label>
-                <select id="forge-routing" value={forge.routingMode} onChange={(event) => forge.setRoutingMode(event.target.value as typeof forge.routingMode)} className="mt-2 h-10 w-full rounded-xl border border-ice/10 bg-panel px-3 text-sm text-text outline-none focus:border-accent-cyan/50">
-                  <option value="auto">{t('forgePage.routingAuto')}</option>
-                  <option value="local_first">{t('forgePage.routingLocal')}</option>
-                  <option value="gpu_enabled">{t('forgePage.routingGpu')}</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="forge-budget" className="mono-label">Budget cap, USD</label>
-                <input id="forge-budget" type="number" min="0" max="1000000" step="0.5" value={forge.budgetCapUsd} onChange={(event) => forge.setBudgetCapUsd(Math.max(0, Number(event.target.value) || 0))} className="mt-2 h-10 w-full rounded-xl border border-ice/10 bg-panel px-3 text-sm text-text outline-none focus:border-accent-cyan/50" />
-              </div>
-              <Button onClick={forge.compile} disabled={forge.prompt.trim().length < 3} className="h-10 whitespace-nowrap" leftIcon={<Sparkles size={16} />}>
-                {t('forgePage.compile')}
-              </Button>
-            </div>
-            {forge.compileError && <div role="alert" className="mt-4 flex items-start gap-2 rounded-2xl border border-danger/25 bg-danger/10 p-3 text-sm text-danger"><AlertCircle size={16} className="mt-0.5 shrink-0" />{forge.compileError}</div>}
-          </div>
-
-          <section className="mt-6" aria-labelledby="forge-timeline-title">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <p className="mono-label">Live execution timeline</p>
-                <h2 id="forge-timeline-title" className="mt-1 text-xl font-bold text-text">{t('forgePage.planTitle')}</h2>
-              </div>
-              {forge.plan && <div className="flex items-center gap-2 text-xs text-muted"><Gauge size={14} /><b className="text-text">${forge.plan.estimatedCostUsd.toFixed(2)}</b> {t('forgePage.ofBudget')} ${forge.plan.totalBudgetCapUsd.toFixed(2)}</div>}
-            </div>
-
-            {forge.plan ? (
-              <div className="mt-4 overflow-hidden rounded-3xl border border-ice/10 bg-panel/45">
-                <div className="border-b border-ice/10 px-4 py-3 sm:px-5">
-                  <p className="truncate text-sm font-semibold text-text">{forge.plan.title}</p>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ice/10"><div className="h-full rounded-full bg-flow-gradient" style={{ width: `${Math.max(8, ((forge.plan.currentStageIndex + 1) / forge.plan.steps.length) * 100)}%` }} /></div>
-                </div>
-                <ol className="divide-y divide-ice/10">
-                  {forge.plan.steps.map((step, index) => <TimelineStep key={step.stepId} step={step} index={index} />)}
-                </ol>
-                <div className="flex items-start gap-2 border-t border-accent-cyan/15 bg-accent-cyan/[0.05] px-4 py-3 text-xs leading-5 text-muted sm:px-5">
-                  <ShieldCheck size={15} className="mt-0.5 shrink-0 text-accent-cyan" />
-                  {t('forgePage.previewNote')}
-                </div>
-              </div>
-            ) : (
-              <div className="card mt-4 grid min-h-56 place-items-center rounded-3xl p-6 text-center">
-                <div><Circle className="mx-auto text-fog" size={28} /><p className="mt-3 text-sm font-semibold text-text">{t('forgePage.planEmpty')}</p><p className="mt-1 max-w-sm text-xs leading-5 text-muted">{t('forgePage.planEmptyBody')}</p></div>
-              </div>
-            )}
-          </section>
+          <div className="flex items-center gap-2 text-accent-cyan"><Sparkles size={15} /><span className="text-[11px] font-semibold tracking-[0.12em]">Nemo Forge</span></div>
+          <h1 className="mt-1 text-2xl font-black tracking-[-0.04em] text-text sm:text-3xl">{t('forgePage.studioTitle')}</h1>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">{t('forgePage.studioBody')}</p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={downloadZip} leftIcon={<Download size={14} />}>{t('forgePage.downloadZip')}</Button>
+          <Button variant="secondary" size="sm" onClick={() => void copy('nemo', 'cli')} leftIcon={<TerminalSquare size={14} />}>{copied === 'cli' ? t('forgePage.copied') : t('forgePage.openCli')}</Button>
+          <Button size="sm" onClick={preparePublish} disabled={!hasDraft} leftIcon={<Globe2 size={14} />}>{t('forgePage.publishWeb')}</Button>
+        </div>
+      </header>
 
-        <aside className="space-y-4">
-          <section className="card rounded-3xl p-4" aria-labelledby="forge-compute-title">
-            <div className="flex items-center justify-between gap-3">
-              <div><p className="mono-label">Compute center</p><h2 id="forge-compute-title" className="mt-1 text-base font-bold text-text">{t('forgePage.workers')}</h2></div>
-              <button type="button" onClick={() => void forge.refreshOperations()} disabled={forge.loadingOperations} aria-label={t('forgePage.refreshStatuses')} className="rounded-xl p-2 text-muted hover:bg-white/5 hover:text-text disabled:opacity-50"><RefreshCw size={15} className={forge.loadingOperations ? 'animate-spin' : ''} /></button>
+      <main className="mt-4 grid min-h-0 flex-1 overflow-hidden rounded-[1.4rem] border border-ice/[0.09] bg-panel/35 shadow-[0_28px_80px_rgba(2,8,23,.18)] xl:grid-cols-[390px_minmax(0,1fr)]">
+        <section className="flex min-h-[620px] min-w-0 flex-col border-b border-ice/[0.08] bg-bg/35 xl:border-b-0 xl:border-r" aria-label={t('forgePage.builderAria')}>
+          <div className="border-b border-ice/[0.08] p-4">
+            <label htmlFor="forge-prompt" className="text-xs font-semibold text-text">{t('forgePage.describe')}</label>
+            <textarea id="forge-prompt" value={forge.prompt} onChange={(event) => forge.setPrompt(event.target.value)} rows={5} maxLength={16_384} placeholder={t('forgePage.studioPlaceholder')} className="mt-2 w-full resize-none rounded-2xl border border-ice/10 bg-black/15 px-3.5 py-3 text-sm leading-6 text-text outline-none transition placeholder:text-fog focus:border-accent-cyan/50 focus:ring-2 focus:ring-accent-cyan/10" />
+            <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] xl:grid-cols-[1fr_auto]">
+              <label className="relative"><span className="sr-only">{t('forgePage.stack')}</span><select value={stack} onChange={(event) => { const next = event.target.value; setStack(next); setSelectedFile(Object.keys(projectFiles(forge.prompt, next))[0]) }} className="h-10 w-full appearance-none rounded-xl border border-ice/10 bg-panel px-3 pr-9 text-xs font-medium text-text outline-none focus:border-accent-cyan/50"><option value="react-tailwind">React + Tailwind</option><option value="html-css">HTML + CSS</option><option value="next-tailwind">Next.js + Tailwind</option></select><ChevronDown size={14} className="pointer-events-none absolute right-3 top-3 text-muted" /></label>
+              <Button onClick={generate} disabled={forge.prompt.trim().length < 3} leftIcon={<Play size={14} />}>{t('forgePage.generate')}</Button>
             </div>
-            <div className="mt-4 space-y-2">
-              {forge.connectors.map((connector) => (
-                <div key={connector.id} className="flex items-center gap-3 rounded-2xl border border-ice/10 bg-panel/45 p-3">
-                  <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', connector.state === 'ready' ? 'bg-teal' : connector.state === 'unverified' ? 'bg-amber' : 'bg-fog/60')} />
-                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-text">{connector.label}</p><p className="truncate text-[11px] text-muted">{connector.detail}</p></div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{connector.state === 'ready' ? 'ready' : connector.state === 'unverified' ? 'check' : 'off'}</span>
-                </div>
-              ))}
-            </div>
-            {forge.operationsError && <p className="mt-3 text-xs leading-5 text-danger">{forge.operationsError}</p>}
-          </section>
+            {forge.compileError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-danger/20 bg-danger/[0.08] p-3 text-xs leading-5 text-danger"><AlertCircle size={14} className="mt-0.5 shrink-0" />{forge.compileError}</div>}
+          </div>
 
-          <section className="card rounded-3xl p-4" aria-labelledby="forge-approvals-title">
-            <div className="flex items-center justify-between gap-3">
-              <div><p className="mono-label">Human-in-the-Loop</p><h2 id="forge-approvals-title" className="mt-1 text-base font-bold text-text">{t('forgePage.awaiting')}</h2></div>
-              <span className="rounded-pill border border-amber/25 bg-amber/10 px-2.5 py-1 text-xs font-bold text-amber">{forge.approvals.length}</span>
-            </div>
-            {forge.loadingOperations ? <div className="mt-4 flex items-center gap-2 text-xs text-muted"><Loader2 size={14} className="animate-spin" />{t('common.loading')}</div> : forge.approvals.length ? (
-              <div className="mt-4 space-y-3">
-                {forge.approvals.slice(0, 3).map((approval) => (
-                  <article key={approval.id} className="rounded-2xl border border-ice/10 bg-panel/45 p-3">
-                    <p className="text-xs font-medium leading-5 text-text">{approval.summary}</p>
-                    <p className="mt-1 text-[10px] text-muted">{new Date(approval.createdAt).toLocaleString(lang === 'ru' ? 'ru-RU' : lang === 'en' ? 'en-US' : 'uz-UZ')}</p>
-                    {approval.artifacts.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {approval.artifacts.map((artifact) => (
-                          <div key={`${approval.id}:${artifact.sha256}`} className="overflow-hidden rounded-xl border border-ice/10 bg-bg/40">
-                            {artifact.mimeType === 'video/mp4' ? (
-                              <video
-                                controls
-                                preload="metadata"
-                                playsInline
-                                src={artifact.url}
-                                className="aspect-video w-full bg-black object-contain"
-                                aria-label={t('forgePage.previewOf', { name: artifact.name })}
-                              />
-                            ) : (
-                              <iframe
-                                src={artifact.url}
-                                title={t('forgePage.previewOf', { name: artifact.name })}
-                                sandbox=""
-                                referrerPolicy="no-referrer"
-                                className="h-40 w-full bg-white"
-                              />
-                            )}
-                            <a
-                              href={artifact.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              referrerPolicy="no-referrer"
-                              className="flex items-center justify-between gap-2 px-2.5 py-2 text-[10px] text-muted hover:text-text"
-                            >
-                              <span className="truncate">{artifact.name}</span>
-                              <ExternalLink size={12} className="shrink-0" />
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'approved')} className="inline-flex items-center justify-center gap-1 rounded-xl bg-teal/10 px-2 py-2 text-xs font-semibold text-teal disabled:opacity-50"><Check size={13} />{t('forgePage.approve')}</button>
-                      <button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'rejected')} className="inline-flex items-center justify-center gap-1 rounded-xl bg-danger/10 px-2 py-2 text-xs font-semibold text-danger disabled:opacity-50"><X size={13} />{t('forgePage.reject')}</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : <div className="mt-4 rounded-2xl border border-dashed border-ice/10 p-4 text-xs leading-5 text-muted">{t('forgePage.noApprovals')}</div>}
-          </section>
-        </aside>
+          <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
+            <section className="border-b border-ice/[0.08] p-4" aria-labelledby="forge-files-title">
+              <div className="flex items-center justify-between"><h2 id="forge-files-title" className="text-xs font-semibold text-text">{t('forgePage.files')}</h2><span className="font-mono text-[10px] text-fog">{Object.keys(files).length}</span></div>
+              <div className="mt-3 space-y-0.5 text-xs"><div className="flex items-center gap-2 px-2 py-1.5 text-muted"><FolderOpen size={14} className="text-accent-cyan" /><span>{t('forgePage.projectRoot')}</span></div>{Object.keys(files).map((name) => <FileRow key={name} name={name} active={selectedFile === name} onSelect={() => { setSelectedFile(name); setStudioTab('code') }} />)}</div>
+            </section>
+
+            <section className="flex min-h-0 flex-col p-4" aria-labelledby="forge-chat-title">
+              <div className="flex items-center justify-between"><h2 id="forge-chat-title" className="text-xs font-semibold text-text">{t('forgePage.coderChat')}</h2><span className="flex items-center gap-1 text-[10px] text-teal"><span className="h-1.5 w-1.5 rounded-full bg-teal" />{t('forgePage.ready')}</span></div>
+              <div className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1"><div className="flex gap-2.5"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent-cyan/10 text-accent-cyan"><Bot size={14} /></span><p className="rounded-2xl rounded-tl-sm bg-white/[0.04] px-3 py-2.5 text-xs leading-5 text-muted">{hasDraft ? t('forgePage.agentDraftReady', { n: Object.keys(files).length }) : t('forgePage.agentWelcome')}</p></div>{forge.prompt.trim() && <div className="flex justify-end"><p className="max-w-[88%] whitespace-pre-line rounded-2xl rounded-tr-sm bg-accent-cyan/[0.09] px-3 py-2.5 text-xs leading-5 text-text">{forge.prompt}</p></div>}{chatNotes.map((note, index) => <div key={`${note}-${index}`} className="flex gap-2.5"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent-cyan/10 text-accent-cyan"><Bot size={14} /></span><p className="rounded-2xl rounded-tl-sm bg-white/[0.04] px-3 py-2.5 text-xs leading-5 text-muted">{t('forgePage.changeApplied', { text: note })}</p></div>)}{hasDraft && <div className="flex gap-2.5"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent-cyan/10 text-accent-cyan"><Bot size={14} /></span><p className="rounded-2xl rounded-tl-sm bg-white/[0.04] px-3 py-2.5 text-xs leading-5 text-muted">{t('forgePage.agentNext')}</p></div>}</div>
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-ice/10 bg-black/10 px-3 py-2"><input value={tweak} onChange={(event) => setTweak(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitTweak() }} aria-label={t('forgePage.tweakAria')} placeholder={t('forgePage.tweakPlaceholder')} className="min-w-0 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-fog" /><button type="button" onClick={submitTweak} disabled={!tweak.trim()} aria-label={t('forgePage.send')} className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.05] text-muted transition hover:bg-accent-cyan/10 hover:text-accent-cyan disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /></button></div>
+            </section>
+          </div>
+        </section>
+
+        <section className="flex min-h-[620px] min-w-0 flex-col bg-[#090f1c]/40" aria-label={t('forgePage.workspaceAria')}>
+          <nav className="flex items-center gap-1 overflow-x-auto border-b border-ice/[0.08] px-3 py-2" aria-label={t('forgePage.viewTabs')}>
+            <StudioTabButton active={studioTab === 'preview'} onClick={() => setStudioTab('preview')} icon={MonitorPlay} label={t('forgePage.livePreview')} />
+            <StudioTabButton active={studioTab === 'code'} onClick={() => setStudioTab('code')} icon={Code2} label={t('forgePage.fileCode')} />
+            <StudioTabButton active={studioTab === 'console'} onClick={() => setStudioTab('console')} icon={TerminalSquare} label={t('forgePage.console')} />
+            <span className="ml-auto hidden items-center gap-1.5 pr-2 text-[10px] text-muted sm:flex"><span className={cn('h-1.5 w-1.5 rounded-full', forge.live ? 'bg-teal' : 'bg-amber')} />{forge.live ? t('forgePage.connected') : t('forgePage.localPreview')}</span>
+          </nav>
+          <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">{studioTab === 'preview' && <LivePreview prompt={forge.prompt} ready={hasDraft} submitted={previewSent} onSubmit={() => setPreviewSent(true)} />}{studioTab === 'code' && <CodeViewer name={selectedFile} code={files[selectedFile] ?? ''} onCopy={() => void copy(files[selectedFile] ?? '', 'code')} copied={copied === 'code'} />}{studioTab === 'console' && <ConsoleView forge={forge} publishMessage={publishMessage} lang={lang} />}</div>
+        </section>
+      </main>
+
+      <section className="mt-4 grid gap-3 rounded-2xl border border-ice/[0.08] bg-panel/35 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" aria-labelledby="forge-cli-title">
+        <div className="min-w-0"><div className="flex items-center gap-2"><TerminalSquare size={15} className="text-accent-cyan" /><h2 id="forge-cli-title" className="text-xs font-semibold text-text">{t('forgePage.cliTitle')}</h2></div><div className="mt-2 flex min-w-0 items-center gap-2 rounded-xl bg-black/20 px-3 py-2"><code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-muted">{INSTALL_COMMAND}</code><button type="button" onClick={() => void copy(INSTALL_COMMAND, 'install')} aria-label={t('forgePage.copyInstall')} className="shrink-0 rounded-lg p-1.5 text-muted transition hover:bg-white/[0.05] hover:text-text">{copied === 'install' ? <Check size={14} className="text-teal" /> : <Clipboard size={14} />}</button></div></div>
+        <div className="flex flex-wrap gap-2 sm:justify-end"><Button href="/download/cli" size="sm" variant="secondary" leftIcon={<PackageOpen size={14} />}>{t('forgePage.downloadCli')}</Button><Button href="/docs/cli" size="sm" variant="ghost" rightIcon={<ExternalLink size={13} />}>{t('forgePage.cliDocs')}</Button></div>
       </section>
     </div>
   )
 }
 
-function TimelineStep({ step, index }: { step: ExecutionStep; index: number }) {
+function FileRow({ name, active, onSelect }: { name: string; active: boolean; onSelect(): void }) {
+  const shortName = name.startsWith('src/') ? name.slice(4) : name
+  const nested = shortName.includes('/')
+  return <button type="button" onClick={onSelect} className={cn('flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition', nested && 'pl-7', active ? 'bg-accent-cyan/[0.09] text-text' : 'text-muted hover:bg-white/[0.035] hover:text-text')}>{nested ? <Folder size={13} className="text-fog" /> : name.endsWith('.css') ? <FileText size={13} className="text-violet" /> : <FileCode2 size={13} className="text-accent-cyan" />}<span className="truncate">{shortName}</span></button>
+}
+
+function StudioTabButton({ active, onClick, icon: Icon, label }: { active: boolean; onClick(): void; icon: typeof Globe2; label: string }) {
+  return <button type="button" onClick={onClick} aria-current={active ? 'page' : undefined} className={cn('flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition', active ? 'bg-white/[0.07] text-text' : 'text-muted hover:bg-white/[0.035] hover:text-text')}><Icon size={14} />{label}</button>
+}
+
+function LivePreview({ prompt, ready, submitted, onSubmit }: { prompt: string; ready: boolean; submitted: boolean; onSubmit(): void }) {
   const { t } = useI18n()
-  const Icon = STEP_ICONS[step.type]
-  const waiting = step.status === 'waiting_approval'
-  return (
-    <li className="grid gap-3 px-4 py-4 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
-      <span className={cn('flex h-9 w-9 items-center justify-center rounded-xl border', waiting ? 'border-amber/30 bg-amber/10 text-amber' : 'border-ice/10 bg-panel text-accent-cyan')}><Icon size={16} /></span>
-      <div className="min-w-0">
-        <div className="flex items-center gap-2"><span className="text-[10px] font-semibold text-fog">{String(index + 1).padStart(2, '0')}</span><p className="truncate text-sm font-semibold text-text">{t(`forgePage.step_${step.type}`)}</p>{index > 0 && <ChevronRight size={13} className="hidden text-fog sm:block" />}</div>
-        <p className="mt-1 truncate text-xs text-muted">{step.assignedSkillId}</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 sm:justify-end"><span className="rounded-lg border border-ice/10 px-2 py-1 text-[10px] font-medium text-muted">{PROFILE_LABELS[step.computeProfile]}</span><span className={cn('rounded-lg px-2 py-1 text-[10px] font-semibold', waiting ? 'bg-amber/10 text-amber' : 'bg-white/5 text-muted')}>{waiting ? 'approval' : step.status}</span></div>
-    </li>
-  )
+  return <div className="mx-auto min-h-full max-w-5xl overflow-hidden rounded-2xl border border-slate-700/70 bg-[#07101d] shadow-[0_24px_80px_rgba(0,0,0,.28)]"><div className="flex items-center gap-1.5 border-b border-white/10 bg-[#0d1725] px-3 py-2"><span className="h-2.5 w-2.5 rounded-full bg-[#f07878]" /><span className="h-2.5 w-2.5 rounded-full bg-[#e8bd68]" /><span className="h-2.5 w-2.5 rounded-full bg-[#69c58f]" /><span className="ml-3 rounded-md bg-white/[0.05] px-3 py-1 font-mono text-[9px] text-slate-400">localhost:4173</span></div>{ready ? <div className="relative isolate overflow-hidden px-6 pb-16 pt-16 sm:px-12 sm:pt-24"><div className="pointer-events-none absolute -right-28 -top-28 -z-10 h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" /><p className="text-xs font-medium tracking-[0.12em] text-cyan-300">NEMO FORGE PREVIEW</p><h2 className="mt-5 max-w-3xl text-balance text-3xl font-semibold tracking-[-0.04em] text-white sm:text-5xl">{prompt || t('forgePage.previewFallback')}</h2><p className="mt-5 max-w-xl text-sm leading-6 text-slate-400">{t('forgePage.previewBody')}</p><button type="button" onClick={onSubmit} className="mt-8 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 active:scale-[.98]">{submitted ? t('forgePage.previewDone') : t('forgePage.previewAction')}</button></div> : <div className="grid min-h-[430px] place-items-center px-6 text-center"><div><MonitorPlay size={32} className="mx-auto text-slate-600" /><p className="mt-4 text-sm font-semibold text-slate-200">{t('forgePage.previewEmpty')}</p><p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-slate-500">{t('forgePage.previewEmptyBody')}</p></div></div>}</div>
+}
+
+function CodeViewer({ name, code, onCopy, copied }: { name: string; code: string; onCopy(): void; copied: boolean }) {
+  const { t } = useI18n()
+  return <div className="overflow-hidden rounded-2xl border border-ice/[0.08] bg-[#07101b]"><div className="flex items-center justify-between border-b border-ice/[0.08] px-4 py-3"><div className="flex min-w-0 items-center gap-2"><FileCode2 size={14} className="shrink-0 text-accent-cyan" /><span className="truncate font-mono text-xs text-text">{name}</span></div><button type="button" onClick={onCopy} className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[10px] text-muted transition hover:bg-white/[0.05] hover:text-text">{copied ? <Check size={12} className="text-teal" /> : <Clipboard size={12} />}{copied ? t('forgePage.copied') : t('forgePage.copyCode')}</button></div><pre className="max-h-[660px] overflow-auto p-4 font-mono text-[11px] leading-6 text-slate-300"><code>{code}</code></pre></div>
+}
+
+function ConsoleView({ forge, publishMessage, lang }: { forge: ReturnType<typeof useForgeExecution>; publishMessage: string; lang: string }) {
+  const { t } = useI18n()
+  return <div className="space-y-4"><section className="rounded-2xl border border-ice/[0.08] bg-black/20 p-4"><div className="flex items-center justify-between"><h2 className="text-xs font-semibold text-text">{t('forgePage.buildTrace')}</h2>{forge.plan && <span className="font-mono text-[10px] text-muted">${forge.plan.estimatedCostUsd.toFixed(2)}</span>}</div>{forge.plan ? <ol className="mt-4 space-y-2">{forge.plan.steps.map((step, index) => <li key={step.stepId} className="flex items-center gap-3 rounded-xl bg-white/[0.025] px-3 py-2.5"><span className="font-mono text-[10px] text-fog">{String(index + 1).padStart(2, '0')}</span><CheckCircle2 size={14} className={step.status === 'waiting_approval' ? 'text-amber' : 'text-teal'} /><span className="min-w-0 flex-1 truncate text-xs text-muted">{t(`forgePage.step_${step.type}`)}</span><span className="text-[10px] text-fog">{step.status === 'waiting_approval' ? t('forgePage.needsReview') : t('forgePage.ready')}</span></li>)}</ol> : <p className="mt-3 text-xs leading-5 text-muted">{t('forgePage.consoleEmpty')}</p>}</section>{publishMessage && <div role="status" className="flex items-start gap-2 rounded-2xl border border-amber/20 bg-amber/[0.07] p-4 text-xs leading-5 text-amber"><ShieldCheck size={15} className="mt-0.5 shrink-0" />{publishMessage}</div>}<section className="rounded-2xl border border-ice/[0.08] bg-black/20 p-4"><h2 className="text-xs font-semibold text-text">{t('forgePage.approvalsTitle')}</h2>{forge.loadingOperations ? <p className="mt-3 flex items-center gap-2 text-xs text-muted"><Loader2 size={13} className="animate-spin" />{t('common.loading')}</p> : forge.approvals.length ? <div className="mt-3 space-y-2">{forge.approvals.slice(0, 3).map((approval) => <article key={approval.id} className="rounded-xl bg-white/[0.025] p-3"><p className="text-xs leading-5 text-text">{approval.summary}</p><p className="mt-1 text-[10px] text-fog">{new Date(approval.createdAt).toLocaleString(lang === 'ru' ? 'ru-RU' : lang === 'en' ? 'en-US' : 'uz-UZ')}</p><div className="mt-2 flex gap-2"><button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'approved')} className="rounded-lg bg-teal/10 px-2.5 py-1.5 text-[10px] font-semibold text-teal"><Check size={12} className="mr-1 inline" />{t('forgePage.approve')}</button><button type="button" disabled={forge.approvalBusy === approval.id} onClick={() => void forge.decideApproval(approval.id, 'rejected')} className="rounded-lg bg-danger/10 px-2.5 py-1.5 text-[10px] font-semibold text-danger"><X size={12} className="mr-1 inline" />{t('forgePage.reject')}</button></div></article>)}</div> : <p className="mt-3 text-xs leading-5 text-muted">{t('forgePage.noApprovals')}</p>}</section>{forge.operationsError && <div role="alert" className="flex items-start gap-2 rounded-xl bg-danger/[0.07] p-3 text-xs text-danger"><AlertCircle size={14} className="mt-0.5 shrink-0" />{forge.operationsError}</div>}</div>
 }

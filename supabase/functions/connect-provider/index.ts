@@ -39,6 +39,19 @@ const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> =
   sentry: { label: 'Sentry (ошибки)', ok: (k) => k.length >= 16 },
   // marketplaces (seller API)
   uzum: { label: 'Uzum Market (API продавца)', ok: (k) => k.length >= 10 },
+  telegram: { label: 'Telegram Bot', ok: (k) => /^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(k) },
+  google_workspace: { label: 'Google Workspace (Service Account JSON)', ok: (k) => {
+    try {
+      const value = JSON.parse(k) as Record<string, unknown>
+      return value.type === 'service_account' && typeof value.project_id === 'string' && typeof value.client_email === 'string' && typeof value.private_key === 'string'
+    } catch { return false }
+  } },
+  moysklad: { label: 'МойСклад', ok: (k) => k.length >= 20 },
+  custom_webhook: { label: 'Custom Webhook (формат: https://url|секрет)', ok: (k) => {
+    const split = k.lastIndexOf('|')
+    if (split < 0 || k.slice(split + 1).length < 16) return false
+    try { return new URL(k.slice(0, split)).protocol === 'https:' } catch { return false }
+  } },
   wildberries: { label: 'Wildberries (API продавца)', ok: (k) => k.length >= 20 },
   ozon: { label: 'Ozon (формат: Client-Id|Api-Key)', ok: (k) => k.includes('|') && k.length >= 15 },
   kaspi: { label: 'Kaspi (API продавца)', ok: (k) => k.length >= 10 },
@@ -96,6 +109,11 @@ Deno.serve(async (req) => {
     if (provider === 'uzum') {
       const smoke = await uzumShops(key)
       if (!smoke.ok) return json({ ok: false, error: smoke.result }, 200)
+    }
+    if (provider === 'telegram') {
+      const response = await fetch(`https://api.telegram.org/bot${encodeURIComponent(key)}/getMe`, { signal: AbortSignal.timeout(8_000) }).catch(() => null)
+      const payload = response ? await response.json().catch(() => null) as { ok?: boolean } | null : null
+      if (!response?.ok || payload?.ok !== true) return json({ ok: false, error: 'Telegram отклонил токен бота.' }, 200)
     }
     await admin.from('provider_keys').upsert({
       account_id: accountId,

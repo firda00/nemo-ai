@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, sectionNav, leadsPage, app] = await Promise.all([
+const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, teamDetailPage, sectionNav, leadsPage, app] = await Promise.all([
   read('src/components/layout/AppLayout.tsx'),
   read('src/components/office/AgentDrawer.tsx'),
   read('src/components/agents/AgentQuickEditDrawer.tsx'),
@@ -11,14 +11,18 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/components/office/PipelineNode.tsx'),
   read('src/pages/app/AutonomousPage.tsx'),
   read('src/pages/app/AgentsPage.tsx'),
+  read('src/pages/app/TeamDetailPage.tsx'),
   read('src/components/platform/KnowledgeIntegrationNav.tsx'),
   read('src/pages/app/LeadsPage.tsx'),
   read('src/App.tsx'),
 ])
 
-const normalDestinations = ['/app', '/app/teams', '/app/forge', '/app/content', '/app/knowledge', '/app/analytics', '/app/settings']
-for (const route of normalDestinations) assert.match(layout, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
-assert.equal((layout.match(/to: '\/app(?:'|\/teams'|\/forge'|\/content'|\/knowledge'|\/analytics'|\/settings')/g) ?? []).length, 7)
+const sidebarBlock = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
+const normalDestinations = ['/app', '/app/teams', '/app/settings']
+for (const route of normalDestinations) assert.match(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
+for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) assert.doesNotMatch(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
+assert.equal((sidebarBlock.match(/to: '\/app(?:'|\/teams'|\/settings')/g) ?? []).length, 3)
+assert.doesNotMatch(sidebarBlock, /to: '\/app\/forge'/)
 assert.doesNotMatch(layout, /to: '\/app\/dialogues'/)
 assert.doesNotMatch(app, /import DialoguesPage/)
 assert.match(app, /path="dialogues" element=\{<Navigate to="\/app" replace \/>\}/)
@@ -38,8 +42,25 @@ assert.match(pipeline, /A2A Wire v1/)
 assert.match(autonomous, /navigate\('\/app\/agents'\)/)
 assert.match(agentsPage, /from\('departments'\)/)
 assert.match(agentsPage, /from\('sub_agents'\)/)
-assert.match(agentsPage, /supplementalAgents=\{teamsView \? activeSavedTeamRoster : undefined\}/)
-assert.match(agentsPage, /savedTeams\[0\]\?\.id \?\? null/)
+assert.match(agentsPage, /!teamsView && <TeamOfficeView platformAgents=\{visibleAgents\}/)
+assert.doesNotMatch(agentsPage, /Команда на холсте|selectedOfficeTeamId|activeOfficeTeam/)
+assert.match(agentsPage, /placeholder=\{registryCopy\.search\}/)
+assert.match(agentsPage, /teamRoster\[a\.id\]\?\.count/)
+assert.match(teamDetailPage, /activeTab.*'overview'.*'graph'.*'runs'/)
+assert.match(teamDetailPage, /initialMode="graph"/)
+assert.match(teamDetailPage, /supplementalAgents=\{graphAgents\}/)
+assert.match(teamDetailPage, /\.eq\('main_agent_id', id\)/)
+assert.match(teamDetailPage, /\.eq\('department_id', deptId\)/)
+assert.match(teamDetailPage, /min-\[1180px\]:grid-cols-\[220px_minmax\(0,1fr\)_310px\]/)
+assert.match(teamDetailPage, /setTelegramOpen\(true\)/)
+assert.match(teamDetailPage, /telegramOpen && <div/)
+assert.match(teamDetailPage, /role="dialog" aria-modal="true" aria-labelledby="telegram-settings-title"/)
+assert.match(teamDetailPage, /setInspectorOpen\(\(value\) => !value\)/)
+assert.match(teamDetailPage, /setSelectedSub\(sa\)/)
+assert.match(teamDetailPage, /selectedSub && <div/)
+assert.match(teamDetailPage, /teamDetailPage\.operationsTools/)
+assert.equal((teamDetailPage.match(/<AutonomousRunner/g) ?? []).length, 1)
+assert.doesNotMatch(teamDetailPage, /CoordinatorAgentPanel|PlannerCommandCenter/)
 assert.match(agentsPage, /<AgentQuickEditDrawer/)
 assert.match(agentsPage, /status: agent\.status === 'active' \? 'draft' : agent\.status/)
 assert.match(quickEditDrawer, /approval_required/)

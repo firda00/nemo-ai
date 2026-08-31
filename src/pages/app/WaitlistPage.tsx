@@ -62,7 +62,7 @@ export default function WaitlistPage() {
                 <p className="mt-2 max-w-md text-sm text-muted">
                   {isSupabaseEnabled ? t('waitlistPage.receivedNote') : t('waitlistPage.demoSavedNote')}
                 </p>
-                <div className="mt-6 flex justify-center gap-3"><Button to="/app/create-team">Back to demo</Button><Button to="/app/results" variant="outline">View results</Button></div>
+                <div className="mt-6 flex justify-center gap-3"><Button to="/app?create=team">Back to demo</Button><Button to="/app/results" variant="outline">View results</Button></div>
               </div>
             </div>
           ) : (

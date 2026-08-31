@@ -26,6 +26,7 @@ import { chooseExecutionPlan } from '../_shared/executionBudget.ts'
 import { validateDependencies } from '../_shared/executionDag.ts'
 import { embedText } from '../_shared/knowledge.ts'
 import { memoryForPhase, type Claim, type Phase, type RecallOutcome } from '../_shared/orgMemory.ts'
+import { GoalSchema } from '../_shared/goal.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -505,18 +506,36 @@ Deno.serve(async (req) => {
     }).filter((item: { role: string; name: string }) => item.role && item.name)
       .map((item: Record<string, unknown>, index: number) => ({ ...item, depends_on: index > 0 ? [index - 1] : [] }))
     const orchestratedGoal = String(body?.orchestrated_goal ?? goal).slice(0, 24_000)
-    const executionPlan = chooseExecutionPlan({
+    const rawDefinition = Array.isArray(body?.definition_of_done) ? body.definition_of_done : []
+    const goalContractResult = GoalSchema.safeParse({
+      goal_statement: String(body?.goal_statement ?? body?.goal_description ?? goal),
+      goal_description: String(body?.goal_description ?? body?.goal_statement ?? goal),
+      definition_of_done: rawDefinition.length ? rawDefinition : [
+        `Сформирован конкретный результат по цели: ${goal.replace(/\s+/g, ' ').slice(0, 180)}`,
+        'Результат проверен на полноту и фактическую обоснованность',
+        'Финальный материал содержит применимые следующие действия',
+      ],
+      max_iterations: body?.max_iterations ?? 10,
+      current_iteration: 1,
+      status: 'running',
+    })
+    if (!goalContractResult.success) return json({ error: 'invalid_goal_contract', issues: goalContractResult.error.issues }, 400)
+    const goalContract = goalContractResult.data
+    const budgetPlan = chooseExecutionPlan({
       goal,
       orchestratedGoal,
       artifacts,
       hasPreset: presetSpecs.length > 0,
       hasDepartment: Boolean(requestedDepartmentId),
     })
+    // A goal-conditioned run must execute and pass a separate evaluator. A one-call
+    // transformation cannot prove a measurable definition of done.
+    const executionPlan = { ...budgetPlan, path: 'team' as const, reason: 'goal_conditioned' }
     const immutableInput = {
       goal, orchestratedGoal, inputArtifacts: artifacts, lang: String(body?.lang ?? '').slice(0, 8),
-      model: String(body?.model ?? '').slice(0, 160), departmentId: requestedDepartmentId || null, executionPlan,
+      model: String(body?.model ?? '').slice(0, 160), departmentId: requestedDepartmentId || null, executionPlan, goalContract,
     }
-    const initialState = { goal, orchestratedGoal, inputArtifacts: artifacts, specs: presetSpecs, nextSpecialist: 0, nextReview: 0, executionPlan }
+    const initialState = { goal, orchestratedGoal, inputArtifacts: artifacts, specs: presetSpecs, nextSpecialist: 0, nextReview: 0, executionPlan, goalContract, goalEvaluation: null, iterationContext: '' }
     const { data: existing } = await admin.from('autonomous_run_checkpoints').select('id,run_ref,status,state,phase,transition,updated_at').eq('account_id', accountId).eq('user_id', user.id).eq('run_ref', runRef).maybeSingle()
     if (existing) return json({ ok: true, run: existing, reused: true })
     const { data: activeRun } = await admin.from('autonomous_run_checkpoints').select('id,run_ref,context_key,status,state,phase,transition,updated_at').eq('account_id', accountId).eq('user_id', user.id).in('status', ['queued', 'running']).order('updated_at', { ascending: false }).limit(1).maybeSingle()
@@ -531,7 +550,7 @@ Deno.serve(async (req) => {
     const orgMemory = await loadOrgClaims(admin, accountId, orchestratedGoal || goal, null, 24)
     const { data: queued, error: enqueueError } = await admin.from('autonomous_run_checkpoints').insert({
       account_id: accountId, user_id: user.id, run_ref: runRef, context_key: contextKey,
-      phase: executionPlan.path === 'quick' ? 'synth' : 'team', transition: executionPlan.path === 'quick' ? 'synth' : presetSpecs.length ? 'specialist' : 'staff', state: initialState,
+      phase: 'team', transition: presetSpecs.length ? 'observe_plan' : 'staff', state: initialState,
       immutable_input: { ...immutableInput, orgMemory }, status: 'queued', next_attempt_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     }).select('id,run_ref,status,state,phase,transition,updated_at').single()
@@ -683,7 +702,7 @@ Deno.serve(async (req) => {
   const goalText = String(body?.goal ?? '')
   const store: StoreSnapshot = STORE_GOAL_RE.test(goalText)
     ? await storeSnapshot(admin, accountId)
-    : { connected: false, provider: null, block: '', rowCount: 0, missing: [] }
+    : { connected: false, browserEvidence: false, provider: null, block: '', rowCount: 0, missing: [], auditReport: '', catalogueReport: '' }
 
   // the account's business profile — grounds every action in the real business
   const bizBlock = await loadBusinessContext(admin, accountId)
@@ -1042,6 +1061,14 @@ OUTPUT CONTRACT:
 
     if (action === 'synth') {
       const goal = String(body?.goal ?? '').trim()
+      const parsedGoalContract = GoalSchema.safeParse(body?.goal_contract)
+      const goalContract = parsedGoalContract.success ? parsedGoalContract.data : null
+      const goalEvaluation = body?.goal_evaluation && typeof body.goal_evaluation === 'object'
+        ? body.goal_evaluation as { achieved?: boolean; criteria?: Array<{ criterion?: string; achieved?: boolean; evidence?: string }> }
+        : null
+      const goalCompletionBlock = goalContract
+        ? `\n\nGOAL COMPLETION CONTRACT:\nStatus: ${goalContract.status}\nIteration: ${goalContract.current_iteration}/${goalContract.max_iterations}\nDefinition of done:\n${goalContract.definition_of_done.map((criterion, index) => `${index + 1}. [${goalEvaluation?.criteria?.[index]?.achieved ? 'x' : ' '}] ${criterion}${goalEvaluation?.criteria?.[index]?.evidence ? ` — ${goalEvaluation.criteria[index].evidence}` : ''}`).join('\n')}\n${goalContract.status === 'goal_achieved' ? 'The deterministic evaluator confirmed all conditions. Include a compact “Goal Achieved” checklist in the final report.' : 'The iteration safety limit was reached. Clearly label unresolved conditions; never claim Goal Achieved.'}`
+        : ''
       const artifacts = inputArtifacts(body?.input_artifacts)
       const calculatedEvidence = marketplaceEvidence(goal, artifacts, store.block)
       type SynthStep = {
@@ -1123,7 +1150,7 @@ OUTPUT CONTRACT:
         {
           role: 'user',
           content:
-            `CLIENT'S REQUEST — this is exactly what you MUST deliver, in full:\n${goal}${enBrief ? `\n(In English, for precise understanding: ${enBrief})` : ''}\n\n` +
+            `CLIENT'S REQUEST — this is exactly what you MUST deliver, in full:\n${goal}${enBrief ? `\n(In English, for precise understanding: ${enBrief})` : ''}${goalCompletionBlock}\n\n` +
             `${calculatedEvidence ? `${calculatedEvidence}\nUse these values exactly. If reorder_units is null, clearly state that the quantity is a planning baseline and request safety_stock before a purchase-ready order; never invent it.\n\n` : ''}` +
             `Reference notes from the team (use ONLY the parts relevant to the request above; ignore anything off-topic or generic):\n` +
             `${steps.map((s) => `## ${s.role}: ${s.task}${s.needsHumanReview ? ' [HUMAN REVIEW REQUIRED]' : ''}\n${s.output || '(no output)'}`).join('\n\n')}\n\n` +

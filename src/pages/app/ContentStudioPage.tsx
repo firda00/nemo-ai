@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom'
-import { Factory, Target, PenLine, BarChart3, Clapperboard, Cpu, Rocket, Film, Swords, Globe2, Radar, Wrench } from 'lucide-react'
+import { Factory, Target, PenLine, BarChart3, Clapperboard, Cpu, Rocket, Film, Swords, Globe2, Radar, Wrench, WandSparkles } from 'lucide-react'
 import { FactoryAutopilotPanel } from '../../components/platform/FactoryAutopilotPanel'
 import { CompetitorTeamPanel } from '../../components/platform/CompetitorTeamPanel'
 import { MultiLangPanel } from '../../components/platform/MultiLangPanel'
@@ -15,6 +15,7 @@ import { useState } from 'react'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
 import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
+import { MarketingCampaignStudio } from '../../components/platform/MarketingCampaignStudio'
 
 /**
  * Content Factory — simplified to THREE top-level groups so the first screen is
@@ -27,11 +28,12 @@ import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
  * ids in ?tab= are unchanged (plus 'watch' for the channel-watch tool, which was
  * previously buried inside multilang) and unknown values fall back to Autopilot.
  */
-type Leaf = 'autopilot' | 'video' | 'media' | 'strategy' | 'content' | 'analyze' | 'battle' | 'multilang' | 'watch'
-type Group = 'autopilot' | 'studio' | 'tools'
+type Leaf = 'campaign' | 'autopilot' | 'video' | 'media' | 'strategy' | 'content' | 'analyze' | 'battle' | 'multilang' | 'watch'
+type Group = 'campaign' | 'autopilot' | 'studio' | 'tools'
 
-const LEAVES: Leaf[] = ['autopilot', 'video', 'media', 'strategy', 'content', 'analyze', 'battle', 'multilang', 'watch']
+const LEAVES: Leaf[] = ['campaign', 'autopilot', 'video', 'media', 'strategy', 'content', 'analyze', 'battle', 'multilang', 'watch']
 const GROUP_OF: Record<Leaf, Group> = {
+  campaign: 'campaign',
   autopilot: 'autopilot',
   video: 'studio',
   media: 'studio',
@@ -42,7 +44,7 @@ const GROUP_OF: Record<Leaf, Group> = {
   multilang: 'tools',
   watch: 'tools',
 }
-const GROUP_DEFAULT: Record<Group, Leaf> = { autopilot: 'autopilot', studio: 'video', tools: 'strategy' }
+const GROUP_DEFAULT: Record<Group, Leaf> = { campaign: 'campaign', autopilot: 'autopilot', studio: 'video', tools: 'strategy' }
 
 // model categories are stable RU keys in the catalog; map them to i18n for display
 const MODEL_CAT_KEY: Record<string, string> = {
@@ -56,11 +58,12 @@ export default function ContentStudioPage() {
   const [params, setParams] = useSearchParams()
   const [model, setModel] = useState(DEFAULT_MODEL)
   const rawTab = params.get('tab') ?? ''
-  const tab: Leaf = (LEAVES as string[]).includes(rawTab) ? (rawTab as Leaf) : 'autopilot'
+  const tab: Leaf = (LEAVES as string[]).includes(rawTab) ? (rawTab as Leaf) : 'campaign'
   const group = GROUP_OF[tab]
   const openLeaf = (leaf: Leaf) => setParams(leaf === 'autopilot' ? {} : { tab: leaf }, { replace: true })
 
   const GROUPS: { id: Group; label: string; icon: typeof Target; hint: string }[] = [
+    { id: 'campaign', label: t('marketingCampaignNav.title'), icon: WandSparkles, hint: t('marketingCampaignNav.hint') },
     { id: 'autopilot', label: t('contentStudioPage.tabAutopilot'), icon: Rocket, hint: t('contentStudioPage.hintAutopilot') },
     { id: 'studio', label: t('contentStudioPage.groupStudio'), icon: Film, hint: t('contentStudioPage.groupStudioHint') },
     { id: 'tools', label: t('contentStudioPage.groupTools'), icon: Wrench, hint: t('contentStudioPage.groupToolsHint') },
@@ -88,7 +91,7 @@ export default function ContentStudioPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-text">{t('contentStudioPage.title')}</h1>
           <p className="text-sm text-muted">{t('contentStudioPage.subtitle')}</p>
         </div>
-        {tab !== 'media' && (
+        {tab !== 'media' && tab !== 'campaign' && (
           <label className="flex items-center gap-2 rounded-xl border border-ice/10 bg-black/20 px-3 py-2">
             <Cpu size={15} className="text-violet" />
             <span className="text-[11px] text-muted">{t('contentStudioPage.model')}</span>
@@ -104,7 +107,7 @@ export default function ContentStudioPage() {
           </label>
         )}
       </div>
-      {tab !== 'media' && <p className="mt-2 text-[11px] text-fog">{t('contentStudioPage.premiumNote')}</p>}
+      {tab !== 'media' && tab !== 'campaign' && <p className="mt-2 text-[11px] text-fog">{t('contentStudioPage.premiumNote')}</p>}
 
       {/* group bar — one decision on the first screen */}
       <div className="mt-6 flex flex-wrap gap-2">
@@ -148,6 +151,7 @@ export default function ContentStudioPage() {
       )}
 
       <div className="mt-6">
+        {tab === 'campaign' && <MarketingCampaignStudio />}
         {tab === 'autopilot' && <FactoryAutopilotPanel model={model} />}
         {tab === 'battle' && <CompetitorTeamPanel model={model} />}
         {tab === 'watch' && <ChannelWatchPanel />}

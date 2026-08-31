@@ -67,6 +67,16 @@ npx supabase secrets set SETUP_SECRET=придумайте-длинную-слу
 npx supabase secrets set WAITLIST_IP_PEPPER="$(openssl rand -hex 32)"
 ```
 
+Для Marketing Engine 2.0 можно переопределить модели, поддерживающие OpenRouter Structured Outputs:
+
+```powershell
+npx supabase secrets set MARKETING_MODEL=openai/gpt-4o-mini
+npx supabase secrets set MARKETING_FALLBACK_MODEL=google/gemini-2.5-flash
+```
+
+Если переменные не заданы, используются эти же значения по умолчанию. Маршрутизация требует
+поддержку `response_format: json_schema`, поэтому несовместимый провайдер не получит запрос.
+
 > `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` Supabase подставляет в функции автоматически — их задавать НЕ нужно.
 
 ---

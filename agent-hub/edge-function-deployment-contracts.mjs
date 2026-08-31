@@ -26,7 +26,7 @@ assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory mus
 // Supabase; авторизация своя — Basic/подпись у касс, honeypot + HMAC-лимит с обязательным перцем
 // у waitlist.
 assert.equal(publicFunctions.length, 37)
-assert.equal(authenticatedFunctions.length, 49)
+assert.equal(authenticatedFunctions.length, 52)
 assert.deepEqual(excludedFunctions, ['qtest'])
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
 

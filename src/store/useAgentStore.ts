@@ -140,7 +140,7 @@ interface AgentStore {
   isAdmin: boolean
   tokenBalance: number
   profileResolved: boolean
-  hydrate: () => Promise<void>
+  hydrate: (options?: { forceProfile?: boolean }) => Promise<void>
   /** Re-fetch the account token balance (after a top-up / gift redeem). */
   refreshBalance: () => Promise<void>
   /** Resolve the caller's account_id (cached), fetching from `users` if needed. */
@@ -162,7 +162,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   tokenBalance: 0,
   profileResolved: !isSupabaseEnabled,
 
-  hydrate: async () => {
+  hydrate: async (options) => {
     if (!isSupabaseEnabled || !supabase) {
       set({ agents: localAgents(), hydrated: true, profileResolved: true })
       return
@@ -171,7 +171,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     let accountId = cachedAccountId
     let isAdmin = cachedIsAdmin
 
-    if (!profileResolved) {
+    if (options?.forceProfile || !profileResolved) {
       const { data: sessionData } = await supabase.auth.getSession()
       if (!sessionData.session) {
         set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
@@ -179,7 +179,12 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       }
 
       const { data: prof, error: profileError } = await supabase.from('users').select('account_id, is_admin').eq('id', sessionData.session.user.id).maybeSingle()
-      if (profileError || !prof?.account_id) {
+      if (profileError) {
+        // A transient profile read must not switch an authenticated tenant into demo mode.
+        set({ profileResolved: false, hydrated: true })
+        return
+      }
+      if (!prof?.account_id) {
         set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
         return
       }
@@ -193,15 +198,20 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       return
     }
 
-    const [{ data }, acc] = await Promise.all([
+    const [agentResult, accountResult] = await Promise.all([
       accountId ? supabase.from('agents').select('*, channels(type)').eq('account_id', accountId).order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
       accountId ? supabase.from('accounts').select('token_balance').eq('id', accountId).single() : Promise.resolve({ data: null }),
     ])
+    if ('error' in agentResult && agentResult.error) {
+      // Preserve the last known registry rather than showing a false empty state.
+      set({ accountId, isAdmin, hydrated: true })
+      return
+    }
     set({
-      agents: (data ?? []).map(mapAgent),
+      agents: (agentResult.data ?? []).map(mapAgent),
       accountId,
       isAdmin,
-      tokenBalance: Number((acc as { data: { token_balance?: number } | null })?.data?.token_balance ?? 0),
+      tokenBalance: Number((accountResult as { data: { token_balance?: number } | null })?.data?.token_balance ?? 0),
       hydrated: true,
     })
   },

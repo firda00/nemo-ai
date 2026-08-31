@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Users, Bot, PlayCircle, ClipboardList, BellRing, GitBranch, ChevronDown, Wallet, ListChecks, Send, Users2, Truck, Loader2 } from 'lucide-react'
+import { Users, Bot, ClipboardList, BellRing, GitBranch, ChevronDown, Send, Users2, Truck, Loader2, LayoutDashboard, Network, History, Settings2, PanelRightClose, PanelRightOpen, X, Activity, FileText, CircleDot } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { PROVIDERS } from '../../data/platform'
@@ -11,11 +11,13 @@ import { AutonomousRunner } from '../../components/platform/AutonomousRunner'
 import { TelegramBotConnect } from '../../components/platform/TelegramBotConnect'
 import { PlanerkaSheetCard } from '../../components/platform/PlanerkaSheetCard'
 import { PlanerkaMembersCard } from '../../components/platform/PlanerkaMembersCard'
-import { CoordinatorAgentPanel } from '../../components/platform/CoordinatorAgentPanel'
-import { PlannerCommandCenter } from '../../components/platform/PlannerCommandCenter'
 import { SAMPLE_PAYMENT, SAMPLE_MEETING, SAMPLE_RETENTION } from '../../lib/dynamicTeams'
 import { SAMPLE_LOGISTICS } from '../../lib/commerceTeams'
 import { cn } from '../../lib/cn'
+import { TeamOfficeView } from '../../components/office/TeamOfficeView'
+import type { AgentNodeData } from '../../types/orchestrator'
+import { LiveCodeSandboxArtifact } from '../../components/platform/LiveCodeSandboxArtifact'
+import { isCodeCreationIntent } from '../../lib/codeCreationIntent'
 
 interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
@@ -37,7 +39,6 @@ interface RunStep {
 interface Run { id: string; task: string; kind: string; status?: string; human_review_status?: 'pending' | 'approved' | 'rejected' | null; report?: string; steps?: RunStep[]; created_at: string }
 
 const COLORS = ['#22D3EE', '#5B7CF6', '#8B7CF8', '#13C5B4', '#F4A640', '#EC6CB0']
-const riskCls = (r?: string) => (r === 'high' ? 'bg-danger/15 text-danger' : r === 'medium' ? 'bg-amber/15 text-amber' : 'bg-teal/15 text-teal')
 const statusCls = (s?: string) => (s === 'overdue' ? 'bg-danger/15 text-danger' : s === 'done' ? 'bg-teal/15 text-teal' : s === 'in_progress' ? 'bg-cyan/15 text-cyan' : 'bg-white/[0.06] text-muted')
 
 export default function TeamDetailPage() {
@@ -59,6 +60,10 @@ export default function TeamDetailPage() {
   const [tgConnected, setTgConnected] = useState(false)
   const [groupConnected, setGroupConnected] = useState(false)
   const [subBots, setSubBots] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'runs'>('overview')
+  const [telegramOpen, setTelegramOpen] = useState(false)
+  const [inspectorOpen, setInspectorOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1180)
+  const [selectedSub, setSelectedSub] = useState<Sub | null>(null)
 
   const loadResults = useCallback(async (deptId: string) => {
     if (!supabase) return
@@ -74,6 +79,21 @@ export default function TeamDetailPage() {
 
   useEffect(() => {
     if (!isSupabaseEnabled || !supabase || !id) {
+      if (id) {
+        try {
+          const raw = window.localStorage.getItem(`nemo-team-blueprint:${id}`)
+          if (raw) {
+            const saved = JSON.parse(raw) as { departmentId?: string; name?: string; goal?: string; members?: Array<{ name: string; role: string; skills?: string[]; prompt?: { role?: string; tasks?: string } }> }
+            const savedMembers = saved.members ?? []
+            if (savedMembers.length) window.setTimeout(() => setDept({
+              id: saved.departmentId || `demo-${id}`,
+              name: saved.name || 'AI Team',
+              niche: saved.goal,
+              subs: savedMembers.map((member, index) => ({ id: `${id}-member-${index}`, name: member.name, role: member.role, skills: member.skills, prompt: member.prompt ?? {}, model: 'openai/gpt-4o-mini' })),
+            }), 0)
+          }
+        } catch { /* optional demo persistence */ }
+      }
       window.setTimeout(() => setLoading(false), 0)
       return
     }
@@ -105,6 +125,26 @@ export default function TeamDetailPage() {
 
   const teamName = team?.name || dept?.name || 'Operations Team'
   const goal = team?.purpose || 'Automate routine operations: payments, admin escalation, meetings-to-tasks and manager reports.'
+  const graphAgents: AgentNodeData[] = (dept?.subs ?? []).map((sub, index) => ({
+    id: sub.id,
+    name: sub.name,
+    role: sub.role,
+    avatar: COLORS[index % COLORS.length],
+    status: 'idle',
+    tools: sub.skills ?? [],
+    metrics: { tasksCompleted: 0, avgExecutionTimeMs: 0 },
+    model: sub.model,
+    provider: sub.model?.includes('/') ? sub.model.split('/')[0] : 'configured',
+    configurationSummary: sub.prompt?.tasks || sub.prompt?.role || sub.role,
+    parentId: id,
+  }))
+  const tabCopy = lang === 'uz' ? {
+    overview: 'Boshqaruv va vazifalar', graph: 'Hamkorlik sxemasi', runs: 'Ishga tushirish tarixi',
+  } : lang === 'en' ? {
+    overview: 'Management & tasks', graph: 'A2A orchestration', runs: 'Runs & traces',
+  } : {
+    overview: 'Управление и задачи', graph: 'Схема взаимодействия', runs: 'История запусков',
+  }
 
   // Show operational workflows only for teams that were created for that work.
   // Content, sales and store teams keep the universal "task the team" runner.
@@ -174,231 +214,97 @@ export default function TeamDetailPage() {
     return <div className="container-page max-w-4xl py-10 text-center text-muted">{t('teamDetailPage.teamNotFound')}</div>
   }
 
+  const latestRun = runs[0]
+  const activeAgents = dept?.subs.length ?? 0
+
   return (
-    <div className="container-page max-w-7xl py-8">
-      <div className="flex flex-col gap-3">
-        <p className="mono-label">AI Team</p>
-        <h1 className="text-3xl font-extrabold text-text">{teamName}</h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted">{goal}</p>
-        <div className="flex flex-wrap gap-2">
-          <span className="rounded-pill border border-teal/20 bg-teal/10 px-3 py-1 text-xs text-teal">{team?.status || 'active'}</span>
-          <span className="rounded-pill border border-violet/20 bg-violet/10 px-3 py-1 text-xs text-violet">{dept ? t('teamDetailPage.specialistAgents', { n: dept.subs.length }) : t('teamDetailPage.noTeamStructure')}</span>
-          {isRegulated && <span className="rounded-pill border border-amber/25 bg-amber/10 px-3 py-1 text-xs text-amber">{safetyCopy.badge}</span>}
+    <div className="container-page max-w-[1540px] py-6 sm:py-8">
+      <header className="flex flex-col gap-4 border-b border-ice/[0.07] pb-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-2xl font-extrabold tracking-[-0.035em] text-text sm:text-3xl">{teamName}</h1>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-teal/20 bg-teal/[0.07] px-2.5 py-1 text-[11px] font-semibold text-teal"><span className="h-1.5 w-1.5 rounded-full bg-teal" />{t('teamDetailPage.onlineAgents', { n: activeAgents })}</span>
+            {isRegulated && <span className="rounded-lg border border-amber/25 bg-amber/[0.07] px-2.5 py-1 text-[11px] text-amber">{safetyCopy.badge}</span>}
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted text-pretty">{goal}</p>
         </div>
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setTelegramOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-ice/[0.09] bg-card/[0.025] px-3.5 py-2.5 text-xs font-semibold text-muted transition hover:border-cyan/25 hover:text-text active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/30"><Settings2 size={15} />{t('teamDetailPage.telegramSettings')}</button>
+          <button type="button" onClick={() => setInspectorOpen((value) => !value)} aria-pressed={inspectorOpen} className="inline-flex items-center gap-2 rounded-xl border border-ice/[0.09] bg-card/[0.025] px-3.5 py-2.5 text-xs font-semibold text-muted transition hover:border-cyan/25 hover:text-text active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/30">{inspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}{t('teamDetailPage.inspector')}</button>
+        </div>
+      </header>
 
-      <div className="mt-8 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        {/* LEFT — team structure + workflow runner */}
-        <div className="min-w-0 space-y-6">
-          <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><Users size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.teamStructure')}</h2></div>
-            {dept && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{t('teamDetailPage.subBotOptionalNote')}</p>}
-            <div className="mt-4 space-y-2">
-              {(dept?.subs ?? []).map((sa, i) => {
-                const color = COLORS[i % COLORS.length]
-                return (
-                  <div key={sa.id} className="flex min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border border-ice/[0.07] px-3.5 py-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${color}22`, color }}><Bot size={14} /></span>
-                    <span className="min-w-0 flex-1 truncate text-sm text-text">{sa.name}</span>
-                    <span title={sa.role} className="hidden max-w-28 shrink truncate rounded-full px-2 py-0.5 text-[10px] sm:inline" style={{ background: `${color}1a`, color }}>{sa.role}</span>
-                    <select
-                      aria-label={`${sa.name} model`}
-                      value={sa.model}
-                      disabled={savingSubModel === sa.id}
-                      onChange={(e) => void updateSubModel(sa.id, e.target.value)}
-                      className="glass max-w-32 shrink rounded-lg px-2 py-1.5 text-[10px] text-text outline-none focus:border-violet/50 disabled:opacity-60"
-                    >
-                      {PROVIDERS.map((provider) => (
-                        <optgroup key={provider.id} label={provider.name} className="bg-panel">
-                          {provider.models.map((model) => <option key={model.id} value={model.id} className="bg-panel">{model.label}{model.premium ? ' 💎' : ''}</option>)}
-                        </optgroup>
-                      ))}
-                    </select>
-                    {savingSubModel === sa.id && <Loader2 size={13} className="shrink-0 animate-spin text-violet" />}
-                    {isRegulated
-                      ? <span className="shrink-0 rounded-pill border border-amber/20 bg-amber/10 px-2 py-0.5 text-[10px] text-amber">{safetyCopy.specialist}</span>
-                      : <TelegramBotConnect compact target={{ sub_agent_id: sa.id }} connected={subBots.has(sa.id)} onConnected={() => setSubBots((prev) => new Set(prev).add(sa.id))} />}
-                  </div>
-                )
+      <nav className="mt-4 flex max-w-full gap-1 overflow-x-auto" aria-label={t('teamDetailPage.teamSections')}>
+        {([
+          { id: 'overview' as const, label: tabCopy.overview, icon: LayoutDashboard },
+          { id: 'graph' as const, label: tabCopy.graph, icon: Network },
+          { id: 'runs' as const, label: tabCopy.runs, icon: History },
+        ]).map((tab) => (
+          <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} aria-pressed={activeTab === tab.id} className={cn('inline-flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/30', activeTab === tab.id ? 'border-cyan text-text' : 'border-transparent text-muted hover:border-ice/15 hover:text-text')}><tab.icon size={15} />{tab.label}</button>
+        ))}
+      </nav>
+
+      {activeTab === 'graph' && <TeamOfficeView key={id} platformAgents={team ? [team] : []} supplementalAgents={graphAgents} loading={loading} initialMode="graph" showModeSwitcher={false} />}
+
+      {activeTab === 'overview' && (
+        <div className={cn('mt-5 grid min-w-0 gap-4', inspectorOpen ? 'min-[1180px]:grid-cols-[220px_minmax(0,1fr)_310px]' : 'min-[1180px]:grid-cols-[220px_minmax(0,1fr)]')}>
+          <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-20 min-[1180px]:self-start" aria-label={t('teamDetailPage.specialists')}>
+            <div className="mb-3 flex items-center justify-between px-1"><h2 className="text-xs font-bold uppercase tracking-[0.13em] text-fog">{t('teamDetailPage.specialists')}</h2><span className="font-mono text-[10px] text-muted">{activeAgents}</span></div>
+            <div className="space-y-1.5">
+              {(dept?.subs ?? []).map((sa, index) => {
+                const color = COLORS[index % COLORS.length]
+                return <button key={sa.id} type="button" onClick={() => setSelectedSub(sa)} className="group flex w-full min-w-0 items-center gap-3 rounded-2xl px-2.5 py-3 text-left transition hover:bg-white/[0.035] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/30">
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: `${color}18`, color }}><Bot size={16} /><span className={cn('absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-bg', latestRun && index < (latestRun.steps?.length ?? 0) ? 'bg-teal' : 'bg-fog')} /></span>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-text">{sa.name}</span><span className="mt-0.5 block truncate text-[11px] text-muted">{sa.role}</span></span>
+                  <ChevronDown size={14} className="-rotate-90 text-fog opacity-0 transition group-hover:opacity-100" />
+                </button>
               })}
-              {!dept && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noSavedStructure')}</p>}
+              {!dept && <p className="rounded-2xl border border-dashed border-ice/10 p-4 text-xs leading-5 text-muted">{t('teamDetailPage.noSavedStructure')}</p>}
+            </div>
+            <p className="mt-4 px-3 text-[10px] leading-4 text-fog">{t('teamDetailPage.agentSettingsHint')}</p>
+          </aside>
+
+          <main className="min-w-0 overflow-hidden rounded-3xl border border-ice/[0.08] bg-card/[0.018]" aria-labelledby="team-stream-title">
+            <div className="flex items-center gap-3 border-b border-ice/[0.07] px-4 py-3.5 sm:px-5"><span className="grid h-9 w-9 place-items-center rounded-xl bg-cyan/[0.08] text-cyan"><Activity size={17} /></span><div><h2 id="team-stream-title" className="text-sm font-bold text-text">{t('teamDetailPage.commandStream')}</h2><p className="mt-0.5 text-[11px] text-muted">{t('teamDetailPage.commandStreamHint')}</p></div>{latestRun && <span className="ml-auto hidden items-center gap-1.5 font-mono text-[10px] text-teal sm:inline-flex"><CircleDot size={11} />{t('teamDetailPage.latestRun')}</span>}</div>
+
+            <div className="max-h-[58vh] min-h-72 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
+              {!latestRun && <div className="grid min-h-56 place-items-center text-center"><div><Users size={26} className="mx-auto text-fog" /><p className="mt-3 text-sm font-semibold text-text">{t('teamDetailPage.streamEmpty')}</p><p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted">{t('teamDetailPage.streamEmptyHint')}</p></div></div>}
+              {latestRun && <>
+                <article className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-cyan/[0.08] px-4 py-3"><p className="mb-1 text-[10px] font-semibold text-cyan">{t('teamDetailPage.you')}</p><p className="break-words text-sm leading-6 text-text">{latestRun.task}</p></article>
+                <article className="max-w-[92%]"><div className="flex items-start gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet/[0.1] text-violet"><Bot size={15} /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-xs font-bold text-text">{t('teamDetailPage.coordinator')}</p><span className="text-[10px] text-fog">{new Date(latestRun.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div><p className="mt-1 text-sm leading-6 text-muted">{t('teamDetailPage.coordinatorAccepted')}</p><div className="mt-2 space-y-1.5">{(latestRun.steps ?? []).slice(0, 4).map((step, index) => <button type="button" key={`${step.query}-${index}`} onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="flex w-full min-w-0 items-center gap-2 rounded-xl bg-white/[0.025] px-3 py-2 text-left transition hover:bg-white/[0.05]"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal" /><span className="min-w-0 flex-1 truncate text-xs text-muted">{step.query}</span><span className="text-[10px] text-fog">{step.review?.approved ? t('teamDetailPage.ready') : t('teamDetailPage.inProgress')}</span></button>)}</div></div></div></article>
+                {latestRun.report && <button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="ml-11 flex max-w-[88%] items-start gap-3 rounded-2xl border border-teal/20 bg-teal/[0.055] p-4 text-left transition hover:bg-teal/[0.08]"><FileText size={18} className="mt-0.5 shrink-0 text-teal" /><span><span className="block text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</span><span className="mt-1 block text-xs leading-5 text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</span></span></button>}
+                {latestRun.report && isCodeCreationIntent(latestRun.task) && <div className="ml-0 min-w-0 sm:ml-11"><LiveCodeSandboxArtifact prompt={latestRun.task} compact /></div>}
+              </>}
             </div>
 
-            <p className="mt-4 text-[11px] leading-relaxed text-fog">Each specialist has an independent model. Plan limits are enforced by the server when the team runs.</p>
-            {modelMsg && <p className={cn('mt-2 text-[11px]', modelOk ? 'text-teal' : 'text-danger')}>{modelMsg}</p>}
-          </section>
-
-          {/* Universal: give the SAVED team any task (make a post, write a plan, etc.) */}
-          <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><PlayCircle size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.taskToTeamTitle')}</h2></div>
-            <p className="mt-1.5 text-sm text-muted">{t('teamDetailPage.taskToTeamDesc')}</p>
-            {isRegulated && (
-              <p className="mt-3 rounded-xl border border-amber/25 bg-amber/[0.07] p-3 text-xs leading-relaxed text-amber">
-                {safetyCopy.notice}
-              </p>
-            )}
-            <div className="mt-4">
-              <AutonomousRunner
-                key={dept?.id ?? 'team'}
-                defaultGoal={marketplaceDefaultGoal}
-                presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))}
-                contextHint={goal}
-                placeholder={t('teamDetailPage.taskToTeamPlaceholder')}
-                departmentId={dept?.id}
-                onRunSaved={() => dept ? loadResults(dept.id) : undefined}
-              />
-            </div>
-          </section>
-
-          {/* Operations scenarios — only for operations-type teams */}
-          {isOps && (
-            <section className="card rounded-3xl p-6">
-              <div className="flex items-center gap-2"><PlayCircle size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.opsScenariosTitle')}</h2></div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {isLogistics ? (
-                  <button onClick={() => setKind('logistics_control')} className="inline-flex items-center gap-1.5 rounded-xl border border-cyan/40 bg-cyan/10 px-3 py-2 text-sm text-text">
-                    <Truck size={15} /> Manual logistics analysis (beta)
-                  </button>
-                ) : (
-                  <>
-                    <button onClick={() => setKind('retention_scan')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'retention_scan' ? 'border-danger/40 bg-danger/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                      <BellRing size={15} /> {t('teamDetailPage.churnBtn')}
-                    </button>
-                    <button onClick={() => setKind('payment_control')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'payment_control' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                      <Wallet size={15} /> {t('teamDetailPage.paymentControl')}
-                    </button>
-                    <button onClick={() => setKind('meeting_to_tasks')} className={cn('inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm', workflowKind === 'meeting_to_tasks' ? 'border-violet/40 bg-violet/10 text-text' : 'border-ice/10 text-muted hover:text-text')}>
-                      <ListChecks size={15} /> {t('teamDetailPage.meetingToTasks')}
-                    </button>
-                  </>
-                )}
-              </div>
-              <div className="mt-4">
-                <OpsWorkflowRunner
-                  key={workflowKind}
-                  kind={workflowKind}
-                  departmentId={dept?.id}
-                  sampleInput={workflowKind === 'logistics_control' ? SAMPLE_LOGISTICS : workflowKind === 'retention_scan' ? SAMPLE_RETENTION : workflowKind === 'payment_control' ? SAMPLE_PAYMENT : SAMPLE_MEETING}
-                  lang={lang}
-                  onDone={() => dept && loadResults(dept.id)}
-                />
-              </div>
-            </section>
-          )}
-
-          <section className="card space-y-5 rounded-3xl p-6">
-            <div>
-              <div className="flex items-center gap-2"><Send size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.telegramBotsTitle')}</h2></div>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{t('teamDetailPage.telegramBotsDesc')}</p>
+            <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-4">
+              {isRegulated && <p className="mb-3 rounded-xl border border-amber/20 bg-amber/[0.06] p-3 text-xs leading-5 text-amber">{safetyCopy.notice}</p>}
+              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} contextHint={goal} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} onRunSaved={() => dept ? loadResults(dept.id) : undefined} />
             </div>
 
-            {isRegulated ? (
-              <div className="rounded-2xl border border-amber/30 bg-amber/[0.07] p-4">
-                <p className="text-sm font-semibold text-text">{safetyCopy.blockedTitle}</p>
-                <p className="mt-2 text-[13px] leading-relaxed text-muted">{safetyCopy.blockedBody}</p>
-              </div>
-            ) : (
-              <>
-            {/* PRIMARY — one master bot / one token runs the whole team. This is the "start here". */}
-            <div className="rounded-2xl border border-violet/25 bg-violet/[0.05] p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-pill bg-violet/15 px-2.5 py-0.5 text-[11px] font-semibold text-violet">{t('teamDetailPage.masterBotBadge')}</span>
-                <p className="text-[14px] font-semibold text-text">{t('teamDetailPage.teamCommonBot')}</p>
-              </div>
-              <p className="mt-2 text-[13px] leading-relaxed text-muted">{t('teamDetailPage.teamCommonBotHint')}</p>
-              <ol className="mt-3 space-y-2">
-                {[t('teamDetailPage.botStep1'), t('teamDetailPage.botStep2'), t('teamDetailPage.botStep3')].map((step, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-muted">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet/15 text-[11px] font-semibold text-violet">{i + 1}</span>
-                    <span>{step}</span>
-                  </li>
-                ))}
-              </ol>
-              <div className="mt-3.5">
-                <TelegramBotConnect
-                  target={{ agent_id: id }}
-                  connected={tgConnected}
-                  onConnected={() => setTgConnected(true)}
-                />
-              </div>
-            </div>
+            {isOps && <details className="group border-t border-ice/[0.07] bg-bg/10 [&_summary]:list-none"><summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-xs font-semibold text-muted transition hover:text-text"><ChevronDown size={14} className="transition group-open:rotate-180" />{t('teamDetailPage.operationsTools')}<span className="ml-auto text-[10px] text-fog">{t('teamDetailPage.optionalBadge')}</span></summary><div className="space-y-4 border-t border-ice/[0.06] p-4">
+              <div className="flex flex-wrap gap-2">{isLogistics ? <button onClick={() => setKind('logistics_control')} className="inline-flex items-center gap-1.5 rounded-xl border border-cyan/30 bg-cyan/[0.06] px-3 py-2 text-xs text-text"><Truck size={14} />{t('teamDetailPage.logisticsAnalysis')}</button> : <><button onClick={() => setKind('retention_scan')} className={cn('rounded-xl border px-3 py-2 text-xs', workflowKind === 'retention_scan' ? 'border-cyan/30 bg-cyan/[0.06] text-text' : 'border-ice/10 text-muted')}>{t('teamDetailPage.churnBtn')}</button><button onClick={() => setKind('payment_control')} className={cn('rounded-xl border px-3 py-2 text-xs', workflowKind === 'payment_control' ? 'border-cyan/30 bg-cyan/[0.06] text-text' : 'border-ice/10 text-muted')}>{t('teamDetailPage.paymentControl')}</button><button onClick={() => setKind('meeting_to_tasks')} className={cn('rounded-xl border px-3 py-2 text-xs', workflowKind === 'meeting_to_tasks' ? 'border-cyan/30 bg-cyan/[0.06] text-text' : 'border-ice/10 text-muted')}>{t('teamDetailPage.meetingToTasks')}</button></>}</div>
+              <OpsWorkflowRunner key={workflowKind} kind={workflowKind} departmentId={dept?.id} sampleInput={workflowKind === 'logistics_control' ? SAMPLE_LOGISTICS : workflowKind === 'retention_scan' ? SAMPLE_RETENTION : workflowKind === 'payment_control' ? SAMPLE_PAYMENT : SAMPLE_MEETING} lang={lang} onDone={() => dept && loadResults(dept.id)} />
+              {!isLogistics && <><PlanerkaSheetCard /><PlanerkaMembersCard /></>}
+            </div></details>}
+          </main>
 
-            {/* OPTIONAL — group bot + personal specialist bots, folded so they don't distract from the one token. */}
-            <details className="group rounded-2xl border border-ice/[0.07] bg-black/10 [&_summary]:list-none">
-              <summary className="flex cursor-pointer items-center gap-2 p-4 text-[13px] font-medium text-text">
-                <ChevronDown size={15} className="text-muted transition group-open:rotate-180" />
-                {t('teamDetailPage.advancedBotsToggle')}
-                <span className="ml-auto rounded-pill bg-white/[0.06] px-2 py-0.5 text-[10px] text-muted">{t('teamDetailPage.optionalBadge')}</span>
-              </summary>
-              <div className="border-t border-ice/[0.06] p-4">
-                <p className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-text"><Users2 size={14} className="text-amber" /> {t('teamDetailPage.groupBotLabel')}</p>
-                <TelegramBotConnect
-                  target={{ agent_id: id, scope: 'group', label: 'Task bot' }}
-                  connected={groupConnected}
-                  hint={t('teamDetailPage.groupBotHint')}
-                  onConnected={() => setGroupConnected(true)}
-                />
-                <p className="mt-2 rounded-xl border border-ice/[0.07] bg-black/20 p-3 text-[12px] leading-relaxed text-muted">
-                  {t('teamDetailPage.specialistNotePart1')}<span className="text-text">{t('teamDetailPage.specialistNoteEmphasis')}</span>{t('teamDetailPage.specialistNotePart2')}
-                </p>
-              </div>
-            </details>
-              </>
-            )}
-          </section>
+          {inspectorOpen && <>
+            <button type="button" aria-label={t('teamDetailPage.closeInspector')} onClick={() => setInspectorOpen(false)} className="fixed inset-0 z-40 bg-bg/65 backdrop-blur-sm min-[1180px]:hidden" />
+            <aside className="fixed inset-y-0 right-0 z-50 w-[min(360px,92vw)] overflow-y-auto border-l border-ice/[0.09] bg-bg p-4 shadow-2xl min-[1180px]:sticky min-[1180px]:top-20 min-[1180px]:z-auto min-[1180px]:h-[calc(100dvh-6rem)] min-[1180px]:w-auto min-[1180px]:rounded-3xl min-[1180px]:border min-[1180px]:bg-card/[0.02] min-[1180px]:shadow-none" aria-label={t('teamDetailPage.inspector')}>
+              <div className="flex items-center gap-2"><Activity size={16} className="text-cyan" /><h2 className="text-sm font-bold text-text">{t('teamDetailPage.inspector')}</h2><button type="button" onClick={() => setInspectorOpen(false)} aria-label={t('teamDetailPage.closeInspector')} className="ml-auto rounded-lg p-1.5 text-muted transition hover:bg-white/[0.05] hover:text-text"><X size={15} /></button></div>
+              <section className="mt-4 rounded-2xl bg-white/[0.025] p-3.5"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-fog">{t('teamDetailPage.activeRun')}</p>{latestRun ? <><div className="mt-2 flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-teal" /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-text">{latestRun.task}</p></div><p className="mt-2 font-mono text-[10px] text-muted">{t('teamDetailPage.agentsInRun', { n: Math.min(activeAgents, latestRun.steps?.length || activeAgents) })} · {latestRun.status ?? t('teamDetailPage.ready')}</p></> : <p className="mt-2 text-xs leading-5 text-muted">{t('teamDetailPage.noActiveRun')}</p>}</section>
+              <section className="mt-5"><div className="flex items-center justify-between"><h3 className="text-xs font-bold text-text">{t('teamDetailPage.agentActivity')}</h3><span className="font-mono text-[10px] text-muted">{activeAgents}</span></div><div className="mt-2 space-y-1">{(dept?.subs ?? []).slice(0, 6).map((sa, index) => <button type="button" key={sa.id} onClick={() => setSelectedSub(sa)} className="flex w-full min-w-0 items-center gap-2 rounded-xl px-2 py-2 text-left transition hover:bg-white/[0.035]"><span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', latestRun && index < (latestRun.steps?.length ?? 0) ? 'bg-teal' : 'bg-fog')} /><span className="min-w-0 flex-1 truncate text-xs text-muted">{sa.name}</span><span className="text-[10px] text-fog">{latestRun && index < (latestRun.steps?.length ?? 0) ? t('teamDetailPage.ready') : t('teamDetailPage.waiting')}</span></button>)}</div></section>
+              {notifs.length > 0 && <section className="mt-5"><h3 className="flex items-center gap-2 text-xs font-bold text-text"><BellRing size={13} className="text-amber" />{t('teamDetailPage.adminNotifications')}<span className="ml-auto font-mono text-[10px] text-muted">{notifs.length}</span></h3><div className="mt-2 space-y-2">{notifs.slice(0, 3).map((notification) => <div key={notification.id} className="rounded-xl bg-amber/[0.045] px-3 py-2.5"><p className="text-xs font-medium text-text">{notification.title}</p>{notification.body && <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted">{notification.body}</p>}</div>)}</div></section>}
+              {tasks.length > 0 && <section className="mt-5"><h3 className="flex items-center gap-2 text-xs font-bold text-text"><ClipboardList size={13} className="text-cyan" />{t('teamDetailPage.tasksHeading')}<span className="ml-auto font-mono text-[10px] text-muted">{tasks.length}</span></h3><div className="mt-2 space-y-1.5">{tasks.slice(0, 4).map((task) => <div key={task.id} className="rounded-xl bg-white/[0.025] px-3 py-2.5"><p className="line-clamp-2 text-xs text-text">{task.title}</p><div className="mt-1.5 flex items-center gap-2 text-[9px] text-fog">{task.owner && <span>{task.owner}</span>}<span className={cn('ml-auto rounded-md px-1.5 py-0.5', statusCls(task.status))}>{task.status ?? 'todo'}</span></div></div>)}</div></section>}
+              <section className="mt-5"><div className="flex items-center justify-between"><h3 className="text-xs font-bold text-text">{t('teamDetailPage.previousRuns')}</h3><button type="button" onClick={() => setActiveTab('runs')} className="text-[10px] font-semibold text-cyan hover:underline">{t('teamDetailPage.viewAll')}</button></div><div className="mt-2 space-y-1.5">{runs.slice(0, 5).map((run) => <button key={run.id} type="button" onClick={() => { setOpenRun(run.id); setActiveTab('runs') }} className="flex w-full min-w-0 items-center gap-2 rounded-xl px-2 py-2 text-left transition hover:bg-white/[0.035]"><FileText size={13} className="shrink-0 text-fog" /><span className="min-w-0 flex-1 truncate text-xs text-muted">{run.task}</span><span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', run.human_review_status === 'rejected' ? 'bg-danger' : run.human_review_status === 'approved' ? 'bg-teal' : 'bg-amber')} /></button>)}{runs.length === 0 && <p className="py-3 text-xs text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}</div></section>
+            </aside>
+          </>}
         </div>
+      )}
 
-        {/* RIGHT — live results from the DB */}
-        <div className="min-w-0 space-y-6">
-          <CoordinatorAgentPanel
-            mode={isOps ? 'planner' : 'general'}
-            context={`Team: ${teamName}. Tasks: ${tasks.map((task) => `${task.title} (${task.status ?? 'todo'}, owner: ${task.owner ?? 'none'})`).join('; ') || 'no saved tasks yet'}.`}
-            liveStatus={isLogistics
-              ? (tasks.some((task) => !task.owner) ? 'Есть логистические исключения без владельца: назначьте ответственного.' : 'Ручной анализ логистики готов: вставьте CSV отправлений. Живой трекинг перевозчиков пока не подключён, сообщения не отправляются автоматически.')
-              : isOps
-              ? (tasks.some((task) => !task.owner) ? 'Есть задачи без владельца: назначьте ответственного до начала работы.' : 'Планёрка готова: задачи распределяются, проверяются и закрываются с результатом.')
-              : isRegulated
-              ? safetyCopy.status
-              : safetyCopy.generalStatus}
-          />
-          {isOps && !isLogistics && <PlannerCommandCenter tasks={tasks} />}
-          {isOps && !isLogistics && <PlanerkaSheetCard />}
-          {isOps && !isLogistics && <PlanerkaMembersCard />}
-          {isOps && <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><BellRing size={18} className="text-amber" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.adminNotifications')}</h2><span className="ml-auto text-xs text-muted">{notifs.length}</span></div>
-            <div className="mt-4 space-y-2">
-              {notifs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noNotifications')}</p>}
-              {notifs.map((n) => (
-                <div key={n.id} className="rounded-xl border border-amber/15 bg-amber/[0.04] p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-text">{n.title}</span>
-                    {n.risk && <span className={cn('ml-auto rounded-full px-2 py-0.5 text-[10px]', riskCls(n.risk))}>{n.risk}</span>}
-                  </div>
-                  {n.body && <p className="mt-1 text-[13px] leading-relaxed text-muted">{n.body}</p>}
-                  {n.target && <p className="mt-1 text-[11px] text-fog">→ {n.target}</p>}
-                </div>
-              ))}
-            </div>
-          </section>}
-
-          {isOps && <section className="card rounded-3xl p-6">
-            <div className="flex items-center gap-2"><ClipboardList size={18} className="text-cyan" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.tasksHeading')}</h2><span className="ml-auto text-xs text-muted">{tasks.length}</span></div>
-            <div className="mt-4 space-y-2">
-              {tasks.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noTasks')}</p>}
-              {tasks.map((tk) => (
-                <div key={tk.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-ice/[0.07] p-3">
-                  <span className="min-w-0 flex-1 text-sm text-text">{tk.title}</span>
-                  {tk.owner && <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-muted">{tk.owner}</span>}
-                  {tk.deadline && <span className="text-[11px] text-muted">{tk.deadline}</span>}
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px]', riskCls(tk.priority))}>{tk.priority ?? 'medium'}</span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', statusCls(tk.status))}>{tk.status ?? 'todo'}</span>
-                </div>
-              ))}
-            </div>
-          </section>}
-
-          <section className="card min-w-0 overflow-hidden rounded-3xl p-6">
-            <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">Runs & agent trace</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
+      {activeTab === 'runs' && <section className="card mx-auto mt-6 min-w-0 max-w-6xl overflow-hidden rounded-3xl p-4 sm:p-6">
+            <div className="flex items-center gap-2"><GitBranch size={18} className="text-violet" /><h2 className="text-lg font-bold text-text">{t('teamDetailPage.runsTrace')}</h2><span className="ml-auto text-xs text-muted">{runs.length}</span></div>
             <div className="mt-4 space-y-2">
               {runs.length === 0 && <p className="rounded-xl border border-dashed border-ice/10 p-5 text-center text-sm text-muted">{t('teamDetailPage.noWorkflowRuns')}</p>}
               {runs.map((run) => {
@@ -407,9 +313,9 @@ export default function TeamDetailPage() {
                   <div key={run.id} className="min-w-0 overflow-hidden rounded-xl border border-ice/[0.07]">
                     <button onClick={() => setOpenRun(isOpen ? null : run.id)} className="flex w-full min-w-0 items-center gap-2.5 px-3.5 py-2.5 text-left">
                       <span className="shrink-0 rounded-full bg-violet/10 px-2 py-0.5 text-[10px] text-violet">{run.kind}</span>
-                       {(run.human_review_status === 'pending' || (!run.human_review_status && run.status === 'needs_review')) && <span className="shrink-0 rounded-full bg-amber/10 px-2 py-0.5 text-[10px] text-amber">human review</span>}
-                       {run.human_review_status === 'approved' && <span className="shrink-0 rounded-full bg-teal/10 px-2 py-0.5 text-[10px] text-teal">owner approved</span>}
-                       {run.human_review_status === 'rejected' && <span className="shrink-0 rounded-full bg-danger/10 px-2 py-0.5 text-[10px] text-danger">owner rejected</span>}
+                       {(run.human_review_status === 'pending' || (!run.human_review_status && run.status === 'needs_review')) && <span className="shrink-0 rounded-lg bg-amber/10 px-2 py-0.5 text-[10px] text-amber">{t('teamDetailPage.humanReview')}</span>}
+                       {run.human_review_status === 'approved' && <span className="shrink-0 rounded-lg bg-teal/10 px-2 py-0.5 text-[10px] text-teal">{t('teamDetailPage.ownerApproved')}</span>}
+                       {run.human_review_status === 'rejected' && <span className="shrink-0 rounded-lg bg-danger/10 px-2 py-0.5 text-[10px] text-danger">{t('teamDetailPage.ownerRejected')}</span>}
                       <span title={run.task} className="min-w-0 flex-1 truncate text-sm text-text">{run.task}</span>
                       <span className="hidden shrink-0 text-[11px] text-muted min-[1800px]:inline">{new Date(run.created_at).toLocaleString()}</span>
                       <ChevronDown size={15} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
@@ -421,9 +327,9 @@ export default function TeamDetailPage() {
                             <p className="mb-1 break-words text-[11px] font-medium text-cyan">{s.query}</p>
                             {s.review && (s.review.reviewed_by || s.review.needs_human_review) && (
                               <p className={cn('mb-1.5 text-[10.5px]', s.review.needs_human_review ? 'text-amber' : s.review.approved ? 'text-teal' : 'text-muted')}>
-                                {s.review.reviewed_by ? `Peer: ${s.review.reviewed_by} / ${s.review.score ?? 0}/100` : 'Peer review'}
-                                {s.review.revised ? ` / revised ${s.review.revisions ?? 1}x` : ''}
-                                 {s.review.needs_human_review && (run.human_review_status === 'pending' || !run.human_review_status) ? ' / human review required' : ''}
+                                {s.review.reviewed_by ? `${t('teamDetailPage.peer')}: ${s.review.reviewed_by} / ${s.review.score ?? 0}/100` : t('teamDetailPage.peerReview')}
+                                {s.review.revised ? ` / ${t('teamDetailPage.revised', { n: s.review.revisions ?? 1 })}` : ''}
+                                 {s.review.needs_human_review && (run.human_review_status === 'pending' || !run.human_review_status) ? ` / ${t('teamDetailPage.humanReviewRequired')}` : ''}
                               </p>
                             )}
                             <div className="min-w-0 overflow-x-auto text-[12px] text-muted"><Markdown content={(s.findings || '—').slice(0, 1200)} /></div>
@@ -441,9 +347,17 @@ export default function TeamDetailPage() {
                 )
               })}
             </div>
-          </section>
-        </div>
-      </div>
+          </section>}
+
+      {telegramOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-bg/75 p-3 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTelegramOpen(false) }}><section role="dialog" aria-modal="true" aria-labelledby="telegram-settings-title" className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-ice/[0.1] bg-panel p-5 shadow-2xl sm:p-6"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-cyan/[0.08] text-cyan"><Send size={18} /></span><div className="min-w-0 flex-1"><h2 id="telegram-settings-title" className="text-lg font-bold text-text">{t('teamDetailPage.telegramBotsTitle')}</h2><p className="mt-1 text-sm leading-6 text-muted">{t('teamDetailPage.telegramBotsDesc')}</p></div><button type="button" onClick={() => setTelegramOpen(false)} aria-label={t('teamDetailPage.closeTelegram')} className="rounded-xl p-2 text-muted transition hover:bg-white/[0.05] hover:text-text"><X size={17} /></button></div>
+        {isRegulated ? (
+          <div className="mt-5 rounded-2xl border border-amber/25 bg-amber/[0.06] p-4"><p className="text-sm font-semibold text-text">{safetyCopy.blockedTitle}</p><p className="mt-2 text-xs leading-5 text-muted">{safetyCopy.blockedBody}</p></div>
+        ) : (
+          <div className="mt-5 space-y-4"><div className="rounded-2xl bg-violet/[0.055] p-4"><p className="text-sm font-semibold text-text">{t('teamDetailPage.teamCommonBot')}</p><p className="mt-1.5 text-xs leading-5 text-muted">{t('teamDetailPage.teamCommonBotHint')}</p><ol className="mt-3 space-y-2">{[t('teamDetailPage.botStep1'), t('teamDetailPage.botStep2'), t('teamDetailPage.botStep3')].map((step, index) => <li key={step} className="flex gap-2.5 text-xs leading-5 text-muted"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-violet/15 text-[10px] font-bold text-violet">{index + 1}</span><span>{step}</span></li>)}</ol><div className="mt-4"><TelegramBotConnect target={{ agent_id: id }} connected={tgConnected} onConnected={() => setTgConnected(true)} /></div></div><details className="group rounded-2xl border border-ice/[0.08] [&_summary]:list-none"><summary className="flex cursor-pointer items-center gap-2 p-4 text-xs font-semibold text-text"><ChevronDown size={14} className="transition group-open:rotate-180" />{t('teamDetailPage.advancedBotsToggle')}<span className="ml-auto text-[10px] text-fog">{t('teamDetailPage.optionalBadge')}</span></summary><div className="border-t border-ice/[0.07] p-4"><p className="mb-2 flex items-center gap-2 text-xs font-semibold text-text"><Users2 size={14} className="text-amber" />{t('teamDetailPage.groupBotLabel')}</p><TelegramBotConnect target={{ agent_id: id, scope: 'group', label: 'Task bot' }} connected={groupConnected} hint={t('teamDetailPage.groupBotHint')} onConnected={() => setGroupConnected(true)} /></div></details></div>
+        )}
+      </section></div>}
+
+      {selectedSub && <div className="fixed inset-0 z-50 grid place-items-center bg-bg/75 p-3 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedSub(null) }}><section role="dialog" aria-modal="true" aria-labelledby="agent-settings-title" className="w-full max-w-md rounded-3xl border border-ice/[0.1] bg-panel p-5 shadow-2xl"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-cyan/[0.08] text-cyan"><Bot size={18} /></span><div className="min-w-0 flex-1"><h2 id="agent-settings-title" className="text-lg font-bold text-text">{selectedSub.name}</h2><p className="mt-0.5 text-xs text-muted">{selectedSub.role}</p></div><button type="button" onClick={() => setSelectedSub(null)} aria-label={t('teamDetailPage.closeAgentSettings')} className="rounded-xl p-2 text-muted transition hover:bg-white/[0.05] hover:text-text"><X size={17} /></button></div><p className="mt-5 text-xs leading-5 text-muted">{selectedSub.prompt?.tasks || selectedSub.prompt?.role || t('teamDetailPage.agentNoDescription')}</p><label className="mt-5 block text-[10px] font-bold uppercase tracking-[0.12em] text-fog">{t('teamDetailPage.agentModel')}<select aria-label={`${selectedSub.name} model`} value={selectedSub.model} disabled={savingSubModel === selectedSub.id} onChange={(event) => { const model = event.target.value; setSelectedSub((current) => current ? { ...current, model } : current); void updateSubModel(selectedSub.id, model) }} className="mt-2 w-full rounded-xl border border-ice/[0.09] bg-bg/40 px-3 py-2.5 text-sm text-text outline-none focus:border-cyan/35">{PROVIDERS.map((provider) => <optgroup key={provider.id} label={provider.name} className="bg-panel">{provider.models.map((model) => <option key={model.id} value={model.id} className="bg-panel">{model.label}{model.premium ? ' 💎' : ''}</option>)}</optgroup>)}</select></label>{savingSubModel === selectedSub.id && <p className="mt-2 flex items-center gap-2 text-xs text-muted"><Loader2 size={13} className="animate-spin" />{t('teamDetailPage.savingModel')}</p>}{modelMsg && <p className={cn('mt-2 text-xs', modelOk ? 'text-teal' : 'text-danger')}>{modelMsg}</p>}{!isRegulated && <div className="mt-5 border-t border-ice/[0.07] pt-4"><p className="mb-2 text-xs font-semibold text-text">{t('teamDetailPage.personalBot')}</p><TelegramBotConnect compact target={{ sub_agent_id: selectedSub.id }} connected={subBots.has(selectedSub.id)} onConnected={() => setSubBots((previous) => new Set(previous).add(selectedSub.id))} /></div>}</section></div>}
     </div>
   )
 }

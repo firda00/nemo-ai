@@ -72,9 +72,9 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { data: consumed } = state.length >= 32 ? await admin.rpc('consume_google_oauth_transaction', { p_state_hash: await hash(state) }) : { data: null }
     const accountId = consumed?.[0]?.account_id ?? null
-    if (!code || !accountId) return Response.redirect(`${APP_URL}/app/integrations?google=error`, 302)
+    if (!code || !accountId) return Response.redirect(`${APP_URL}/app/settings?google=error`, 302)
     if (await blocksExternalActions(admin, accountId)) {
-      return Response.redirect(`${APP_URL}/app/integrations?google=blocked`, 302)
+      return Response.redirect(`${APP_URL}/app/settings?google=blocked`, 302)
     }
     try {
       const creds = await loadAppCreds(admin, accountId)
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ code, client_id: creds.id, client_secret: creds.secret, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code' }),
       }).then((r) => r.json())
-      if (!tok.refresh_token) return Response.redirect(`${APP_URL}/app/integrations?google=norefresh`, 302)
+      if (!tok.refresh_token) return Response.redirect(`${APP_URL}/app/settings?google=norefresh`, 302)
       let email = ''
       try {
         const ui = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${tok.access_token}` } }).then((r) => r.json())
@@ -95,9 +95,9 @@ Deno.serve(async (req) => {
         scopes: SCOPES,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'account_id' })
-      return Response.redirect(`${APP_URL}/app/integrations?google=connected`, 302)
+      return Response.redirect(`${APP_URL}/app/settings?google=connected`, 302)
     } catch {
-      return Response.redirect(`${APP_URL}/app/integrations?google=error`, 302)
+      return Response.redirect(`${APP_URL}/app/settings?google=error`, 302)
     }
   }
 
