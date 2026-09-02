@@ -495,8 +495,6 @@ export default function EducationSalesWorkflowPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button to="/app?create=team" variant={page === 'create' ? 'primary' : 'secondary'}>Create Team</Button>
-          <Button to="/app/run-workflow" variant={page === 'run' ? 'primary' : 'secondary'}>Run Workflow</Button>
-          <Button to="/app/activity" variant={page === 'results' ? 'primary' : 'secondary'}>Activity</Button>
         </div>
       </div>
 
@@ -607,7 +605,7 @@ export default function EducationSalesWorkflowPage() {
             <textarea value={leads} onChange={(e) => setLeads(e.target.value)} rows={13} className={`${fieldCls} mt-4 resize-y leading-relaxed`} />
             {backendError && <div className="mt-4 rounded-2xl border border-danger/25 bg-danger/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-danger"><AlertCircle size={16} /> {executionMode === 'local_simulation' ? 'Live workflow disabled' : 'Backend workflow failed'}</p><p className="mt-1 text-xs text-muted">{backendError}</p><div className="mt-3 flex flex-wrap gap-2"><Button onClick={runLocalSimulation} size="sm" variant="outline">Run local simulation instead</Button><Button to="/app/integrations" size="sm" variant="outline">Configure integrations</Button></div></div>}
             <Button onClick={runWorkflow} disabled={running || leads.trim().length < 10} fullWidth className="mt-4"><Play size={16} /> {running ? 'Running agents...' : 'Run workflow'}</Button>
-            {runCompleted && <div className="mt-4 rounded-2xl border border-teal/20 bg-teal/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-teal"><CheckCircle2 size={16} /> Completed</p><p className="mt-1 text-xs text-muted">Agent execution finished and structured output was saved.</p><Button to="/app/activity" size="sm" className="mt-3">View activity</Button></div>}
+            {runCompleted && <div className="mt-4 rounded-2xl border border-teal/20 bg-teal/10 p-4"><p className="flex items-center gap-2 text-sm font-semibold text-teal"><CheckCircle2 size={16} /> Completed</p><p className="mt-1 text-xs text-muted">Agent execution finished and structured output was saved.</p><Button to="/app" size="sm" className="mt-3">Open chat</Button></div>}
           </div>
           <div className="card rounded-3xl p-6">
             <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-bold text-text">Agent execution</h2><span className={`rounded-pill border px-3 py-1 text-xs ${modeClass}`}>{executionMode === 'live_success' ? 'Live orchestrate' : executionMode === 'live_failed' ? 'Live failed' : 'Local simulation'}</span></div>

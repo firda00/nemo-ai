@@ -20,6 +20,7 @@ import type { OperationalAgentStatus } from '../../types/orchestrator'
 import { AgentQuickEditDrawer, type AgentQuickEditDraft } from '../../components/agents/AgentQuickEditDrawer'
 import type { PlatformAgent } from '../../types/platform'
 import { subscribeTeamRegistryChanged } from '../../lib/teamRegistrySync'
+import { teamDisplayName } from '../../lib/teamDisplayName'
 
 type PresetRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
 
@@ -64,17 +65,6 @@ function artifactUrls(result: string): string[] {
     .slice(0, 6)
 }
 
-function teamDisplayName(agent: PlatformAgent): string {
-  const raw = agent.name.trim()
-  if (raw && raw.length <= 52 && !/^(team|команда|создай|create)\s*:/i.test(raw)) return raw
-  const context = `${raw} ${agent.niche ?? ''} ${agent.purpose ?? ''} ${agent.prompt.tasks}`.toLowerCase()
-  if (/uzum|marketplace|маркетплейс/.test(context)) return 'Uzum Growth Team'
-  if (/video|reels|content|контент|медиа/.test(context)) return 'Content & Reels Factory'
-  if (/sales|crm|продаж|лид/.test(context)) return 'Sales & CRM Team'
-  if (/support|поддерж|клиент/.test(context)) return 'Customer Support Team'
-  return 'AI Operations Team'
-}
-
 export default function AgentsPage() {
   const { lang, t } = useI18n()
   const navigate = useNavigate()
@@ -101,7 +91,7 @@ export default function AgentsPage() {
   const savedTeams = useMemo(() => agents.filter((agent) => agent.type === 'workflow'), [agents])
   const normalizedTeamSearch = teamSearch.trim().toLowerCase()
   const filteredTeams = teamsView && normalizedTeamSearch
-    ? visibleAgents.filter((team) => `${teamDisplayName(team)} ${team.purpose} ${team.niche ?? ''} ${(teamRoster[team.id]?.roles ?? []).join(' ')}`.toLowerCase().includes(normalizedTeamSearch))
+    ? visibleAgents.filter((team) => `${teamDisplayName({ name: team.name, goal: team.purpose, niche: team.niche, tasks: team.prompt.tasks, lang })} ${team.purpose} ${team.niche ?? ''} ${(teamRoster[team.id]?.roles ?? []).join(' ')}`.toLowerCase().includes(normalizedTeamSearch))
     : visibleAgents
   const registryCopy = lang === 'uz' ? {
     search: 'Jamoani nomi, roli yoki vazifasi bo‘yicha qidiring…', searchLabel: 'AI jamoalarni qidirish', specialists: 'mutaxassis', noResults: 'Hech qanday jamoa topilmadi',
@@ -371,7 +361,7 @@ export default function AgentsPage() {
                 <div className="flex items-center gap-3">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet/15 text-violet"><Users size={20} /></span>
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-text">{teamDisplayName(a)}</p>
+                    <p className="truncate font-medium text-text">{teamDisplayName({ name: a.name, goal: a.purpose, niche: a.niche, tasks: a.prompt.tasks, lang })}</p>
                     <span className={cn('mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-normal', agentStatusStyle[a.status])}>{t(`platform.agentStatus.${a.status}`)}</span>
                   </div>
                 </div>

@@ -18,6 +18,7 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
 ])
 
 const sidebarBlock = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
+const teamNames = await read('src/lib/teamDisplayName.ts')
 const normalDestinations = ['/app', '/app/teams', '/app/settings']
 for (const route of normalDestinations) assert.match(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
 for (const route of ['/app/content', '/app/finance', '/app/research', '/app/knowledge', '/app/analytics']) assert.doesNotMatch(sidebarBlock, new RegExp(`to: '${route.replaceAll('/', '\\/')}'`))
@@ -64,6 +65,9 @@ assert.match(teamDetailPage, /streamMode onTaskSubmitted=\{setPendingTask\}/, 't
 assert.match(teamDetailPage, /team-working-message/, 'the command stream must show a live working state')
 assert.match(teamDetailPage, /team-thinking-dots/, 'the working state must visibly animate without exposing private reasoning')
 assert.match(teamDetailPage, /streamEndRef\.current\?\.scrollIntoView/, 'new chat activity must remain visible')
+assert.match(teamDetailPage, /teamDisplayName\(\{ name:/, 'team rooms must never expose a raw creation prompt as their title')
+assert.match(teamNames, /Команда роста Uzum/, 'generated Uzum teams need a short Russian customer-facing name')
+assert.match(teamNames, /generatedName/, 'custom names must be preserved while generated prompt names are normalized')
 assert.doesNotMatch(teamDetailPage, /CoordinatorAgentPanel|PlannerCommandCenter/)
 assert.match(agentsPage, /<AgentQuickEditDrawer/)
 assert.match(agentsPage, /status: agent\.status === 'active' \? 'draft' : agent\.status/)

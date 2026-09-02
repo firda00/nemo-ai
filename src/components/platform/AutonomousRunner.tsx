@@ -21,6 +21,7 @@ import {
   type AutonomousInputArtifact,
 } from '../../lib/autonomousInputs'
 import { defaultDefinitionOfDone, GoalSchema, type GoalContract, type GoalEvaluation } from '../../types/goal'
+import { teamDisplayName } from '../../lib/teamDisplayName'
 
 const live = isSupabaseEnabled
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
@@ -632,7 +633,7 @@ export function AutonomousRunner({
     try {
       const model = saveModel || undefined
       const res = await saveDynamicTeam(addAgent, {
-        name: `Team: ${goal.trim().slice(0, 40)}`,
+        name: teamDisplayName({ goal, lang }),
         goal: goal.trim(),
         specialists: specs.map((s) => ({ role: s.role, name: s.name, prompt: s.prompt, skills: s.skills ?? [], ...(model ? { model } : {}) })),
         ...(saveSphere.trim() ? { niche: saveSphere.trim() } : {}),

@@ -38,7 +38,6 @@ import MemoryPage from './pages/app/MemoryPage'
 import AutomationsPage from './pages/app/AutomationsPage'
 import MarketingStrategyPage from './pages/app/MarketingStrategyPage'
 import AutopostPage from './pages/app/AutopostPage'
-import ActivityPage from './pages/app/ActivityPage'
 import LibraryPage from './pages/app/LibraryPage'
 import IntegrationsToolsPage from './pages/app/IntegrationsToolsPage'
 import FollowUpsPage from './pages/app/FollowUpsPage'
@@ -129,7 +128,7 @@ export default function App() {
         <Route path="finance" element={<Navigate to="/app" replace />} />
         <Route path="followups" element={<FollowUpsPage />} />
         <Route path="monitor" element={<ObservabilityPage />} />
-        <Route path="activity" element={<ActivityPage />} />
+        <Route path="activity" element={<Navigate to="/app" replace />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="tools" element={<IntegrationsToolsPage />} />
@@ -138,8 +137,8 @@ export default function App() {
         <Route path="teams" element={<AgentsPage />} />
         <Route path="teams/education-sales" element={<EducationSalesWorkflowPage />} />
         <Route path="teams/:id" element={<TeamDetailPage />} />
-        <Route path="run-workflow" element={<EducationSalesWorkflowPage />} />
-        <Route path="results" element={<Navigate to="/app/activity" replace />} />
+        <Route path="run-workflow" element={<Navigate to="/app" replace />} />
+        <Route path="results" element={<Navigate to="/app" replace />} />
         <Route path="waitlist" element={<WaitlistPage />} />
         <Route path="demo" element={<DemoPage />} />
         <Route path="swarms" element={<SwarmsPage />} />

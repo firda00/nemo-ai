@@ -18,6 +18,7 @@ import { TeamOfficeView } from '../../components/office/TeamOfficeView'
 import type { AgentNodeData } from '../../types/orchestrator'
 import { LiveCodeSandboxArtifact } from '../../components/platform/LiveCodeSandboxArtifact'
 import { isCodeCreationIntent } from '../../lib/codeCreationIntent'
+import { teamDisplayName } from '../../lib/teamDisplayName'
 
 interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
@@ -126,8 +127,8 @@ export default function TeamDetailPage() {
     return () => { on = false }
   }, [id, loadResults])
 
-  const teamName = team?.name || dept?.name || 'Operations Team'
   const goal = team?.purpose || 'Automate routine operations: payments, admin escalation, meetings-to-tasks and manager reports.'
+  const teamName = teamDisplayName({ name: team?.name || dept?.name, goal, niche: team?.niche || dept?.niche, tasks: team?.prompt.tasks, lang })
   const graphAgents: AgentNodeData[] = (dept?.subs ?? []).map((sub, index) => ({
     id: sub.id,
     name: sub.name,
@@ -231,11 +232,11 @@ export default function TeamDetailPage() {
       <header className="flex flex-col gap-4 border-b border-ice/[0.07] pb-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-2xl font-extrabold tracking-[-0.035em] text-text sm:text-3xl">{teamName}</h1>
+            <h1 title={teamName} className="max-w-[min(720px,72vw)] truncate text-2xl font-extrabold tracking-[-0.035em] text-text sm:text-3xl">{teamName}</h1>
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-teal/20 bg-teal/[0.07] px-2.5 py-1 text-[11px] font-semibold text-teal"><span className="h-1.5 w-1.5 rounded-full bg-teal" />{t('teamDetailPage.onlineAgents', { n: activeAgents })}</span>
             {isRegulated && <span className="rounded-lg border border-amber/25 bg-amber/[0.07] px-2.5 py-1 text-[11px] text-amber">{safetyCopy.badge}</span>}
           </div>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted text-pretty">{goal}</p>
+          <p title={goal} className="mt-2 max-w-3xl text-sm leading-6 text-muted text-pretty line-clamp-2">{goal}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => setTelegramOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-ice/[0.09] bg-card/[0.025] px-3.5 py-2.5 text-xs font-semibold text-muted transition hover:border-cyan/25 hover:text-text active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan/30"><Settings2 size={15} />{t('teamDetailPage.telegramSettings')}</button>

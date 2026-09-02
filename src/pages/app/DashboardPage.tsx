@@ -73,11 +73,6 @@ export default function DashboardPage() {
     navigate('/app?create=team')
   }
 
-  const runDemo = (type: 'payment-control' | 'meeting-to-tasks') => {
-    localStorage.setItem('nemo-demo-workflow-request', type)
-    navigate('/app/run-workflow')
-  }
-
   return (
     <div className="container-page max-w-7xl !px-3 py-6 sm:!px-8 sm:py-8">
       <SmartTaskDesk />
@@ -97,7 +92,6 @@ export default function DashboardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button to="/app?create=team"><Plus size={16} /> {t('mvp.dashboard.createTeam')}</Button>
-          <Button to="/app/run-workflow" variant="outline"><PlayCircle size={16} /> {t('mvp.dashboard.runDemo')}</Button>
         </div>
       </div>
 
@@ -158,8 +152,6 @@ export default function DashboardPage() {
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           <PilotAction n="01" title={t('mvp.pilot.courseConsultant')} desc={t('mvp.pilot.courseConsultantDesc')} onClick={createCourseConsultant} />
           <PilotAction n="02" title={t('mvp.pilot.operationsTeam')} desc={t('mvp.pilot.operationsTeamDesc')} onClick={createOperationsTeam} />
-          <PilotAction n="03" title={t('mvp.pilot.paymentDemo')} desc={t('mvp.pilot.paymentDemoDesc')} onClick={() => runDemo('payment-control')} />
-          <PilotAction n="04" title={t('mvp.pilot.meetingDemo')} desc={t('mvp.pilot.meetingDemoDesc')} onClick={() => runDemo('meeting-to-tasks')} />
         </div>
       </section>
 
