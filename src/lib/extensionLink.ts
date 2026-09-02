@@ -33,6 +33,8 @@ type ExtensionReply = {
   submitted?: boolean
   needsConfirmation?: boolean
   uploaded?: boolean
+  note?: string
+  pageUrl?: string
 }
 
 type ChromeRuntime = {
@@ -134,6 +136,8 @@ export type BrowserTaskResult = {
   failed: number
   submitted: boolean
   needsConfirmation: boolean
+  note?: string
+  pageUrl?: string
 }
 
 /**
@@ -160,5 +164,7 @@ export async function runExtensionBrowserTask(
     failed: Number(probe.reply.failed ?? 0),
     submitted: Boolean(probe.reply.submitted),
     needsConfirmation: Boolean(probe.reply.needsConfirmation),
+    note: probe.reply.note,
+    pageUrl: probe.reply.pageUrl,
   }
 }

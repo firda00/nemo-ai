@@ -15,7 +15,7 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
-import { PLAN_SYSTEM_PROMPT, checkPlan, detectCategoryMismatch, extractOwnerFormValues, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
+import { GENERAL_BROWSER_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, checkPlan, detectCategoryMismatch, extractOwnerFormValues, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
 import {
   classifyProviderResponse, decideSubmit, ownerMessage,
   type SubmitMode,
@@ -950,11 +950,13 @@ Deno.serve(async (req) => {
     const access = await entitlementFor(admin, profile.account_id)
     if (!access.allowed) return json({ error: 'subscription_required', reason: access.reason, message: lockMessage(access) }, 402)
 
+    const generalBrowser = body?.mode === 'general_browser'
     const items = Array.isArray(body?.page?.items) ? body.page.items.slice(0, 150) : []
-    if (!items.length) return json({ error: 'empty_page' }, 400)
+    const pageContent = typeof body?.page?.content === 'string' ? body.page.content.slice(0, 12_000) : ''
+    if (!items.length && !(generalBrowser && pageContent)) return json({ error: 'empty_page' }, 400)
     const instruction = typeof body?.instruction === 'string' ? body.instruction.trim().slice(0, 500) : ''
     if (!instruction) return json({ error: 'no_instruction' }, 400)
-    const ownerValues = extractOwnerFormValues(instruction)
+    const ownerValues = generalBrowser ? {} : extractOwnerFormValues(instruction)
 
     // Данные для подстановки берутся НА СЕРВЕРЕ, а не из поручения: иначе достаточно попросить
     // «впиши сюда чужой артикул», и расширение впишет что угодно, что уместилось в текст.
@@ -963,10 +965,12 @@ Deno.serve(async (req) => {
     // модель извлекла из текста владельца: бренд, страна происхождения, материал — что угодно, что
     // он сам назвал). Здесь его не было вовсе, и планировщик не мог сопоставить select «Бренд» или
     // «Страна производства» ни с чем — не потому что таких данных нет, а потому что их не спросили.
-    const { data: draft } = await admin.from('commerce_listing_drafts')
-      .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')
-      .eq('account_id', profile.account_id).eq('status', 'ready')
-      .order('approved_at', { ascending: true }).limit(1).maybeSingle()
+    const { data: draft } = generalBrowser
+      ? { data: null }
+      : await admin.from('commerce_listing_drafts')
+        .select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')
+        .eq('account_id', profile.account_id).eq('status', 'ready')
+        .order('approved_at', { ascending: true }).limit(1).maybeSingle()
 
     // Категория страницы против категории черновика — ДО модели и ДО единого действия. Живой
     // случай: страница стояла на «Книги › Комиксы», план заполнил 7 полей данными черновика про
@@ -977,7 +981,7 @@ Deno.serve(async (req) => {
     // confirmCategoryMismatch — согласие владельца продолжить всё равно, тем же путём, что и
     // confirmRisky: спрашивается заново на каждом запуске, никогда не запоминается.
     const categorySignal = detectCategoryMismatch(items, draft?.uzum_category ?? null)
-    if (categorySignal.mismatch && !body?.confirmCategoryMismatch) {
+    if (!generalBrowser && categorySignal.mismatch && !body?.confirmCategoryMismatch) {
       return json({
         ok: true,
         category_mismatch: true,
@@ -1000,13 +1004,13 @@ Deno.serve(async (req) => {
       maxTokens: 2000,
       responseFormat: { type: 'json_object' },
       messages: [
-        { role: 'system', content: PLAN_SYSTEM_PROMPT },
+        { role: 'system', content: generalBrowser ? GENERAL_BROWSER_SYSTEM_PROMPT : PLAN_SYSTEM_PROMPT },
         {
           role: 'user',
           content: planUserPrompt({
             instruction,
-            page: { url: body?.page?.url, title: body?.page?.title, items },
-            data: draft || Object.keys(ownerValues).length
+            page: { url: body?.page?.url, title: body?.page?.title, content: pageContent, items },
+            data: !generalBrowser && (draft || Object.keys(ownerValues).length)
               ? {
                 title_ru: draft?.title_ru ?? null, title_uz: draft?.title_uz ?? null,
                 description_ru: draft?.description_ru ?? null, description_uz: draft?.description_uz ?? null,

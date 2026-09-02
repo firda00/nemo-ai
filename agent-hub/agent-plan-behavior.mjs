@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import {
   MAX_ACTIONS,
   MAX_VALUE_LENGTH,
+  GENERAL_BROWSER_SYSTEM_PROMPT,
   PLAN_SYSTEM_PROMPT,
   checkPlan,
   detectCategoryMismatch,
@@ -24,6 +25,10 @@ const PAGE = [
   { id: 4, kind: 'select', label: 'Единица измерения', options: ['шт', 'кг'] },
   { id: 5, kind: 'input', label: 'Артикул', disabled: true },
 ]
+
+assert.match(GENERAL_BROWSER_SYSTEM_PROMPT, /парол|password/i)
+assert.match(GENERAL_BROWSER_SYSTEM_PROMPT, /CAPTCHA/i)
+assert.match(GENERAL_BROWSER_SYSTEM_PROMPT, /оплат|покуп/i)
 
 // После перехода элементы старого DOM больше не существуют. Следующие действия выполнятся только
 // после нового снимка страницы автономным loop.
@@ -248,4 +253,4 @@ assert.deepEqual(extractOwnerFormValues('Narxni: 55 000, qoldiqni 8'), { price_u
 assert.deepEqual(extractOwnerFormValues('Товар 2026, артикул 99881'), {}, 'случайные числа не становятся ценой или остатком')
 assert.deepEqual(extractOwnerFormValues('Поставь цену 999999999999999999999'), {}, 'небезопасно большое число отбрасывается')
 
-console.log('[OK] Agent plan behaviour: 82 assertions')
+console.log('[OK] Agent plan behaviour: 85 assertions')

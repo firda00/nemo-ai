@@ -752,7 +752,7 @@ export const extraUz = {
     "placeholder": "Masalan: oylik hisobot bo‘yicha kirim va chiqimni hisoblang...",
     "send": "Vazifani yuborish",
     "routingHint": "Nemo niyatni aniqlaydi va kerakli interaktiv artefaktni dialog ichida ochadi.",
-    "suggestionBrowser": "Uzum kabinetini oching va mahsulot kartasini yangilang",
+    "suggestionBrowser": "Brauzerni oching, saytdagi ma’lumotni toping va vazifani bajaring",
     "suggestionMarketing": "Mahsulotimiz uchun Reels ssenariysi va muqova tayyorlang",
     "suggestionFinance": "Oylik kirim, chiqim va samarasiz xarajatlarni tahlil qiling",
     "suggestionResearch": "Uchrashuv videosidan xulosa, qarorlar va vazifalarni ajrating",
@@ -794,8 +794,8 @@ export const extraUz = {
   "browserControl": {
     "running": "Nemo brauzerda ishlamoqda", "runningHint": "Kabinet ochiladi, kerakli sahifa topiladi va qadamlar avtomatik bajariladi.",
     "completed": "Brauzer vazifasi bajarildi", "completedHint": "Xavfsiz qadamlar inson ishtirokisiz yakunlandi.", "submitted": "Moderatsiyaga yuborildi", "stopped": "Brauzer agenti to‘xtadi",
-    "actions": "{count} amal", "confirmHint": "Kartani moderatsiyaga yuborish qaytarib bo‘lmaydigan qadam. Faqat shu yakuniy amal uchun tasdiq kerak.", "confirm": "Yuborishni tasdiqlash", "retry": "Davom ettirish",
-    "reasons": { "not_linked": "Avval Nemo kengaytmasini akkaunt bilan bog‘lang.", "no_bridge": "Chrome kengaytmani ko‘rmayapti. Uni o‘rnating yoki bu sahifani yangilang.", "no_answer": "Kengaytma javob bermadi.", "silent": "Brauzer vazifasi belgilangan vaqtda javob bermadi.", "human_needed": "Kirish yoki CAPTCHA uchun inson kerak.", "login_required": "Uzum kabinetiga kirish kerak.", "needs_confirmation": "Yakuniy yuborish tasdiqni kutmoqda.", "no_progress": "Sahifa bir necha qadam davomida o‘zgarmadi.", "step_limit": "Xavfsiz qadamlar limiti tugadi.", "left_allowed_site": "Vazifa ruxsat etilgan Uzum domenidan chiqdi.", "no_plan": "Joriy sahifa uchun xavfsiz amal topilmadi.", "media_not_uploaded": "Rasmlar maydoni topilmadi yoki fayllar yuklanmadi." }
+    "actions": "{count} amal", "confirmHint": "Keyingi qadam qaytarib bo‘lmaydigan amal bo‘lishi mumkin. Uni faqat shu ishga tasdiqlang.", "confirm": "Amalni tasdiqlash", "retry": "Davom ettirish",
+    "reasons": { "not_linked": "Avval Nemo kengaytmasini akkaunt bilan bog‘lang.", "host_permission_required": "Nemo kengaytmasini oching va saytlarda ishlashga bir marta ruxsat bering.", "no_bridge": "Chrome kengaytmani ko‘rmayapti. Uni o‘rnating yoki bu sahifani yangilang.", "no_answer": "Kengaytma javob bermadi.", "silent": "Brauzer vazifasi belgilangan vaqtda javob bermadi.", "human_needed": "Kirish yoki CAPTCHA uchun inson kerak.", "login_required": "Saytga kirish kerak.", "needs_confirmation": "Qaytarib bo‘lmaydigan amal tasdiqni kutmoqda.", "no_progress": "Sahifa bir necha qadam davomida o‘zgarmadi.", "step_limit": "Xavfsiz qadamlar limiti tugadi.", "left_allowed_site": "Brauzer ichki yoki ruxsat berilmagan sahifaga o‘tdi.", "no_plan": "Joriy sahifa uchun xavfsiz amal topilmadi.", "media_not_uploaded": "Rasmlar maydoni topilmadi yoki fayllar yuklanmadi." }
   },
   "liveSandbox": {
     "eyebrow": "Komanda artefakti", "title": "Live Code Sandbox", "downloadZip": "ZIP yuklash", "cli": "CLI", "copied": "Nusxalandi",
@@ -3008,7 +3008,7 @@ export const extraRu = {
     "placeholder": "Например: посчитай приток и отток по выписке за месяц...",
     "send": "Отправить задачу",
     "routingHint": "Nemo определяет намерение и открывает нужный интерактивный артефакт внутри диалога.",
-    "suggestionBrowser": "Открой кабинет Uzum и обнови карточку товара",
+    "suggestionBrowser": "Открой браузер, найди информацию на сайте и выполни задачу",
     "suggestionMarketing": "Сделай сценарий Reels и обложку для нашего товара",
     "suggestionFinance": "Проанализируй приток, отток и неэффективные расходы за месяц",
     "suggestionResearch": "Сделай выжимку, решения и задачи из видео созвона",
@@ -3050,8 +3050,8 @@ export const extraRu = {
   "browserControl": {
     "running": "Nemo работает в браузере", "runningHint": "Открываю кабинет, нахожу нужную страницу и выполняю шаги автоматически.",
     "completed": "Задача в браузере выполнена", "completedHint": "Безопасные шаги завершены без участия человека.", "submitted": "Карточка отправлена на модерацию", "stopped": "Браузерный агент остановился",
-    "actions": "Действий: {count}", "confirmHint": "Отправка карточки на модерацию — необратимый шаг. Подтверждение требуется только для этого финального действия.", "confirm": "Подтвердить отправку", "retry": "Продолжить",
-    "reasons": { "not_linked": "Сначала свяжите расширение Nemo с аккаунтом.", "no_bridge": "Chrome не видит расширение. Установите его или обновите эту страницу.", "no_answer": "Расширение не ответило.", "silent": "Браузерная задача не ответила за отведённое время.", "human_needed": "Для входа или CAPTCHA требуется человек.", "login_required": "Нужно войти в кабинет Uzum.", "needs_confirmation": "Финальная отправка ожидает подтверждения.", "no_progress": "Страница не изменилась после нескольких шагов.", "step_limit": "Достигнут безопасный лимит шагов.", "left_allowed_site": "Маршрут вышел за пределы разрешённого домена Uzum.", "no_plan": "Для текущего экрана не найдено безопасного действия.", "media_not_uploaded": "Поле изображений не найдено или файлы не загрузились." }
+    "actions": "Действий: {count}", "confirmHint": "Следующий шаг может быть необратимым. Подтвердите его только для этой задачи.", "confirm": "Подтвердить действие", "retry": "Продолжить",
+    "reasons": { "not_linked": "Сначала свяжите расширение Nemo с аккаунтом.", "host_permission_required": "Откройте расширение Nemo и один раз разрешите ему работать на сайтах.", "no_bridge": "Chrome не видит расширение. Установите его или обновите эту страницу.", "no_answer": "Расширение не ответило.", "silent": "Браузерная задача не ответила за отведённое время.", "human_needed": "Для входа или CAPTCHA требуется человек.", "login_required": "Нужно войти на сайт.", "needs_confirmation": "Необратимое действие ожидает подтверждения.", "no_progress": "Страница не изменилась после нескольких шагов.", "step_limit": "Достигнут безопасный лимит шагов.", "left_allowed_site": "Браузер перешёл на внутреннюю или недоступную страницу.", "no_plan": "Для текущего экрана не найдено безопасного действия.", "media_not_uploaded": "Поле изображений не найдено или файлы не загрузились." }
   },
   "liveSandbox": {
     "eyebrow": "Артефакт команды", "title": "Live Code Sandbox", "downloadZip": "Скачать ZIP", "cli": "CLI", "copied": "Скопировано",
@@ -5264,7 +5264,7 @@ export const extraEn = {
     "placeholder": "For example: calculate monthly inflow and outflow from this statement...",
     "send": "Send task",
     "routingHint": "Nemo detects the intent and opens the right interactive artifact inside the conversation.",
-    "suggestionBrowser": "Open Uzum Seller and update a product listing",
+    "suggestionBrowser": "Open the browser, find information on a website, and complete the task",
     "suggestionMarketing": "Create a Reels script and cover for our product",
     "suggestionFinance": "Analyze monthly inflow, outflow, and inefficient spend",
     "suggestionResearch": "Extract a summary, decisions, and tasks from a meeting video",
@@ -5306,8 +5306,8 @@ export const extraEn = {
   "browserControl": {
     "running": "Nemo is working in the browser", "runningHint": "Opening the seller workspace, locating the right page, and completing steps automatically.",
     "completed": "Browser task completed", "completedHint": "Safe steps were completed without human participation.", "submitted": "Listing sent for moderation", "stopped": "Browser agent stopped",
-    "actions": "{count} actions", "confirmHint": "Submitting a listing for moderation is irreversible. Confirmation is required only for this final action.", "confirm": "Confirm submission", "retry": "Continue",
-    "reasons": { "not_linked": "Link the Nemo extension to your account first.", "no_bridge": "Chrome cannot see the extension. Install it or reload this page.", "no_answer": "The extension did not respond.", "silent": "The browser task did not respond within the allowed time.", "human_needed": "A person is required for sign-in or CAPTCHA.", "login_required": "Sign in to Uzum Seller first.", "needs_confirmation": "Final submission is waiting for confirmation.", "no_progress": "The page did not change after several steps.", "step_limit": "The safe step limit was reached.", "left_allowed_site": "The task left the allowed Uzum domain.", "no_plan": "No safe action was found for the current screen.", "media_not_uploaded": "The image field was not found or the files were not uploaded." }
+    "actions": "{count} actions", "confirmHint": "The next step may be irreversible. Confirm it for this task only.", "confirm": "Confirm action", "retry": "Continue",
+    "reasons": { "not_linked": "Link the Nemo extension to your account first.", "host_permission_required": "Open the Nemo extension and grant website access once.", "no_bridge": "Chrome cannot see the extension. Install it or reload this page.", "no_answer": "The extension did not respond.", "silent": "The browser task did not respond within the allowed time.", "human_needed": "A person is required for sign-in or CAPTCHA.", "login_required": "Sign in to the website first.", "needs_confirmation": "An irreversible action is waiting for confirmation.", "no_progress": "The page did not change after several steps.", "step_limit": "The safe step limit was reached.", "left_allowed_site": "The browser reached an internal or inaccessible page.", "no_plan": "No safe action was found for the current screen.", "media_not_uploaded": "The image field was not found or the files were not uploaded." }
   },
   "liveSandbox": {
     "eyebrow": "Team artifact", "title": "Live Code Sandbox", "downloadZip": "Download ZIP", "cli": "CLI", "copied": "Copied",

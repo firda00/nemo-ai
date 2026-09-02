@@ -49,6 +49,8 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       confirmRisky: Boolean(message.confirmRisky),
       confirmCategoryMismatch: false,
       attachments: [],
+      mode: message.mode === 'commerce' || /(?:uzum|seller\.uzum)/i.test(instruction)
+        ? 'commerce' : 'general_browser',
     }).then(sendResponse)
     return true
   }
@@ -73,11 +75,35 @@ async function activeTab() {
 }
 
 const SELLER_HOME = 'https://seller.uzum.uz/'
+const BROWSER_HOME = 'https://www.google.com/'
+const UNIVERSAL_ORIGINS = ['http://*/*', 'https://*/*']
 const MAX_AUTONOMOUS_STEPS = 12
 const isSellerUrl = (url) => {
   try { return new URL(url).origin === new URL(SELLER_HOME).origin } catch { return false }
 }
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const isWebUrl = (url) => {
+  try { return ['http:', 'https:'].includes(new URL(url).protocol) } catch { return false }
+}
+const isNemoUrl = (url) => {
+  try { return ALLOWED_ORIGINS.includes(new URL(url).origin) } catch { return false }
+}
+
+async function universalAccessGranted() {
+  return await chrome.permissions.contains({ origins: UNIVERSAL_ORIGINS })
+}
+
+function requestedUrl(instruction) {
+  const source = String(instruction ?? '')
+  const match = source.match(/https?:\/\/[^\s<>{}\[\]"']+/i)
+    ?? source.match(/(?:www\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z]{2,})(?:\/[^\s<>{}\[\]"']*)?/i)
+  if (!match) return null
+  try {
+    const raw = match[0].replace(/[.,;:!?]+$/, '')
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null
+  } catch { return null }
+}
 
 async function waitForTab(tabId, timeoutMs = 12_000) {
   const started = Date.now()
@@ -103,6 +129,16 @@ async function ensureSellerTab() {
   return created.id ? await waitForTab(created.id) : null
 }
 
+async function ensureTaskTab(instruction, mode, startUrl) {
+  if (mode === 'commerce') return await ensureSellerTab()
+  if (!await universalAccessGranted()) return { permissionRequired: true }
+  // Как у браузерных агентов: каждое новое поручение получает отдельную рабочую вкладку и не
+  // перетирает страницу, которую человек читал до запуска.
+  const target = requestedUrl(instruction) ?? (isWebUrl(startUrl) && !isNemoUrl(startUrl) ? startUrl : BROWSER_HOME)
+  const created = await chrome.tabs.create({ url: target, active: true })
+  return created.id ? await waitForTab(created.id) : null
+}
+
 /** После клика продолжает в новой вкладке, если кабинет открыл её сам. */
 async function nextSellerTab(previousId, knownIds) {
   await pause(700)
@@ -115,7 +151,32 @@ async function nextSellerTab(previousId, knownIds) {
   return next?.id ? await waitForTab(next.id) : null
 }
 
+async function nextTaskTab(previousId, knownIds, mode) {
+  if (mode === 'commerce') return await nextSellerTab(previousId, knownIds)
+  await pause(700)
+  const tabs = await chrome.tabs.query({ currentWindow: true })
+  const webTabs = tabs.filter((tab) => tab.id && isWebUrl(tab.url) && !isNemoUrl(tab.url))
+  const fresh = webTabs.find((tab) => !knownIds.has(tab.id))
+  const same = webTabs.find((tab) => tab.id === previousId)
+  const active = webTabs.find((tab) => tab.active)
+  const next = fresh ?? same ?? active ?? null
+  return next?.id ? await waitForTab(next.id) : null
+}
+
 const toTab = (tabId, message, frameId = 0) => chrome.tabs.sendMessage(tabId, message, { frameId }).catch(() => null)
+
+async function ensurePageBridge(tabId) {
+  const existing = await toTab(tabId, { type: 'nemo:scan', limit: 1 })
+  if (existing) return true
+  if (!await universalAccessGranted()) return false
+  try {
+    // Файлы исполняются в одном isolated world и в том же порядке, что declarative content script.
+    for (const file of ['scanner.js', 'executor.js', 'content.js']) {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [file] })
+    }
+    return true
+  } catch { return false }
+}
 
 /**
  * Uzum может отрисовать рабочую форму во вложенном frame. Content script установлен во все
@@ -123,6 +184,7 @@ const toTab = (tabId, message, frameId = 0) => chrome.tabs.sendMessage(tabId, me
  * Выбираем кадр с наибольшим числом полей формы; при равенстве главный кадр остаётся первым.
  */
 async function scanWorkingFrame(tabId) {
+  if (!await ensurePageBridge(tabId)) return { frameId: 0, scan: null }
   const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)
   const ids = [...new Set((frames?.length ? frames : [{ frameId: 0 }]).map((frame) => frame.frameId))]
   const scans = await Promise.all(ids.map(async (frameId) => ({
@@ -162,14 +224,19 @@ function mediaUploadAction(page, attachments) {
   return { action: { type: 'upload', id: best.item.id, files: attachments }, error: null }
 }
 
-async function runInstructionStep({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [], tab }) {
-  if (!tab?.id || !isSellerUrl(tab.url)) return { ok: false, reason: 'left_allowed_site' }
+async function runInstructionStep({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [], tab, mode }) {
+  if (!tab?.id || !isWebUrl(tab.url) || (mode === 'commerce' && !isSellerUrl(tab.url))) {
+    return { ok: false, reason: 'left_allowed_site' }
+  }
   const frame = await scanWorkingFrame(tab.id)
   const scan = frame.scan
   if (!scan) return { ok: false, reason: 'no_response' }
   if (!scan.ok) return { ok: false, reason: scan.reason ?? 'no_response' }
 
-  const planned = await callNemo('agent_plan', { instruction, page: scan.page, confirmCategoryMismatch })
+  const planned = await callNemo('agent_plan', {
+    instruction, page: scan.page, confirmCategoryMismatch,
+    mode: mode === 'commerce' ? 'commerce' : 'general_browser',
+  })
   if (!planned.ok) return { ok: false, reason: planned.error }
 
   // Категория страницы не совпадает с категорией черновика — сервер остановился ДО модели и ДО
@@ -214,10 +281,13 @@ async function runInstructionStep({ instruction, confirmRisky = false, confirmCa
   if (upload.error) return { ok: false, reason: upload.error }
   const actions = [...(planned.data?.actions ?? []), ...(upload.action ? [upload.action] : [])]
   if (!actions.length) {
+    const note = planned.data?.note ?? null
+    const completed = mode === 'general_browser' && Boolean(note)
     return {
-      ok: false,
-      reason: 'no_plan',
-      note: planned.data?.note ?? null,
+      ok: completed,
+      completed,
+      reason: completed ? null : 'no_plan',
+      note,
       // Отброшенное доезжает до владельца, а не остаётся в консоли: «уточните поручение» человеку,
       // у которого план отвергла наша же проверка, — это совет чинить не то.
       rejected: planned.data?.rejected ?? [],
@@ -254,9 +324,10 @@ async function runInstructionStep({ instruction, confirmRisky = false, confirmCa
  * дождаться следующего экрана/вкладки → повторить. Один клик «Выполнить» разрешает весь описанный
  * маршрут, но рискованные кнопки всё равно требуют явной галочки этого запуска.
  */
-export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [] }) {
+export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [], mode = 'commerce', startUrl = null }) {
   if (!await readSession()) return { ok: false, reason: 'not_linked' }
-  let tab = await ensureSellerTab()
+  let tab = await ensureTaskTab(instruction, mode, startUrl)
+  if (tab?.permissionRequired) return { ok: false, reason: 'host_permission_required' }
   if (!tab?.id) return { ok: false, reason: 'no_tab' }
 
   const knownIds = new Set((await chrome.tabs.query({ currentWindow: true })).map((one) => one.id).filter(Boolean))
@@ -277,7 +348,7 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     const result = await runInstructionStep({
       instruction, confirmRisky, confirmCategoryMismatch,
       attachments: uploaded ? [] : attachments,
-      tab,
+      tab, mode,
     })
     last = result
     draftId = result.draftId ?? draftId
@@ -289,7 +360,7 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     else repeated = 0
     previousFingerprint = result.pageFingerprint ?? previousFingerprint
 
-    if (result.submitted || result.needsConfirmation || result.reason === 'category_mismatch'
+    if (result.completed || result.submitted || result.needsConfirmation || result.reason === 'category_mismatch'
       || result.reason === 'human_needed' || result.reason === 'left_allowed_site') break
     if (!result.ok) break
     if (repeated >= 2) {
@@ -297,7 +368,7 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
       break
     }
 
-    const next = await nextSellerTab(tab.id, knownIds)
+    const next = await nextTaskTab(tab.id, knownIds, mode)
     if (!next) { last = { ...result, ok: false, reason: 'left_allowed_site' }; break }
     knownIds.add(next.id)
     tab = next
@@ -308,7 +379,7 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
   const mediaMissing = attachments.length > 0 && !uploaded
   const reachedLimit = stepsRun >= MAX_AUTONOMOUS_STEPS && last?.ok && !last?.submitted
   const terminalReason = mediaMissing ? 'media_not_uploaded' : reachedLimit ? 'step_limit' : last?.reason
-  const ok = submitted || (totalDone > 0 && !needsConfirmation && !mediaMissing
+  const ok = Boolean(last?.completed) || submitted || (totalDone > 0 && !needsConfirmation && !mediaMissing
     && terminalReason !== 'no_progress' && terminalReason !== 'step_limit')
   const final = {
     ...(last ?? {}), ok, done: totalDone, failed: totalFailed,
@@ -432,6 +503,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       confirmRisky: Boolean(message.confirmRisky),
       confirmCategoryMismatch: Boolean(message.confirmCategoryMismatch),
       attachments: Array.isArray(message.attachments) ? message.attachments : [],
+      mode: message.mode === 'general_browser' ? 'general_browser' : 'commerce',
+      startUrl: message.startUrl,
     }).then(sendResponse)
     return true
   }

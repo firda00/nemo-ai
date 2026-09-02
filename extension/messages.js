@@ -16,6 +16,11 @@ const DICT = {
     uz: 'Ochiq sahifada nima qilishni yozing. Nemo uni ko‘rib, amallarni taklif qiladi.',
   },
   working: { ru: 'Смотрю страницу…', uz: 'Sahifani ko‘ryapman…' },
+  enableUniversal: { ru: 'Разрешить Nemo работать на сайтах', uz: 'Nemo’ga saytlarda ishlashga ruxsat berish' },
+  universalEnabled: { ru: '✓ Управление сайтами включено', uz: '✓ Saytlarni boshqarish yoqilgan' },
+  universalGranted: { ru: 'Готово. Теперь Nemo может сам открывать сайты и переходить между вкладками.', uz: 'Tayyor. Endi Nemo saytlarni o‘zi ochib, varaqlar orasida o‘ta oladi.' },
+  universalDenied: { ru: 'Разрешение не выдано. Nemo продолжит работать только в Uzum.', uz: 'Ruxsat berilmadi. Nemo faqat Uzum’da ishlashda davom etadi.' },
+  host_permission_required: { ru: 'Откройте расширение Nemo и один раз разрешите ему работать на сайтах.', uz: 'Nemo kengaytmasini oching va saytlarda ishlashga bir marta ruxsat bering.' },
 
   run: {
     ru: "Выполнить",

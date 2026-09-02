@@ -356,7 +356,7 @@ function BrowserControlArtifact({ runKey, prompt }: { runKey: number; prompt: st
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-text">{running ? t('browserControl.running') : result?.submitted ? t('browserControl.submitted') : result?.ok ? t('browserControl.completed') : t('browserControl.stopped')}</p>
-        <p className="mt-1 text-xs leading-5 text-muted">{running ? t('browserControl.runningHint') : reason || t('browserControl.completedHint')}</p>
+        <p className="mt-1 text-xs leading-5 text-muted">{running ? t('browserControl.runningHint') : result?.note || reason || t('browserControl.completedHint')}</p>
       </div>
       {!running && result && <span className="rounded-full border border-ice/[0.08] px-2.5 py-1 text-[10px] font-semibold text-muted">{t('browserControl.actions', { count: result.done })}</span>}
     </div>

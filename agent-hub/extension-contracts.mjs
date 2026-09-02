@@ -108,6 +108,12 @@ const contracts = [
     && manifest.host_permissions.includes('https://ogfmyjiuqmgroobckdyw.supabase.co/*')
     && manifest.host_permissions.every((one) => !one.includes('*.'))],
 
+  ['universal website access is optional and requires one explicit Chrome grant',
+    manifest.optional_host_permissions?.includes('http://*/*')
+    && manifest.optional_host_permissions?.includes('https://*/*')
+    && popup.includes("chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] })")
+    && !manifest.content_scripts.some((script) => script.matches.includes('<all_urls>'))],
+
   ['no wildcard host slips in through content scripts',
     manifest.content_scripts.every((script) =>
       script.matches.every((match) => match === 'https://seller.uzum.uz/*'))],
@@ -311,7 +317,7 @@ const contracts = [
     background.includes("const SELLER_HOME = 'https://seller.uzum.uz/'")
     && background.includes('MAX_AUTONOMOUS_STEPS = 12')
     && background.includes('chrome.tabs.create({ url: SELLER_HOME, active: true })')
-    && background.includes('nextSellerTab(tab.id, knownIds)')
+    && background.includes('nextTaskTab(tab.id, knownIds, mode)')
     && background.includes('runInstructionStep({')],
 
   ['the trusted Nemo chat can start the same bounded browser loop',
@@ -321,12 +327,18 @@ const contracts = [
     && link.includes('export async function runExtensionBrowserTask')
     && background.indexOf("message?.type === 'nemo:run-browser'") > background.indexOf('ALLOWED_ORIGINS.includes(origin)')],
 
-  ['the autonomous browser is bounded to Seller, login screens and progress guards',
-    background.includes('new URL(url).origin === new URL(SELLER_HOME).origin')
+  ['the autonomous browser is bounded by web protocols, login screens and progress guards',
+    background.includes("['http:', 'https:'].includes(new URL(url).protocol)")
     && background.includes("reason: 'left_allowed_site'")
     && background.includes("reason: 'no_progress'")
     && content.includes("input[type=\"password\"]")
     && content.includes("return 'login_required'")],
+
+  ['non-Uzum pages receive the same scanner and executor only after permission',
+    background.includes('async function ensurePageBridge(tabId)')
+    && background.includes("for (const file of ['scanner.js', 'executor.js', 'content.js'])")
+    && background.includes('chrome.scripting.executeScript')
+    && background.includes("mode: mode === 'commerce' ? 'commerce' : 'general_browser'")],
 
   // Заполнить половину формы и только потом заметить капчу — значит оставить в чужом кабинете
   // полуготовую карточку.
@@ -411,7 +423,7 @@ const contracts = [
   // каждом запуске заново, и постоянного чекбокса в интерфейсе для него нет.
   ['the category override is asked every run, never remembered',
     background.includes('confirmCategoryMismatch = false')
-    && background.includes("callNemo('agent_plan', { instruction, page: scan.page, confirmCategoryMismatch })")
+    && background.includes("instruction, page: scan.page, confirmCategoryMismatch,")
     && background.includes("reason: 'category_mismatch'")
     && popup.includes("answer.reason === 'category_mismatch'")
     && popup.includes('let pendingCategoryConfirm = false')

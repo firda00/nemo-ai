@@ -223,6 +223,9 @@ function kindOf(element) {
  */
 const RISKY = [
   'удал', 'delete', 'o‘chir', 'ochir',
+  'оплат', 'купить', 'purchase', 'checkout', 'pay now', 'перевести деньги', 'transfer money',
+  'отправить письмо', 'send email', 'send message', 'опубликов', 'publish', 'post now',
+  'предоставить доступ', 'grant access', 'разрешить доступ', 'allow access',
   'отправ', 'submit', 'publish', 'опубликов', 'модерац',
   'оплат', 'pay', 'купить', 'checkout', 'to‘la',
   'подтверд', 'confirm', 'сохранит', 'save',
@@ -321,6 +324,11 @@ function scanPage(limit = 120) {
   // этих двух чисел «в DOM: 1» можно было только гадать, что значит.
   const domTotal = document.querySelectorAll('*').length
   const shadowHosts = countShadowHosts(document)
+  // Текст страницы нужен универсальному агенту для чтения результатов поиска, статей и таблиц.
+  // HTML, скрипты и значения input не отправляются; объём ограничен, чтобы страница не вытеснила
+  // поручение пользователя из контекста модели.
+  const content = String(document.body?.innerText ?? document.documentElement?.innerText ?? '')
+    .replace(/\s+/g, ' ').trim().slice(0, 12_000)
 
   return {
     url: location.href,
@@ -328,6 +336,7 @@ function scanPage(limit = 120) {
     // отчёте, но чинятся по-разному.
     frame: window.top === window.self ? 'главный' : 'вложенный',
     title: document.title,
+    content,
     count: found.length,
     raw: raw.length,
     domTotal,

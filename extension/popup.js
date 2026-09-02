@@ -9,6 +9,7 @@ const nodes = {
   title: document.getElementById('title'),
   intro: document.getElementById('intro'),
   state: document.getElementById('state'),
+  universal: document.getElementById('universal'),
   instruction: document.getElementById('instruction'),
   media: document.getElementById('media'),
   mediaLabel: document.getElementById('mediaLabel'),
@@ -36,6 +37,7 @@ function paintChrome() {
   nodes.run.textContent = say('run', lang)
   nodes.riskyLabel.textContent = say('allowRisky', lang)
   nodes.diagnose.textContent = say('diagnose', lang)
+  nodes.universal.textContent = say('enableUniversal', lang)
   nodes.instruction.placeholder = say('placeholder', lang)
   nodes.mediaLabel.textContent = say('mediaLabel', lang)
   nodes.mediaCount.textContent = nodes.media.files?.length
@@ -74,6 +76,9 @@ async function selectedMedia() {
 
 async function refresh() {
   paintChrome()
+  const universal = await chrome.permissions.contains({ origins: ['http://*/*', 'https://*/*'] })
+  nodes.universal.textContent = say(universal ? 'universalEnabled' : 'enableUniversal', lang)
+  nodes.universal.disabled = universal
   const info = await chrome.runtime.sendMessage({ type: 'nemo:state' }).catch(() => null)
   const linked = Boolean(info?.linked)
   nodes.run.disabled = !linked
@@ -85,6 +90,14 @@ async function refresh() {
   nodes.state.textContent = linked && recentRun?.status === 'running'
     ? say('autonomousRunning', lang).replace('{step}', String(recentRun.step ?? 0))
     : say(linked ? 'ready' : info?.expired ? 'expired' : 'not_linked', lang)
+}
+
+async function enableUniversal() {
+  // Chrome показывает системное окно разрешений только из прямого клика пользователя. После
+  // этого разрешение сохраняется, и каждое следующее поручение работает без участия человека.
+  const granted = await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] })
+  nodes.result.textContent = say(granted ? 'universalGranted' : 'universalDenied', lang)
+  await refresh()
 }
 
 /**
@@ -150,9 +163,12 @@ async function run() {
     nodes.run.disabled = false
     return
   }
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
   const answer = await chrome.runtime.sendMessage({
     type: 'nemo:instruct',
     instruction,
+    mode: String(active?.url ?? '').startsWith('https://seller.uzum.uz/') ? 'commerce' : 'general_browser',
+    startUrl: active?.url,
     // Согласие передаётся ЯВНО и каждый раз: галочка не запоминается между запусками, потому что
     // разрешение, выданное однажды, через неделю нажимает кнопку, о которой уже забыли.
     confirmRisky: nodes.risky.checked,
@@ -189,6 +205,7 @@ async function diagnose() {
 }
 
 nodes.diagnose.addEventListener('click', () => void diagnose())
+nodes.universal.addEventListener('click', () => void enableUniversal())
 nodes.run.addEventListener('click', () => void run())
 nodes.instruction.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void run()
