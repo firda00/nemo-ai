@@ -2,7 +2,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { CLI_MAX_BODY_BYTES, CLI_MAX_COMPLETION_TOKENS, parseCliChatInput } from '../_shared/cliChat.ts'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { estimateCostUsd, PRIMARY_MODEL } from '../_shared/llm.ts'
+import { CLIENT_RESPONSE_STYLE, estimateCostUsd, PRIMARY_MODEL } from '../_shared/llm.ts'
 import { monthlyTokens, planOf } from '../_shared/plans.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -71,7 +71,9 @@ Deno.serve(async (req) => {
         'X-Title': 'Nemo CLI',
       },
       body: JSON.stringify({
-        model, messages: parsed.data.messages, max_tokens: CLI_MAX_COMPLETION_TOKENS,
+        model,
+        messages: [{ role: 'system', content: CLIENT_RESPONSE_STYLE }, ...parsed.data.messages],
+        max_tokens: CLI_MAX_COMPLETION_TOKENS,
         ...(parsed.data.tools.length ? { tools: parsed.data.tools, tool_choice: 'auto' } : {}),
       }),
       signal: AbortSignal.timeout(45_000),
