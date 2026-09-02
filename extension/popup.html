@@ -22,6 +22,14 @@
       background: rgba(10,13,28,.6); color: #E8ECF8; padding: 10px; font: inherit;
     }
     textarea:focus { outline: none; border-color: rgba(139,124,248,.6); }
+    .media-picker {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-top: 8px; padding: 9px 10px; border-radius: 10px;
+      border: 1px dashed rgba(232,236,248,.18); color: #8B93AD; cursor: pointer;
+    }
+    .media-picker:hover { border-color: rgba(139,124,248,.55); color: #E8ECF8; }
+    .media-picker input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
+    .media-count { color: #5EEAD4; font-size: 11px; white-space: nowrap; }
     #run {
       width: 100%; margin-top: 8px; padding: 12px; border: 0; border-radius: 10px; cursor: pointer;
       background: linear-gradient(135deg, #8B7CF8, #6366F1);
@@ -58,6 +66,11 @@
   <div class="state" id="state"></div>
 
   <textarea id="instruction" rows="3"></textarea>
+  <label class="media-picker" for="media">
+    <span id="mediaLabel"></span>
+    <span id="mediaCount" class="media-count"></span>
+    <input id="media" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+  </label>
   <label class="risky">
     <input type="checkbox" id="risky" />
     <span id="riskyLabel"></span>

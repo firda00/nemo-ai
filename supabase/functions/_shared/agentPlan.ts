@@ -20,6 +20,8 @@ export interface PageItem {
   context?: string
   risky?: boolean
   options?: string[]
+  accept?: string
+  multiple?: boolean
 }
 
 export type PlanAction =
@@ -56,6 +58,7 @@ export const PLAN_SYSTEM_PROMPT = `Ты помогаешь заполнять ф
   description_uz → ВСЕ поля описания на узбекском, сколько бы их ни было
   category       → поле поиска категории
   price_uzs      → поле цены
+  stock_total    → поле остатка / количества на складе
   attributes     → список характеристик [{"name","value"}], которые владелец сам назвал. Ставь
                     значение в select, ТОЛЬКО если его name или value явно совпадает с подписью
                     поля или с одним из "options" почти дословно — «похоже, наверное то самое»
@@ -84,7 +87,36 @@ export const PLAN_SYSTEM_PROMPT = `Ты помогаешь заполнять ф
    обычно это значит, что на странице не выполнен предыдущий шаг.
 5. Соблюдай смысл языка: поле «на русском» получает русский текст, «на узбекском» — узбекский.
    Слово Uzum в контексте языком поля не делает — оно есть на каждой странице этого сайта.
-6. Уже заполненное (непустое "value") не переписывай, если в поручении не сказано обратное.`
+6. Уже заполненное (непустое "value") не переписывай, если в поручении не сказано «обнови»,
+   «измени», «замени» или другое столь же явное указание.
+7. Поле kind "file" не трогай: изображения, выбранные владельцем, расширение прикрепляет само.
+8. Если владелец прямо попросил отправить/сохранить карточку, можно предложить click по
+   соответствующей risky-кнопке. Исполнитель всё равно потребует отдельную галочку подтверждения.`
+
+/**
+ * Изменяемые числовые поля, которые владелец явно назвал в текущем поручении.
+ *
+ * Это не свободное извлечение моделью: значение попадает в data только рядом с точным словом
+ * «цена»/«остаток». Поэтому «обнови остаток 12» работает на открытой карточке, а случайное число
+ * из названия товара или сообщения не превращается в цену.
+ */
+export function extractOwnerFormValues(instruction: string): { price_uzs?: number; stock_total?: number } {
+  const source = instruction.normalize('NFKC').toLowerCase()
+  const read = (pattern: RegExp, max: number) => {
+    const match = source.match(pattern)
+    if (!match?.[1]) return undefined
+    const normalized = match[1].replace(/[\s_.,]/g, '')
+    if (!/^\d+$/.test(normalized)) return undefined
+    const value = Number(normalized)
+    return Number.isSafeInteger(value) && value >= 0 && value <= max ? value : undefined
+  }
+  const price_uzs = read(/(?:цена|цену|стоимость|price|narx(?:i|ni)?)\s*(?:=|:|на|до)?\s*([\d\s_.,]+)/iu, 1_000_000_000_000)
+  const stock_total = read(/(?:остаток|остатки|количеств[оа]|stock|qoldiq(?:ni|i)?)\s*(?:=|:|на|до)?\s*([\d\s_.,]+)/iu, 1_000_000_000)
+  return {
+    ...(price_uzs == null ? {} : { price_uzs }),
+    ...(stock_total == null ? {} : { stock_total }),
+  }
+}
 
 /** Данные черновика в виде, пригодном для промпта. Ключи говорящие: модель читает их как подписи. */
 export function planUserPrompt(input: {
@@ -102,6 +134,8 @@ export function planUserPrompt(input: {
     disabled: item.disabled || undefined,
     risky: item.risky || undefined,
     options: item.options?.length ? item.options : undefined,
+    accept: item.accept || undefined,
+    multiple: item.multiple || undefined,
     context: item.context || undefined,
   }))
   return JSON.stringify({

@@ -303,6 +303,12 @@ function scanPage(limit = 120) {
       ...(kind === 'select'
         ? { options: [...(element.options ?? [])].slice(0, 40).map((one) => (one.text ?? '').trim().slice(0, 80)) }
         : {}),
+      ...(kind === 'file'
+        ? {
+          accept: String(element.accept ?? '').slice(0, 160),
+          multiple: Boolean(element.multiple),
+        }
+        : {}),
     })
   }
   // Счётчик по видам — то, по чему сразу видно, дошли ли поля формы до снимка вообще. «Собрано 120

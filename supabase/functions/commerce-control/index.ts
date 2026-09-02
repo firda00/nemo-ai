@@ -15,7 +15,7 @@ import {
 import { catalogueContext } from '../_shared/commerceListingChat.ts'
 import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 import { signImages } from '../_shared/listingImages.ts'
-import { PLAN_SYSTEM_PROMPT, checkPlan, detectCategoryMismatch, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
+import { PLAN_SYSTEM_PROMPT, checkPlan, detectCategoryMismatch, extractOwnerFormValues, planNote, planUserPrompt, unaddressedFields } from '../_shared/agentPlan.ts'
 import {
   classifyProviderResponse, decideSubmit, ownerMessage,
   type SubmitMode,
@@ -954,6 +954,7 @@ Deno.serve(async (req) => {
     if (!items.length) return json({ error: 'empty_page' }, 400)
     const instruction = typeof body?.instruction === 'string' ? body.instruction.trim().slice(0, 500) : ''
     if (!instruction) return json({ error: 'no_instruction' }, 400)
+    const ownerValues = extractOwnerFormValues(instruction)
 
     // Данные для подстановки берутся НА СЕРВЕРЕ, а не из поручения: иначе достаточно попросить
     // «впиши сюда чужой артикул», и расширение впишет что угодно, что уместилось в текст.
@@ -1005,13 +1006,15 @@ Deno.serve(async (req) => {
           content: planUserPrompt({
             instruction,
             page: { url: body?.page?.url, title: body?.page?.title, items },
-            data: draft
+            data: draft || Object.keys(ownerValues).length
               ? {
-                title_ru: draft.title_ru, title_uz: draft.title_uz,
-                description_ru: draft.description_ru, description_uz: draft.description_uz,
-                category: draft.uzum_category,
-                price_uzs: draft.min_selling_price_tiyin == null ? null : Math.ceil(draft.min_selling_price_tiyin / 100),
-                attributes: draft.attributes ?? [],
+                title_ru: draft?.title_ru ?? null, title_uz: draft?.title_uz ?? null,
+                description_ru: draft?.description_ru ?? null, description_uz: draft?.description_uz ?? null,
+                category: draft?.uzum_category ?? null,
+                price_uzs: ownerValues.price_uzs
+                  ?? (draft?.min_selling_price_tiyin == null ? null : Math.ceil(draft.min_selling_price_tiyin / 100)),
+                stock_total: ownerValues.stock_total ?? null,
+                attributes: draft?.attributes ?? [],
               }
               : null,
           }),

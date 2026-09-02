@@ -11,6 +11,7 @@ import {
   PLAN_SYSTEM_PROMPT,
   checkPlan,
   detectCategoryMismatch,
+  extractOwnerFormValues,
   planNote,
   planUserPrompt,
   unaddressedFields,
@@ -197,7 +198,7 @@ assert.ok(PLAN_SYSTEM_PROMPT.includes('Uzum'), 'ловушка про язык �
 // пустой план на «заполни карточку товара» и будет формально права.
 assert.ok(PLAN_SYSTEM_PROMPT.includes('ОБЩИЕ ПОРУЧЕНИЯ — ЭТО НОРМА'))
 assert.ok(PLAN_SYSTEM_PROMPT.includes('Заполни карточку товара'))
-for (const key of ['title_ru', 'title_uz', 'description_ru', 'description_uz', 'category', 'price_uzs', 'attributes']) {
+for (const key of ['title_ru', 'title_uz', 'description_ru', 'description_uz', 'category', 'price_uzs', 'stock_total', 'attributes']) {
   assert.ok(PLAN_SYSTEM_PROMPT.includes(key), `ключ данных ${key} назван в промпте`)
 }
 // Пустой ответ разрешён только как крайний случай, а не как осторожная привычка.
@@ -232,4 +233,10 @@ assert.ok(prompt.includes('Название товара на русском'))
 assert.ok(prompt.includes('Брелок'))
 assert.equal(/<div|class=|querySelector/.test(prompt), false, 'разметка наружу не уезжает')
 
-console.log('[OK] Agent plan behaviour: 76 assertions')
+// Цена и остаток для РЕДАКТИРОВАНИЯ существующей карточки берутся только из явных слов владельца.
+assert.deepEqual(extractOwnerFormValues('Обнови цену на 129 900 и остаток 17'), { price_uzs: 129900, stock_total: 17 })
+assert.deepEqual(extractOwnerFormValues('Narxni: 55 000, qoldiqni 8'), { price_uzs: 55000, stock_total: 8 })
+assert.deepEqual(extractOwnerFormValues('Товар 2026, артикул 99881'), {}, 'случайные числа не становятся ценой или остатком')
+assert.deepEqual(extractOwnerFormValues('Поставь цену 999999999999999999999'), {}, 'небезопасно большое число отбрасывается')
+
+console.log('[OK] Agent plan behaviour: 80 assertions')

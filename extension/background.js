@@ -56,7 +56,28 @@ async function activeTab() {
   return tab ?? null
 }
 
-const toTab = (tabId, message) => chrome.tabs.sendMessage(tabId, message).catch(() => null)
+const toTab = (tabId, message, frameId = 0) => chrome.tabs.sendMessage(tabId, message, { frameId }).catch(() => null)
+
+/**
+ * Uzum может отрисовать рабочую форму во вложенном frame. Content script установлен во все
+ * frame, но tabs.sendMessage без frameId всегда разговаривает только с главным документом.
+ * Выбираем кадр с наибольшим числом полей формы; при равенстве главный кадр остаётся первым.
+ */
+async function scanWorkingFrame(tabId) {
+  const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)
+  const ids = [...new Set((frames?.length ? frames : [{ frameId: 0 }]).map((frame) => frame.frameId))]
+  const scans = await Promise.all(ids.map(async (frameId) => ({
+    frameId,
+    scan: await toTab(tabId, { type: 'nemo:scan' }, frameId),
+  })))
+  const score = (entry) => {
+    if (!entry.scan?.ok) return -1
+    const items = entry.scan.page?.items ?? []
+    const fields = items.filter((item) => ['input', 'textarea', 'richtext', 'select', 'file'].includes(item.kind)).length
+    return fields * 1000 + items.length
+  }
+  return scans.sort((a, b) => score(b) - score(a) || a.frameId - b.frameId)[0] ?? { frameId: 0, scan: null }
+}
 
 /**
  * Одно поручение: снять страницу, спросить у Nemo план, выполнить его.
@@ -65,13 +86,30 @@ const toTab = (tabId, message) => chrome.tabs.sendMessage(tabId, message).catch(
  * происходит: расширение не придумывает действия само, потому что придуманное действие в чужом
  * кабинете стоит дороже несделанного.
  */
-export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false }) {
+function mediaUploadAction(page, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return { action: null, error: null }
+  const candidates = (page?.items ?? []).filter((item) => item.kind === 'file' && !item.disabled)
+  if (!candidates.length) return { action: null, error: 'no_file_field' }
+  const imageWords = /фото|изображ|картин|медиа|image|photo|picture|media|rasm|surat|accept.*image/i
+  const ranked = candidates.map((item) => ({
+    item,
+    score: imageWords.test(`${item.label ?? ''} ${item.context ?? ''} ${item.name ?? ''} ${item.accept ?? ''}`) ? 2 : 0,
+  })).sort((a, b) => b.score - a.score || a.item.id - b.item.id)
+  const best = ranked[0]
+  if (!best || (ranked.length > 1 && best.score === ranked[1].score && best.score === 0)) {
+    return { action: null, error: 'no_file_field' }
+  }
+  return { action: { type: 'upload', id: best.item.id, files: attachments }, error: null }
+}
+
+export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [] }) {
   if (!await readSession()) return { ok: false, reason: 'not_linked' }
 
   const tab = await activeTab()
   if (!tab?.id) return { ok: false, reason: 'no_tab' }
 
-  const scan = await toTab(tab.id, { type: 'nemo:scan' })
+  const frame = await scanWorkingFrame(tab.id)
+  const scan = frame.scan
   if (!scan) return { ok: false, reason: 'no_response' }
   if (!scan.ok) return { ok: false, reason: scan.reason ?? 'no_response' }
 
@@ -116,7 +154,9 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     console.log('[Nemo] план не тронул:', unaddressed.map((one) => `#${one.id} ${one.kind}`).join(', '))
   }
 
-  const actions = planned.data?.actions ?? []
+  const upload = mediaUploadAction(scan.page, attachments)
+  if (upload.error) return { ok: false, reason: upload.error }
+  const actions = [...(planned.data?.actions ?? []), ...(upload.action ? [upload.action] : [])]
   if (!actions.length) {
     return {
       ok: false,
@@ -129,22 +169,25 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     }
   }
 
-  const executed = await toTab(tab.id, { type: 'nemo:run-plan', actions, confirmRisky })
+  const executed = await toTab(tab.id, { type: 'nemo:run-plan', actions, confirmRisky }, frame.frameId)
   if (!executed) return { ok: false, reason: 'no_response' }
 
   // Нужное подтверждение — это не провал плана, а вопрос к человеку. Отделено от прочих неудач,
   // потому что ответ на него другой: не «почини», а «разреши».
   const needsConfirmation = (executed.results ?? []).some((one) => one.error === 'needs_confirmation')
+  const submitted = (executed.results ?? []).some((one) => one.ok && one.method === 'click' && one.effect === 'submit')
 
   // Каждая попытка попадает в журнал Nemo — включая те, где ничего не вышло. Попытка, о которой
   // ничего не осталось, через неделю превращается в «оно почему-то не работает».
   if (planned.data?.draft_id) {
     await reportResult({
       draftId: planned.data.draft_id,
-      status: executed.done > 0 ? 'refused' : 'failed',
-      reason: executed.done > 0 ? 'human_needed' : 'form_changed',
-      message: executed.done > 0
-        ? `Заполнено полей: ${executed.done}. Проверьте текст и продолжайте сами.`
+      status: submitted ? 'sent' : executed.done > 0 ? 'refused' : 'failed',
+      reason: submitted ? 'browser_submit_clicked' : executed.done > 0 ? 'human_needed' : 'form_changed',
+      message: submitted
+        ? 'Кнопка отправки нажата с подтверждением владельца. Ожидается подтверждение синхронизацией Uzum.'
+        : executed.done > 0
+        ? `Выполнено действий: ${executed.done}. Проверьте карточку перед отправкой.`
         : 'Ни одно поле не заполнено — план не подошёл этой странице.',
     })
   }
@@ -155,6 +198,7 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     failed: executed.failed,
     results: executed.results,
     needsConfirmation,
+    submitted,
     note: planned.data?.note ?? null,
     unaddressed,
   }
@@ -181,7 +225,8 @@ export async function collectDiagnostics() {
   ]
   if (!tab?.id) return { text: lines.join('\n') }
 
-  const scan = await toTab(tab.id, { type: 'nemo:scan' })
+  const frame = await scanWorkingFrame(tab.id)
+  const scan = frame.scan
   if (!scan) {
     lines.push('снимок: страница не ответила — обновите её (Ctrl+F5) и повторите')
   } else if (!scan.ok) {
@@ -254,6 +299,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       instruction: String(message.instruction ?? '').slice(0, 500),
       confirmRisky: Boolean(message.confirmRisky),
       confirmCategoryMismatch: Boolean(message.confirmCategoryMismatch),
+      attachments: Array.isArray(message.attachments) ? message.attachments : [],
     }).then(sendResponse)
     return true
   }

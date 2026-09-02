@@ -10,6 +10,9 @@ const nodes = {
   intro: document.getElementById('intro'),
   state: document.getElementById('state'),
   instruction: document.getElementById('instruction'),
+  media: document.getElementById('media'),
+  mediaLabel: document.getElementById('mediaLabel'),
+  mediaCount: document.getElementById('mediaCount'),
   risky: document.getElementById('risky'),
   riskyLabel: document.getElementById('riskyLabel'),
   run: document.getElementById('run'),
@@ -34,6 +37,39 @@ function paintChrome() {
   nodes.riskyLabel.textContent = say('allowRisky', lang)
   nodes.diagnose.textContent = say('diagnose', lang)
   nodes.instruction.placeholder = say('placeholder', lang)
+  nodes.mediaLabel.textContent = say('mediaLabel', lang)
+  nodes.mediaCount.textContent = nodes.media.files?.length
+    ? say('mediaCount', lang).replace('{count}', String(nodes.media.files.length))
+    : say('mediaEmpty', lang)
+}
+
+const MAX_MEDIA_FILES = 8
+const MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024
+const MAX_MEDIA_TOTAL_BYTES = 32 * 1024 * 1024
+const ALLOWED_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('read_failed'))
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function selectedMedia() {
+  const files = [...(nodes.media.files ?? [])]
+  if (!files.length) return []
+  if (files.length > MAX_MEDIA_FILES) throw new Error('too_many_media')
+  if (files.some((file) => !ALLOWED_MEDIA_TYPES.has(file.type))) throw new Error('unsupported_media')
+  if (files.some((file) => file.size <= 0 || file.size > MAX_MEDIA_FILE_BYTES)) throw new Error('media_too_large')
+  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_MEDIA_TOTAL_BYTES) throw new Error('media_total_too_large')
+  return await Promise.all(files.map(async (file) => ({
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    dataUrl: await readAsDataUrl(file),
+  })))
 }
 
 async function refresh() {
@@ -78,6 +114,7 @@ function describe(answer) {
     if (answer.rejected?.length) lines.push(`${say('rejected', lang)} ${answer.rejected.length}`)
     return lines.join('\n')
   }
+  if (answer.submitted) return say('submitted', lang)
   const lines = [`${say('filledCount', lang)} ${answer.done}`]
   if (answer.failed) lines.push(`${say('failedCount', lang)} ${answer.failed}`)
   if (answer.needsConfirmation) lines.push(say('needs_confirmation', lang))
@@ -101,6 +138,14 @@ async function run() {
   nodes.result.textContent = say('working', lang)
   const confirmCategoryMismatch = pendingCategoryConfirm
   pendingCategoryConfirm = false
+  let attachments = []
+  try {
+    attachments = await selectedMedia()
+  } catch (error) {
+    nodes.result.textContent = say(error instanceof Error ? error.message : 'unsupported_media', lang)
+    nodes.run.disabled = false
+    return
+  }
   const answer = await chrome.runtime.sendMessage({
     type: 'nemo:instruct',
     instruction,
@@ -108,9 +153,11 @@ async function run() {
     // разрешение, выданное однажды, через неделю нажимает кнопку, о которой уже забыли.
     confirmRisky: nodes.risky.checked,
     confirmCategoryMismatch,
+    attachments,
   }).catch(() => null)
   if (answer && !answer.ok && answer.reason === 'category_mismatch') pendingCategoryConfirm = true
   nodes.result.textContent = describe(answer)
+  if (answer?.ok) nodes.media.value = ''
   await refresh()
 }
 
@@ -142,6 +189,7 @@ nodes.run.addEventListener('click', () => void run())
 nodes.instruction.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void run()
 })
+nodes.media.addEventListener('change', paintChrome)
 
 for (const button of document.querySelectorAll('.lang button')) {
   button.addEventListener('click', async () => {

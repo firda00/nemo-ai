@@ -22,9 +22,17 @@ const DICT = {
     uz: "Bajarish",
   },
   placeholder: {
-    ru: "Например: заполни карточку товара",
-    uz: "Masalan: tovar kartochkasini to‘ldir",
+    ru: "Например: обнови цену, остаток и фото карточки",
+    uz: "Masalan: kartochka narxi, qoldig‘i va rasmlarini yangila",
   },
+  mediaLabel: { ru: 'Фото и инфографика', uz: 'Rasm va infografika' },
+  mediaEmpty: { ru: 'не выбраны', uz: 'tanlanmagan' },
+  mediaCount: { ru: 'выбрано: {count}', uz: 'tanlandi: {count}' },
+  too_many_media: { ru: 'Можно выбрать не больше 8 изображений.', uz: '8 tadan ortiq rasm tanlab bo‘lmaydi.' },
+  unsupported_media: { ru: 'Поддерживаются JPG, PNG и WebP.', uz: 'JPG, PNG va WebP qo‘llanadi.' },
+  media_too_large: { ru: 'Каждое изображение должно быть не больше 8 МБ.', uz: 'Har bir rasm 8 MB dan oshmasligi kerak.' },
+  media_total_too_large: { ru: 'Общий размер изображений должен быть не больше 32 МБ.', uz: 'Rasmlarning umumiy hajmi 32 MB dan oshmasligi kerak.' },
+  no_file_field: { ru: 'На странице не найдено поле загрузки изображений. Откройте шаг «Фото» и повторите.', uz: 'Sahifada rasm yuklash maydoni topilmadi. «Rasmlar» bosqichini ochib, qayta urinib ko‘ring.' },
   no_tab: {
     ru: "Откройте страницу, с которой нужно работать, и повторите.",
     uz: "Ishlamoqchi bo‘lgan sahifani oching va qayta urinib ko‘ring.",
@@ -44,6 +52,10 @@ const DICT = {
   filledCount: {
     ru: "Готово. Заполнено полей:",
     uz: "Tayyor. To‘ldirilgan maydonlar:",
+  },
+  submitted: {
+    ru: 'Карточка отправлена по вашему подтверждению. Nemo проверит результат при следующей синхронизации.',
+    uz: 'Kartochka sizning tasdig‘ingiz bilan yuborildi. Nemo natijani keyingi sinxronlashda tekshiradi.',
   },
   failedCount: {
     ru: "Не удалось:",

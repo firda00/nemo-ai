@@ -240,6 +240,24 @@ const contracts = [
     && executor.includes("action.type === 'select'")
     && executor.includes("error: 'unknown_action'")],
 
+  // Файл никогда не выбирает модель: его явно выбирает владелец в popup, после чего исполнитель
+  // прикрепляет байты только к найденному input[type=file] и проверяет FileList обратно.
+  ['owner-selected images use a bounded verified file-input upload',
+    popupHtml.includes('accept="image/jpeg,image/png,image/webp"')
+    && popup.includes('MAX_MEDIA_FILES = 8')
+    && background.includes("type: 'upload'")
+    && executor.includes("String(element.type ?? '').toLowerCase() !== 'file'")
+    && executor.includes('const transfer = new DataTransfer()')
+    && executor.includes('element.files = transfer.files')
+    && executor.includes('attached === accepted.length')],
+
+  ['an owner-confirmed risky submit is reported separately from field filling',
+    executor.includes("? 'submit'")
+    && background.includes("one.effect === 'submit'")
+    && background.includes("reason: submitted ? 'browser_submit_clicked'")
+    && background.includes("status: submitted ? 'sent'")
+    && popup.includes('if (answer.submitted)')],
+
   // innerHTML даёт худший исход: текст появляется на экране, модель редактора остаётся пустой, и
   // описание уходит на модерацию пустым. Именно так описания и остались пустыми в прошлой версии.
   ['the rich text editor is never filled through innerhtml',
@@ -260,7 +278,7 @@ const contracts = [
   // и день на выяснение, какая половина уцелела.
   ['every step reports for itself and the plan does not stop early',
     executor.includes('function runPlan(actions, options)')
-    && executor.includes('results.push(runAction(action, options))')
+    && executor.includes('results.push(await runAction(action, options))')
     && !/break\s*$/m.test(stripComments(executor))],
 
   // Кнопка «Удалить» или «Отправить», нажатая по плану модели, не отменяется никаким «назад».
@@ -281,6 +299,12 @@ const contracts = [
     content.includes('chrome.runtime.onMessage.addListener')
     && content.includes("message?.type === 'nemo:scan'")
     && content.includes("message?.type === 'nemo:run-plan'")],
+
+  ['forms rendered in a child frame are scanned and executed in the same frame',
+    manifest.permissions.includes('webNavigation')
+    && background.includes('chrome.webNavigation.getAllFrames({ tabId })')
+    && background.includes("['input', 'textarea', 'richtext', 'select', 'file']")
+    && background.includes("{ type: 'nemo:run-plan', actions, confirmRisky }, frame.frameId")],
 
   // Заполнить половину формы и только потом заметить капчу — значит оставить в чужом кабинете
   // полуготовую карточку.
@@ -346,7 +370,7 @@ const contracts = [
   ['attributes reach the planner, not just the legacy task feed',
     AGENT_PLAN_BODY.includes(
       ".select('id, title_ru, title_uz, description_ru, description_uz, uzum_category, attributes, min_selling_price_tiyin')",
-    ) && AGENT_PLAN_BODY.includes('attributes: draft.attributes')],
+    ) && AGENT_PLAN_BODY.includes('attributes: draft?.attributes')],
 
   // Живой случай: страница на «Книги › Комиксы», план всё равно заполнил 7 полей данными
   // черновика про женский хиджаб. Никакая проверка ОТДЕЛЬНЫХ действий это не ловит — номера верные,

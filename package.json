@@ -80,7 +80,7 @@
     "test:uzum": "node --experimental-strip-types agent-hub/uzum-merchant-behavior.mjs",
     "test:sales-trend": "node --experimental-strip-types agent-hub/sales-trend-behavior.mjs",
     "test:listing-submit": "node --experimental-strip-types agent-hub/listing-submit-behavior.mjs",
-    "test:extension": "node agent-hub/extension-contracts.mjs",
+    "test:extension": "node agent-hub/extension-contracts.mjs && node agent-hub/extension-executor-behavior.mjs",
     "test:agent-plan": "node --experimental-strip-types agent-hub/agent-plan-behavior.mjs",
     "test:scanner": "node agent-hub/scanner-visibility-behavior.mjs",
     "test:scanner-shadow": "node agent-hub/scanner-shadow-dom-behavior.mjs",

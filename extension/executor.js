@@ -100,7 +100,57 @@ function typeIntoRichText(element, text) {
  * помеченную сканером как рискованная, не выполняется: план, пришедший от модели, не должен уметь
  * удалить товар или отправить карточку на модерацию только потому, что так сложились слова.
  */
-function runAction(action, { elementById, confirmRisky = false } = {}) {
+const MAX_UPLOAD_FILES = 8
+const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024
+const MAX_UPLOAD_TOTAL_BYTES = 32 * 1024 * 1024
+
+/**
+ * Передаёт выбранные владельцем изображения настоящему file-input.
+ *
+ * Путь к локальному файлу браузер раскрывать расширению не имеет права. Поэтому popup читает
+ * только выбранные человеком байты, а здесь из них собирается FileList через DataTransfer — тот
+ * же объект, который форма получила бы после ручного выбора файлов. После установки обязательно
+ * читаем files обратно: красивое событие change без реально прикреплённых файлов успехом не
+ * считается.
+ */
+async function uploadFiles(element, files) {
+  if ((element.tagName ?? '').toLowerCase() !== 'input' || String(element.type ?? '').toLowerCase() !== 'file') {
+    return { ok: false, error: 'not_a_file_field' }
+  }
+  if (!Array.isArray(files) || !files.length || files.length > MAX_UPLOAD_FILES) {
+    return { ok: false, error: 'invalid_files' }
+  }
+
+  let total = 0
+  const prepared = []
+  for (const source of files) {
+    const name = String(source?.name ?? '').replace(/[\\/\0]/g, '_').slice(0, 180)
+    const type = String(source?.type ?? '').toLowerCase()
+    const size = Number(source?.size ?? 0)
+    const dataUrl = String(source?.dataUrl ?? '')
+    if (!name || !/^image\/(jpeg|png|webp)$/.test(type)) return { ok: false, error: 'unsupported_file' }
+    if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_FILE_BYTES) return { ok: false, error: 'file_too_large' }
+    total += size
+    if (total > MAX_UPLOAD_TOTAL_BYTES) return { ok: false, error: 'files_too_large' }
+    if (!dataUrl.startsWith(`data:${type};base64,`)) return { ok: false, error: 'invalid_file_data' }
+    const blob = await fetch(dataUrl).then((response) => response.blob()).catch(() => null)
+    if (!blob || blob.size !== size) return { ok: false, error: 'invalid_file_data' }
+    prepared.push(new File([blob], name, { type, lastModified: Date.now() }))
+  }
+
+  const transfer = new DataTransfer()
+  const accepted = element.multiple ? prepared : prepared.slice(0, 1)
+  for (const file of accepted) transfer.items.add(file)
+  element.files = transfer.files
+  element.dispatchEvent(new Event('input', { bubbles: true }))
+  element.dispatchEvent(new Event('change', { bubbles: true }))
+  const attached = Number(element.files?.length ?? 0)
+  return attached === accepted.length
+    ? { ok: true, method: 'data-transfer', uploaded: attached }
+    : { ok: false, error: 'upload_not_accepted', uploaded: attached }
+}
+
+async function runAction(action, { elementById, confirmRisky = false } = {}) {
   const element = elementById(action?.id)
   if (!element) return { ok: false, id: action?.id, error: 'no_element' }
   if (element.disabled || element.getAttribute?.('aria-disabled') === 'true') {
@@ -120,8 +170,13 @@ function runAction(action, { elementById, confirmRisky = false } = {}) {
     if (element.getAttribute?.('data-nemo-risky') === 'true' && !confirmRisky) {
       return { ok: false, id: action.id, error: 'needs_confirmation' }
     }
+    const isRisky = element.getAttribute?.('data-nemo-risky') === 'true'
+    const riskText = `${element.innerText ?? element.textContent ?? ''} ${element.getAttribute?.('aria-label') ?? ''}`.toLowerCase()
+    const effect = /отправ|submit|publish|опубликов|модерац|yubor/.test(riskText)
+      ? 'submit'
+      : /удал|delete|o‘chir|ochir/.test(riskText) ? 'delete' : 'other'
     element.click()
-    return { ok: true, id: action.id, method: 'click' }
+    return { ok: true, id: action.id, method: 'click', risky: isRisky, effect }
   }
 
   if (action.type === 'select') {
@@ -136,6 +191,11 @@ function runAction(action, { elementById, confirmRisky = false } = {}) {
     return { ok: true, id: action.id, method: 'select' }
   }
 
+  if (action.type === 'upload') {
+    const result = await uploadFiles(element, action.files)
+    return { id: action.id, ...result }
+  }
+
   return { ok: false, id: action?.id, error: 'unknown_action' }
 }
 
@@ -146,10 +206,10 @@ function runAction(action, { elementById, confirmRisky = false } = {}) {
  * какая половина уцелела. Здесь каждый шаг отчитывается сам, и человек видит список: что встало,
  * что нет и почему.
  */
-function runPlan(actions, options) {
+async function runPlan(actions, options) {
   const results = []
   for (const action of actions ?? []) {
-    results.push(runAction(action, options))
+    results.push(await runAction(action, options))
   }
   return {
     done: results.filter((one) => one.ok).length,

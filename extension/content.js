@@ -104,14 +104,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const stop = findStopSign()
     if (stop) { sendResponse({ ok: false, reason: 'human_needed', detail: stop }); return true }
 
-    const report = runPlan(message.actions, {
-      elementById,
-      confirmRisky: Boolean(message.confirmRisky),
-    })
-    // Способ, которым сработал каждый шаг, — самое ценное в отчёте. Именно по нему видно, что
-    // редактор описания принял текст через beforeinput, а не «execCommand вернул true и ничего».
-    console.log('[Nemo] выполнено:', report.results)
-    sendResponse({ ok: report.done > 0, ...report })
+    ;(async () => {
+      const report = await runPlan(message.actions, {
+        elementById,
+        confirmRisky: Boolean(message.confirmRisky),
+      })
+      // Способ, которым сработал каждый шаг, — самое ценное в отчёте. Именно по нему видно, что
+      // редактор описания принял текст через beforeinput, а не «execCommand вернул true и ничего».
+      console.log('[Nemo] выполнено:', report.results)
+      sendResponse({ ok: report.done > 0, ...report })
+    })()
     return true
   }
 
