@@ -8,12 +8,12 @@ export const LANGS = ['ru', 'uz']
 
 const DICT = {
   title: {
-    ru: 'Nemo — помощник на странице',
-    uz: 'Nemo — sahifadagi yordamchi',
+    ru: 'Nemo in Chrome',
+    uz: 'Nemo in Chrome',
   },
   intro: {
-    ru: 'Напишите, что сделать на открытой странице. Nemo посмотрит её и предложит действия.',
-    uz: 'Ochiq sahifada nima qilishni yozing. Nemo uni ko‘rib, amallarni taklif qiladi.',
+    ru: 'Поручите задачу: Nemo сам откроет сайт, прочитает страницу и выполнит нужные действия.',
+    uz: 'Vazifani yozing: Nemo saytni o‘zi ochadi, sahifani o‘qiydi va kerakli amallarni bajaradi.',
   },
   working: { ru: 'Смотрю страницу…', uz: 'Sahifani ko‘ryapman…' },
   enableUniversal: { ru: 'Разрешить Nemo работать на сайтах', uz: 'Nemo’ga saytlarda ishlashga ruxsat berish' },
@@ -27,8 +27,8 @@ const DICT = {
     uz: "Bajarish",
   },
   placeholder: {
-    ru: "Например: обнови цену, остаток и фото карточки",
-    uz: "Masalan: kartochka narxi, qoldig‘i va rasmlarini yangila",
+    ru: "Например: открой сайт, найди нужный раздел и заполни форму",
+    uz: "Masalan: saytni och, kerakli bo‘limni top va formani to‘ldir",
   },
   mediaLabel: { ru: 'Фото и инфографика', uz: 'Rasm va infografika' },
   mediaEmpty: { ru: 'не выбраны', uz: 'tanlanmagan' },

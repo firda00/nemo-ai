@@ -129,6 +129,11 @@ const contracts = [
   ['it is a manifest v3 extension',
     manifest.manifest_version === 3 && manifest.background?.service_worker === 'background.js'],
 
+  ['the public brand describes a browser agent, not one marketplace tool',
+    manifest.name === 'Nemo in Chrome'
+    && manifest.action?.default_title === 'Nemo in Chrome'
+    && !/uzum|загрузчик товаров/i.test(manifest.name)],
+
   // Модули подключаются в порядке зависимости: content.js зовёт функции из scanner и executor,
   // а content_scripts делят одну область видимости.
   ['the content scripts load in dependency order',

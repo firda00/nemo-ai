@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1NDKQJ1YWTIxW3EZQK5cRuZhFRUiImG+KSwz0MlhIp9dlqSi+DQk6qrh+UD9+bA1P63xJ0D9GxZovI3A1W8JjdihJCf/MOizTtE5HJVuRO5SAYU0jzJc5rLujKhb4IZlpc7aWfy8GPTHMG/d5k//cFzjZqzjSLrNminMjNFToExmilrJ+HwTnL2wptSqvobT4ke726vDCcykwRlxtO+YJjSnkm/EcAfoLEyNmIEZb2w+8ZRBg4ulWB6b9/FidqJTcVJ+dBTqai7SVfg/spcSmkG26+sf7X/SflMmQHB0nm8japN4vdfrAyMFHAIjfkymyLYKlTpaT8jtMD/R/zNhTwIDAQAB",
-  "name": "Nemo — загрузчик товаров в Uzum",
-  "version": "0.4.0",
+  "name": "Nemo in Chrome",
+  "version": "0.4.1",
   "description": "Выполняет поручения Nemo в браузере: открывает страницы, переходит по вкладкам и заполняет формы.",
   "minimum_chrome_version": "116",
   "host_permissions": [
@@ -46,6 +46,6 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Nemo — загрузчик товаров"
+    "default_title": "Nemo in Chrome"
   }
 }
