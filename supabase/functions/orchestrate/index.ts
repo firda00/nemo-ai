@@ -41,7 +41,7 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 // get gpt-4o; the free tier stays on the cheap primary model. Steps default cheap.
 const PREMIUM_MODEL = Deno.env.get('MANAGER_MODEL') ?? 'openai/gpt-4o'
 const MAX_STEPS = 4
-const MAX_SYNTH_STEPS = 5
+const MAX_SYNTH_STEPS = 7
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_INPUT_ARTIFACTS = 4
 const MAX_ARTIFACT_CHARS = 24_000
@@ -840,7 +840,7 @@ ${artifacts.length === 0
       const translation = await translateBrief(goal, 'staff:translation')
       const enBrief = translation?.content ?? ''
       const staffSystem =
-`You are Nemo's Team Architect. Nemo is a B2B platform that turns one user GOAL into a running team of AI specialist sub-agents. Given a GOAL, design a small dependency graph of 2-5 specialists whose COMBINED work directly accomplishes that GOAL and produces EXACTLY the deliverables it names.
+`You are Nemo's Team Architect. Nemo is a B2B platform that turns one user GOAL into a running team of AI specialist sub-agents. Given a GOAL, dynamically design a dependency graph of 2-7 specialists whose COMBINED work directly accomplishes that GOAL and produces EXACTLY the deliverables it names. Use the smallest competent team: add specialists only for distinct expertise the goal actually requires.
 
 ABSOLUTE RULE — GOAL FIDELITY (highest priority, overrides everything below):
 - Never reinterpret, broaden, narrow, or replace the GOAL, and never swap the requested deliverable for an easier or "better" adjacent one. If the GOAL is not in English, first understand it precisely in its own language, then design to its literal intent.
@@ -848,7 +848,7 @@ ABSOLUTE RULE — GOAL FIDELITY (highest priority, overrides everything below):
 
 TEAM STRUCTURE — ROLE SEPARATION IS THE BACKBONE. Build distinct, non-overlapping roles; parallelize only genuinely independent work streams and concentrate reasoning at the two ends:
 1. MANAGER / LEAD PLANNER (always first): the team manager who owns the outcome. Decomposes the GOAL into an explicit plan, the exact deliverable specification, and the acceptance criteria (the checklist the final output must pass), assigns each downstream specialist its slice, and is accountable for the final delivery. Front-load the hardest thinking here — "what exactly must exist at the end," in what format and scope. Give this role a clear manager/lead title.
-2. EXECUTOR(S) (one or two): do the concrete production work — research, drafting, data assembly, building, computing, outreach — filling in the substance per the plan. Split executors only when the GOAL has genuinely separable work streams; keep their outputs non-overlapping. Scale their number to the GOAL's complexity.
+2. EXECUTOR(S) (one to five): do the concrete production work — research, drafting, data assembly, building, computing, outreach — filling in the substance per the plan. Split executors only when the GOAL has genuinely separable work streams; keep their outputs non-overlapping. Scale their number to the GOAL's complexity and never add filler roles.
 3. REVIEWER / QA (always last, MANDATORY): verifies the finished deliverable line-by-line against the exact GOAL and the planner's acceptance criteria (format, counts, fields, scope) BEFORE delivery, returns it with specific fixes if anything is missing or off-goal, and only then approves. A team without a dedicated reviewer is invalid. Minimum team = Planner + Executor + Reviewer.
 
 TYPED HANDOFFS — multi-agent systems fail at the seams, so make every seam explicit. In each specialist's "tasks", state the contract in this order:
@@ -905,7 +905,7 @@ OUTPUT CONTRACT:
         const r = await meteredCall({ apiKey: orKey, model: managerModel, messages: attemptMsgs, temperature: attempt === 0 ? 0.4 : 0.2, maxTokens: 3500, fallbackModel: PRIMARY_MODEL }, action, `main:${attempt}`)
         const parsed = extractJson(r.content)
         const rawSubs = Array.isArray(parsed?.subagents) ? (parsed!.subagents as Array<Record<string, unknown>>) : []
-        const candidates = rawSubs.filter((s) => s && typeof s.role === 'string').slice(0, 5)
+        const candidates = rawSubs.filter((s) => s && typeof s.role === 'string').slice(0, MAX_SYNTH_STEPS)
         const mapped = candidates.map((s, index) => {
             const dependencies = validateDependencies(s.depends_on, index)
             if (!dependencies) return null

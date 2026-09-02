@@ -108,6 +108,7 @@ export function AutonomousRunner({
   definitionOfDone,
   maxIterations = 10,
   streamMode = false,
+  adaptiveTeam = false,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -141,6 +142,8 @@ export function AutonomousRunner({
   maxIterations?: number
   /** The parent conversation renders progress/results; this instance remains the composer only. */
   streamMode?: boolean
+  /** Let the coordinator assemble task-specific temporary specialists instead of reusing a fixed roster. */
+  adaptiveTeam?: boolean
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -320,7 +323,7 @@ export function AutonomousRunner({
     setResult(null)
     setSpecs([])
     setRunning(true)
-    setPhase(presetSpecs?.length ? 'team' : 'architect')
+    setPhase(presetSpecs?.length && !adaptiveTeam ? 'team' : 'architect')
     const goalContract = GoalSchema.parse({
       goal_statement: task,
       definition_of_done: definitionOfDone?.length ? definitionOfDone : defaultDefinitionOfDone(task),
@@ -340,7 +343,7 @@ export function AutonomousRunner({
       definition_of_done: goalContract.definition_of_done,
       max_iterations: goalContract.max_iterations,
       ...(departmentId ? { department_id: departmentId } : {}),
-      ...(presetSpecs?.length ? { preset_specs: presetSpecs } : {}),
+      ...(presetSpecs?.length && !adaptiveTeam ? { preset_specs: presetSpecs } : {}),
     })
     const workerRun = response?.run as RunCheckpoint | null
     if (!workerRun) {
@@ -458,7 +461,7 @@ export function AutonomousRunner({
       if (restored?.specs?.length) {
         created = restored.specs
         setSpecs(created)
-      } else if (presetSpecs?.length) {
+      } else if (presetSpecs?.length && !adaptiveTeam) {
         created = presetSpecs.map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: { role: s.prompt.role ?? '', tasks: s.prompt.tasks ?? '', tone: s.prompt.tone ?? '', rules: s.prompt.rules ?? '' }, status: 'pending' as const }))
         setSpecs(created)
       } else {

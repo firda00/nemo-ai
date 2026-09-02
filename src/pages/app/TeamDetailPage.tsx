@@ -69,7 +69,7 @@ export default function TeamDetailPage() {
   const [selectedSub, setSelectedSub] = useState<Sub | null>(null)
   const [pendingTask, setPendingTask] = useState<string | null>(null)
   const [runnerStatus, setRunnerStatus] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle')
-  const [fastStoreArtifact, setFastStoreArtifact] = useState<string | null>(null)
+  const [fastStoreArtifact, setFastStoreArtifact] = useState<{ task: string; runRef: string } | null>(null)
   const streamEndRef = useRef<HTMLDivElement | null>(null)
 
   const loadResults = useCallback(async (deptId: string) => {
@@ -139,7 +139,7 @@ export default function TeamDetailPage() {
     currentTask: runnerStatus === 'running' || runnerStatus === 'queued' ? (lang === 'ru' ? 'Выполняет текущую задачу' : lang === 'uz' ? 'Joriy vazifani bajarmoqda' : 'Running current task') : undefined,
     tools: team?.skills ?? [], metrics: { tasksCompleted: runs.length, avgExecutionTimeMs: 0 }, model: team?.model, provider: team?.model?.split('/')[0] ?? 'configured', configurationSummary: goal,
   }
-  const graphAgents: AgentNodeData[] = [graphLead, ...(dept?.subs ?? []).map((sub, index) => ({
+  const permanentGraphAgents: AgentNodeData[] = (dept?.subs ?? []).map((sub, index) => ({
     id: sub.id,
     name: sub.name,
     role: sub.role,
@@ -151,7 +151,15 @@ export default function TeamDetailPage() {
     provider: sub.model?.includes('/') ? sub.model.split('/')[0] : 'configured',
     configurationSummary: sub.prompt?.tasks || sub.prompt?.role || sub.role,
     parentId: graphLead.id,
-  }))]
+  }))
+  const temporaryGraphAgents: AgentNodeData[] = (latestRun?.steps ?? []).slice(permanentGraphAgents.length).map((step, index) => {
+    const role = step.query.split(':')[0]?.trim() || (lang === 'ru' ? 'Профильный эксперт' : lang === 'uz' ? 'Maxsus ekspert' : 'Task specialist')
+    return {
+      id: `run:${latestRun?.id}:${index}`, name: role, role: lang === 'ru' ? 'Временный субагент задачи' : lang === 'uz' ? 'Vazifaning vaqtinchalik subagenti' : 'Temporary task subagent', avatar: COLORS[(permanentGraphAgents.length + index + 1) % COLORS.length], status: 'completed',
+      tools: [], metrics: { tasksCompleted: 1, avgExecutionTimeMs: 0 }, provider: 'runtime', configurationSummary: step.query, parentId: graphLead.id,
+    }
+  })
+  const graphAgents: AgentNodeData[] = [graphLead, ...permanentGraphAgents, ...temporaryGraphAgents]
   const tabCopy = lang === 'uz' ? {
     overview: 'Boshqaruv va vazifalar', graph: 'Hamkorlik sxemasi', runs: 'Ishga tushirish tarixi',
   } : lang === 'en' ? {
@@ -291,7 +299,7 @@ export default function TeamDetailPage() {
               {latestRun && <>
                 <article className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-cyan/[0.08] px-4 py-3"><p className="mb-1 text-[10px] font-semibold text-cyan">{t('teamDetailPage.you')}</p><p className="break-words text-sm leading-6 text-text">{latestRun.task}</p></article>
                 <article className="max-w-[92%]"><div className="flex items-start gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet/[0.1] text-violet"><Bot size={15} /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-xs font-bold text-text">{t('teamDetailPage.coordinator')}</p><span className="text-[10px] text-fog">{new Date(latestRun.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div><p className="mt-1 text-sm leading-6 text-muted">{t('teamDetailPage.coordinatorAccepted')}</p><div className="mt-2 space-y-1.5">{(latestRun.steps ?? []).slice(0, 4).map((step, index) => <button type="button" key={`${step.query}-${index}`} onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="flex w-full min-w-0 items-center gap-2 rounded-xl bg-white/[0.025] px-3 py-2 text-left transition hover:bg-white/[0.05]"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal" /><span className="min-w-0 flex-1 truncate text-xs text-muted">{step.query}</span><span className="text-[10px] text-fog">{step.review?.approved ? t('teamDetailPage.ready') : t('teamDetailPage.inProgress')}</span></button>)}</div></div></div></article>
-                {latestRun.report && <button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="ml-11 flex max-w-[88%] items-start gap-3 rounded-2xl border border-teal/20 bg-teal/[0.055] p-4 text-left transition hover:bg-teal/[0.08]"><FileText size={18} className="mt-0.5 shrink-0 text-teal" /><span><span className="block text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</span><span className="mt-1 block text-xs leading-5 text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</span></span></button>}
+                {latestRun.report && latestRun.kind === 'store_snapshot' ? <div className="ml-0 min-w-0 sm:ml-11"><StoreSnapshotArtifact lang={lang} /></div> : latestRun.report && <article className="ml-0 max-w-[96%] overflow-hidden rounded-2xl border border-teal/20 bg-teal/[0.045] sm:ml-11"><header className="flex items-center gap-3 border-b border-teal/10 px-4 py-3"><FileText size={17} className="shrink-0 text-teal" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</p><p className="mt-0.5 text-[10px] text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</p></div><button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="text-[10px] font-semibold text-cyan transition hover:text-text">{t('teamDetailPage.viewAll')}</button></header><div className="max-h-80 overflow-y-auto px-4 py-3 text-sm leading-6"><Markdown content={latestRun.report} /></div></article>}
                 {latestRun.report && isCodeCreationIntent(latestRun.task) && <div className="ml-0 min-w-0 sm:ml-11"><LiveCodeSandboxArtifact prompt={latestRun.task} compact /></div>}
               </>}
               {pendingTask && (fastStoreArtifact || runnerStatus !== 'completed') && <>
@@ -301,19 +309,19 @@ export default function TeamDetailPage() {
                     <span className="team-working-avatar relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan/[0.09] text-cyan"><Activity size={16} /><span className="absolute inset-0 rounded-xl border border-cyan/35" /></span>
                     <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-ice/[0.07] bg-white/[0.025] px-4 py-3.5">
                       <div className="flex items-center gap-2"><p className="text-xs font-bold text-text">{t('teamDetailPage.coordinator')}</p><span className="team-thinking-dots" aria-hidden="true"><i /><i /><i /></span></div>
-                      <p className="mt-1 text-xs leading-5 text-muted">{runnerStatus === 'queued' ? (lang === 'ru' ? 'Задача принята и ожидает запуска' : lang === 'uz' ? 'Vazifa qabul qilindi va ishga tushishni kutmoqda' : 'Task accepted and waiting to start') : (lang === 'ru' ? 'Команда анализирует данные и собирает готовый результат' : lang === 'uz' ? 'Jamoa ma’lumotlarni tahlil qilib, tayyor natijani yig‘moqda' : 'The team is analyzing the data and assembling the result')}</p>
-                      <div className="mt-3 flex flex-wrap gap-1.5">{(dept?.subs ?? []).slice(0, 4).map((agent, index) => <span key={agent.id} className="team-agent-working inline-flex items-center gap-1.5 rounded-lg bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-muted" style={{ animationDelay: `${index * 180}ms` }}><span className="h-1.5 w-1.5 rounded-full bg-teal" />{agent.name}</span>)}</div>
+                      <p className="mt-1 text-xs leading-5 text-muted">{runnerStatus === 'queued' ? (lang === 'ru' ? 'Задача принята и ожидает запуска' : lang === 'uz' ? 'Vazifa qabul qilindi va ishga tushishni kutmoqda' : 'Task accepted and waiting to start') : (lang === 'ru' ? 'Координатор выбрал профильных субагентов и собирает готовый результат' : lang === 'uz' ? 'Koordinator maxsus subagentlarni tanlab, tayyor natijani yig‘moqda' : 'The coordinator selected task specialists and is assembling the result')}</p>
+                      <div className="mt-3 flex flex-wrap gap-1.5">{(dept?.subs ?? []).slice(0, 4).map((agent, index) => <span key={agent.id} className="team-agent-working inline-flex items-center gap-1.5 rounded-lg bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-muted" style={{ animationDelay: `${index * 180}ms` }}><span className="h-1.5 w-1.5 rounded-full bg-teal" />{agent.name}</span>)}<span className="team-agent-working inline-flex items-center gap-1.5 rounded-lg border border-cyan/15 bg-cyan/[0.045] px-2.5 py-1.5 text-[10px] text-cyan"><span className="h-1.5 w-1.5 rounded-full bg-cyan" />{lang === 'ru' ? '+ субагенты по задаче' : lang === 'uz' ? '+ vazifa subagentlari' : '+ task subagents'}</span></div>
                     </div>
                   </div>
                 </article>}
-                {fastStoreArtifact && <div className="min-w-0 sm:ml-11"><StoreSnapshotArtifact lang={lang} onSettled={(ok) => setRunnerStatus(ok ? 'completed' : 'failed')} /></div>}
+                {fastStoreArtifact && <div className="min-w-0 sm:ml-11"><StoreSnapshotArtifact lang={lang} departmentId={dept?.id} task={fastStoreArtifact.task} runRef={fastStoreArtifact.runRef} onSettled={(ok) => setRunnerStatus(ok ? 'completed' : 'failed')} onSaved={async () => { if (dept) await loadResults(dept.id); setFastStoreArtifact(null); setPendingTask(null) }} /></div>}
               </>}
               <div ref={streamEndRef} />
             </div>
 
             <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-4">
               {isRegulated && <p className="mb-3 rounded-xl border border-amber/20 bg-amber/[0.06] p-3 text-xs leading-5 text-amber">{safetyCopy.notice}</p>}
-              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} contextHint={goal} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={(task) => { setPendingTask(task); setFastStoreArtifact(null) }} onFastTask={async (task) => { if (!isMarketplaceWorkspace || !isStoreSnapshotIntent(task)) return false; setFastStoreArtifact(task); return true }} onRunStateChange={setRunnerStatus} onRunSaved={async () => { if (dept) await loadResults(dept.id); setPendingTask(null) }} />
+              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} adaptiveTeam contextHint={`${goal}\n\nПостоянный состав команды: ${(dept?.subs ?? []).map((s) => `${s.name} — ${s.role}`).join('; ')}. Координатор может собрать временных профильных субагентов, если постоянному составу не хватает компетенции для точного результата.`} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={(task) => { setPendingTask(task); setFastStoreArtifact(null) }} onFastTask={async (task) => { if (!isMarketplaceWorkspace || !isStoreSnapshotIntent(task)) return false; setFastStoreArtifact({ task, runRef: crypto.randomUUID() }); return true }} onRunStateChange={setRunnerStatus} onRunSaved={async () => { if (dept) await loadResults(dept.id); setPendingTask(null) }} />
             </div>
 
             {isOps && <details className="group border-t border-ice/[0.07] bg-bg/10 [&_summary]:list-none"><summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-xs font-semibold text-muted transition hover:text-text"><ChevronDown size={14} className="transition group-open:rotate-180" />{t('teamDetailPage.operationsTools')}<span className="ml-auto text-[10px] text-fog">{t('teamDetailPage.optionalBadge')}</span></summary><div className="space-y-4 border-t border-ice/[0.06] p-4">

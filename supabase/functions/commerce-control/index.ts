@@ -272,6 +272,23 @@ Deno.serve(async (req) => {
     })
   }
 
+  if (action === 'save_snapshot_run') {
+    const departmentId = typeof body?.department_id === 'string' && UUID.test(body.department_id) ? body.department_id : ''
+    const runRef = typeof body?.run_ref === 'string' && UUID.test(body.run_ref) ? body.run_ref : ''
+    const task = text(body?.task, 500)
+    const report = typeof body?.report === 'string' && body.report.trim().length <= 20_000 ? body.report.trim() : null
+    if (!departmentId || !runRef || !task || !report) return json({ error: 'invalid snapshot run' }, 400)
+    const { data: department } = await admin.from('departments').select('id').eq('id', departmentId).eq('account_id', profile.account_id).maybeSingle()
+    if (!department) return json({ error: 'department not found' }, 403)
+    const { data: existing } = await admin.from('research_runs').select('id').eq('account_id', profile.account_id).eq('run_ref', runRef).maybeSingle()
+    if (existing?.id) return json({ ok: true, id: existing.id, reused: true })
+    const { data: saved, error } = await admin.from('research_runs').insert({
+      account_id: profile.account_id, department_id: departmentId, run_ref: runRef,
+      task, report, kind: 'store_snapshot', status: 'done', sources: [], steps: [], tokens: 0, cost: 0,
+    }).select('id').single()
+    return error || !saved ? json({ error: 'could not save snapshot history' }, 500) : json({ ok: true, id: saved.id })
+  }
+
   if (action === 'start_pilot') {
     const { data: existing } = await admin.from('commerce_pilots').select('status, expires_at').eq('account_id', profile.account_id).maybeSingle()
     if (existing) return json({ error: existing.status === 'active' ? 'commerce pilot is already active' : 'commerce pilot has ended' }, 409)
