@@ -176,7 +176,9 @@ const contracts = [
       const digest = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest().subarray(0, 16)
       const derived = [...digest].flatMap((b) => [b >> 4, b & 15])
         .map((n) => String.fromCharCode(97 + n)).join('')
-      return link.includes(`?? '${derived}'`) && read('.env.example').includes(derived)
+      return link.includes(`?? '${derived}'`)
+        && read('.env.example').includes(derived)
+        && cors.includes(`chrome-extension://${derived}`)
     })()],
 
   ['the function lets exactly this extension call it',

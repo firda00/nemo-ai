@@ -17,7 +17,7 @@ const PROD_ORIGIN = 'https://nemo-ai-swart.vercel.app'
  * функции, и наружу это выглядело как «сеть недоступна» — при полностью исправной сети. Одного
  * host_permissions в манифесте мало: он снимает проверку на стороне браузера, а не на нашей.
  */
-const EXTENSION_ORIGIN = 'chrome-extension://mafjjfinnlpigcbmhiabkiamnhnmgcca'
+const EXTENSION_ORIGIN = 'chrome-extension://efgffoegaefoommemkgmnafeaakbjloi'
 
 /*
  * ПОСТОЯННЫЕ АДРЕСА ФРОНТЕНДА. ПЕРЕЧИСЛЕНЫ ПОИМЁННО, И ЭТО ПРИНЦИПИАЛЬНО.
