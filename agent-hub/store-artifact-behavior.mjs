@@ -6,6 +6,8 @@ for (const query of [
   'как обстоят дела с магазином',
   'покажи мне дашборд продаж',
   'дай краткую сводку по остаткам',
+  'предоставь мне недельный отчет и что можно улучшить',
+  'покажи недельные итоги продаж',
   'а другие магазины',
   'store health',
   "do'kon holatini ko'rsat",
@@ -19,6 +21,14 @@ for (const query of [
 ]) assert.equal(isStoreSnapshotIntent(query), false, query)
 
 console.log('store artifact intent behavior passed')
+
+const { isAnalyticalArtifactIntent } = await import('../src/lib/analyticalArtifactIntent.ts')
+for (const query of [
+  'предоставь недельный отчет и что можно улучшить',
+  'покажи KPI маркетинга за месяц',
+  'сделай dashboard по задачам команды',
+]) assert.equal(isAnalyticalArtifactIntent(query), true, query)
+for (const query of ['привет', 'напиши письмо клиенту']) assert.equal(isAnalyticalArtifactIntent(query), false, query)
 
 const root = new URL('../', import.meta.url)
 const artifact = readFileSync(new URL('src/components/platform/StoreSnapshotArtifact.tsx', root), 'utf8')
