@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Users, Bot, ClipboardList, BellRing, GitBranch, ChevronDown, Send, Users2, Truck, Loader2, LayoutDashboard, Network, History, Settings2, PanelRightClose, PanelRightOpen, X, Activity, FileText, CircleDot } from 'lucide-react'
 import { useI18n } from '../../i18n'
@@ -64,6 +64,9 @@ export default function TeamDetailPage() {
   const [telegramOpen, setTelegramOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1180)
   const [selectedSub, setSelectedSub] = useState<Sub | null>(null)
+  const [pendingTask, setPendingTask] = useState<string | null>(null)
+  const [runnerStatus, setRunnerStatus] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle')
+  const streamEndRef = useRef<HTMLDivElement | null>(null)
 
   const loadResults = useCallback(async (deptId: string) => {
     if (!supabase) return
@@ -209,13 +212,19 @@ export default function TeamDetailPage() {
     generalStatus: 'The team is ready for an internal task: provide facts and acceptance criteria, then review the result before any external action.',
   }
 
+  const latestRun = runs[0]
+  const activeAgents = dept?.subs.length ?? 0
+  const latestRunId = latestRun?.id
+
+  useEffect(() => {
+    if (!pendingTask && !latestRunId) return
+    streamEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [pendingTask, runnerStatus, latestRunId])
+
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
     return <div className="container-page max-w-4xl py-10 text-center text-muted">{t('teamDetailPage.teamNotFound')}</div>
   }
-
-  const latestRun = runs[0]
-  const activeAgents = dept?.subs.length ?? 0
 
   return (
     <div className="container-page max-w-[1540px] py-6 sm:py-8">
@@ -275,11 +284,25 @@ export default function TeamDetailPage() {
                 {latestRun.report && <button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="ml-11 flex max-w-[88%] items-start gap-3 rounded-2xl border border-teal/20 bg-teal/[0.055] p-4 text-left transition hover:bg-teal/[0.08]"><FileText size={18} className="mt-0.5 shrink-0 text-teal" /><span><span className="block text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</span><span className="mt-1 block text-xs leading-5 text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</span></span></button>}
                 {latestRun.report && isCodeCreationIntent(latestRun.task) && <div className="ml-0 min-w-0 sm:ml-11"><LiveCodeSandboxArtifact prompt={latestRun.task} compact /></div>}
               </>}
+              {pendingTask && runnerStatus !== 'completed' && <>
+                <article className="team-message-in ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-cyan/[0.08] px-4 py-3"><p className="mb-1 text-[10px] font-semibold text-cyan">{t('teamDetailPage.you')}</p><p className="break-words text-sm leading-6 text-text">{pendingTask}</p></article>
+                <article className="team-working-message max-w-[92%]" role="status" aria-live="polite">
+                  <div className="flex items-start gap-3">
+                    <span className="team-working-avatar relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan/[0.09] text-cyan"><Activity size={16} /><span className="absolute inset-0 rounded-xl border border-cyan/35" /></span>
+                    <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-ice/[0.07] bg-white/[0.025] px-4 py-3.5">
+                      <div className="flex items-center gap-2"><p className="text-xs font-bold text-text">{t('teamDetailPage.coordinator')}</p><span className="team-thinking-dots" aria-hidden="true"><i /><i /><i /></span></div>
+                      <p className="mt-1 text-xs leading-5 text-muted">{runnerStatus === 'queued' ? (lang === 'ru' ? 'Задача принята и ожидает запуска' : lang === 'uz' ? 'Vazifa qabul qilindi va ishga tushishni kutmoqda' : 'Task accepted and waiting to start') : (lang === 'ru' ? 'Команда анализирует данные и собирает готовый результат' : lang === 'uz' ? 'Jamoa ma’lumotlarni tahlil qilib, tayyor natijani yig‘moqda' : 'The team is analyzing the data and assembling the result')}</p>
+                      <div className="mt-3 flex flex-wrap gap-1.5">{(dept?.subs ?? []).slice(0, 4).map((agent, index) => <span key={agent.id} className="team-agent-working inline-flex items-center gap-1.5 rounded-lg bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-muted" style={{ animationDelay: `${index * 180}ms` }}><span className="h-1.5 w-1.5 rounded-full bg-teal" />{agent.name}</span>)}</div>
+                    </div>
+                  </div>
+                </article>
+              </>}
+              <div ref={streamEndRef} />
             </div>
 
             <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-4">
               {isRegulated && <p className="mb-3 rounded-xl border border-amber/20 bg-amber/[0.06] p-3 text-xs leading-5 text-amber">{safetyCopy.notice}</p>}
-              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} contextHint={goal} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} onRunSaved={() => dept ? loadResults(dept.id) : undefined} />
+              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} contextHint={goal} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={setPendingTask} onRunStateChange={setRunnerStatus} onRunSaved={async () => { if (dept) await loadResults(dept.id); setPendingTask(null) }} />
             </div>
 
             {isOps && <details className="group border-t border-ice/[0.07] bg-bg/10 [&_summary]:list-none"><summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-xs font-semibold text-muted transition hover:text-text"><ChevronDown size={14} className="transition group-open:rotate-180" />{t('teamDetailPage.operationsTools')}<span className="ml-auto text-[10px] text-fog">{t('teamDetailPage.optionalBadge')}</span></summary><div className="space-y-4 border-t border-ice/[0.06] p-4">

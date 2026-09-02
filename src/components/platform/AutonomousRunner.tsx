@@ -101,9 +101,11 @@ export function AutonomousRunner({
   contextKey,
   builderMode = false,
   onRunStateChange,
+  onTaskSubmitted,
   onComplete,
   definitionOfDone,
   maxIterations = 10,
+  streamMode = false,
 }: {
   defaultGoal?: string
   // when provided, use THIS saved team instead of designing a fresh one (skip 'staff')
@@ -126,11 +128,15 @@ export function AutonomousRunner({
   /** Focused create-team UX: hide the internal agent trace and offer a direct save/open action. */
   builderMode?: boolean
   onRunStateChange?: (status: 'idle' | 'queued' | 'running' | 'completed' | 'failed') => void
+  /** Optimistic chat event: lets a parent place the user's message in the stream immediately. */
+  onTaskSubmitted?: (task: string) => void
   onComplete?: (result: string) => void
   /** Optional measurable completion contract; defaults are derived from the goal. */
   definitionOfDone?: string[]
   /** Hard safety cap for Observe → Execute → Goal Check cycles. */
   maxIterations?: number
+  /** The parent conversation renders progress/results; this instance remains the composer only. */
+  streamMode?: boolean
 }) {
   const { t, lang } = useI18n()
   const navigate = useNavigate()
@@ -161,6 +167,7 @@ export function AutonomousRunner({
   // the owner to upload a file while their store is connected was the loudest wrong thing on this
   // screen, so the warning must know whether a connection exists.
   const [storeConnected, setStoreConnected] = useState(false)
+  const [composerCleared, setComposerCleared] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -251,6 +258,7 @@ export function AutonomousRunner({
       : spec)
     setResumeCheckpoint(workerRun)
     if (state?.goal) {
+      onTaskSubmitted?.(state.goal)
       if (onGoalChange) onGoalChange(state.goal)
       else setInternalGoal(state.goal)
     }
@@ -401,6 +409,10 @@ export function AutonomousRunner({
     const restored = resume?.state
     const task = restored?.goal?.trim() || goal.trim()
     if (task.length < 4 || running) return
+    if (!resume) {
+      onTaskSubmitted?.(task)
+      if (streamMode) setComposerCleared(true)
+    }
     if (!resume && live) {
       await enqueueWorkerRun(task)
       return
@@ -667,8 +679,8 @@ export function AutonomousRunner({
     <div>
       <div className="glass flex items-end gap-2 rounded-2xl p-2 focus-within:border-violet/50 focus-within:shadow-glow">
         <textarea
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
+          value={composerCleared ? '' : goal}
+          onChange={(e) => { setComposerCleared(false); setGoal(e.target.value) }}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run() }}
           rows={2}
           disabled={running}
@@ -743,7 +755,7 @@ export function AutonomousRunner({
           {dataWarning}
         </p>
       )}
-      {running && (
+      {running && !streamMode && (
         <div className="team-run-stage card mt-5 overflow-hidden rounded-3xl p-5 sm:p-6" role="status" aria-live="polite">
           <div className="relative z-10 flex items-center gap-4">
             <div className="team-run-orbit relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
@@ -793,7 +805,7 @@ export function AutonomousRunner({
         </div>
       )}
 
-      {result && !running && (
+      {result && !running && !streamMode && (
         <div className="mt-5 space-y-4">
           {goalRuntime && (
             <div className={cn('rounded-2xl border p-4', goalRuntime.contract.status === 'goal_achieved' ? 'border-teal/25 bg-teal/[0.07]' : 'border-amber/25 bg-amber/[0.07]')}>

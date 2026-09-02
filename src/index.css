@@ -390,6 +390,21 @@
   100% { transform: translateX(75%); }
 }
 
+@keyframes team-message-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes team-working-breathe {
+  0%, 100% { opacity: .55; transform: scale(.96); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes team-agent-working {
+  0%, 100% { opacity: .48; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
 .team-run-stage {
   position: relative;
   animation: team-stage-in 420ms cubic-bezier(.22, 1, .36, 1) both;
@@ -415,6 +430,14 @@
 .team-run-progress { width: 65%; animation: team-progress-sweep 1.7s ease-in-out infinite alternate; }
 .team-result-ready { animation: team-stage-in 460ms cubic-bezier(.22, 1, .36, 1) both; }
 .team-builder-icon { animation: team-orbit-float 4s ease-in-out infinite; }
+.team-message-in { animation: team-message-in 280ms cubic-bezier(.22, 1, .36, 1) both; }
+.team-working-message { animation: team-message-in 360ms 80ms cubic-bezier(.22, 1, .36, 1) both; }
+.team-working-avatar > span { animation: team-pulse-ring 1.8s ease-out infinite; }
+.team-thinking-dots { display: inline-flex; align-items: center; gap: 3px; }
+.team-thinking-dots i { width: 4px; height: 4px; border-radius: 999px; background: rgb(var(--color-cyan)); animation: team-working-breathe 1.15s ease-in-out infinite; }
+.team-thinking-dots i:nth-child(2) { animation-delay: 150ms; }
+.team-thinking-dots i:nth-child(3) { animation-delay: 300ms; }
+.team-agent-working { animation: team-agent-working 1.8s ease-in-out infinite; }
 
 .office-node-active { animation: office-status-pulse 1.8s ease-in-out infinite; }
 .office-node-attention { animation: office-attention-pulse 1.5s ease-in-out infinite; }
@@ -427,6 +450,11 @@
   .team-run-pulse,
   .team-run-progress,
   .team-result-ready,
-  .team-builder-icon { animation: none; }
+  .team-builder-icon,
+  .team-message-in,
+  .team-working-message,
+  .team-working-avatar > span,
+  .team-thinking-dots i,
+  .team-agent-working { animation: none; }
   .react-flow__edge-path { animation: none !important; }
 }
