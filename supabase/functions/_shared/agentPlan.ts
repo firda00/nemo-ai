@@ -35,10 +35,17 @@ export const MAX_VALUE_LENGTH = 30_000
 /** План длиннее двадцати шагов на одной странице — почти наверняка не план, а перебор. */
 export const MAX_ACTIONS = 20
 
-export const PLAN_SYSTEM_PROMPT = `Ты помогаешь заполнять формы на веб-страницах.
+export const PLAN_SYSTEM_PROMPT = `Ты управляешь кабинетом продавца пошагово: переходишь по разделам,
+ищешь нужный товар и заполняешь формы.
 
 Тебе дают снимок страницы: список интерактивных элементов с номерами, подписями, плейсхолдерами и
 окружающим текстом. Поручение от владельца страницы. И data — готовые данные для подстановки.
+
+Ты работаешь внутри многошагового цикла: после твоих действий страница будет снята заново. Если
+нужная форма ещё не открыта, выбери ОДНУ наиболее подходящую кнопку или ссылку навигации и закончи
+этот шаг — не предлагай действия над элементами старого экрана после перехода. Для поиска товара
+можно использовать артикул/название из instruction, но нельзя переносить свободный текст
+instruction в поля самой карточки: значения карточки берутся только из data.
 
 Верни JSON: {"actions": [...], "note": "одна фраза о том, что сделал или почему не смог"}.
 
@@ -91,7 +98,8 @@ export const PLAN_SYSTEM_PROMPT = `Ты помогаешь заполнять ф
    «измени», «замени» или другое столь же явное указание.
 7. Поле kind "file" не трогай: изображения, выбранные владельцем, расширение прикрепляет само.
 8. Если владелец прямо попросил отправить/сохранить карточку, можно предложить click по
-   соответствующей risky-кнопке. Исполнитель всё равно потребует отдельную галочку подтверждения.`
+   соответствующей risky-кнопке. Исполнитель всё равно потребует отдельную галочку подтверждения.
+9. Не переходи на другой домен, не вводи логин/пароль и не пытайся обходить CAPTCHA.`
 
 /**
  * Изменяемые числовые поля, которые владелец явно назвал в текущем поручении.
@@ -162,12 +170,17 @@ export function checkPlan(raw: unknown, items: PageItem[]): PlanCheck {
   const known = new Map(items.map((item) => [Number(item.id), item]))
   const actions: PlanAction[] = []
   const rejected: PlanCheck['rejected'] = []
+  let navigationAccepted = false
 
   const list = Array.isArray((raw as { actions?: unknown })?.actions)
     ? (raw as { actions: unknown[] }).actions
     : []
 
   for (const candidate of list) {
+    if (navigationAccepted) {
+      rejected.push({ action: candidate, reason: 'stale_after_navigation' })
+      continue
+    }
     if (actions.length >= MAX_ACTIONS) {
       rejected.push({ action: candidate, reason: 'too_many_actions' })
       continue
@@ -191,6 +204,9 @@ export function checkPlan(raw: unknown, items: PageItem[]): PlanCheck {
 
     if (type === 'click') {
       actions.push({ type: 'click', id })
+      const navigationText = `${item.label ?? ''} ${item.text ?? ''} ${item.context ?? ''}`
+      navigationAccepted = item.kind === 'link'
+        || /откры|перейти|далее|следующ|редакт|создать товар|open|next|edit|continue|o‘tish|ochish/i.test(navigationText)
       continue
     }
 

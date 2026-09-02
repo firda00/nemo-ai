@@ -25,6 +25,11 @@ function findStopSign() {
   for (const selector of STOP_SIGNS) {
     if (document.querySelector(selector)) return selector
   }
+  // Пароль расширение не вводит и не читает. Сохранённая сессия браузера — нормально; экран
+  // повторного входа — граница, где управление возвращается владельцу.
+  for (const password of document.querySelectorAll('input[type="password"]')) {
+    if (visibility(password) === 'ok') return 'login_required'
+  }
   return null
 }
 

@@ -36,6 +36,22 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     forgetSession().then(() => sendResponse({ ok: true }))
     return true
   }
+  if (message?.type === 'nemo:run-browser') {
+    const instruction = String(message.instruction ?? '').trim().slice(0, 500)
+    if (!instruction) {
+      sendResponse({ ok: false, reason: 'empty_instruction' })
+      return false
+    }
+    runInstruction({
+      instruction,
+      // Финальная отправка на модерацию — отдельное осознанное действие в UI. Обычный запрос
+      // в чате разрешает навигацию и редактирование, но не необратимую публикацию.
+      confirmRisky: Boolean(message.confirmRisky),
+      confirmCategoryMismatch: false,
+      attachments: [],
+    }).then(sendResponse)
+    return true
+  }
   if (message?.type !== 'nemo:link') {
     sendResponse({ ok: false, error: 'unknown_message' })
     return false
@@ -54,6 +70,49 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   return tab ?? null
+}
+
+const SELLER_HOME = 'https://seller.uzum.uz/'
+const MAX_AUTONOMOUS_STEPS = 12
+const isSellerUrl = (url) => {
+  try { return new URL(url).origin === new URL(SELLER_HOME).origin } catch { return false }
+}
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function waitForTab(tabId, timeoutMs = 12_000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null)
+    if (!tab) return null
+    if (tab.status === 'complete') return tab
+    await pause(250)
+  }
+  return await chrome.tabs.get(tabId).catch(() => null)
+}
+
+/** Открывает Seller сам, если поручение запущено из Nemo или другой вкладки. */
+async function ensureSellerTab() {
+  const current = await activeTab()
+  if (current?.id && isSellerUrl(current.url)) return current
+  const existing = await chrome.tabs.query({ currentWindow: true, url: 'https://seller.uzum.uz/*' })
+  if (existing[0]?.id) {
+    await chrome.tabs.update(existing[0].id, { active: true })
+    return await waitForTab(existing[0].id)
+  }
+  const created = await chrome.tabs.create({ url: SELLER_HOME, active: true })
+  return created.id ? await waitForTab(created.id) : null
+}
+
+/** После клика продолжает в новой вкладке, если кабинет открыл её сам. */
+async function nextSellerTab(previousId, knownIds) {
+  await pause(700)
+  const tabs = await chrome.tabs.query({ currentWindow: true })
+  const sellerTabs = tabs.filter((tab) => tab.id && isSellerUrl(tab.url))
+  const fresh = sellerTabs.find((tab) => !knownIds.has(tab.id))
+  const active = sellerTabs.find((tab) => tab.active)
+  const same = sellerTabs.find((tab) => tab.id === previousId)
+  const next = fresh ?? active ?? same ?? null
+  return next?.id ? await waitForTab(next.id) : null
 }
 
 const toTab = (tabId, message, frameId = 0) => chrome.tabs.sendMessage(tabId, message, { frameId }).catch(() => null)
@@ -89,7 +148,8 @@ async function scanWorkingFrame(tabId) {
 function mediaUploadAction(page, attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return { action: null, error: null }
   const candidates = (page?.items ?? []).filter((item) => item.kind === 'file' && !item.disabled)
-  if (!candidates.length) return { action: null, error: 'no_file_field' }
+  // На первом экране поля фото обычно ещё нет: автономный loop сначала дойдёт до нужного шага.
+  if (!candidates.length) return { action: null, error: null }
   const imageWords = /фото|изображ|картин|медиа|image|photo|picture|media|rasm|surat|accept.*image/i
   const ranked = candidates.map((item) => ({
     item,
@@ -102,12 +162,8 @@ function mediaUploadAction(page, attachments) {
   return { action: { type: 'upload', id: best.item.id, files: attachments }, error: null }
 }
 
-export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [] }) {
-  if (!await readSession()) return { ok: false, reason: 'not_linked' }
-
-  const tab = await activeTab()
-  if (!tab?.id) return { ok: false, reason: 'no_tab' }
-
+async function runInstructionStep({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [], tab }) {
+  if (!tab?.id || !isSellerUrl(tab.url)) return { ok: false, reason: 'left_allowed_site' }
   const frame = await scanWorkingFrame(tab.id)
   const scan = frame.scan
   if (!scan) return { ok: false, reason: 'no_response' }
@@ -177,21 +233,6 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
   const needsConfirmation = (executed.results ?? []).some((one) => one.error === 'needs_confirmation')
   const submitted = (executed.results ?? []).some((one) => one.ok && one.method === 'click' && one.effect === 'submit')
 
-  // Каждая попытка попадает в журнал Nemo — включая те, где ничего не вышло. Попытка, о которой
-  // ничего не осталось, через неделю превращается в «оно почему-то не работает».
-  if (planned.data?.draft_id) {
-    await reportResult({
-      draftId: planned.data.draft_id,
-      status: submitted ? 'sent' : executed.done > 0 ? 'refused' : 'failed',
-      reason: submitted ? 'browser_submit_clicked' : executed.done > 0 ? 'human_needed' : 'form_changed',
-      message: submitted
-        ? 'Кнопка отправки нажата с подтверждением владельца. Ожидается подтверждение синхронизацией Uzum.'
-        : executed.done > 0
-        ? `Выполнено действий: ${executed.done}. Проверьте карточку перед отправкой.`
-        : 'Ни одно поле не заполнено — план не подошёл этой странице.',
-    })
-  }
-
   return {
     ok: executed.done > 0,
     done: executed.done,
@@ -199,9 +240,100 @@ export async function runInstruction({ instruction, confirmRisky = false, confir
     results: executed.results,
     needsConfirmation,
     submitted,
+    uploaded: (executed.results ?? []).some((one) => one.ok && one.method === 'data-transfer'),
+    draftId: planned.data?.draft_id ?? null,
+    pageUrl: scan.page.url,
+    pageFingerprint: JSON.stringify((scan.page.items ?? []).map((item) => [item.kind, item.label, item.text, item.value])).slice(0, 12_000),
     note: planned.data?.note ?? null,
     unaddressed,
   }
+}
+
+/**
+ * Полный браузерный цикл: открыть кабинет → посмотреть экран → выполнить безопасный шаг →
+ * дождаться следующего экрана/вкладки → повторить. Один клик «Выполнить» разрешает весь описанный
+ * маршрут, но рискованные кнопки всё равно требуют явной галочки этого запуска.
+ */
+export async function runInstruction({ instruction, confirmRisky = false, confirmCategoryMismatch = false, attachments = [] }) {
+  if (!await readSession()) return { ok: false, reason: 'not_linked' }
+  let tab = await ensureSellerTab()
+  if (!tab?.id) return { ok: false, reason: 'no_tab' }
+
+  const knownIds = new Set((await chrome.tabs.query({ currentWindow: true })).map((one) => one.id).filter(Boolean))
+  let totalDone = 0
+  let totalFailed = 0
+  let uploaded = false
+  let draftId = null
+  let previousFingerprint = null
+  let repeated = 0
+  let last = null
+  let stepsRun = 0
+
+  await chrome.storage.session.set({ nemoBrowserRun: { status: 'running', step: 0, instruction: instruction.slice(0, 160), updatedAt: Date.now() } })
+
+  for (let step = 1; step <= MAX_AUTONOMOUS_STEPS; step++) {
+    stepsRun = step
+    await chrome.storage.session.set({ nemoBrowserRun: { status: 'running', step, instruction: instruction.slice(0, 160), updatedAt: Date.now() } })
+    const result = await runInstructionStep({
+      instruction, confirmRisky, confirmCategoryMismatch,
+      attachments: uploaded ? [] : attachments,
+      tab,
+    })
+    last = result
+    draftId = result.draftId ?? draftId
+    totalDone += Number(result.done ?? 0)
+    totalFailed += Number(result.failed ?? 0)
+    uploaded ||= Boolean(result.uploaded)
+
+    if (result.pageFingerprint && result.pageFingerprint === previousFingerprint) repeated += 1
+    else repeated = 0
+    previousFingerprint = result.pageFingerprint ?? previousFingerprint
+
+    if (result.submitted || result.needsConfirmation || result.reason === 'category_mismatch'
+      || result.reason === 'human_needed' || result.reason === 'left_allowed_site') break
+    if (!result.ok) break
+    if (repeated >= 2) {
+      last = { ...result, ok: false, reason: 'no_progress' }
+      break
+    }
+
+    const next = await nextSellerTab(tab.id, knownIds)
+    if (!next) { last = { ...result, ok: false, reason: 'left_allowed_site' }; break }
+    knownIds.add(next.id)
+    tab = next
+  }
+
+  const submitted = Boolean(last?.submitted)
+  const needsConfirmation = Boolean(last?.needsConfirmation)
+  const mediaMissing = attachments.length > 0 && !uploaded
+  const reachedLimit = stepsRun >= MAX_AUTONOMOUS_STEPS && last?.ok && !last?.submitted
+  const terminalReason = mediaMissing ? 'media_not_uploaded' : reachedLimit ? 'step_limit' : last?.reason
+  const ok = submitted || (totalDone > 0 && !needsConfirmation && !mediaMissing
+    && terminalReason !== 'no_progress' && terminalReason !== 'step_limit')
+  const final = {
+    ...(last ?? {}), ok, done: totalDone, failed: totalFailed,
+    submitted, needsConfirmation, uploaded, reason: terminalReason,
+  }
+
+  // Одна запись на весь маршрут, а не по записи на каждый экран.
+  if (draftId) {
+    await reportResult({
+      draftId,
+      status: submitted ? 'sent' : ok ? 'refused' : 'failed',
+      reason: submitted ? 'browser_submit_clicked' : ok ? 'browser_task_completed' : String(terminalReason ?? 'form_changed').slice(0, 60),
+      message: submitted
+        ? 'Кнопка отправки нажата с подтверждением владельца. Ожидается подтверждение синхронизацией Uzum.'
+        : ok ? `Автономный маршрут завершён. Выполнено действий: ${totalDone}.`
+        : `Автономный маршрут остановлен: ${String(terminalReason ?? 'unknown')}.`,
+    })
+  }
+  await chrome.storage.session.set({ nemoBrowserRun: {
+    status: ok ? 'completed' : needsConfirmation ? 'confirmation' : 'stopped',
+    done: totalDone,
+    reason: terminalReason ?? null,
+    updatedAt: Date.now(),
+  } })
+  return final
 }
 
 /**
@@ -304,7 +436,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
   if (message?.type === 'nemo:state') {
-    sessionState().then(({ session, expired }) => sendResponse({ linked: Boolean(session), expired }))
+    Promise.all([sessionState(), chrome.storage.session.get('nemoBrowserRun')])
+      .then(([{ session, expired }, stored]) => sendResponse({
+        linked: Boolean(session), expired, browserRun: stored?.nemoBrowserRun ?? null,
+      }))
     return true
   }
   return undefined

@@ -41,7 +41,13 @@ assert.match(intent, /finance[\s\S]*research[\s\S]*marketing/, 'intent routing m
 assert.match(desk, /MarketingCampaignStudio/, 'marketing must render as a chat artifact')
 assert.match(desk, /FinanceCashFlowDashboard/, 'finance must render as a chat artifact')
 assert.match(desk, /ResearchNotebookHub/, 'research must render as a chat artifact')
-assert.match(desk, /expanded && <div/, 'artifact studios must mount only after the user opens them')
+assert.match(intent, /'browser'/, 'Uzum browser work must be recognized as an on-demand chat artifact')
+assert.match(desk, /runExtensionBrowserTask/, 'the browser artifact must invoke the linked local extension')
+assert.match(desk, /needsConfirmation/, 'irreversible moderation submission must retain a human gate')
+assert.match(intent, /explicitlyRequestsBrowserSubmission/, 'an explicit submit instruction must not require the same approval twice')
+assert.match(desk, /explicitlyRequestsBrowserSubmission\(prompt\)/, 'the chat must pass explicit submission authority to this run')
+assert.match(desk, /browserTaskRuns = new Map/, 'one chat turn must never execute twice under React Strict Mode')
+assert.match(desk, /expanded && kind !== 'browser'/, 'heavy artifact studios must mount only after the user opens them')
 assert.match(desk, /max-h-\[760px\] overflow-auto/, 'embedded studios must stay bounded inside the conversation')
 
 for (const locale of ['extraUz', 'extraRu', 'extraEn']) {

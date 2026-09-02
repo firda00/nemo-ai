@@ -80,7 +80,11 @@ async function refresh() {
   nodes.state.className = linked ? 'state ok' : 'state bad'
   // «Не связывались» и «связь просрочена» — разные беды: во втором случае человек уже делал
   // то, что ему советуют, и повторять совет дословно значит выглядеть сломанным.
-  nodes.state.textContent = say(linked ? 'ready' : info?.expired ? 'expired' : 'not_linked', lang)
+  const recentRun = info?.browserRun && Date.now() - Number(info.browserRun.updatedAt ?? 0) < 15 * 60 * 1000
+    ? info.browserRun : null
+  nodes.state.textContent = linked && recentRun?.status === 'running'
+    ? say('autonomousRunning', lang).replace('{step}', String(recentRun.step ?? 0))
+    : say(linked ? 'ready' : info?.expired ? 'expired' : 'not_linked', lang)
 }
 
 /**

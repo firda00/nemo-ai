@@ -22,7 +22,18 @@
 export const EXTENSION_ID =
   (import.meta.env.VITE_NEMO_EXTENSION_ID as string | undefined) ?? 'efgffoegaefoommemkgmnafeaakbjloi'
 
-type ExtensionReply = { ok?: boolean; error?: string; linked?: boolean; expired?: boolean }
+type ExtensionReply = {
+  ok?: boolean
+  error?: string
+  reason?: string
+  linked?: boolean
+  expired?: boolean
+  done?: number
+  failed?: number
+  submitted?: boolean
+  needsConfirmation?: boolean
+  uploaded?: boolean
+}
 
 type ChromeRuntime = {
   sendMessage?: (
@@ -52,7 +63,7 @@ export type ProbeFailure =
 
 type Probe = { ok: true; reply: ExtensionReply } | { ok: false; failure: ProbeFailure }
 
-function ask(message: unknown): Promise<Probe> {
+function ask(message: unknown, timeoutMs = 3000): Promise<Probe> {
   const chromeRuntime = runtime()
   const send = chromeRuntime?.sendMessage
   // chrome.runtime появляется на странице ТОЛЬКО если расширение объявило её домен в
@@ -64,7 +75,7 @@ function ask(message: unknown): Promise<Probe> {
     const finish = (value: Probe) => { if (!settled) { settled = true; resolve(value) } }
     // Расширение может быть установлено и не отвечать — например, service worker уснул. Ждать
     // вечно нельзя: кнопка останется в состоянии «связываю…» навсегда.
-    window.setTimeout(() => finish({ ok: false, failure: 'silent' }), 3000)
+    window.setTimeout(() => finish({ ok: false, failure: 'silent' }), timeoutMs)
     try {
       send.call(chromeRuntime, EXTENSION_ID, message, (response) => {
         // Если расширения с таким идентификатором нет, Chrome не бросает исключение, а выставляет
@@ -114,4 +125,40 @@ export async function linkExtension(session: { access_token: string; expires_at?
 export async function unlinkExtension(): Promise<boolean> {
   const probe = await ask({ type: 'nemo:unlink' })
   return probe.ok && Boolean(probe.reply.ok)
+}
+
+export type BrowserTaskResult = {
+  ok: boolean
+  reason?: string
+  done: number
+  failed: number
+  submitted: boolean
+  needsConfirmation: boolean
+}
+
+/**
+ * Запустить поручение в локальном браузере пользователя.
+ *
+ * Сайт не получает доступ к tabs API: он передаёт только текст поручения доверенному расширению.
+ * Расширение само держит доменную границу seller.uzum.uz и требует отдельного подтверждения для
+ * финальной отправки карточки на модерацию.
+ */
+export async function runExtensionBrowserTask(
+  instruction: string,
+  confirmRisky = false,
+): Promise<BrowserTaskResult> {
+  // 12 экранов включают сетевые вызовы модели и загрузку SPA. Не объявляем задачу «зависшей»,
+  // пока расширение ещё честно работает: преждевременный retry может повторно изменить карточку.
+  const probe = await ask({ type: 'nemo:run-browser', instruction, confirmRisky }, 10 * 60_000)
+  if (!probe.ok) {
+    return { ok: false, reason: probe.failure, done: 0, failed: 0, submitted: false, needsConfirmation: false }
+  }
+  return {
+    ok: Boolean(probe.reply.ok),
+    reason: probe.reply.reason ?? probe.reply.error,
+    done: Number(probe.reply.done ?? 0),
+    failed: Number(probe.reply.failed ?? 0),
+    submitted: Boolean(probe.reply.submitted),
+    needsConfirmation: Boolean(probe.reply.needsConfirmation),
+  }
 }

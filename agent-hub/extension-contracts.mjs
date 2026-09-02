@@ -117,7 +117,8 @@ const contracts = [
     && !JSON.stringify(manifest).includes('*://*/*')
     && !manifest.permissions.includes('cookies')
     && !manifest.permissions.includes('webRequest')
-    && !manifest.permissions.includes('history')],
+    && !manifest.permissions.includes('history')
+    && !manifest.permissions.includes('tabs')],
 
   ['it is a manifest v3 extension',
     manifest.manifest_version === 3 && manifest.background?.service_worker === 'background.js'],
@@ -305,6 +306,27 @@ const contracts = [
     && background.includes('chrome.webNavigation.getAllFrames({ tabId })')
     && background.includes("['input', 'textarea', 'richtext', 'select', 'file']")
     && background.includes("{ type: 'nemo:run-plan', actions, confirmRisky }, frame.frameId")],
+
+  ['one command may autonomously cross several seller pages and new tabs',
+    background.includes("const SELLER_HOME = 'https://seller.uzum.uz/'")
+    && background.includes('MAX_AUTONOMOUS_STEPS = 12')
+    && background.includes('chrome.tabs.create({ url: SELLER_HOME, active: true })')
+    && background.includes('nextSellerTab(tab.id, knownIds)')
+    && background.includes('runInstructionStep({')],
+
+  ['the trusted Nemo chat can start the same bounded browser loop',
+    background.includes("message?.type === 'nemo:run-browser'")
+    && background.includes('runInstruction({')
+    && link.includes("type: 'nemo:run-browser'")
+    && link.includes('export async function runExtensionBrowserTask')
+    && background.indexOf("message?.type === 'nemo:run-browser'") > background.indexOf('ALLOWED_ORIGINS.includes(origin)')],
+
+  ['the autonomous browser is bounded to Seller, login screens and progress guards',
+    background.includes('new URL(url).origin === new URL(SELLER_HOME).origin')
+    && background.includes("reason: 'left_allowed_site'")
+    && background.includes("reason: 'no_progress'")
+    && content.includes("input[type=\"password\"]")
+    && content.includes("return 'login_required'")],
 
   // Заполнить половину формы и только потом заметить капчу — значит оставить в чужом кабинете
   // полуготовую карточку.

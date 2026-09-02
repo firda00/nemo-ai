@@ -15,10 +15,12 @@ import {
   Workflow,
   Loader2,
   Code2,
+  Globe2,
+  ShieldCheck,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
-import { classifyTaskArtifact, type SmartArtifactKind } from '../../lib/smartArtifactIntent'
+import { classifyTaskArtifact, explicitlyRequestsBrowserSubmission, type SmartArtifactKind } from '../../lib/smartArtifactIntent'
 import { MarketingCampaignStudio } from './MarketingCampaignStudio'
 import { FinanceCashFlowDashboard } from '../finance/FinanceCashFlowDashboard'
 import { ResearchNotebookHub } from '../research/ResearchNotebookHub'
@@ -26,6 +28,7 @@ import { AutonomousRunner } from './AutonomousRunner'
 import { classifyChatEntityIntent, createEntityFromChat, type ChatCreatedEntity } from '../../lib/chatEntityFactory'
 import { useAgentStore } from '../../store/useAgentStore'
 import { LiveCodeSandboxArtifact } from './LiveCodeSandboxArtifact'
+import { runExtensionBrowserTask, type BrowserTaskResult } from '../../lib/extensionLink'
 
 type ChatTurn = {
   id: number
@@ -69,6 +72,7 @@ const DISCOVERY_COPY = {
 } as const
 
 const ARTIFACT_META = {
+  browser: { icon: Globe2, route: null, titleKey: 'smartTaskDesk.browserTitle', tint: 'text-accent-cyan bg-accent-cyan/10' },
   marketing: { icon: Film, route: '/app/content', titleKey: 'smartTaskDesk.marketingTitle', tint: 'text-violet bg-violet/10' },
   finance: { icon: Landmark, route: '/app/finance', titleKey: 'smartTaskDesk.financeTitle', tint: 'text-teal bg-teal/10' },
   research: { icon: NotebookTabs, route: '/app/research', titleKey: 'smartTaskDesk.researchTitle', tint: 'text-accent-cyan bg-accent-cyan/10' },
@@ -121,6 +125,7 @@ export function SmartTaskDesk() {
   }, [searchParams, setSearchParams])
 
   const suggestions = useMemo(() => [
+    { kind: 'browser' as const, label: t('smartTaskDesk.suggestionBrowser') },
     { kind: 'marketing' as const, label: t('smartTaskDesk.suggestionMarketing') },
     { kind: 'finance' as const, label: t('smartTaskDesk.suggestionFinance') },
     { kind: 'research' as const, label: t('smartTaskDesk.suggestionResearch') },
@@ -233,6 +238,7 @@ export function SmartTaskDesk() {
               </div>
               {turn.artifact && (
                 <ArtifactCard
+                  runKey={turn.id}
                   kind={turn.artifact}
                   prompt={turn.artifactPrompt ?? ''}
                   expanded={activeArtifactId === turn.id}
@@ -292,7 +298,7 @@ function TeamRunArtifact({ entity, goal }: { entity: ChatCreatedEntity; goal: st
   return <section className="mt-3 overflow-hidden rounded-2xl border border-violet/20 bg-bg/45"><div className="flex items-center gap-3 border-b border-ice/[0.07] px-4 py-3"><span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-violet/10 text-violet"><Workflow size={16} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-teal" /></span><div><p className="text-xs font-bold text-text">{entity.name}</p><p className="text-[10px] text-muted">{t('smartTaskDesk.teamRunHandoff')}</p></div></div><div className="p-3 sm:p-4"><AutonomousRunner defaultGoal={goal} departmentId={entity.departmentId} contextKey={`chat:${entity.id}`} presetSpecs={entity.members.map((member) => ({ name: member.name, role: member.role, skills: member.skills, prompt: member.prompt }))} /></div></section>
 }
 
-function ArtifactCard({ kind, prompt, expanded, onToggle }: { kind: SmartArtifactKind; prompt: string; expanded: boolean; onToggle: () => void }) {
+function ArtifactCard({ runKey, kind, prompt, expanded, onToggle }: { runKey: number; kind: SmartArtifactKind; prompt: string; expanded: boolean; onToggle: () => void }) {
   const { t } = useI18n()
   const meta = ARTIFACT_META[kind]
   const Icon = meta.icon
@@ -301,14 +307,66 @@ function ArtifactCard({ kind, prompt, expanded, onToggle }: { kind: SmartArtifac
     <div className="flex flex-wrap items-center gap-3 border-b border-ice/[0.07] px-3 py-3 sm:px-4">
       <span className={cn('flex h-9 w-9 items-center justify-center rounded-xl', meta.tint)}><Icon size={16} /></span>
       <div className="min-w-0 flex-1"><p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-fog">{t('smartTaskDesk.interactiveArtifact')}</p><h2 className="truncate text-sm font-bold text-text">{t(meta.titleKey)}</h2></div>
-      <Link to={meta.route} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-muted transition hover:bg-white/[0.04] hover:text-text"><ExternalLink size={13} />{t('smartTaskDesk.openFull')}</Link>
+      {meta.route && <Link to={meta.route} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-muted transition hover:bg-white/[0.04] hover:text-text"><ExternalLink size={13} />{t('smartTaskDesk.openFull')}</Link>}
       <button type="button" onClick={onToggle} aria-expanded={expanded} className="inline-flex items-center gap-1.5 rounded-lg border border-ice/[0.08] px-2.5 py-2 text-[11px] font-semibold text-muted transition hover:bg-white/[0.04] hover:text-text"><ChevronDown size={13} className={cn('transition-transform', expanded && 'rotate-180')} />{expanded ? t('smartTaskDesk.collapse') : t('smartTaskDesk.expand')}</button>
     </div>
-    {expanded && <div className="max-h-[760px] overflow-auto p-3 sm:p-5 animate-fadeIn">
+    {kind === 'browser' && <div className={cn('max-h-[760px] overflow-auto p-3 sm:p-5', expanded ? 'animate-fadeIn' : 'hidden')}>
+      <BrowserControlArtifact runKey={runKey} prompt={prompt} />
+    </div>}
+    {expanded && kind !== 'browser' && <div className="max-h-[760px] overflow-auto p-3 sm:p-5 animate-fadeIn">
       {kind === 'marketing' && <MarketingCampaignStudio />}
       {kind === 'finance' && <FinanceCashFlowDashboard />}
       {kind === 'research' && <ResearchNotebookHub />}
       {kind === 'code' && <LiveCodeSandboxArtifact prompt={prompt} />}
     </div>}
   </section>
+}
+
+// React Strict Mode дважды монтирует компоненты в разработке. Один и тот же turn должен запустить
+// браузер ровно один раз — повторный клик способен дважды изменить цену или создать дубль.
+const browserTaskRuns = new Map<number, Promise<BrowserTaskResult>>()
+
+function BrowserControlArtifact({ runKey, prompt }: { runKey: number; prompt: string }) {
+  const { t } = useI18n()
+  const [result, setResult] = useState<BrowserTaskResult | null>(null)
+  const [running, setRunning] = useState(true)
+
+  const execute = (confirmRisky = false, force = false) => {
+    setRunning(true)
+    const run = confirmRisky
+      ? runExtensionBrowserTask(prompt, true)
+      : !force && browserTaskRuns.get(runKey) || runExtensionBrowserTask(prompt, false)
+    if (!confirmRisky) browserTaskRuns.set(runKey, run)
+    void run.then((answer) => setResult(answer)).finally(() => setRunning(false))
+  }
+
+  useEffect(() => {
+    const run = browserTaskRuns.get(runKey)
+      ?? runExtensionBrowserTask(prompt, explicitlyRequestsBrowserSubmission(prompt))
+    browserTaskRuns.set(runKey, run)
+    void run.then((answer) => setResult(answer)).finally(() => setRunning(false))
+  }, [prompt, runKey])
+
+  const reason = result?.reason ? t(`browserControl.reasons.${result.reason}`) : ''
+  return <div className="space-y-3">
+    <div className="flex items-start gap-3 rounded-2xl border border-accent-cyan/15 bg-accent-cyan/[0.05] p-4">
+      <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-cyan/10 text-accent-cyan">
+        {running ? <Loader2 size={18} className="animate-spin" /> : <Globe2 size={18} />}
+        {running && <span className="absolute inset-0 animate-ping rounded-xl border border-accent-cyan/30" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold text-text">{running ? t('browserControl.running') : result?.submitted ? t('browserControl.submitted') : result?.ok ? t('browserControl.completed') : t('browserControl.stopped')}</p>
+        <p className="mt-1 text-xs leading-5 text-muted">{running ? t('browserControl.runningHint') : reason || t('browserControl.completedHint')}</p>
+      </div>
+      {!running && result && <span className="rounded-full border border-ice/[0.08] px-2.5 py-1 text-[10px] font-semibold text-muted">{t('browserControl.actions', { count: result.done })}</span>}
+    </div>
+
+    {result?.needsConfirmation && !running && <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/20 bg-amber-400/[0.06] p-4 sm:flex-row sm:items-center">
+      <ShieldCheck size={18} className="shrink-0 text-amber-300" />
+      <p className="flex-1 text-xs leading-5 text-muted">{t('browserControl.confirmHint')}</p>
+      <button type="button" onClick={() => execute(true)} className="rounded-xl bg-amber-300 px-4 py-2.5 text-xs font-bold text-slate-950 transition hover:brightness-105">{t('browserControl.confirm')}</button>
+    </div>}
+
+    {!running && result && !result.ok && !result.needsConfirmation && <button type="button" onClick={() => execute(false, true)} className="rounded-xl border border-ice/[0.1] px-4 py-2.5 text-xs font-semibold text-text transition hover:border-accent-cyan/30 hover:bg-accent-cyan/[0.05]">{t('browserControl.retry')}</button>}
+  </div>
 }

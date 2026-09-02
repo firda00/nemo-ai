@@ -25,6 +25,15 @@ const PAGE = [
   { id: 5, kind: 'input', label: 'Артикул', disabled: true },
 ]
 
+// После перехода элементы старого DOM больше не существуют. Следующие действия выполнятся только
+// после нового снимка страницы автономным loop.
+const navigationPlan = checkPlan({ actions: [
+  { type: 'click', id: 6 },
+  { type: 'type', id: 1, value: 'Нельзя вводить на старой странице' },
+] }, [...PAGE, { id: 6, kind: 'link', text: 'Открыть карточку' }])
+assert.deepEqual(navigationPlan.actions, [{ type: 'click', id: 6 }])
+assert.equal(navigationPlan.rejected[0].reason, 'stale_after_navigation')
+
 // --- Номер обязан быть из снимка ------------------------------------------------------------------
 // Это главная проверка файла. Элемента, которого мы не показывали, коснуться нельзя — и неважно,
 // выдумала его модель или подменили ответ по дороге.
@@ -239,4 +248,4 @@ assert.deepEqual(extractOwnerFormValues('Narxni: 55 000, qoldiqni 8'), { price_u
 assert.deepEqual(extractOwnerFormValues('Товар 2026, артикул 99881'), {}, 'случайные числа не становятся ценой или остатком')
 assert.deepEqual(extractOwnerFormValues('Поставь цену 999999999999999999999'), {}, 'небезопасно большое число отбрасывается')
 
-console.log('[OK] Agent plan behaviour: 80 assertions')
+console.log('[OK] Agent plan behaviour: 82 assertions')

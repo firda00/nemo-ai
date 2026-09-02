@@ -33,6 +33,10 @@ const DICT = {
   media_too_large: { ru: 'Каждое изображение должно быть не больше 8 МБ.', uz: 'Har bir rasm 8 MB dan oshmasligi kerak.' },
   media_total_too_large: { ru: 'Общий размер изображений должен быть не больше 32 МБ.', uz: 'Rasmlarning umumiy hajmi 32 MB dan oshmasligi kerak.' },
   no_file_field: { ru: 'На странице не найдено поле загрузки изображений. Откройте шаг «Фото» и повторите.', uz: 'Sahifada rasm yuklash maydoni topilmadi. «Rasmlar» bosqichini ochib, qayta urinib ko‘ring.' },
+  media_not_uploaded: { ru: 'Nemo прошёл страницы, но не нашёл поле загрузки изображений. Проверьте, что в карточке доступен шаг «Фото».', uz: 'Nemo sahifalardan o‘tdi, ammo rasm yuklash maydonini topmadi. Kartochkada «Rasmlar» bosqichi borligini tekshiring.' },
+  no_progress: { ru: 'Страница не изменилась после двух попыток. Nemo остановился, чтобы не повторять одно действие бесконечно.', uz: 'Ikki urinishdan keyin sahifa o‘zgarmadi. Bir amalni cheksiz takrorlamaslik uchun Nemo to‘xtadi.' },
+  step_limit: { ru: 'Nemo дошёл до лимита из 12 шагов и остановился. Проверьте текущий экран перед продолжением.', uz: 'Nemo 12 qadamlik chegaraga yetib to‘xtadi. Davom etishdan oldin joriy sahifani tekshiring.' },
+  left_allowed_site: { ru: 'Кабинет открыл страницу вне seller.uzum.uz. Nemo остановился и не передал туда данные.', uz: 'Kabinet seller.uzum.uz dan tashqaridagi sahifani ochdi. Nemo to‘xtadi va u yerga ma’lumot yubormadi.' },
   no_tab: {
     ru: "Откройте страницу, с которой нужно работать, и повторите.",
     uz: "Ishlamoqchi bo‘lgan sahifani oching va qayta urinib ko‘ring.",
@@ -98,6 +102,10 @@ const DICT = {
   ready: {
     ru: 'Связь с Nemo есть. Откройте нужную страницу и напишите поручение.',
     uz: 'Nemo bilan aloqa bor. Kerakli sahifani oching va topshiriqni yozing.',
+  },
+  autonomousRunning: {
+    ru: 'Nemo самостоятельно выполняет маршрут в браузере. Текущий шаг: {step}.',
+    uz: 'Nemo brauzerdagi yo‘lni mustaqil bajaryapti. Joriy qadam: {step}.',
   },
 
   // --- Почему нельзя работать ---------------------------------------------------------------
