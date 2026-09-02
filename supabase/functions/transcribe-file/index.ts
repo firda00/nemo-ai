@@ -148,13 +148,16 @@ async function geminiDeleteFile(fileName: string): Promise<void> {
 // window lies entirely past the end of the audio.
 async function geminiTranscribeWindow(fileUri: string, mime: string, languageHint: string, startSec: number, endSec: number): Promise<GeminiResult> {
   try {
+    const instruction = mime.startsWith('video/')
+      ? `Analyze ONLY the segment of this video between ${hms(startSec)} and ${hms(endSec)}. Produce a faithful timecoded log that includes spoken words, visible text, slide changes, demonstrated actions and other important visual events. Detect Russian, English, Uzbek and mixed speech. Preserve the original language, distinguish speakers when possible, and prefix every meaningful line with [hh:mm:ss]. Do not invent events, summarize or translate. Language hint: ${languageHint}. If the video ends before ${hms(startSec)}, output exactly ${NO_SPEECH_MARK}. Output ONLY the timecoded source log.`
+      : `Transcribe ONLY the segment of this meeting audio between ${hms(startSec)} and ${hms(endSec)} verbatim. Detect and understand mixed speech in Russian, English, Uzbek, Kazakh, Kyrgyz, Tajik, Turkmen, Turkish, Arabic, Persian, Hindi, Urdu, Chinese, Japanese, Korean, German, French, Spanish, Italian and Portuguese. Preserve the original language, distinguish speakers when possible, and keep meaningful timestamps or speaker changes. Do not summarize and do not translate. Language hint: ${languageHint}. If the audio ends before ${hms(startSec)}, output exactly ${NO_SPEECH_MARK}. Output ONLY the transcription of that segment.`
     const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [
           { file_data: { mime_type: mime, file_uri: fileUri } },
-          { text: `Transcribe ONLY the segment of this meeting audio between ${hms(startSec)} and ${hms(endSec)} verbatim. Detect and understand mixed speech in Russian, English, Uzbek, Kazakh, Kyrgyz, Tajik, Turkmen, Turkish, Arabic, Persian, Hindi, Urdu, Chinese, Japanese, Korean, German, French, Spanish, Italian and Portuguese. Preserve the original language, distinguish speakers when possible, and keep meaningful timestamps or speaker changes. Do not summarize and do not translate. Language hint: ${languageHint}. If the audio ends before ${hms(startSec)}, output exactly ${NO_SPEECH_MARK}. Output ONLY the transcription of that segment.` },
+          { text: instruction },
         ] }],
         generationConfig: { temperature: 0, maxOutputTokens: LONG_OUTPUT_TOKENS },
       }),
@@ -438,6 +441,9 @@ Deno.serve(async (req) => {
     }
 
     if (!transcript) {
+      if (mime.startsWith('video/')) {
+        return json({ ok: false, code: 'VIDEO_ANALYSIS_UNAVAILABLE', message: `Не удалось проанализировать видео через Gemini. ${providerError}`.trim() }, 503)
+      }
       if (bytes.byteLength > SHORT_MAX_BYTES) {
         return json({ ok: false, code: 'TRANSCRIPTION_FAILED', message: `Не удалось расшифровать длинную запись через Gemini. ${providerError}`.trim() }, 200)
       }

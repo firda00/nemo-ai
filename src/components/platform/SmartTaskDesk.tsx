@@ -17,6 +17,11 @@ import {
   Code2,
   Globe2,
   ShieldCheck,
+  Paperclip,
+  X,
+  FileAudio,
+  FileVideo,
+  FileText,
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -40,6 +45,21 @@ type ChatTurn = {
   entity?: ChatCreatedEntity
   teamRunGoal?: string
   error?: boolean
+  attachments?: File[]
+}
+
+const CHAT_FILE_ACCEPT = '.pdf,.docx,.xlsx,.csv,.txt,.md,.json,.mp3,.m4a,.wav,.mp4'
+const CHAT_FILE_LIMIT = 4
+const CHAT_FILE_MAX_BYTES = 180 * 1024 * 1024
+
+function attachmentIcon(file: File) {
+  if (file.type.startsWith('video/')) return FileVideo
+  if (file.type.startsWith('audio/')) return FileAudio
+  return FileText
+}
+
+function attachmentSize(bytes: number) {
+  return bytes >= 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
 type DiscoveryState = {
@@ -91,8 +111,11 @@ export function SmartTaskDesk() {
   const [activeEntity, setActiveEntity] = useState<ChatCreatedEntity | null>(null)
   const [creating, setCreating] = useState(false)
   const [discovery, setDiscovery] = useState<DiscoveryState | null>(null)
+  const [attachments, setAttachments] = useState<File[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
   const turnId = useRef(0)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const discoveryStartedFromUrl = useRef(false)
   const discoveryCopy = DISCOVERY_COPY[lang]
 
@@ -132,13 +155,17 @@ export function SmartTaskDesk() {
   ], [t])
 
   const runTask = async (text: string, forcedKind?: SmartArtifactKind) => {
-    const value = text.trim()
+    const selectedFiles = attachments
+    const value = text.trim() || (selectedFiles.length ? t('smartTaskDesk.analyzeAttachments') : '')
     if (!value || creating) return
     const entityIntent = classifyChatEntityIntent(value)
-    const artifact = forcedKind ?? classifyTaskArtifact(value)
+    const hasMultimodalSource = selectedFiles.some((file) => /^(audio|video)\//.test(file.type) || /\.(pdf|docx|xlsx|csv|txt|md|json)$/i.test(file.name))
+    const artifact = forcedKind ?? (hasMultimodalSource ? 'research' : classifyTaskArtifact(value))
     const stamp = turnId.current += 2
-    setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value }])
+    setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value, attachments: selectedFiles }])
     setDraft('')
+    setAttachments([])
+    setAttachmentError('')
     if (discovery) {
       if (discovery.step === 'goal') {
         setDiscovery({ ...discovery, step: 'channels', goal: value })
@@ -195,6 +222,20 @@ export function SmartTaskDesk() {
     }
   }
 
+  const selectAttachments = (files: FileList | null) => {
+    if (!files?.length) return
+    const incoming = Array.from(files)
+    const supported = incoming.filter((file) => file.size > 0 && file.size <= CHAT_FILE_MAX_BYTES)
+    setAttachments((current) => [...current, ...supported].slice(0, CHAT_FILE_LIMIT))
+    setAttachmentError(
+      supported.length !== incoming.length
+        ? t('smartTaskDesk.fileRejected')
+        : attachments.length + supported.length > CHAT_FILE_LIMIT
+          ? t('smartTaskDesk.fileLimit', { count: CHAT_FILE_LIMIT })
+          : '',
+    )
+  }
+
   return (
     <section className="overflow-hidden rounded-[28px] border border-ice/[0.09] bg-panel/70 shadow-[0_24px_80px_-48px_rgba(6,182,212,0.55)] backdrop-blur-xl" aria-labelledby="smart-task-desk-title">
       <header className="border-b border-ice/[0.07] px-4 py-5 sm:px-6">
@@ -235,12 +276,17 @@ export function SmartTaskDesk() {
                 turn.role === 'user' ? 'rounded-tr-md bg-accent-indigo text-white' : 'rounded-tl-md border border-ice/[0.07] bg-card/[0.035] text-muted',
               )}>
                 {turn.text ?? (turn.copyKey ? t(turn.copyKey) : '')}
+                {!!turn.attachments?.length && <div className="mt-2 flex flex-wrap gap-2">{turn.attachments.map((file, index) => {
+                  const Icon = attachmentIcon(file)
+                  return <span key={`${file.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-black/15 px-2 py-1 text-[10px] text-white/90"><Icon size={12} /><span className="max-w-48 truncate">{file.name}</span><span className="text-white/60">{attachmentSize(file.size)}</span></span>
+                })}</div>}
               </div>
               {turn.artifact && (
                 <ArtifactCard
                   runKey={turn.id}
                   kind={turn.artifact}
                   prompt={turn.artifactPrompt ?? ''}
+                  attachments={turn.attachments}
                   expanded={activeArtifactId === turn.id}
                   onToggle={() => setActiveArtifactId((current) => current === turn.id ? null : turn.id)}
                 />
@@ -264,6 +310,10 @@ export function SmartTaskDesk() {
           {suggestions.map((suggestion) => <button key={suggestion.kind} type="button" onClick={() => void runTask(suggestion.label, suggestion.kind)} className="rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-2 text-left text-xs text-muted transition hover:-translate-y-0.5 hover:border-accent-cyan/25 hover:text-text">{suggestion.label}</button>)}
         </div>}
         <form onSubmit={submit} className="relative rounded-2xl border border-ice/[0.1] bg-card/[0.04] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] focus-within:border-accent-cyan/30 focus-within:ring-2 focus-within:ring-accent-cyan/[0.06]">
+          {!!attachments.length && <div className="flex flex-wrap gap-2 px-2 pb-1">{attachments.map((file, index) => {
+            const Icon = attachmentIcon(file)
+            return <span key={`${file.name}-${index}`} className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-accent-cyan/15 bg-accent-cyan/[0.06] px-2.5 py-2 text-[11px] text-text"><Icon size={14} className="shrink-0 text-accent-cyan" /><span className="max-w-48 truncate">{file.name}</span><span className="text-fog">{attachmentSize(file.size)}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-md p-0.5 text-fog hover:bg-white/[0.06] hover:text-text" aria-label={t('smartTaskDesk.removeFile')}><X size={12} /></button></span>
+          })}</div>}
           <textarea
             ref={composerRef}
             value={draft}
@@ -271,10 +321,13 @@ export function SmartTaskDesk() {
             onKeyDown={onComposerKeyDown}
             rows={2}
             placeholder={t('smartTaskDesk.placeholder')}
-            className="min-h-16 w-full resize-none bg-transparent px-2 py-2 pr-12 text-sm leading-6 text-text outline-none placeholder:text-fog"
+            className="min-h-16 w-full resize-none bg-transparent px-2 py-2 pb-10 pr-12 text-sm leading-6 text-text outline-none placeholder:text-fog"
           />
-          <button type="submit" disabled={!draft.trim() || creating} aria-label={t('smartTaskDesk.send')} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-accent-cyan text-bg transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"><ArrowUp size={17} /></button>
+          <input ref={fileInputRef} type="file" multiple accept={CHAT_FILE_ACCEPT} className="hidden" onChange={(event) => { selectAttachments(event.target.files); event.target.value = '' }} />
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={creating || attachments.length >= CHAT_FILE_LIMIT} aria-label={t('smartTaskDesk.attachFile')} className="absolute bottom-3 left-3 inline-flex h-9 items-center gap-2 rounded-xl border border-ice/[0.08] px-3 text-[11px] font-semibold text-muted transition hover:border-accent-cyan/25 hover:text-text disabled:opacity-35"><Paperclip size={15} /><span className="hidden sm:inline">{t('smartTaskDesk.attach')}</span></button>
+          <button type="submit" disabled={(!draft.trim() && !attachments.length) || creating} aria-label={t('smartTaskDesk.send')} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-accent-cyan text-bg transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"><ArrowUp size={17} /></button>
         </form>
+        {attachmentError && <p role="alert" className="mt-2 px-1 text-[10px] text-amber">{attachmentError}</p>}
         <p className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-fog"><MessageSquareText size={12} />{t('smartTaskDesk.routingHint')}</p>
       </div>
     </section>
@@ -298,7 +351,7 @@ function TeamRunArtifact({ entity, goal }: { entity: ChatCreatedEntity; goal: st
   return <section className="mt-3 overflow-hidden rounded-2xl border border-violet/20 bg-bg/45"><div className="flex items-center gap-3 border-b border-ice/[0.07] px-4 py-3"><span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-violet/10 text-violet"><Workflow size={16} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-teal" /></span><div><p className="text-xs font-bold text-text">{entity.name}</p><p className="text-[10px] text-muted">{t('smartTaskDesk.teamRunHandoff')}</p></div></div><div className="p-3 sm:p-4"><AutonomousRunner defaultGoal={goal} departmentId={entity.departmentId} contextKey={`chat:${entity.id}`} presetSpecs={entity.members.map((member) => ({ name: member.name, role: member.role, skills: member.skills, prompt: member.prompt }))} /></div></section>
 }
 
-function ArtifactCard({ runKey, kind, prompt, expanded, onToggle }: { runKey: number; kind: SmartArtifactKind; prompt: string; expanded: boolean; onToggle: () => void }) {
+function ArtifactCard({ runKey, kind, prompt, attachments, expanded, onToggle }: { runKey: number; kind: SmartArtifactKind; prompt: string; attachments?: File[]; expanded: boolean; onToggle: () => void }) {
   const { t } = useI18n()
   const meta = ARTIFACT_META[kind]
   const Icon = meta.icon
@@ -316,7 +369,7 @@ function ArtifactCard({ runKey, kind, prompt, expanded, onToggle }: { runKey: nu
     {expanded && kind !== 'browser' && <div className="max-h-[760px] overflow-auto p-3 sm:p-5 animate-fadeIn">
       {kind === 'marketing' && <MarketingCampaignStudio />}
       {kind === 'finance' && <FinanceCashFlowDashboard />}
-      {kind === 'research' && <ResearchNotebookHub />}
+      {kind === 'research' && <ResearchNotebookHub initialFiles={attachments} autoAnalyze />}
       {kind === 'code' && <LiveCodeSandboxArtifact prompt={prompt} />}
     </div>}
   </section>

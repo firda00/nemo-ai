@@ -6,7 +6,8 @@ import {
 } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
-import { getAccessToken, isSupabaseEnabled } from '../../lib/supabase'
+import { getAccessToken, isSupabaseEnabled, supabase } from '../../lib/supabase'
+import { extractText } from '../../lib/extractText'
 import { useAgentStore } from '../../store/useAgentStore'
 import {
   ResearchNotebookOutputSchema,
@@ -29,8 +30,49 @@ interface NotebookSource {
 
 const DEMO_WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
 const MAX_UPLOAD_BYTES = 180 * 1024 * 1024
-const ALLOWED_EXTENSIONS = new Set(['mp3', 'm4a', 'mp4', 'pdf', 'txt'])
+const ALLOWED_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'mp4', 'pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json'])
 const WAVEFORM = [10, 18, 29, 22, 39, 31, 17, 25, 42, 33, 21, 37, 26, 14, 30, 41, 24, 36, 18, 27, 44, 31, 20, 35, 16, 28, 40, 23, 32, 19, 38, 25]
+const MAX_CONTINUE_CALLS = 30
+
+function mediaDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const media = document.createElement(file.type.startsWith('video/') ? 'video' : 'audio')
+    media.preload = 'metadata'
+    media.onloadedmetadata = () => { const duration = Number(media.duration); URL.revokeObjectURL(url); resolve(Number.isFinite(duration) && duration > 0 ? duration : 1) }
+    media.onerror = () => { URL.revokeObjectURL(url); resolve(1) }
+    media.src = url
+  })
+}
+
+function hms(totalSeconds: number) {
+  return new Date(Math.max(0, Math.min(totalSeconds, 359_999)) * 1000).toISOString().slice(11, 19)
+}
+
+function hmsSeconds(value: string) {
+  const [hours, minutes, seconds] = value.split(':').map(Number)
+  return hours * 3600 + minutes * 60 + seconds
+}
+
+function transcriptToSegments(transcript: string, durationSeconds: number) {
+  const matches = [...transcript.matchAll(/(?:^|\n)\s*\[?(\d{2}:[0-5]\d:[0-5]\d)\]?\s*(?:[-–—:]\s*)?([^\n]+)/g)]
+  if (!matches.length) {
+    const chunks = transcript.match(/[\s\S]{1,3800}(?=\s|$)/g) ?? [transcript.slice(0, 3800)]
+    return chunks.slice(0, 150).map((text, index) => ({
+      start: hms(Math.floor((durationSeconds * index) / chunks.length)),
+      end: hms(Math.max(1, Math.ceil((durationSeconds * (index + 1)) / chunks.length))),
+      speaker: 'Unknown',
+      text: text.trim(),
+    }))
+  }
+  return matches.slice(0, 2000).map((match, index) => {
+    const next = matches[index + 1]?.[1]
+    const raw = match[2].trim()
+    const speakerMatch = raw.match(/^([^:]{1,120}):\s+(.+)$/)
+    const finalEnd = hms(Math.max(hmsSeconds(match[1]) + 1, Math.round(durationSeconds)))
+    return { start: match[1], end: next ?? finalEnd, speaker: speakerMatch?.[1] ?? 'Unknown', text: (speakerMatch?.[2] ?? raw).slice(0, 4000) }
+  })
+}
 
 function sourceIcon(kind: SourceKind) {
   if (kind === 'youtube_url') return PlayCircle
@@ -104,13 +146,14 @@ function evidenceLocator(evidence: ResearchEvidence, t: (path: string) => string
   return `${t('researchHub.paragraph')} ${evidence.paragraph}`
 }
 
-function ResearchNotebookWorkspace() {
+function ResearchNotebookWorkspace({ initialFiles, autoAnalyze = false }: { initialFiles?: File[]; autoAnalyze?: boolean }) {
   const { t, lang } = useI18n()
   const accountId = useAgentStore((state) => state.accountId)
   const preview = useMemo(() => buildPreview(t), [t])
-  const [sources, setSources] = useState<NotebookSource[]>(preview.sources)
-  const [analysis, setAnalysis] = useState<ResearchNotebookOutput | null>(preview.output)
-  const [selectedEvidence, setSelectedEvidence] = useState<ResearchEvidence | null>(preview.output.meeting_intelligence.key_decisions[0].evidence[0])
+  const embeddedUpload = Boolean(initialFiles?.length)
+  const [sources, setSources] = useState<NotebookSource[]>(embeddedUpload ? [] : preview.sources)
+  const [analysis, setAnalysis] = useState<ResearchNotebookOutput | null>(embeddedUpload ? null : preview.output)
+  const [selectedEvidence, setSelectedEvidence] = useState<ResearchEvidence | null>(embeddedUpload ? null : preview.output.meeting_intelligence.key_decisions[0].evidence[0])
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [note, setNote] = useState('')
   const [showNote, setShowNote] = useState(false)
@@ -118,7 +161,9 @@ function ResearchNotebookWorkspace() {
   const [error, setError] = useState('')
   const [playing, setPlaying] = useState(false)
   const [activeLine, setActiveLine] = useState(0)
+  const [autoAnalyzePending, setAutoAnalyzePending] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const initialFilesKey = useRef('')
 
   const stopPlayback = useCallback(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel()
@@ -183,28 +228,60 @@ function ResearchNotebookWorkspace() {
     setError('')
   }
 
-  const acceptFiles = async (files: FileList | null) => {
-    if (!files?.length) return
-    const additions: NotebookSource[] = []
-    for (const file of Array.from(files)) {
+  const acceptFiles = useCallback(async (input: FileList | File[] | null) => {
+    const selected = input ? Array.from(input) : []
+    if (!selected.length) return
+    for (const file of selected) {
       const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
       if (!ALLOWED_EXTENSIONS.has(extension)) { setError(t('researchHub.unsupportedFile')); continue }
       if (file.size > MAX_UPLOAD_BYTES) { setError(t('researchHub.fileTooLarge')); continue }
-      const id = `file-${Date.now()}-${additions.length}`
-      if (extension === 'txt') {
-        const text = (await file.text()).trim()
-        if (!text) continue
+      const id = `file-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+      const detail = `${Math.max(1, Math.round(file.size / 1024 / 1024))} MB`
+      const isMedia = ['mp3', 'm4a', 'wav', 'mp4'].includes(extension)
+      setSources((current) => [...current, { id, kind: extension === 'mp4' ? 'media_video' : isMedia ? 'media_audio' : 'plain_text', title: file.name, detail, status: 'processing' }])
+      try {
+        if (!isMedia) {
+          const text = (await extractText(file)).trim()
+          if (!text) throw new Error('empty')
+          const workspaceId = accountId && accountId !== 'demo' ? accountId : DEMO_WORKSPACE_ID
+          const normalized: SourceIngestion = { source_id: id, workspace_id: workspaceId, kind: 'plain_text', title: file.name, language: lang, size_bytes: Math.max(1, Math.min(file.size, 8 * 1024 * 1024)), ingested_at: new Date().toISOString(), text }
+          setSources((current) => current.map((source) => source.id === id ? { ...source, detail: t('researchHub.characters', { count: text.length }), status: 'ready', normalized } : source))
+          continue
+        }
+        if (!supabase || !isSupabaseEnabled) throw new Error('auth')
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) throw new Error('auth')
+        const duration = await mediaDuration(file)
+        const path = `${user.id}/audio/${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, '_').slice(0, 60)}`
+        const contentType = extension === 'mp4' ? 'video/mp4' : extension === 'm4a' ? 'audio/mp4' : extension === 'wav' ? 'audio/wav' : 'audio/mpeg'
+        const upload = await supabase.storage.from('private-audio').upload(path, file, { contentType })
+        if (upload.error) throw upload.error
+        const body = { storage_path: path, format: contentType, language: lang || 'auto', duration_seconds: Math.round(duration) }
+        let invoked = await supabase.functions.invoke('transcribe-file', { body })
+        let response = invoked.data as { ok?: boolean; pending?: boolean; job_id?: string; transcript?: string; message?: string; error?: string } | null
+        for (let call = 0; call < MAX_CONTINUE_CALLS && response?.ok && response.pending && response.job_id; call++) {
+          invoked = await supabase.functions.invoke('transcribe-file', { body: { action: 'continue', job_id: response.job_id } })
+          response = invoked.data as typeof response
+        }
+        if (!response?.ok || !response.transcript) throw new Error(response?.message || response?.error || 'transcription')
+        const kind = extension === 'mp4' ? 'media_video' : 'media_audio'
+        const mimeType = kind === 'media_video' ? 'video/mp4' : extension === 'm4a' ? 'audio/mp4' : extension === 'wav' ? 'audio/wav' : 'audio/mpeg'
         const workspaceId = accountId && accountId !== 'demo' ? accountId : DEMO_WORKSPACE_ID
-        const normalized: SourceIngestion = { source_id: id, workspace_id: workspaceId, kind: 'plain_text', title: file.name, language: lang, size_bytes: Math.max(1, file.size), ingested_at: new Date().toISOString(), text }
-        additions.push({ id, kind: 'plain_text', title: file.name, detail: `${Math.max(1, Math.round(file.size / 1024))} KB`, status: 'ready', normalized })
-      } else {
-        const kind: SourceKind = extension === 'pdf' ? 'pdf_document' : extension === 'mp4' ? 'media_video' : 'media_audio'
-        additions.push({ id, kind, title: file.name, detail: `${Math.max(1, Math.round(file.size / 1024 / 1024))} MB`, status: 'processing' })
+        const normalized = {
+          source_id: id, workspace_id: workspaceId, kind, title: file.name, language: lang,
+          size_bytes: file.size, ingested_at: new Date().toISOString(), storage_path: path,
+          mime_type: mimeType, duration_seconds: Math.max(1, Math.round(duration)),
+          transcript_segments: transcriptToSegments(response.transcript, duration),
+        } as SourceIngestion
+        setSources((current) => current.map((source) => source.id === id ? { ...source, detail: `${kind === 'media_video' ? 'VIDEO' : 'AUDIO'} / ${hms(duration)}`, status: 'ready', normalized } : source))
+        setError('')
+      } catch {
+        setSources((current) => current.map((source) => source.id === id ? { ...source, status: 'failed' } : source))
+        setError(t('researchHub.mediaProcessingError'))
       }
     }
-    if (additions.length) setSources((current) => [...current, ...additions])
-    if (additions.some((item) => item.status === 'processing')) setError(t('researchHub.liveNeedsProcessing'))
-  }
+    if (autoAnalyze) setAutoAnalyzePending(true)
+  }, [accountId, autoAnalyze, lang, t])
 
   const analyze = async () => {
     const normalized = sources.flatMap((source) => source.status === 'ready' && source.normalized ? [source.normalized] : [])
@@ -239,6 +316,25 @@ function ResearchNotebookWorkspace() {
     }
   }
 
+  useEffect(() => {
+    if (!initialFiles?.length) return
+    const key = initialFiles.map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|')
+    if (initialFilesKey.current === key) return
+    initialFilesKey.current = key
+    void acceptFiles(initialFiles)
+  }, [acceptFiles, initialFiles])
+
+  useEffect(() => {
+    if (!autoAnalyzePending || sources.some((source) => source.status === 'processing')) return
+    const timer = window.setTimeout(() => {
+      setAutoAnalyzePending(false)
+      void analyze()
+    }, 0)
+    return () => window.clearTimeout(timer)
+    // analyze intentionally runs once after the files supplied by the chat are normalized.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAnalyzePending, sources])
+
   const sourceMap = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources])
   const selectedSource = selectedEvidence ? sourceMap.get(selectedEvidence.source_id) : null
   const readyCount = sources.filter((source) => source.status === 'ready').length
@@ -269,7 +365,7 @@ function ResearchNotebookWorkspace() {
             <UploadCloud size={18} className="shrink-0 text-accent-cyan" />
             <span className="min-w-0"><span className="block text-xs font-semibold text-text">{t('researchHub.upload')}</span><span className="mt-0.5 block text-[10px] text-fog">{t('researchHub.uploadHint')}</span></span>
           </button>
-          <input ref={fileInput} type="file" multiple accept=".mp3,.m4a,.mp4,.pdf,.txt,audio/mpeg,audio/mp4,video/mp4,application/pdf,text/plain" className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void acceptFiles(event.target.files); event.target.value = '' }} />
+          <input ref={fileInput} type="file" multiple accept=".mp3,.m4a,.wav,.mp4,.pdf,.docx,.xlsx,.csv,.txt,.md,.json,audio/mpeg,audio/mp4,audio/wav,video/mp4,application/pdf,text/plain" className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void acceptFiles(event.target.files); event.target.value = '' }} />
           <button type="button" onClick={() => setShowNote((value) => !value)} className="mt-2 flex w-full items-center gap-3 rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-3 text-left text-xs font-semibold text-text transition hover:bg-card/[0.06]"><FileText size={17} className="text-muted" />{t('researchHub.note')}</button>
           {showNote && <div className="mt-2 rounded-xl border border-ice/[0.08] bg-bg/30 p-2"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} placeholder={t('researchHub.notePlaceholder')} className="w-full resize-y bg-transparent px-1 py-1 text-xs leading-5 text-text outline-none placeholder:text-fog" /><button type="button" onClick={addNote} disabled={!note.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent-indigo px-3 py-2 text-xs font-bold text-white disabled:opacity-40"><Plus size={14} />{t('researchHub.addNote')}</button></div>}
           <div className="mt-5 space-y-2">
@@ -325,7 +421,7 @@ function ResearchNotebookWorkspace() {
   )
 }
 
-export function ResearchNotebookHub() {
+export function ResearchNotebookHub({ initialFiles, autoAnalyze = false }: { initialFiles?: File[]; autoAnalyze?: boolean } = {}) {
   const { lang } = useI18n()
-  return <ResearchNotebookWorkspace key={lang} />
+  return <ResearchNotebookWorkspace key={lang} initialFiles={initialFiles} autoAnalyze={autoAnalyze} />
 }
