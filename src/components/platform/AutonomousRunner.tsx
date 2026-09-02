@@ -103,6 +103,7 @@ export function AutonomousRunner({
   builderMode = false,
   onRunStateChange,
   onTaskSubmitted,
+  onFastTask,
   onComplete,
   definitionOfDone,
   maxIterations = 10,
@@ -131,6 +132,8 @@ export function AutonomousRunner({
   onRunStateChange?: (status: 'idle' | 'queued' | 'running' | 'completed' | 'failed') => void
   /** Optimistic chat event: lets a parent place the user's message in the stream immediately. */
   onTaskSubmitted?: (task: string) => void
+  /** Optional fast path for deterministic chat artifacts that do not need a goal loop. */
+  onFastTask?: (task: string) => boolean | Promise<boolean>
   onComplete?: (result: string) => void
   /** Optional measurable completion contract; defaults are derived from the goal. */
   definitionOfDone?: string[]
@@ -413,6 +416,14 @@ export function AutonomousRunner({
     if (!resume) {
       onTaskSubmitted?.(task)
       if (streamMode) setComposerCleared(true)
+      if (onFastTask) {
+        setRunning(true)
+        try {
+          if (await onFastTask(task)) return
+        } finally {
+          setRunning(false)
+        }
+      }
     }
     if (!resume && live) {
       await enqueueWorkerRun(task)

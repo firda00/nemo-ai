@@ -16,6 +16,7 @@
     "test:ui-stability": "node agent-hub/ui-stability-contracts.mjs",
     "test:ui": "node agent-hub/site-smoke.mjs",
     "test:team-office": "node agent-hub/team-office-ui-contracts.mjs",
+    "test:store-artifact": "node --experimental-strip-types agent-hub/store-artifact-behavior.mjs",
     "test:smart-navigation": "node agent-hub/smart-navigation-contracts.mjs",
     "test:goal-loop": "node --experimental-strip-types agent-hub/goal-conditioned-loop-contracts.mjs",
     "test:chat-team-integrations": "node agent-hub/chat-team-integration-contracts.mjs",

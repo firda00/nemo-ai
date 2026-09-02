@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, teamDetailPage, sectionNav, leadsPage, app] = await Promise.all([
+const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agentsPage, teamDetailPage, sectionNav, leadsPage, app, runner, storeArtifact] = await Promise.all([
   read('src/components/layout/AppLayout.tsx'),
   read('src/components/office/AgentDrawer.tsx'),
   read('src/components/agents/AgentQuickEditDrawer.tsx'),
@@ -15,6 +15,8 @@ const [layout, drawer, quickEditDrawer, store, view, pipeline, autonomous, agent
   read('src/components/platform/KnowledgeIntegrationNav.tsx'),
   read('src/pages/app/LeadsPage.tsx'),
   read('src/App.tsx'),
+  read('src/components/platform/AutonomousRunner.tsx'),
+  read('src/components/platform/StoreSnapshotArtifact.tsx'),
 ])
 
 const sidebarBlock = layout.slice(layout.indexOf('const navGroups'), layout.indexOf('const nav ='))
@@ -61,13 +63,22 @@ assert.match(teamDetailPage, /setSelectedSub\(sa\)/)
 assert.match(teamDetailPage, /selectedSub && <div/)
 assert.match(teamDetailPage, /teamDetailPage\.operationsTools/)
 assert.equal((teamDetailPage.match(/<AutonomousRunner/g) ?? []).length, 1)
-assert.match(teamDetailPage, /streamMode onTaskSubmitted=\{setPendingTask\}/, 'team tasks must enter the command stream immediately')
+assert.match(teamDetailPage, /streamMode onTaskSubmitted=/, 'team tasks must enter the command stream immediately')
 assert.match(teamDetailPage, /team-working-message/, 'the command stream must show a live working state')
 assert.match(teamDetailPage, /team-thinking-dots/, 'the working state must visibly animate without exposing private reasoning')
 assert.match(teamDetailPage, /streamEndRef\.current\?\.scrollIntoView/, 'new chat activity must remain visible')
 assert.match(teamDetailPage, /teamDisplayName\(\{ name:/, 'team rooms must never expose a raw creation prompt as their title')
 assert.match(teamNames, /Команда роста Uzum/, 'generated Uzum teams need a short Russian customer-facing name')
 assert.match(teamNames, /generatedName/, 'custom names must be preserved while generated prompt names are normalized')
+assert.match(teamDetailPage, /onFastTask=/, 'simple store questions must bypass the expensive autonomous goal loop')
+assert.match(teamDetailPage, /StoreSnapshotArtifact/, 'store status must render as an in-chat artifact')
+assert.match(teamDetailPage, /platformAgents=\{\[\]\}/, 'the graph must use the normalized live team nodes rather than stale platform state')
+assert.match(runner, /await onFastTask\(task\)/, 'the runner must support deterministic fast artifacts')
+assert.match(storeArtifact, /action: 'status'/)
+assert.match(storeArtifact, /action: 'list_skus'/)
+assert.match(storeArtifact, /sold_units_7d/)
+assert.match(storeArtifact, /stock_total/)
+assert.doesNotMatch(storeArtifact, /dangerouslySetInnerHTML|service_role|OPENROUTER_API_KEY/)
 assert.doesNotMatch(teamDetailPage, /CoordinatorAgentPanel|PlannerCommandCenter/)
 assert.match(agentsPage, /<AgentQuickEditDrawer/)
 assert.match(agentsPage, /status: agent\.status === 'active' \? 'draft' : agent\.status/)

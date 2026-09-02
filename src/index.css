@@ -432,6 +432,7 @@
 .team-builder-icon { animation: team-orbit-float 4s ease-in-out infinite; }
 .team-message-in { animation: team-message-in 280ms cubic-bezier(.22, 1, .36, 1) both; }
 .team-working-message { animation: team-message-in 360ms 80ms cubic-bezier(.22, 1, .36, 1) both; }
+.store-artifact-in { animation: team-message-in 420ms cubic-bezier(.22, 1, .36, 1) both; }
 .team-working-avatar > span { animation: team-pulse-ring 1.8s ease-out infinite; }
 .team-thinking-dots { display: inline-flex; align-items: center; gap: 3px; }
 .team-thinking-dots i { width: 4px; height: 4px; border-radius: 999px; background: rgb(var(--color-cyan)); animation: team-working-breathe 1.15s ease-in-out infinite; }
@@ -453,6 +454,7 @@
   .team-builder-icon,
   .team-message-in,
   .team-working-message,
+  .store-artifact-in,
   .team-working-avatar > span,
   .team-thinking-dots i,
   .team-agent-working { animation: none; }
