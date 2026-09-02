@@ -5,10 +5,12 @@
   <title>Nemo</title>
   <style>
     :root { color-scheme: dark; }
+    html, body { min-height: 100%; }
     body {
-      margin: 0; width: 340px; padding: 16px;
+      margin: 0; width: auto; min-width: 280px; min-height: 100vh; padding: 18px;
       background: #0A0D1C; color: #E8ECF8;
       font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      box-sizing: border-box;
     }
     header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     h1 { margin: 0; font-size: 14px; font-weight: 600; }

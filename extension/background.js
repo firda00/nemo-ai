@@ -9,6 +9,18 @@
 
 import { callNemo, forgetSession, readSession, reportResult, saveSession, sessionState } from './nemo.js'
 
+// Nemo живёт в постоянной боковой панели Chrome. Обычный action popup закрывается при первом
+// клике по странице и поэтому непригоден для длинной браузерной задачи. Этот режим сохраняет
+// панель справа при навигации и переключении вкладок — как рабочее пространство, а не меню.
+async function enablePersistentSidePanel() {
+  if (!chrome.sidePanel?.setPanelBehavior) return
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined)
+}
+
+chrome.runtime.onInstalled.addListener(() => { void enablePersistentSidePanel() })
+chrome.runtime.onStartup.addListener(() => { void enablePersistentSidePanel() })
+void enablePersistentSidePanel()
+
 /**
  * Кто вправе говорить с расширением.
  *

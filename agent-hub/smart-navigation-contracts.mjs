@@ -23,7 +23,7 @@ for (const route of ['/app/content', '/app/finance', '/app/research', '/app/know
 }
 assert.match(commandItems, /const commandItems = nav/, 'Command Palette must expose only active navigation')
 
-for (const route of ['content', 'finance', 'research']) {
+for (const route of ['content', 'finance', 'research', 'commerce']) {
   assert.match(app, new RegExp(`path="${route}" element=\\{<Navigate to="\\/app" replace \\/>\\}`), `${route} must redirect to the chat with replace`)
 }
 assert.match(app, /path="forge" element=\{<Navigate to="\/app\/teams" replace \/>\}/, 'legacy Forge route must redirect to AI teams')

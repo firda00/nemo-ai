@@ -27,6 +27,7 @@ import { FeedbackWidget } from '../platform/FeedbackWidget'
 import { featureEnabled, trackEvent } from '../../lib/telemetry'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { PLANS, planLabelKey } from '../../lib/plans'
+import { extensionReachable, extensionState, linkExtension } from '../../lib/extensionLink'
 
 export function AppLayout() {
   const { t } = useI18n()
@@ -52,6 +53,23 @@ export function AppLayout() {
     }).catch(() => undefined)
     return () => { active = false }
   }, [isAuthed])
+
+  // Связь с локальным браузерным агентом устанавливается из любого рабочего экрана Nemo.
+  // Отдельная страница настройки для этого не нужна: расширению передаётся только короткоживущий
+  // access token, refresh token браузерное расширение никогда не получает.
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase || !isAuthed) return
+    let active = true
+    ;(async () => {
+      const state = await extensionState()
+      if (!active || !extensionReachable(state) || state === 'linked') return
+      const { data } = await supabase.auth.getSession()
+      const session = data.session
+      if (!active || !session?.access_token || !session.expires_at) return
+      await linkExtension({ access_token: session.access_token, expires_at: session.expires_at })
+    })().catch(() => undefined)
+    return () => { active = false }
+  }, [isAuthed, user?.id])
   // desktop sidebar collapse (hide) — persisted so it stays the user's choice
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('nemo.sidebar') === 'collapsed' } catch { return false }

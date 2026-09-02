@@ -23,7 +23,7 @@ const messages = read('extension/messages.js')
 const control = read('supabase/functions/commerce-control/index.ts')
 const plan = read('supabase/functions/_shared/agentPlan.ts')
 const link = read('src/lib/extensionLink.ts')
-const page = read('src/pages/app/CommercePage.tsx')
+const layout = read('src/components/layout/AppLayout.tsx')
 const cors = read('supabase/functions/_shared/cors.ts')
 
 /** Код без комментариев. Проверять надо исполняемое, а не объяснение рядом с ним. */
@@ -134,6 +134,12 @@ const contracts = [
     && manifest.action?.default_title === 'Nemo in Chrome'
     && !/uzum|загрузчик товаров/i.test(manifest.name)],
 
+  ['the extension opens as a persistent Chrome side panel, not a disposable popup',
+    manifest.side_panel?.default_path === 'popup.html'
+    && !manifest.action?.default_popup
+    && manifest.permissions.includes('sidePanel')
+    && background.includes('openPanelOnActionClick: true')],
+
   // Модули подключаются в порядке зависимости: content.js зовёт функции из scanner и executor,
   // а content_scripts делят одну область видимости.
   ['the content scripts load in dependency order',
@@ -167,7 +173,8 @@ const contracts = [
     && background.includes('sessionState().then(({ session, expired })')
     && link.includes("return probe.reply.expired ? 'expired' : 'unlinked'")
     && popup.includes("info?.expired ? 'expired' : 'not_linked'")
-    && page.includes("window.addEventListener('focus', check)")],
+    && layout.includes('extensionState()')
+    && layout.includes('linkExtension({ access_token: session.access_token, expires_at: session.expires_at })')],
 
   ['only the short-lived token crosses to the extension',
     link.includes('session: { access_token: session.access_token, expires_at: session.expires_at }')
