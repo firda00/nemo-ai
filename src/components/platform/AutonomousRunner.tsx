@@ -417,6 +417,8 @@ export function AutonomousRunner({
     const task = restored?.goal?.trim() || goal.trim()
     if (task.length < 4 || running) return
     if (!resume) {
+      setResumeCheckpoint(null)
+      localStorage.removeItem(workerRunStorageKey)
       onTaskSubmitted?.(task)
       if (streamMode) setComposerCleared(true)
       if (onFastTask) {
@@ -669,7 +671,6 @@ export function AutonomousRunner({
     setResumeCheckpoint(null)
     setGoalRuntime(null)
   }
-  const canResume = Boolean(resumeCheckpoint && resumeCheckpoint.state.goal.trim() === goal.trim())
   const phaseOrder = ['architect', 'team', 'review', 'synth'] as const
   const activePhaseIndex = Math.max(0, phaseOrder.indexOf(phase === 'idle' ? 'architect' : phase))
   const phaseLabel = resumeCheckpoint?.transition === 'goal_check'
@@ -702,7 +703,7 @@ export function AutonomousRunner({
           placeholder={placeholder ?? t('autonomousRunner.placeholderDefault')}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-text outline-none placeholder:text-muted/70"
         />
-        <button onClick={() => void run(canResume ? resumeCheckpoint ?? undefined : undefined)} disabled={running || goal.trim().length < 4} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition disabled:opacity-40">
+        <button onClick={() => void run()} disabled={running || goal.trim().length < 4} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition disabled:opacity-40">
           {running ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
         </button>
       </div>

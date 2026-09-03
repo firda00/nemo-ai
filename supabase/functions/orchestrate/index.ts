@@ -529,9 +529,9 @@ Deno.serve(async (req) => {
       hasPreset: presetSpecs.length > 0,
       hasDepartment: Boolean(requestedDepartmentId),
     })
-    // A goal-conditioned run must execute and pass a separate evaluator. A one-call
-    // transformation cannot prove a measurable definition of done.
-    const executionPlan = { ...budgetPlan, path: 'team' as const, reason: 'goal_conditioned' }
+    // Small, read-only turns keep the one-call path even inside a saved team. Only
+    // substantive work pays for staffing, planning, evaluation and synthesis.
+    const executionPlan = budgetPlan
     const immutableInput = {
       goal, orchestratedGoal, inputArtifacts: artifacts, lang: String(body?.lang ?? '').slice(0, 8),
       model: String(body?.model ?? '').slice(0, 160), departmentId: requestedDepartmentId || null, executionPlan, goalContract,
@@ -551,7 +551,7 @@ Deno.serve(async (req) => {
     const orgMemory = await loadOrgClaims(admin, accountId, orchestratedGoal || goal, null, 24)
     const { data: queued, error: enqueueError } = await admin.from('autonomous_run_checkpoints').insert({
       account_id: accountId, user_id: user.id, run_ref: runRef, context_key: contextKey,
-      phase: 'team', transition: presetSpecs.length ? 'observe_plan' : 'staff', state: initialState,
+      phase: executionPlan.path === 'quick' ? 'synth' : 'team', transition: executionPlan.path === 'quick' ? 'synth' : presetSpecs.length ? 'observe_plan' : 'staff', state: initialState,
       immutable_input: { ...immutableInput, orgMemory }, status: 'queued', next_attempt_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     }).select('id,run_ref,status,state,phase,transition,updated_at').single()

@@ -33,7 +33,7 @@ for (const query of [
 for (const query of ['привет', 'напиши письмо клиенту']) assert.equal(isAnalyticalArtifactIntent(query), false, query)
 
 const { isTeamQuickReplyIntent } = await import('../src/lib/teamQuickReplyIntent.ts')
-for (const query of ['привет', 'кто вы', 'что ты умеешь', 'как это работает?', 'спасибо']) {
+for (const query of ['привет', 'кто вы', 'что ты умеешь', 'как это работает?', 'спасибо', 'сделай заголовок короче', 'дай 3 идеи']) {
   assert.equal(isTeamQuickReplyIntent(query), true, query)
 }
 for (const query of ['сделай дашборд магазина', 'проанализируй файл', 'найди последние цены в интернете', 'измени цену товара']) {
@@ -51,3 +51,5 @@ assert.match(commerce, /kind: 'store_snapshot'/)
 assert.match(commerce, /eq\('account_id', profile\.account_id\)/, 'snapshot history must remain tenant scoped')
 assert.match(teamDetail, /functions\.invoke\('cli-chat'/, 'short conversational questions must use one direct model call')
 assert.match(teamDetail, /isTeamQuickReplyIntent/, 'quick replies must fail closed through a deterministic classifier')
+assert.doesNotMatch(teamDetail, /isMarketplaceWorkspace && isStoreSnapshotIntent\(task\)/, 'store dashboards must use the fast artifact from every team room')
+assert.match(teamDetail, /quick_reply_timeout[\s\S]*20_000/, 'a quick reply must fail visibly instead of spinning for minutes')

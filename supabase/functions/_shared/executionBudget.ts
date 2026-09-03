@@ -24,6 +24,8 @@ const HIGH_IMPACT_RE = /\b(approve|reject|eligible|eligibility|rank|prioriti[sz]
 const SECOND_INTENT_RE = /\b(tell me (?:if|whether|which|who|what)|should (?:i|we)|can (?:i|we)|pick|choose|select|decide|which one|best one|safe to|allowed to)\b|(?:скажи.{0,20}(?:можно|стоит|какой|кто|что)|можно ли|стоит ли|следует ли|выбери|выбор|определи.{0,20}(?:кого|какой|можно)|лучший|подписать|принять)|(?:ayt.{0,20}(?:qaysi|mumkin)|tanla|eng yaxshi|kerakmi|mumkinmi)/i
 const REGULATED_CONTEXT_RE = /\b(nda|agreement|bloodwork|blood test|lab results?|metformin|prescription|applications?|applicants?|resumes?|curriculum vitae)\b|(?:анализ[ыа].{0,15}кров|лаборатор|метформин|рецепт|заявк[аи]|резюме|соглашени|подпис[ьы])|(?:qon tahlil|laborator|retsept|ariza|rezyume|kelishuv)/i
 const TRANSFER_RE = /(?:\b\d+(?:[.,]\d+)?\s*(?:usd|eur|uzs|sum|сум|руб|₽|\$|€).{0,40}(?:\bto\b|для|алине|кому|ga\b))|(?:переведи\s+\d)/i
+const QUICK_QUESTION_RE = /^(?:а\s+|и\s+|но\s+)?(?:кто|что|как|почему|зачем|где|когда|како[йея]|какие|сколько|можешь\s+ли|объясни|сократи|перефразируй|переведи|дай\s+(?:до\s+)?\d+\s+(?:иде|вариант)|сделай\s+(?:короче|понятнее|заголовок)|who\b|what\b|how\b|why\b|where\b|when\b|which\b|can\s+you\b|explain\b|shorten\b|rewrite\b|translate\b|give\s+(?:up\s+to\s+)?\d+\b|kim\b|nima\b|qanday\b|nega\b|qayerda\b|qachon\b)/i
+const QUICK_DASHBOARD_RE = /(?:сделай|покажи|дай|создай|построй).{0,35}(?:дашборд|сводк|обзор).{0,60}(?:магазин|продаж)|(?:dashboard|snapshot|summary).{0,60}(?:store|sales)/i
 
 export function chooseExecutionPlan(input: {
   goal: string
@@ -36,16 +38,20 @@ export function chooseExecutionPlan(input: {
   // Three specialists cover the common research / analysis / synthesis split. A single
   // peer review is retained, while recursive revision loops are disabled by default.
   const team = (reason: string): ExecutionPlan => ({ version: 1, path: 'team', reason, maxLogicalLlmCalls: 24, maxSpecialists: 3, maxReviewRounds: 0 })
-  if (input.hasPreset) return team('preset_team')
-  if (input.hasDepartment) return team('saved_department')
-
   const goal = String(input.goal ?? '').trim()
   const fullGoal = String(input.orchestratedGoal ?? goal).trim()
   const artifacts = Array.isArray(input.artifacts) ? input.artifacts : []
   const artifactChars = artifacts.reduce((sum, item) => sum + String(item?.content ?? '').length, 0)
   if (goal.length > 1_200 || fullGoal.length > 4_000 || artifacts.length > 2 || artifactChars > 12_000) return team('input_too_large')
-  const inspectedText = `${fullGoal}\n${artifacts.map((item) => String(item?.content ?? '')).join('\n')}`
+  // The orchestrated goal also contains the saved team's broad business context. Classifying
+  // that text made a harmless short question inherit words such as "marketplace", "strategy"
+  // or "Uzum" and fan out to a full team. Complexity is decided from the user's turn and data.
+  const inspectedText = `${goal}\n${artifacts.map((item) => String(item?.content ?? '')).join('\n')}`
   if (CURRENT_OR_WEB_RE.test(inspectedText) || MUTATION_RE.test(inspectedText) || CONSEQUENTIAL_RE.test(inspectedText) || HIGH_IMPACT_RE.test(inspectedText) || SECOND_INTENT_RE.test(inspectedText) || REGULATED_CONTEXT_RE.test(inspectedText) || TRANSFER_RE.test(inspectedText)) return team('complex_or_sensitive')
-  if (!hasBoundedQuickShape(goal, artifacts.length > 0)) return team('no_bounded_transform_intent')
-  return { version: 1, path: 'quick', reason: 'bounded_read_only_transform', maxLogicalLlmCalls: 1, maxSpecialists: 0, maxReviewRounds: 0 }
+  if (hasBoundedQuickShape(goal, artifacts.length > 0) || (!artifacts.length && goal.length <= 420 && (QUICK_QUESTION_RE.test(goal) || QUICK_DASHBOARD_RE.test(goal)))) {
+    return { version: 1, path: 'quick', reason: 'bounded_read_only_answer', maxLogicalLlmCalls: 1, maxSpecialists: 0, maxReviewRounds: 0 }
+  }
+  if (input.hasPreset) return team('preset_team')
+  if (input.hasDepartment) return team('saved_department')
+  return team('no_bounded_transform_intent')
 }

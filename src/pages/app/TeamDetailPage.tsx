@@ -332,7 +332,7 @@ export default function TeamDetailPage() {
             <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-4">
               {isRegulated && <p className="mb-3 rounded-xl border border-amber/20 bg-amber/[0.06] p-3 text-xs leading-5 text-amber">{safetyCopy.notice}</p>}
               <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} adaptiveTeam contextHint={`${goal}\n\nПостоянный состав команды: ${(dept?.subs ?? []).map((s) => `${s.name} — ${s.role}`).join('; ')}. Координатор может собрать временных профильных субагентов, если постоянному составу не хватает компетенции для точного результата.`} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={(task) => { setPendingTask(task); setFastStoreArtifact(null); setFastReply(null) }} onFastTask={async (task, context) => {
-                if (!context.hasInputArtifacts && isMarketplaceWorkspace && isStoreSnapshotIntent(task)) {
+                if (!context.hasInputArtifacts && isStoreSnapshotIntent(task)) {
                   setFastStoreArtifact({ task, runRef: crypto.randomUUID() })
                   return true
                 }
@@ -341,7 +341,10 @@ export default function TeamDetailPage() {
                 try {
                   const teamContext = `${teamName}. ${goal}. Состав: ${(dept?.subs ?? []).map((member) => `${member.name} — ${member.role}`).join('; ') || 'не указан'}.`
                   const previousResult = latestRun?.report ? `\nПоследний результат команды для контекста:\n${latestRun.report.slice(0, 3500)}` : ''
-                  const { data, error } = await supabase.functions.invoke('cli-chat', { body: { model: 'openai/gpt-4o-mini', messages: [{ role: 'system', content: `Ты отвечаешь внутри комнаты этой AI-команды. Контекст команды: ${teamContext}${previousResult}` }, { role: 'user', content: task }], tools: [] } })
+                  const { data, error } = await Promise.race([
+                    supabase.functions.invoke('cli-chat', { body: { model: 'openai/gpt-4o-mini', messages: [{ role: 'system', content: `Ты отвечаешь внутри комнаты этой AI-команды. Контекст команды: ${teamContext}${previousResult}` }, { role: 'user', content: task }], tools: [] } }),
+                    new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('quick_reply_timeout')), 20_000)),
+                  ])
                   const answer = typeof data?.message?.content === 'string' ? data.message.content.trim() : ''
                   if (error || !answer) throw new Error('quick_reply_failed')
                   setFastReply({ loading: false, text: answer, error: false })

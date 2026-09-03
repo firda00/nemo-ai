@@ -7,7 +7,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 const LEASE_SECONDS = 600
-const ACTION_TIMEOUT_MS = 45_000
+const ACTION_TIMEOUT_MS = 30_000
 const MAX_REVISIONS = 1
 const MAX_PARALLEL_SPECIALISTS = 3
 const MAX_SPECIALIST_ATTEMPTS = 2
@@ -321,8 +321,8 @@ Deno.serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message !== 'claim_lost') {
-      const terminalFailure = run.attempt_count >= 8
-      const delaySeconds = Math.min(300, 5 * 2 ** Math.min(run.attempt_count, 6))
+      const terminalFailure = run.attempt_count >= 3
+      const delaySeconds = Math.min(20, 3 * 2 ** Math.min(run.attempt_count, 3))
       await finish({ state, phase: run.phase, transition: run.transition, specialist: run.specialist_cursor, review: run.review_cursor, revision: run.revision_round, status: terminalFailure ? 'failed' : 'queued', error: message, nextAt: new Date(Date.now() + delaySeconds * 1000).toISOString() }).catch(() => undefined)
     }
     return json({ ok: false, run_ref: run.run_ref, error: message }, message === 'claim_lost' ? 409 : 500)
