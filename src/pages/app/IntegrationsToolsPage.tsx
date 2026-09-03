@@ -83,7 +83,7 @@ const CAT_LABEL: Record<string, string> = {
 const PH_KEY: Record<string, string> = { stripe: 'stripePh', amocrm: 'amocrmPh', bitrix24: 'bitrix24Ph', hyperbrowser: 'hyperbrowserPh' }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export default function IntegrationsToolsPage() {
+export default function IntegrationsToolsPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n()
   const [searchParams] = useSearchParams()
   const [connected, setConnected] = useState<string[]>([])
@@ -170,8 +170,8 @@ export default function IntegrationsToolsPage() {
   }
 
   return (
-    <div className="container-page max-w-5xl py-8">
-      <KnowledgeIntegrationNav active="tools" />
+    <div className={embedded ? 'w-full' : 'container-page max-w-5xl py-8'}>
+      {!embedded && <KnowledgeIntegrationNav active="tools" />}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet/15 text-violet"><Blocks size={20} /></span>

@@ -21,11 +21,11 @@ interface ConnectorItem {
 
 const CONNECTORS: ConnectorItem[] = [
   { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], auth: 'oauth', color: '#4285F4' },
-  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], auth: 'setup', href: '/app/integrations?integration=telegram', color: '#2AABEE' },
-  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], auth: 'key', href: '/app/tools?integration=hubspot', color: '#FF7A59' },
-  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], auth: 'key', href: '/app/tools?integration=notion', color: '#EAECF6' },
-  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], auth: 'key', href: '/app/tools?integration=slack', color: '#36C5F0' },
-  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], auth: 'setup', href: '/app/tools#browser-agent', color: '#22D3EE' },
+  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], auth: 'setup', href: '/app/settings?tab=integrations&section=services&integration=telegram', color: '#2AABEE' },
+  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=hubspot', color: '#FF7A59' },
+  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=notion', color: '#EAECF6' },
+  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=slack', color: '#36C5F0' },
+  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], auth: 'setup', href: '/app/settings?tab=integrations&section=skills#browser-agent', color: '#22D3EE' },
 ]
 
 const TAB_META: Array<{ id: DirectoryTab; title: string; icon: typeof Sparkles }> = [
@@ -138,7 +138,7 @@ export function CapabilityDirectory({ open, onClose }: { open: boolean; onClose:
                   <p className="mt-1 text-xs leading-relaxed text-muted">Разрешены HTTPS/MCP подключения с проверкой до сохранения. Манифест не должен содержать секреты, а клиентский plugin не получает права сервера автоматически.</p>
                 </div>
                 <CustomToolsManager />
-                <Link to="/app/tools" onClick={onClose} className="mt-4 inline-flex items-center gap-1.5 text-xs text-violet hover:underline">Все настройки инструментов <ExternalLink size={12} /></Link>
+                <Link to="/app/settings?tab=integrations&section=skills" onClick={onClose} className="mt-4 inline-flex items-center gap-1.5 text-xs text-violet hover:underline">Все настройки инструментов <ExternalLink size={12} /></Link>
               </div>
             )}
           </div>

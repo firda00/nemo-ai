@@ -15,10 +15,6 @@ import AgentsPage from './pages/app/AgentsPage'
 import AgentEditorPage from './pages/app/AgentEditorPage'
 import AnalyticsPage from './pages/app/AnalyticsPage'
 import SettingsPage from './pages/app/SettingsPage'
-import IntegrationsPage from './pages/app/IntegrationsPage'
-import KnowledgePage from './pages/app/KnowledgePage'
-import LeadsPage from './pages/app/LeadsPage'
-import BillingPage from './pages/app/BillingPage'
 import AdminPage from './pages/app/AdminPage'
 import SwarmsPage from './pages/app/swarms/SwarmsPage'
 import SwarmArchitectPage from './pages/app/swarms/SwarmArchitectPage'
@@ -39,10 +35,8 @@ import AutomationsPage from './pages/app/AutomationsPage'
 import MarketingStrategyPage from './pages/app/MarketingStrategyPage'
 import AutopostPage from './pages/app/AutopostPage'
 import LibraryPage from './pages/app/LibraryPage'
-import IntegrationsToolsPage from './pages/app/IntegrationsToolsPage'
 import FollowUpsPage from './pages/app/FollowUpsPage'
 import ObservabilityPage from './pages/app/ObservabilityPage'
-import ApprovalsPage from './pages/app/ApprovalsPage'
 import SetupPage from './pages/SetupPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPage'
 import EmailAssistantPage from './pages/app/EmailAssistantPage'
@@ -129,9 +123,9 @@ export default function App() {
         <Route path="followups" element={<FollowUpsPage />} />
         <Route path="monitor" element={<ObservabilityPage />} />
         <Route path="activity" element={<Navigate to="/app" replace />} />
-        <Route path="approvals" element={<ApprovalsPage />} />
+        <Route path="approvals" element={<Navigate to="/app" replace />} />
         <Route path="library" element={<LibraryPage />} />
-        <Route path="tools" element={<IntegrationsToolsPage />} />
+        <Route path="tools" element={<Navigate to="/app/settings?tab=integrations&section=skills" replace />} />
         <Route path="create-agent" element={<Navigate to="/app?create=agent" replace />} />
         <Route path="create-team" element={<Navigate to="/app?create=team" replace />} />
         <Route path="teams" element={<AgentsPage />} />
@@ -157,11 +151,11 @@ export default function App() {
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="email-assistant" element={<EmailAssistantPage />} />
         <Route path="settings" element={<SettingsPage />} />
-        <Route path="knowledge" element={<KnowledgePage />} />
-        <Route path="integrations" element={<IntegrationsPage />} />
-        <Route path="lead-forms" element={<LeadsPage />} />
+        <Route path="knowledge" element={<Navigate to="/app/settings?tab=integrations&section=knowledge" replace />} />
+        <Route path="integrations" element={<Navigate to="/app/settings?tab=integrations&section=services" replace />} />
+        <Route path="lead-forms" element={<Navigate to="/app" replace />} />
         <Route path="templates" element={<MarketplacePage />} />
-        <Route path="billing" element={<BillingPage />} />
+        <Route path="billing" element={<Navigate to="/app/settings?tab=billing" replace />} />
         <Route path="admin" element={<AdminMfaGate><AdminPage /></AdminMfaGate>} />
       </Route>
 

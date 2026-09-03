@@ -1,13 +1,17 @@
 import {
   Brain, Building2, Eye, EyeOff, Globe, KeyRound, Moon, RefreshCw,
   ShieldCheck, Sun, User as UserIcon, WalletCards, Webhook, GitBranch, Save,
+  BookOpen, Blocks, Plug,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/Button'
 import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
-import { IntegrationCenter } from '../../components/settings/IntegrationCenter'
 import BillingPage from './BillingPage'
+import IntegrationsPage from './IntegrationsPage'
+import IntegrationsToolsPage from './IntegrationsToolsPage'
+import KnowledgePage from './KnowledgePage'
 import { useAuth } from '../../context/AuthContext'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -31,7 +35,16 @@ const labelCls = 'mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.0
 
 export default function SettingsPage() {
   const { t } = useI18n()
-  const [tab, setTab] = useState<TabId>('profile')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const queryTab = searchParams.get('tab')
+  const tab: TabId = queryTab === 'integrations' || queryTab === 'billing' ? queryTab : 'profile'
+
+  const selectTab = (next: TabId) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('tab', next)
+    if (next !== 'integrations') params.delete('section')
+    setSearchParams(params, { replace: true })
+  }
 
   return <div className="container-page max-w-7xl py-7">
     <header>
@@ -40,7 +53,7 @@ export default function SettingsPage() {
     </header>
 
     <nav className="mt-7 grid grid-cols-3 gap-2 rounded-2xl border border-ice/10 bg-panel/50 p-2" aria-label={t('settingsPage.navAria')}>
-      {TABS.map(({ id, labelKey, compactKey, icon: Icon }) => <button key={id} type="button" onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined} className={cn('flex min-h-12 items-center justify-center gap-2 rounded-xl px-2 py-2 text-xs font-semibold transition duration-200 active:scale-[0.98] sm:px-3', tab === id ? 'bg-accent-cyan/10 text-text ring-1 ring-accent-cyan/30' : 'text-muted hover:bg-white/5 hover:text-text')}><Icon size={16} /><span className="hidden sm:inline">{t(labelKey)}</span><span className="sm:hidden">{t(compactKey)}</span></button>)}
+      {TABS.map(({ id, labelKey, compactKey, icon: Icon }) => <button key={id} type="button" onClick={() => selectTab(id)} aria-current={tab === id ? 'page' : undefined} className={cn('flex min-h-12 items-center justify-center gap-2 rounded-xl px-2 py-2 text-xs font-semibold transition duration-200 active:scale-[0.98] sm:px-3', tab === id ? 'bg-accent-cyan/10 text-text ring-1 ring-accent-cyan/30' : 'text-muted hover:bg-white/5 hover:text-text')}><Icon size={16} /><span className="hidden sm:inline">{t(labelKey)}</span><span className="sm:hidden">{t(compactKey)}</span></button>)}
     </nav>
 
     <div className="mt-5">
@@ -225,7 +238,36 @@ function GitHubKeyCard() {
   </section>
 }
 
-function ConnectorsTab() { return <IntegrationCenter /> }
+type ResourceSection = 'services' | 'knowledge' | 'skills'
+
+function ConnectorsTab() {
+  const { t } = useI18n()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const querySection = searchParams.get('section')
+  const section: ResourceSection = querySection === 'knowledge' || querySection === 'skills' ? querySection : 'services'
+  const sections: Array<{ id: ResourceSection; label: string; icon: IconType }> = [
+    { id: 'services', label: t('settingsPage.resourcesServices'), icon: Plug },
+    { id: 'knowledge', label: t('settingsPage.resourcesKnowledge'), icon: BookOpen },
+    { id: 'skills', label: t('settingsPage.resourcesSkills'), icon: Blocks },
+  ]
+  const selectSection = (next: ResourceSection) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('tab', 'integrations')
+    params.set('section', next)
+    setSearchParams(params, { replace: true })
+  }
+
+  return <div className="space-y-5">
+    <section className="card rounded-2xl p-2">
+      <div className="grid grid-cols-3 gap-2" role="tablist" aria-label={t('settingsPage.resourcesAria')}>
+        {sections.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={section === id} onClick={() => selectSection(id)} className={cn('flex min-h-11 items-center justify-center gap-2 rounded-xl px-2 text-xs font-semibold transition sm:text-sm', section === id ? 'bg-violet/10 text-text ring-1 ring-violet/25' : 'text-muted hover:bg-white/5 hover:text-text')}><Icon size={15} /><span>{label}</span></button>)}
+      </div>
+    </section>
+    {section === 'services' && <IntegrationsPage embedded />}
+    {section === 'knowledge' && <KnowledgePage embedded />}
+    {section === 'skills' && <IntegrationsToolsPage embedded />}
+  </div>
+}
 
 function Panel({ icon: Icon, title, description, children }: { icon: IconType; title: string; description: string; children: ReactNode }) { return <section className="card rounded-2xl p-5 sm:p-6"><div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-cyan/15 to-accent-indigo/15 text-accent-cyan"><Icon size={18} /></span><div><h2 className="font-semibold text-text">{title}</h2><p className="mt-1 text-xs leading-5 text-muted">{description}</p></div></div><div className="mt-5">{children}</div></section> }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block"><span className={labelCls}>{label}</span>{children}</label> }

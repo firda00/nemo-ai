@@ -8,9 +8,9 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 const LEASE_SECONDS = 600
 const ACTION_TIMEOUT_MS = 45_000
-const MAX_REVISIONS = 2
+const MAX_REVISIONS = 1
 const MAX_PARALLEL_SPECIALISTS = 3
-const MAX_SPECIALIST_ATTEMPTS = 3
+const MAX_SPECIALIST_ATTEMPTS = 2
 
 type Spec = {
   role: string
@@ -84,10 +84,13 @@ Deno.serve(async (req) => {
   if (!run) return json({ ok: true, claimed: false })
 
   const input = run.immutable_input ?? {}
-  const executionPlan = (input.executionPlan ?? {}) as { path?: string; maxLogicalLlmCalls?: number }
+  const executionPlan = (input.executionPlan ?? {}) as { path?: string; maxLogicalLlmCalls?: number; maxSpecialists?: number; maxReviewRounds?: number }
   const quickPath = executionPlan.path === 'quick'
   const state = { ...(run.state ?? {}) } as Record<string, unknown> & { specs?: Spec[]; goalContract?: unknown; goalEvaluation?: GoalEvaluation | null; iterationContext?: string }
-  const specs = Array.isArray(state.specs) ? state.specs : []
+  const specialistLimit = Math.max(1, Math.min(MAX_PARALLEL_SPECIALISTS, Number(executionPlan.maxSpecialists) || MAX_PARALLEL_SPECIALISTS))
+  const reviewLimit = Math.max(0, Math.min(MAX_REVISIONS, Number(executionPlan.maxReviewRounds) || 0))
+  const specs = (Array.isArray(state.specs) ? state.specs : []).slice(0, specialistLimit)
+  state.specs = specs
   const common = {
     _worker: true,
     run_id: run.id,
@@ -144,7 +147,7 @@ Deno.serve(async (req) => {
     const artifacts = Array.isArray(input.inputArtifacts) ? input.inputArtifacts : []
     if (run.transition === 'staff') {
       const result = await invoke({ action: 'staff', billing_key: `${run.id}:staff`, goal, use_skills: true, input_artifacts: artifacts })
-      const created: Spec[] = (Array.isArray(result.subagents) ? result.subagents : []).map((spec: Spec) => ({ ...spec, status: 'pending' }))
+      const created: Spec[] = (Array.isArray(result.subagents) ? result.subagents : []).slice(0, specialistLimit).map((spec: Spec) => ({ ...spec, status: 'pending' }))
       if (!created.length) throw new Error('empty_team')
       state.specs = created
       await finish({ state, phase: 'team', transition: 'observe_plan', specialist: 0, review: 0, revision: 0 })
@@ -165,7 +168,7 @@ Deno.serve(async (req) => {
       state.iterationContext = `${String(state.iterationContext ?? '')}\n\nITERATION ${currentIteration} OBSERVE & PLAN:\n${String(planned.output ?? '').slice(0, 5_000)}`.slice(-18_000)
       await finish({ state, phase: 'team', transition: 'specialist', specialist: 0, review: 0, revision: 0 })
     } else if (run.transition === 'specialist') {
-      const ready = readyNodeIndexes(specs, MAX_PARALLEL_SPECIALISTS)
+      const ready = readyNodeIndexes(specs, specialistLimit)
       if (!ready.length) {
         const allDone = specs.length > 0 && specs.every((spec) => spec.status === 'done')
         if (!allDone) {
@@ -227,7 +230,7 @@ Deno.serve(async (req) => {
       const better = !previousBest || review.approved || review.score > previousBest.score || (review.score === previousBest.score && review.issues.length < previousBest.issues.length)
       const bestReview = better ? review : previousBest
       const bestOutput = better ? spec.output : spec.bestOutput ?? spec.output
-      const exhausted = run.revision_round >= MAX_REVISIONS
+      const exhausted = run.revision_round >= reviewLimit
       specs[index] = {
         ...spec,
         output: review.approved || exhausted ? bestOutput : spec.output,

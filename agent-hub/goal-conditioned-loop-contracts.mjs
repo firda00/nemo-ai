@@ -13,7 +13,7 @@ const contract = GoalSchema.parse({
   goal_statement: 'Подготовить проверенный план запуска',
   definition_of_done: ['План запуска сформирован', 'Есть конкретные следующие действия'],
 })
-assert.equal(contract.max_iterations, 10)
+assert.equal(contract.max_iterations, 3)
 assert.equal(contract.current_iteration, 0)
 assert.equal(GoalSchema.safeParse({ ...contract, definition_of_done: ['one'] }).success, false)
 assert.equal(GoalSchema.safeParse({ ...contract, max_iterations: 11 }).success, false)

@@ -516,7 +516,7 @@ Deno.serve(async (req) => {
         'Результат проверен на полноту и фактическую обоснованность',
         'Финальный материал содержит применимые следующие действия',
       ],
-      max_iterations: body?.max_iterations ?? 10,
+      max_iterations: Math.min(3, Math.max(1, Number(body?.max_iterations) || 3)),
       current_iteration: 1,
       status: 'running',
     })

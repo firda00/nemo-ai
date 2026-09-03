@@ -138,7 +138,7 @@ const PROVIDER_UI_TO_KEY: Record<string, string> = {
   ozon: 'ozon',
 }
 
-export default function IntegrationsPage() {
+export default function IntegrationsPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n()
   const toast = useToast()
   const status = useIntegrationStore((s) => s.status)
@@ -397,8 +397,8 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="container-page max-w-6xl py-8">
-      <KnowledgeIntegrationNav active="integrations" />
+    <div className={embedded ? 'w-full' : 'container-page max-w-6xl py-8'}>
+      {!embedded && <KnowledgeIntegrationNav active="integrations" />}
       {/* hero */}
       <div className="relative overflow-hidden rounded-3xl border border-white/[0.07] bg-gradient-to-br from-violet/[0.12] via-panel to-panel p-6 sm:p-8">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-violet/20 blur-3xl" />
@@ -423,7 +423,7 @@ export default function IntegrationsPage() {
             ))}
           </div>
 
-          <Link to="/app/tools" className="group mt-5 inline-flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-black/20 px-4 py-3 transition-colors hover:border-violet/30">
+          <Link to="/app/settings?tab=integrations&section=skills" className="group mt-5 inline-flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-black/20 px-4 py-3 transition-colors hover:border-violet/30">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet/15 text-violet"><Zap size={17} /></span>
             <span className="min-w-0">
               <span className="block text-sm font-medium text-text">{t('platform.integrations.toolsLinkTitle')}</span>
@@ -577,7 +577,7 @@ export default function IntegrationsPage() {
                   ) : isOn ? (
                     <>
                       {(PROVIDER_UI_TO_KEY[it.id] || (GOOGLE_IDS as readonly string[]).includes(it.id)) && (
-                        <Link to={`/app/tools?integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
+                        <Link to={`/app/settings?tab=integrations&section=skills&integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-text hover:bg-white/5">
                           <Wrench size={14} /> {t('platform.integrations.test')}
                         </Link>
                       )}
@@ -600,7 +600,7 @@ export default function IntegrationsPage() {
                         <Plug size={14} /> {isErr ? t('platform.integrations.reconnect') : t('platform.integrations.connect')}
                       </Button>
                     ) : PROVIDER_UI_TO_KEY[it.id] ? (
-                      <Link to={`/app/tools?integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:brightness-110">
+                      <Link to={`/app/settings?tab=integrations&section=skills&integration=${encodeURIComponent(it.id)}`} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:brightness-110">
                         <Plug size={14} /> {t('platform.integrations.connect')}
                       </Link>
                     ) : null

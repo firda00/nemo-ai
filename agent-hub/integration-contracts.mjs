@@ -77,7 +77,7 @@ check('provider keys are reported as secure write-only storage', /providerKeysSe
 check('saved provider key is labelled as saved, not provider-verified', /ключ сохранён/.test(read('src/i18n/extra.ts')) && /run the real test below/.test(read('src/i18n/extra.ts')))
 check('model picker uses authenticated server-side OpenRouter storage', /functions\.invoke\('connect-model'/.test(modelPicker) && /action: 'connect'/.test(modelPicker) && /action: 'disconnect'/.test(modelPicker) && !/localStorage/.test(modelPicker))
 check('provider administration is admin-gated and has no demo key storage', /profileResolved/.test(providersPage) && /!isAdmin/.test(providersPage) && /Navigate to="\/app\/integrations"/.test(providersPage) && !/localStorage/.test(providersPage))
-check('standalone Results navigation is removed with a safe legacy redirect', !/to: '\/app\/results'/.test(appLayout) && /path="results" element=\{<Navigate to="\/app\/activity" replace \/>\}/.test(appRoutes))
+check('standalone Results navigation is removed with a safe legacy redirect', !/to: '\/app\/results'/.test(appLayout) && /path="results" element=\{<Navigate to="\/app" replace \/>\}/.test(appRoutes))
 check('Google uses one single-use OAuth consent flow for Gmail, Sheets, Calendar, Docs and Drive',
   /google_oauth_transactions/.test(googleOauth) && /consume_google_oauth_transaction/.test(googleOauth) &&
   ['gmail.send', 'spreadsheets', 'calendar.events', 'documents', 'drive.file'].every((scope) => googleOauth.includes(scope)))

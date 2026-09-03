@@ -6,7 +6,7 @@ export const GoalSchema = z.object({
   goal_statement: z.string().trim().min(4).max(20_000),
   goal_description: z.string().trim().min(4).max(20_000).optional(),
   definition_of_done: z.array(z.string().trim().min(3).max(500)).min(2).max(5),
-  max_iterations: z.number().int().min(1).max(10).default(10),
+  max_iterations: z.number().int().min(1).max(10).default(3),
   current_iteration: z.number().int().min(0).max(10).default(0),
   status: GoalStatusSchema.default('running'),
 })

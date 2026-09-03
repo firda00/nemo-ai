@@ -43,6 +43,10 @@ assert.equal(chooseExecutionPlan({ goal: 'Summarize the attached file.', artifac
 assert.equal(chooseExecutionPlan({ goal: 'Summarize the attached document as guidance on whether to sign.', artifacts: [{ content: 'Routine notes.' }] }).path, 'team')
 assert.equal(chooseExecutionPlan({ goal: 'Суммаризируй приложенный файл и укажи что продать.', artifacts: [{ content: 'Обычные заметки.' }] }).path, 'team')
 assert.equal(chooseExecutionPlan({ goal: quick[0] }).maxLogicalLlmCalls, 1)
+const boundedTeam = chooseExecutionPlan({ goal: 'Prepare a detailed operating plan for the next quarter.' })
+assert.equal(boundedTeam.maxLogicalLlmCalls, 24)
+assert.equal(boundedTeam.maxSpecialists, 3)
+assert.equal(boundedTeam.maxReviewRounds, 0)
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const orchestrator = fs.readFileSync(path.join(root, 'supabase/functions/orchestrate/index.ts'), 'utf8')
@@ -55,6 +59,8 @@ assert.match(orchestrator, /quickMode[\s\S]*langRule/, 'quick output must honor 
 assert.match(orchestrator, /body\?\.preset_specs\) \? body\.preset_specs\.slice\(0, MAX_SYNTH_STEPS\)/, 'five-agent saved teams must not be silently truncated to four')
 assert.match(worker, /quickPath && run\.transition !== 'synth'/, 'worker must reject a quick plan on any multi-stage transition')
 assert.match(worker, /quickPath && executionPlan\.maxLogicalLlmCalls !== 1/, 'worker must validate the immutable quick budget')
+assert.match(worker, /slice\(0, specialistLimit\)/, 'worker must enforce the specialist ceiling selected by the server')
+assert.match(orchestrator, /max_iterations: Math\.min\(3, Math\.max\(1, Number\(body\?\.max_iterations\) \|\| 3\)\)/, 'goal loops must be capped at three iterations')
 assert.match(worker, /execution_mode: quickPath \? 'quick' : 'team'/, 'synthesis must receive the server-selected mode')
 assert.match(orchestrator, /activeRun\?\.run_ref === runRef[\s\S]*another_run_active/, 'only an exact enqueue retry may adopt an active run')
 

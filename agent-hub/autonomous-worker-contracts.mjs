@@ -53,10 +53,10 @@ assert.equal((worker.match(/await invoke\(/g) ?? []).length, 6, 'each state-mach
 assert.match(worker, /finish_autonomous_transition/, 'state must be committed through the fenced RPC')
 assert.match(worker, /billing_key: `\$\{run\.id\}:iteration:\$\{currentIteration\}:specialist:\$\{index\}`/, 'specialist retries must reuse a logical key inside one goal iteration')
 assert.match(worker, /billing_key: `\$\{run\.id\}:iteration:\$\{currentIteration\}:review:\$\{index\}:\$\{run\.revision_round\}`/, 'review rounds and goal iterations need distinct deterministic billing keys')
-assert.match(worker, /MAX_REVISIONS = 2/, 'worker review convergence must match the browser pipeline')
+assert.match(worker, /MAX_REVISIONS = 1/, 'worker review convergence must remain bounded')
 assert.match(worker, /bestOutput[\s\S]*bestReview/, 'a stochastic revision must not replace the best reviewed draft')
 assert.match(worker, /Promise\.allSettled\(ready\.map/, 'parallel specialists must preserve fulfilled siblings when one fails')
-assert.match(worker, /MAX_SPECIALIST_ATTEMPTS = 3/, 'specialist retry budgets must be node-scoped and bounded')
+assert.match(worker, /MAX_SPECIALIST_ATTEMPTS = 2/, 'specialist retry budgets must be node-scoped and bounded')
 assert.match(worker, /blockedByFailedDependencies/, 'failed dependencies must block downstream nodes instead of looping')
 assert.doesNotMatch(worker, /access_token|refresh_token/, 'the worker must never persist user sessions')
 

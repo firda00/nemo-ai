@@ -8,7 +8,7 @@ import { KnowledgeManager } from '../../components/platform/KnowledgeManager'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
 
-export default function KnowledgePage() {
+export default function KnowledgePage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n()
   const agents = useAgentStore((s) => s.agents)
   // target is either an agent's own base ("agent:<id>") or a team's SHARED base
@@ -36,8 +36,8 @@ export default function KnowledgePage() {
   const [kind, ownerId] = selected.split(':')
 
   return (
-    <div className="container-page max-w-4xl py-8">
-      <KnowledgeIntegrationNav active="knowledge" />
+    <div className={embedded ? 'w-full' : 'container-page max-w-4xl py-8'}>
+      {!embedded && <KnowledgeIntegrationNav active="knowledge" />}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.knowledge')}</h1>

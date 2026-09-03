@@ -23,9 +23,18 @@ for (const route of ['/app/content', '/app/finance', '/app/research', '/app/know
 }
 assert.match(commandItems, /const commandItems = nav/, 'Command Palette must expose only active navigation')
 
-for (const route of ['content', 'finance', 'research', 'commerce', 'activity', 'run-workflow', 'results']) {
+for (const route of ['content', 'finance', 'research', 'commerce', 'activity', 'run-workflow', 'results', 'approvals', 'lead-forms']) {
   assert.match(app, new RegExp(`path="${route}" element=\\{<Navigate to="\\/app" replace \\/>\\}`), `${route} must redirect to the chat with replace`)
 }
+assert.ok(app.includes('path="integrations" element={<Navigate to="/app/settings?tab=integrations&section=services" replace />}'), 'legacy integrations route must open Settings')
+assert.ok(app.includes('path="knowledge" element={<Navigate to="/app/settings?tab=integrations&section=knowledge" replace />}'), 'legacy knowledge route must open Settings')
+assert.ok(app.includes('path="tools" element={<Navigate to="/app/settings?tab=integrations&section=skills" replace />}'), 'legacy tools route must open Settings')
+assert.ok(app.includes('path="billing" element={<Navigate to="/app/settings?tab=billing" replace />}'), 'legacy billing route must open Settings')
+const settings = read('src/pages/app/SettingsPage.tsx')
+assert.match(settings, /'services' \| 'knowledge' \| 'skills'/, 'Settings must consolidate connections, knowledge and skills')
+assert.match(settings, /<IntegrationsPage embedded \/>/, 'integration catalog must render inside Settings')
+assert.match(settings, /<KnowledgePage embedded \/>/, 'knowledge base must render inside Settings')
+assert.match(settings, /<IntegrationsToolsPage embedded \/>/, 'skills and plugins must render inside Settings')
 assert.match(app, /path="forge" element=\{<Navigate to="\/app\/teams" replace \/>\}/, 'legacy Forge route must redirect to AI teams')
 assert.match(app, /path="create-team" element=\{<Navigate to="\/app\?create=team" replace \/>\}/, 'legacy team form must start chat discovery')
 assert.match(app, /path="create-agent" element=\{<Navigate to="\/app\?create=agent" replace \/>\}/, 'legacy agent form must start chat discovery')

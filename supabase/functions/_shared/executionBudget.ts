@@ -32,7 +32,10 @@ export function chooseExecutionPlan(input: {
   hasPreset?: boolean
   hasDepartment?: boolean
 }): ExecutionPlan {
-  const team = (reason: string): ExecutionPlan => ({ version: 1, path: 'team', reason, maxLogicalLlmCalls: 32, maxSpecialists: 5, maxReviewRounds: 2 })
+  // A team run stays useful, but must never fan out without a hard cost ceiling.
+  // Three specialists cover the common research / analysis / synthesis split. A single
+  // peer review is retained, while recursive revision loops are disabled by default.
+  const team = (reason: string): ExecutionPlan => ({ version: 1, path: 'team', reason, maxLogicalLlmCalls: 24, maxSpecialists: 3, maxReviewRounds: 0 })
   if (input.hasPreset) return team('preset_team')
   if (input.hasDepartment) return team('saved_department')
 

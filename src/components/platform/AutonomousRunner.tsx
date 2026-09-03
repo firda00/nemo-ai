@@ -106,7 +106,7 @@ export function AutonomousRunner({
   onFastTask,
   onComplete,
   definitionOfDone,
-  maxIterations = 10,
+  maxIterations = 3,
   streamMode = false,
   adaptiveTeam = false,
 }: {
