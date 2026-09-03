@@ -1,7 +1,7 @@
 import {
   Brain, Building2, Eye, EyeOff, Globe, KeyRound, Moon, RefreshCw,
   ShieldCheck, Sun, User as UserIcon, WalletCards, Webhook, GitBranch, Save,
-  BookOpen, Blocks, Plug,
+  BookOpen, Library, Link2, Plug, Sparkles, ArrowLeft,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -12,6 +12,7 @@ import BillingPage from './BillingPage'
 import IntegrationsPage from './IntegrationsPage'
 import IntegrationsToolsPage from './IntegrationsToolsPage'
 import KnowledgePage from './KnowledgePage'
+import { CapabilityDirectory, type DirectoryTab } from '../../components/platform/CapabilityDirectory'
 import { useAuth } from '../../context/AuthContext'
 import { useI18n } from '../../i18n'
 import { cn } from '../../lib/cn'
@@ -241,31 +242,67 @@ function GitHubKeyCard() {
 type ResourceSection = 'services' | 'knowledge' | 'skills'
 
 function ConnectorsTab() {
-  const { t } = useI18n()
+  const { lang } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const querySection = searchParams.get('section')
-  const section: ResourceSection = querySection === 'knowledge' || querySection === 'skills' ? querySection : 'services'
-  const sections: Array<{ id: ResourceSection; label: string; icon: IconType }> = [
-    { id: 'services', label: t('settingsPage.resourcesServices'), icon: Plug },
-    { id: 'knowledge', label: t('settingsPage.resourcesKnowledge'), icon: BookOpen },
-    { id: 'skills', label: t('settingsPage.resourcesSkills'), icon: Blocks },
-  ]
-  const selectSection = (next: ResourceSection) => {
+  const section: ResourceSection | null = querySection === 'services' || querySection === 'knowledge' || querySection === 'skills' ? querySection : null
+  const [directoryOpen, setDirectoryOpen] = useState(false)
+  const [directoryTab, setDirectoryTab] = useState<DirectoryTab>('connectors')
+  const copy = lang === 'uz' ? {
+    eyebrow: 'Bitta katalog', title: 'Directory', description: 'Ulanishlar, agent ko‘nikmalari va plaginlar endi bir joyda. Keraklisini toping va vazifa paytida ulang.',
+    open: 'Directory’ni ochish', skills: 'Ko‘nikmalar', connections: 'Ulanishlar', plugins: 'Plaginlar',
+    knowledgeTitle: 'Bilimlar bazasi', knowledgeText: 'Agentlar va jamoalar uchun fayllar, havolalar va tasdiqlangan biznes ma’lumotlarini shu yerda saqlang.', back: 'Directory’ga qaytish', setup: 'Ulanishni sozlash',
+  } : lang === 'en' ? {
+    eyebrow: 'One catalog', title: 'Directory', description: 'Connections, agent skills, and plugins now live in one place. Find what you need and connect it when a task calls for it.',
+    open: 'Open Directory', skills: 'Skills', connections: 'Connections', plugins: 'Plugins',
+    knowledgeTitle: 'Knowledge base', knowledgeText: 'Keep files, links, and verified business context for agents and teams here.', back: 'Back to Directory', setup: 'Connection setup',
+  } : {
+    eyebrow: 'Один каталог', title: 'Directory', description: 'Подключения, навыки агентов и плагины теперь находятся в одном месте. Находите нужное и подключайте только для конкретной задачи.',
+    open: 'Открыть Directory', skills: 'Навыки', connections: 'Подключения', plugins: 'Плагины',
+    knowledgeTitle: 'База знаний', knowledgeText: 'Храните здесь файлы, ссылки и подтверждённый контекст бизнеса для агентов и команд.', back: 'Вернуться в Directory', setup: 'Настройка подключения',
+  }
+
+  const openDirectory = (next: DirectoryTab) => { setDirectoryTab(next); setDirectoryOpen(true) }
+  const clearSection = () => {
     const params = new URLSearchParams(searchParams)
     params.set('tab', 'integrations')
-    params.set('section', next)
+    params.delete('section')
+    params.delete('integration')
     setSearchParams(params, { replace: true })
   }
 
-  return <div className="space-y-5">
-    <section className="card rounded-2xl p-2">
-      <div className="grid grid-cols-3 gap-2" role="tablist" aria-label={t('settingsPage.resourcesAria')}>
-        {sections.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={section === id} onClick={() => selectSection(id)} className={cn('flex min-h-11 items-center justify-center gap-2 rounded-xl px-2 text-xs font-semibold transition sm:text-sm', section === id ? 'bg-violet/10 text-text ring-1 ring-violet/25' : 'text-muted hover:bg-white/5 hover:text-text')}><Icon size={15} /><span>{label}</span></button>)}
-      </div>
-    </section>
+  if (section) return <div className="space-y-5">
+    <button type="button" onClick={clearSection} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition hover:bg-white/5 hover:text-text active:scale-[0.98]"><ArrowLeft size={16} />{copy.back}</button>
     {section === 'services' && <IntegrationsPage embedded />}
     {section === 'knowledge' && <KnowledgePage embedded />}
     {section === 'skills' && <IntegrationsToolsPage embedded />}
+    <CapabilityDirectory key={directoryTab} open={directoryOpen} onClose={() => setDirectoryOpen(false)} initialTab={directoryTab} />
+  </div>
+
+  return <div className="space-y-5">
+    <section className="relative overflow-hidden rounded-[1.75rem] border border-cyan/15 bg-panel px-5 pb-6 pt-6 shadow-[0_18px_55px_rgba(14,31,58,.08)] sm:px-7 sm:pb-7">
+      <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-cyan/[0.08] blur-3xl" />
+      <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="max-w-2xl">
+          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan/10 text-cyan ring-1 ring-inset ring-cyan/20"><Library size={20} /></span><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan">{copy.eyebrow}</p><h2 className="mt-0.5 text-2xl font-bold tracking-tight text-text">{copy.title}</h2></div></div>
+          <p className="mt-4 max-w-xl text-sm leading-6 text-muted">{copy.description}</p>
+        </div>
+        <Button onClick={() => openDirectory('connectors')} className="shrink-0" leftIcon={<Library size={16} />}>{copy.open}</Button>
+      </div>
+      <div className="relative mt-6 grid gap-2 sm:grid-cols-3">
+        {([
+          { id: 'connectors' as const, label: copy.connections, icon: Link2, tone: 'text-cyan bg-cyan/10' },
+          { id: 'skills' as const, label: copy.skills, icon: Sparkles, tone: 'text-violet bg-violet/10' },
+          { id: 'plugins' as const, label: copy.plugins, icon: Plug, tone: 'text-amber bg-amber/10' },
+        ]).map(({ id, label, icon: Icon, tone }) => <button key={id} type="button" onClick={() => openDirectory(id)} className="group flex items-center gap-3 rounded-2xl bg-black/[0.08] px-4 py-3 text-left ring-1 ring-inset ring-ice/10 transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.055] hover:ring-ice/20 active:translate-y-0"><span className={cn('grid h-9 w-9 place-items-center rounded-xl', tone)}><Icon size={16} /></span><span className="text-sm font-semibold text-text">{label}</span><span className="ml-auto text-fog transition group-hover:translate-x-0.5 group-hover:text-muted">→</span></button>)}
+      </div>
+    </section>
+
+    <section className="rounded-[1.75rem] border border-ice/10 bg-panel p-5 sm:p-7">
+      <div className="mb-6 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.055] text-text"><BookOpen size={18} /></span><div><h2 className="text-lg font-semibold text-text">{copy.knowledgeTitle}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.knowledgeText}</p></div></div>
+      <KnowledgePage embedded />
+    </section>
+    <CapabilityDirectory key={directoryTab} open={directoryOpen} onClose={() => setDirectoryOpen(false)} initialTab={directoryTab} />
   </div>
 }
 

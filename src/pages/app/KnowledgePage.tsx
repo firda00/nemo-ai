@@ -39,10 +39,10 @@ export default function KnowledgePage({ embedded = false }: { embedded?: boolean
     <div className={embedded ? 'w-full' : 'container-page max-w-4xl py-8'}>
       {!embedded && <KnowledgeIntegrationNav active="knowledge" />}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+        {!embedded && <div>
           <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.knowledge')}</h1>
           <p className="mt-1 text-sm text-muted">{t('platform.knowledge.subtitle')}</p>
-        </div>
+        </div>}
         {agents.length > 0 && (
           <label className="flex items-center gap-2 text-sm">
             <span className="text-muted">{t('platform.knowledge.agentLabel')}</span>

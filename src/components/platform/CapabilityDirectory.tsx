@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Blocks, ChevronLeft, ExternalLink, KeyRound, Link2, Plug, Plus, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Blocks, ChevronLeft, ExternalLink, KeyRound, Link2, Plug, Plus, Search, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AGENT_SKILLS } from '../../data/agentSkills'
 import { useI18n } from '../../i18n'
@@ -7,143 +7,112 @@ import { GoogleSetup } from './GoogleSetup'
 import { CustomToolsManager } from './CustomToolsManager'
 import { cn } from '../../lib/cn'
 
-type DirectoryTab = 'skills' | 'connectors' | 'plugins'
+export type DirectoryTab = 'skills' | 'connectors' | 'plugins'
 
 interface ConnectorItem {
   id: string
   title: string
   description: string
   tools: string[]
-  auth: 'oauth' | 'key' | 'setup'
   href?: string
   color: string
 }
 
 const CONNECTORS: ConnectorItem[] = [
-  { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], auth: 'oauth', color: '#4285F4' },
-  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], auth: 'setup', href: '/app/settings?tab=integrations&section=services&integration=telegram', color: '#2AABEE' },
-  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=hubspot', color: '#FF7A59' },
-  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=notion', color: '#EAECF6' },
-  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], auth: 'key', href: '/app/settings?tab=integrations&section=skills&integration=slack', color: '#36C5F0' },
-  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], auth: 'setup', href: '/app/settings?tab=integrations&section=skills#browser-agent', color: '#22D3EE' },
+  { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], color: '#4285F4' },
+  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], href: '/app/settings?tab=integrations&section=services&integration=telegram', color: '#2AABEE' },
+  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], href: '/app/settings?tab=integrations&section=skills&integration=hubspot', color: '#FF7A59' },
+  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], href: '/app/settings?tab=integrations&section=skills&integration=notion', color: '#A7ADC0' },
+  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], href: '/app/settings?tab=integrations&section=skills&integration=slack', color: '#36C5F0' },
+  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], href: '/app/settings?tab=integrations&section=skills#browser-agent', color: '#22B8CF' },
 ]
 
-const TAB_META: Array<{ id: DirectoryTab; title: string; icon: typeof Sparkles }> = [
-  { id: 'skills', title: 'Skills', icon: Sparkles },
-  { id: 'connectors', title: 'Connectors', icon: Link2 },
-  { id: 'plugins', title: 'Plugins', icon: Plug },
-]
+const TAB_ICONS: Record<DirectoryTab, typeof Sparkles> = { skills: Sparkles, connectors: Link2, plugins: Plug }
 
-export function CapabilityDirectory({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useI18n()
-  const [tab, setTab] = useState<DirectoryTab>('connectors')
+const COPY = {
+  ru: {
+    tabs: { skills: 'Навыки', connectors: 'Подключения', plugins: 'Плагины' },
+    eyebrow: 'Каталог возможностей', subtitle: 'Всё, что агенты могут использовать в работе.', search: 'Найти навык, сервис или плагин…',
+    connectorIntro: 'Обычные задачи работают без сторонних сервисов. Когда агенту понадобится файл, календарь, CRM или канал, Nemo запросит доступ в момент использования.',
+    access: 'Доступные действия', authTitle: 'Доступ только по запросу', authText: 'Nemo подключает сервис только после вашего действия. Секреты хранятся на сервере и не попадают во frontend.', setup: 'Настроить подключение',
+    skillsTitle: 'Навыки уже доступны агентам', skillsText: 'Выберите нужные навыки в настройках конкретного агента. Загруженные навыки остаются приватными.', addSkill: 'Настроить навыки',
+    pluginsTitle: 'Проверяемые плагины', pluginsText: 'HTTPS и MCP-подключения проверяются перед сохранением. Плагин не получает серверные права автоматически.', allTools: 'Расширенные настройки', empty: 'Ничего не найдено', close: 'Закрыть', back: 'Назад', footer: 'Nemo подключает возможности к задаче, а не перегружает ими рабочий стол.',
+  },
+  uz: {
+    tabs: { skills: 'Ko‘nikmalar', connectors: 'Ulanishlar', plugins: 'Plaginlar' },
+    eyebrow: 'Imkoniyatlar katalogi', subtitle: 'Agentlar ishda foydalanishi mumkin bo‘lgan barcha vositalar.', search: 'Ko‘nikma, servis yoki plaginni toping…',
+    connectorIntro: 'Oddiy vazifalar tashqi servislarsiz ishlaydi. Agentga fayl, taqvim, CRM yoki kanal kerak bo‘lsa, Nemo foydalanish vaqtida ruxsat so‘raydi.',
+    access: 'Mavjud amallar', authTitle: 'Faqat so‘rov bo‘yicha ruxsat', authText: 'Nemo servisni faqat sizning harakatingizdan keyin ulaydi. Maxfiy ma’lumotlar serverda saqlanadi.', setup: 'Ulanishni sozlash',
+    skillsTitle: 'Ko‘nikmalar agentlar uchun tayyor', skillsText: 'Kerakli ko‘nikmalarni agent sozlamalarida tanlang. Yuklangan ko‘nikmalar maxfiy qoladi.', addSkill: 'Ko‘nikmalarni sozlash',
+    pluginsTitle: 'Tekshiriladigan plaginlar', pluginsText: 'HTTPS va MCP ulanishlari saqlashdan oldin tekshiriladi. Plagin avtomatik ravishda server huquqlarini olmaydi.', allTools: 'Kengaytirilgan sozlamalar', empty: 'Hech narsa topilmadi', close: 'Yopish', back: 'Orqaga', footer: 'Nemo imkoniyatlarni ish stoliga emas, vazifaga ulaydi.',
+  },
+  en: {
+    tabs: { skills: 'Skills', connectors: 'Connections', plugins: 'Plugins' },
+    eyebrow: 'Capability directory', subtitle: 'Everything agents can use while working.', search: 'Find a skill, service, or plugin…',
+    connectorIntro: 'Everyday tasks work without external services. When an agent needs a file, calendar, CRM, or channel, Nemo asks for access at the moment of use.',
+    access: 'Available actions', authTitle: 'Access only when requested', authText: 'Nemo connects a service only after your action. Secrets stay on the server and never reach the frontend.', setup: 'Configure connection',
+    skillsTitle: 'Skills are ready for agents', skillsText: 'Choose skills in each agent’s settings. Uploaded skills remain private.', addSkill: 'Configure skills',
+    pluginsTitle: 'Verified plugins', pluginsText: 'HTTPS and MCP connections are checked before saving. Plugins do not receive server permissions automatically.', allTools: 'Advanced settings', empty: 'No results found', close: 'Close', back: 'Back', footer: 'Nemo attaches capabilities to a task instead of cluttering your workspace.',
+  },
+}
+
+export function CapabilityDirectory({ open, onClose, initialTab = 'connectors' }: { open: boolean; onClose: () => void; initialTab?: DirectoryTab }) {
+  const { t, lang } = useI18n()
+  const copy = COPY[lang]
+  const [tab, setTab] = useState<DirectoryTab>(initialTab)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   const selected = useMemo(() => CONNECTORS.find((item) => item.id === selectedId) ?? null, [selectedId])
+  const connectors = useMemo(() => CONNECTORS.filter((item) => `${item.title} ${item.description}`.toLowerCase().includes(query.trim().toLowerCase())), [query])
+  const skills = useMemo(() => AGENT_SKILLS.filter((skill) => `${t(`agentEdit.skill_${skill.id}`)} ${t(`agentEdit.skill_${skill.id}Desc`)}`.toLowerCase().includes(query.trim().toLowerCase())), [query, t])
+  const tabs = (Object.keys(TAB_ICONS) as DirectoryTab[]).map((id) => ({ id, title: copy.tabs[id], icon: TAB_ICONS[id], count: id === 'skills' ? AGENT_SKILLS.length : id === 'connectors' ? CONNECTORS.length : undefined }))
+  const closeDirectory = useCallback(() => { setSelectedId(null); setQuery(''); onClose() }, [onClose])
+
+  useEffect(() => {
+    if (!open) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeDirectory() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', closeOnEscape) }
+  }, [closeDirectory, open])
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Nemo Directory">
-      <button className="absolute inset-0" onClick={onClose} aria-label="Закрыть Directory" />
-      <div className="relative flex h-[min(760px,calc(100vh-1.5rem))] w-full max-w-6xl overflow-hidden rounded-3xl border border-white/10 bg-panel shadow-2xl">
-        <aside className="hidden w-52 shrink-0 border-r border-white/10 bg-black/15 p-3 sm:block">
-          <p className="px-3 py-3 text-lg font-semibold text-text">Directory</p>
-          <div className="mt-3 space-y-1">
-            {TAB_META.map((item) => (
-              <button key={item.id} onClick={() => { setTab(item.id); setSelectedId(null) }} className={cn('flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition', tab === item.id ? 'bg-white/10 text-text' : 'text-muted hover:bg-white/5 hover:text-text')}>
-                <item.icon size={16} /> {item.title}
-              </button>
-            ))}
-          </div>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#07101f]/75 p-0 backdrop-blur-md sm:p-5" role="dialog" aria-modal="true" aria-label="Nemo Directory">
+      <button className="absolute inset-0 cursor-default" onClick={closeDirectory} aria-label={copy.close} />
+      <div className="relative grid h-full w-full overflow-hidden bg-panel shadow-[0_28px_90px_rgba(5,12,28,.45)] sm:h-[min(760px,calc(100dvh-2.5rem))] sm:max-w-6xl sm:grid-cols-[14rem_minmax(0,1fr)] sm:rounded-[1.75rem] sm:border sm:border-white/10">
+        <aside className="hidden border-r border-ice/10 bg-black/[0.12] px-3 py-5 sm:flex sm:flex-col">
+          <div className="px-3"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan">{copy.eyebrow}</p><h2 className="mt-1 text-xl font-semibold tracking-tight text-text">Directory</h2><p className="mt-2 text-xs leading-5 text-muted">{copy.subtitle}</p></div>
+          <nav className="mt-7 space-y-1" aria-label="Directory">
+            {tabs.map((item) => <button key={item.id} onClick={() => { setTab(item.id); setSelectedId(null); setQuery('') }} className={cn('group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition duration-200 active:scale-[0.98]', tab === item.id ? 'bg-white/[0.09] text-text shadow-inner shadow-white/[0.03]' : 'text-muted hover:bg-white/[0.045] hover:text-text')}><item.icon size={17} className={tab === item.id ? 'text-cyan' : 'text-fog group-hover:text-muted'} /><span className="flex-1">{item.title}</span>{item.count !== undefined && <span className="text-[10px] tabular-nums text-fog">{item.count}</span>}</button>)}
+          </nav>
+          <p className="mt-auto px-3 text-[11px] leading-5 text-fog">{copy.footer}</p>
         </aside>
 
-        <section className="min-w-0 flex-1 overflow-y-auto">
-          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-panel/95 px-4 py-3 backdrop-blur sm:px-6">
-            <div className="flex min-w-0 items-center gap-3">
-              {selected && <button onClick={() => setSelectedId(null)} className="rounded-lg p-1.5 text-muted hover:bg-white/5 hover:text-text" aria-label="Назад"><ChevronLeft size={19} /></button>}
-              <div>
-                <h2 className="truncate text-lg font-semibold text-text">{selected?.title ?? TAB_META.find((item) => item.id === tab)?.title}</h2>
-                <p className="mt-0.5 text-xs text-muted">Подключайте доступ только тогда, когда он нужен задаче.</p>
-              </div>
-            </div>
-            <button onClick={onClose} className="rounded-lg p-2 text-muted hover:bg-white/5 hover:text-text" aria-label="Закрыть"><X size={19} /></button>
-          </div>
+        <section className="min-w-0 overflow-y-auto">
+          <header className="sticky top-0 z-10 border-b border-ice/10 bg-panel/95 px-4 py-4 backdrop-blur-xl sm:px-7">
+            <div className="flex items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-2">{selected && <button onClick={() => setSelectedId(null)} className="rounded-xl p-2 text-muted transition hover:bg-white/5 hover:text-text" aria-label={copy.back}><ChevronLeft size={19} /></button>}<div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-fog sm:hidden">Directory</p><h3 className="truncate text-lg font-semibold tracking-tight text-text">{selected?.title ?? copy.tabs[tab]}</h3></div></div><button onClick={closeDirectory} className="rounded-xl border border-transparent p-2 text-muted transition hover:border-ice/10 hover:bg-white/5 hover:text-text active:scale-95" aria-label={copy.close}><X size={19} /></button></div>
+            {!selected && tab !== 'plugins' && <label className="relative mt-4 block"><Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-fog" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} className="w-full rounded-xl border border-ice/10 bg-black/10 py-2.5 pl-10 pr-3 text-sm text-text outline-none transition placeholder:text-fog focus:border-cyan/40 focus:ring-2 focus:ring-cyan/10" /></label>}
+            {!selected && <div className="mt-3 flex gap-1 overflow-x-auto sm:hidden">{tabs.map((item) => <button key={item.id} onClick={() => { setTab(item.id); setQuery('') }} className={cn('shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium', tab === item.id ? 'bg-cyan/10 text-text' : 'text-muted')}>{item.title}</button>)}</div>}
+          </header>
 
-          <div className="flex gap-1 overflow-x-auto border-b border-white/10 px-4 py-2 sm:hidden">
-            {TAB_META.map((item) => <button key={item.id} onClick={() => { setTab(item.id); setSelectedId(null) }} className={cn('rounded-lg px-3 py-1.5 text-xs', tab === item.id ? 'bg-white/10 text-text' : 'text-muted')}>{item.title}</button>)}
-          </div>
+          <div className="p-4 pb-10 sm:p-7 sm:pb-12">
+            {tab === 'connectors' && !selected && <><div className="rounded-2xl border border-cyan/15 bg-cyan/[0.045] px-4 py-3.5 text-sm leading-6 text-muted">{copy.connectorIntro}</div>{connectors.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">{connectors.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className="group flex min-h-28 items-start gap-3 rounded-2xl bg-white/[0.035] p-4 text-left ring-1 ring-inset ring-white/[0.07] transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.065] hover:ring-cyan/25 active:translate-y-0"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `${item.color}1f`, color: item.color }}><Blocks size={18} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text">{item.title}</span><span className="mt-1.5 block text-xs leading-5 text-muted">{item.description}</span></span><span className="rounded-lg p-2 text-fog transition group-hover:bg-cyan/10 group-hover:text-cyan"><Plus size={15} /></span></button>)}</div> : <EmptyDirectory text={copy.empty} />}</>}
 
-          <div className="p-4 sm:p-6">
-            {tab === 'connectors' && !selected && (
-              <>
-                <div className="rounded-2xl border border-cyan/20 bg-cyan/[0.05] p-4 text-sm text-muted">
-                  Обычные задачи работают без подключения сторонних сервисов. Если агенту понадобится файл, календарь, CRM или канал — Nemo покажет запрос доступа в момент использования.
-                </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  {CONNECTORS.map((item) => (
-                    <button key={item.id} onClick={() => setSelectedId(item.id)} className="group flex min-h-28 items-start gap-3 rounded-2xl border border-white/10 bg-black/15 p-4 text-left transition hover:border-cyan/35 hover:bg-white/[0.04]">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `${item.color}22`, color: item.color }}><Blocks size={18} /></span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold text-text">{item.title}</span>
-                        <span className="mt-2 block text-xs leading-relaxed text-muted">{item.description}</span>
-                      </span>
-                      <span className="rounded-lg border border-white/10 p-2 text-muted transition group-hover:border-cyan/40 group-hover:text-cyan"><Plus size={15} /></span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
+            {tab === 'connectors' && selected && <div className="mx-auto max-w-3xl"><div className="flex items-start gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${selected.color}1f`, color: selected.color }}><Blocks size={22} /></span><div><h4 className="text-xl font-semibold tracking-tight text-text">{selected.title}</h4><p className="mt-2 max-w-2xl text-sm leading-6 text-muted">{selected.description}</p></div></div><div className="mt-7 border-t border-ice/10 pt-5"><p className="text-sm font-semibold text-text">{copy.access}</p><div className="mt-3 flex flex-wrap gap-2">{selected.tools.map((tool) => <span key={tool} className="rounded-lg bg-white/[0.045] px-2.5 py-1.5 font-mono text-[11px] text-muted ring-1 ring-inset ring-white/[0.07]">{tool}</span>)}</div></div><div className="mt-6 rounded-2xl border border-teal/15 bg-teal/[0.045] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><ShieldCheck size={16} className="text-teal" />{copy.authTitle}</p><p className="mt-1.5 text-xs leading-5 text-muted">{copy.authText}</p></div><div className="mt-6">{selected.id === 'google' ? <GoogleSetup /> : selected.href ? <Link to={selected.href} onClick={closeDirectory} className="btn bg-brand px-4 py-2.5 text-sm text-white"><KeyRound size={15} />{copy.setup}</Link> : null}</div></div>}
 
-            {tab === 'connectors' && selected && (
-              <div className="mx-auto max-w-3xl">
-                <div className="flex items-start gap-4">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${selected.color}22`, color: selected.color }}><Blocks size={22} /></span>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-xl font-semibold text-text">{selected.title}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-muted">{selected.description}</p>
-                  </div>
-                </div>
-                <div className="mt-6 border-t border-white/10 pt-5">
-                  <p className="text-sm font-semibold text-text">Доступные действия</p>
-                  <div className="mt-3 flex flex-wrap gap-2">{selected.tools.map((tool) => <span key={tool} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-muted">{tool}</span>)}</div>
-                </div>
-                <div className="mt-6 rounded-2xl border border-teal/20 bg-teal/[0.05] p-4">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-text"><ShieldCheck size={16} className="text-teal" /> Авторизация по запросу</p>
-                  <p className="mt-1 text-xs leading-relaxed text-muted">Nemo не просит этот доступ заранее. Подключение понадобится только когда агент впервые вызовет действие этого сервиса. Секреты не передаются во frontend.</p>
-                </div>
-                <div className="mt-6">
-                  {selected.id === 'google' ? <GoogleSetup /> : selected.href ? (
-                    <Link to={selected.href} onClick={onClose} className="btn bg-brand px-4 py-2.5 text-sm text-white"><KeyRound size={15} /> Настроить подключение</Link>
-                  ) : null}
-                </div>
-              </div>
-            )}
+            {tab === 'skills' && <><div className="flex flex-col gap-4 rounded-2xl border border-violet/15 bg-violet/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{copy.skillsTitle}</p><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.skillsText}</p></div><Link to="/app/agents" onClick={closeDirectory} className="btn shrink-0 bg-brand px-3 py-2 text-xs text-white"><Plus size={14} />{copy.addSkill}</Link></div>{skills.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">{skills.map((skill) => <article key={skill.id} className="rounded-2xl bg-white/[0.035] p-4 ring-1 ring-inset ring-white/[0.07]"><span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${skill.color}1f`, color: skill.color }}><skill.icon size={16} /></span><p className="mt-3 text-sm font-semibold text-text">{t(`agentEdit.skill_${skill.id}`)}</p><p className="mt-1 text-xs leading-5 text-muted">{t(`agentEdit.skill_${skill.id}Desc`)}</p></article>)}</div> : <EmptyDirectory text={copy.empty} />}</>}
 
-            {tab === 'skills' && (
-              <>
-                <div className="flex flex-col gap-3 rounded-2xl border border-violet/20 bg-violet/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div><p className="text-sm font-semibold text-text">Skills работают без отдельной авторизации</p><p className="mt-1 text-xs text-muted">Загруженный skill остаётся приватным до проверки совместимости Nemo.</p></div>
-                  <Link to="/app/agents" onClick={onClose} className="btn bg-brand px-3 py-2 text-xs text-white"><Plus size={14} /> Добавить skill</Link>
-                </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                  {AGENT_SKILLS.map((skill) => <div key={skill.id} className="rounded-2xl border border-white/10 bg-black/15 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${skill.color}22`, color: skill.color }}><skill.icon size={16} /></span><p className="mt-3 text-sm font-semibold text-text">{t(`agentEdit.skill_${skill.id}`)}</p><p className="mt-1 text-xs leading-relaxed text-muted">{t(`agentEdit.skill_${skill.id}Desc`)}</p></div>)}
-                </div>
-              </>
-            )}
-
-            {tab === 'plugins' && (
-              <div>
-                <div className="mb-4 rounded-2xl border border-amber/20 bg-amber/[0.05] p-4">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-text"><Wrench size={16} className="text-amber" /> Проверяемые plugins</p>
-                  <p className="mt-1 text-xs leading-relaxed text-muted">Разрешены HTTPS/MCP подключения с проверкой до сохранения. Манифест не должен содержать секреты, а клиентский plugin не получает права сервера автоматически.</p>
-                </div>
-                <CustomToolsManager />
-                <Link to="/app/settings?tab=integrations&section=skills" onClick={onClose} className="mt-4 inline-flex items-center gap-1.5 text-xs text-violet hover:underline">Все настройки инструментов <ExternalLink size={12} /></Link>
-              </div>
-            )}
+            {tab === 'plugins' && <div><div className="mb-5 rounded-2xl border border-amber/15 bg-amber/[0.04] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><Wrench size={16} className="text-amber" />{copy.pluginsTitle}</p><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{copy.pluginsText}</p></div><CustomToolsManager /><Link to="/app/settings?tab=integrations&section=skills" onClick={closeDirectory} className="mt-4 inline-flex items-center gap-1.5 text-xs text-violet hover:underline">{copy.allTools}<ExternalLink size={12} /></Link></div>}
           </div>
         </section>
       </div>
     </div>
   )
+}
+
+function EmptyDirectory({ text }: { text: string }) {
+  return <div className="mt-8 rounded-2xl border border-dashed border-ice/10 px-4 py-12 text-center text-sm text-muted">{text}</div>
 }
