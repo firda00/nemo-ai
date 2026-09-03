@@ -20,8 +20,11 @@ assert.match(migration, /status text not null default 'new'/, 'feedback starts i
 assert.match(migration, /'new', 'reviewing', 'resolved'/, 'feedback workflow statuses must be constrained')
 assert.match(adminApi, /action === 'update_feedback_status'/, 'admins must be able to progress a complaint')
 assert.match(adminPage, /Взять в работу.*Отметить решённым/s, 'the admin UI must expose complaint workflow actions')
+assert.match(adminPage, /activeSection === 'feedback'/, 'admin modules must render as focused tabs instead of one long page')
+assert.match(adminPage, /feedbackSearch.*feedbackFilter/s, 'the complaint queue must be searchable and filterable')
+assert.match(adminPage, /visibleAccounts.*accountPlan/s, 'the account table must support focused search and plan filtering')
+assert.match(adminPage, /runningAgents = moderatedAgents\.length > 0 \? activeAgents : totalAgents/, 'agent KPI must fall back to the authoritative account total')
 assert.match(setup, /sessionStorage\.setItem\('nemo\.setup\.draft'/, 'onboarding answers must survive an accidental refresh')
 assert.match(setup, /<FeedbackWidget \/>/, 'users must be able to report an onboarding problem without leaving setup')
 
 console.log('Feedback and onboarding workflow contracts passed.')
-

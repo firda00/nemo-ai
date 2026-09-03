@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, Ban, Bot, Check, Coins, Gift, Layers3, Loader2, Lock, MessageSquareWarning, Plus, RefreshCw, ShieldCheck, Sparkles, Unlock, UserCog, Users } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowUpRight, Ban, Bot, Check, Coins, Gift, Layers3, Loader2, Lock, MessageSquareWarning, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Unlock, UserCog, Users } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
@@ -53,6 +53,8 @@ interface ModeratedAgent {
   type: string
 }
 
+type AdminSection = 'overview' | 'feedback' | 'accounts' | 'skills' | 'broadcast' | 'gifts' | 'agents'
+
 const inputCls = 'glass w-full rounded-lg px-2.5 py-1.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50'
 
 function MetricTile({ label, value, detail, icon, loading }: { label: string; value: string; detail: string; icon: ReactNode; loading: boolean }) {
@@ -68,14 +70,14 @@ function MetricTile({ label, value, detail, icon, loading }: { label: string; va
   )
 }
 
-function AttentionRow({ label, value, tone = 'neutral', href }: { label: string; value: number; tone?: 'neutral' | 'warning' | 'danger'; href: string }) {
+function AttentionRow({ label, value, tone = 'neutral', onClick }: { label: string; value: number; tone?: 'neutral' | 'warning' | 'danger'; onClick: () => void }) {
   return (
-    <a href={href} className="group flex items-center gap-3 rounded-xl px-3 py-3 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:hover:bg-white/[0.04]">
+    <button type="button" onClick={onClick} className="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:hover:bg-white/[0.04]">
       <span className={cn('h-2 w-2 rounded-full', tone === 'danger' ? 'bg-rose-500' : tone === 'warning' ? 'bg-amber-500' : 'bg-slate-400')} />
       <span className="min-w-0 flex-1 text-sm font-medium text-slate-700 dark:text-muted">{label}</span>
       <span className="font-mono text-sm font-semibold tabular-nums text-slate-950 dark:text-text">{value.toLocaleString('ru-RU')}</span>
       <ArrowUpRight size={14} className="text-slate-400 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-    </a>
+    </button>
   )
 }
 
@@ -100,6 +102,28 @@ export default function AdminPage() {
   const [bcMsg, setBcMsg] = useState('')
   const [bcBusy, setBcBusy] = useState(false)
   const [bcResult, setBcResult] = useState<string | null>(null)
+  const [activeSection, setActiveSection] = useState<AdminSection>(() => {
+    const hash = window.location.hash.slice(1) as AdminSection
+    return ['overview', 'feedback', 'accounts', 'skills', 'broadcast', 'gifts', 'agents'].includes(hash) ? hash : 'overview'
+  })
+  const [feedbackFilter, setFeedbackFilter] = useState<'open' | 'all' | 'resolved'>('open')
+  const [feedbackSearch, setFeedbackSearch] = useState('')
+  const [accountSearch, setAccountSearch] = useState('')
+  const [accountPlan, setAccountPlan] = useState('all')
+
+  const selectSection = (section: AdminSection) => {
+    setActiveSection(section)
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${section}`)
+  }
+
+  useEffect(() => {
+    const syncHash = () => {
+      const hash = window.location.hash.slice(1) as AdminSection
+      if (['overview', 'feedback', 'accounts', 'skills', 'broadcast', 'gifts', 'agents'].includes(hash)) setActiveSection(hash)
+    }
+    window.addEventListener('hashchange', syncHash)
+    return () => window.removeEventListener('hashchange', syncHash)
+  }, [])
 
   const call = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!isSupabaseEnabled || !supabase) return null
@@ -244,6 +268,7 @@ export default function AdminPage() {
   const activeAgents = moderatedAgents.filter((row) => row.status !== 'paused').length
   const pausedAgents = moderatedAgents.length - activeAgents
   const totalAgents = accounts.reduce((sum, row) => sum + row.agents, 0)
+  const runningAgents = moderatedAgents.length > 0 ? activeAgents : totalAgents
   const tokenReserve = accounts.reduce((sum, row) => sum + row.token_balance, 0)
   const planCounts = accounts.reduce<Record<string, number>>((result, row) => {
     const plan = row.plan || 'free'
@@ -252,6 +277,25 @@ export default function AdminPage() {
   }, {})
   const plans = Object.entries(planCounts).sort((a, b) => b[1] - a[1])
   const number = (value: number) => new Intl.NumberFormat('ru-RU', { notation: value >= 100_000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value)
+  const visibleFeedback = feedback.filter((row) => {
+    const matchesStatus = feedbackFilter === 'all' || (feedbackFilter === 'open' ? row.status !== 'resolved' : row.status === 'resolved')
+    const query = feedbackSearch.trim().toLowerCase()
+    const matchesSearch = !query || [row.email, row.comment, row.path, row.topic, row.category].some((value) => value?.toLowerCase().includes(query))
+    return matchesStatus && matchesSearch
+  })
+  const visibleAccounts = accounts.filter((row) => {
+    const query = accountSearch.trim().toLowerCase()
+    return (!query || row.email.toLowerCase().includes(query)) && (accountPlan === 'all' || (row.plan || 'free') === accountPlan)
+  })
+  const navItems: Array<{ id: AdminSection; label: string; count?: number }> = [
+    { id: 'overview', label: 'Обзор' },
+    { id: 'feedback', label: 'Обращения', count: openFeedback },
+    { id: 'accounts', label: 'Аккаунты', count: accounts.length },
+    { id: 'skills', label: 'Навыки', count: pendingSkills },
+    { id: 'broadcast', label: 'Рассылки' },
+    { id: 'gifts', label: 'Промокоды' },
+    ...(adminCapabilities.moderate_agents ? [{ id: 'agents' as const, label: 'Агенты', count: pausedAgents }] : []),
+  ]
 
   return (
     <div className="container-page max-w-[1440px] pb-16 pt-7">
@@ -264,13 +308,13 @@ export default function AdminPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.9)]" />
               Операционный центр Nemo
             </div>
-            <h1 className="mt-4 max-w-3xl text-balance text-3xl font-semibold tracking-[-0.045em] md:text-[2.6rem] md:leading-[1.05]">Центр управления платформой</h1>
+            <h1 className="mt-4 max-w-3xl text-balance text-3xl font-semibold tracking-[-0.045em] !text-white md:text-[2.6rem] md:leading-[1.05]">Центр управления платформой</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">Пользователи, агенты, обращения и доступы — единая оперативная картина без переходов между модулями.</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
               <p className="text-xs font-medium text-slate-200">Состояние системы</p>
-              <p className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Данные синхронизированы</p>
+              <p className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-emerald-300"><span className={cn('h-1.5 w-1.5 rounded-full', loading ? 'animate-pulse bg-amber-300' : 'bg-emerald-400')} /> {loading ? 'Обновляем данные' : 'Данные актуальны'}</p>
             </div>
             <button onClick={() => void loadAll()} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.07] px-3.5 text-xs font-semibold text-white transition hover:bg-white/[0.12] active:scale-[0.98] disabled:opacity-50">
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Обновить
@@ -279,16 +323,16 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <nav aria-label="Разделы центра управления" className="sticky top-3 z-20 mx-auto -mt-3 flex w-[calc(100%-2rem)] items-center gap-1 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-[0_14px_45px_-28px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-white/10 dark:bg-[#111827]/90">
-        {[
-          ['#overview', 'Обзор'], ['#feedback', 'Обращения'], ['#accounts', 'Аккаунты'], ['#skills', 'Навыки'], ['#broadcast', 'Рассылки'], ['#gifts', 'Промокоды'],
-        ].map(([href, label]) => <a key={href} href={href} className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-muted dark:hover:bg-white/[0.05] dark:hover:text-text">{label}</a>)}
+      <nav aria-label="Разделы центра управления" className="mt-4 flex items-center gap-1 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-[0_14px_45px_-32px_rgba(15,23,42,0.38)] dark:border-white/10 dark:bg-[#111827]">
+        {navItems.map((item) => <button key={item.id} type="button" onClick={() => selectSection(item.id)} aria-current={activeSection === item.id ? 'page' : undefined} className={cn('flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500', activeSection === item.id ? 'bg-slate-950 text-white shadow-sm dark:bg-white dark:text-slate-950' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-muted dark:hover:bg-white/[0.05] dark:hover:text-text')}>
+          {item.label}{typeof item.count === 'number' && item.count > 0 && <span className={cn('rounded-full px-1.5 py-0.5 font-mono text-[9px]', activeSection === item.id ? 'bg-white/15 text-white dark:bg-slate-900/10 dark:text-slate-900' : 'bg-slate-100 text-slate-500 dark:bg-white/[0.06]')}>{item.count}</span>}
+        </button>)}
       </nav>
 
-      <section id="overview" className="scroll-mt-24 pt-8" aria-label="Обзор платформы">
+      {activeSection === 'overview' && <section id="overview" className="pt-6" aria-label="Обзор платформы">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <MetricTile loading={loading} label="Аккаунты" value={number(accounts.length)} detail={`${number(activeAccounts)} доступны`} icon={<Users size={16} />} />
-          <MetricTile loading={loading} label="Агенты" value={number(totalAgents)} detail={`${number(adminCapabilities.moderate_agents ? activeAgents : totalAgents)} работают`} icon={<Bot size={16} />} />
+          <MetricTile loading={loading} label="Агенты" value={number(totalAgents)} detail={`${number(runningAgents)} работают`} icon={<Bot size={16} />} />
           <MetricTile loading={loading} label="Открытые обращения" value={number(openFeedback)} detail={openFeedback ? 'требуют реакции' : 'очередь обработана'} icon={<MessageSquareWarning size={16} />} />
           <MetricTile loading={loading} label="Токены на счетах" value={number(tokenReserve)} detail="совокупный баланс" icon={<Coins size={16} />} />
           <MetricTile loading={loading} label="На модерации" value={number(pendingSkills)} detail="пользовательских skills" icon={<Layers3 size={16} />} />
@@ -313,50 +357,59 @@ export default function AdminPage() {
           <aside className="rounded-[26px] bg-slate-100/80 p-3 dark:bg-white/[0.025]">
             <div className="flex items-center justify-between px-3 pb-2 pt-2"><div><p className="text-base font-semibold tracking-tight text-slate-950 dark:text-text">Требует внимания</p><p className="mt-1 text-xs text-slate-500 dark:text-muted">Очереди и ограничения</p></div><AlertTriangle size={17} className="text-amber-500" /></div>
             <div className="mt-2 divide-y divide-slate-200/70 dark:divide-white/[0.06]">
-              <AttentionRow href="#feedback" label="Открытые обращения" value={openFeedback} tone={openFeedback ? 'danger' : 'neutral'} />
-              <AttentionRow href="#skills" label="Skills на проверке" value={pendingSkills} tone={pendingSkills ? 'warning' : 'neutral'} />
-              <AttentionRow href="#accounts" label="Заблокированные аккаунты" value={blockedAccounts} tone={blockedAccounts ? 'warning' : 'neutral'} />
-              {adminCapabilities.moderate_agents && <AttentionRow href="#agents" label="Остановленные агенты" value={pausedAgents} tone={pausedAgents ? 'warning' : 'neutral'} />}
+              <AttentionRow onClick={() => selectSection('feedback')} label="Открытые обращения" value={openFeedback} tone={openFeedback ? 'danger' : 'neutral'} />
+              <AttentionRow onClick={() => selectSection('skills')} label="Skills на проверке" value={pendingSkills} tone={pendingSkills ? 'warning' : 'neutral'} />
+              <AttentionRow onClick={() => selectSection('accounts')} label="Заблокированные аккаунты" value={blockedAccounts} tone={blockedAccounts ? 'warning' : 'neutral'} />
+              {adminCapabilities.moderate_agents && <AttentionRow onClick={() => selectSection('agents')} label="Остановленные агенты" value={pausedAgents} tone={pausedAgents ? 'warning' : 'neutral'} />}
             </div>
           </aside>
         </div>
-      </section>
+      </section>}
 
       {/* Feedback operations */}
-      <section id="feedback" className="card mt-8 scroll-mt-24 rounded-[26px] p-6">
-        <div className="flex items-center justify-between gap-3">
+      {activeSection === 'feedback' && <section id="feedback" className="card mt-6 rounded-[26px] p-5 md:p-6">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-bold text-text"><MessageSquareWarning size={16} className="text-amber" /> Жалобы и обратная связь</h2>
-            <p className="mt-1 text-xs text-muted">Последние сообщения пользователей. Доступно только администраторам.</p>
+            <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-text"><MessageSquareWarning size={18} className="text-amber" /> Центр обращений</h2>
+            <p className="mt-1 text-xs text-muted">Жалобы и отзывы собраны в одной рабочей очереди.</p>
           </div>
-          <span className="rounded-lg border border-white/10 px-2.5 py-1 font-mono text-xs text-muted">{feedback.filter((row) => row.status !== 'resolved').length} открыто</span>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className="relative min-w-[240px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input value={feedbackSearch} onChange={(event) => setFeedbackSearch(event.target.value)} placeholder="Поиск по сообщению или email" className={cn(inputCls, 'h-10 pl-9')} /></label>
+            <div className="flex rounded-xl bg-slate-100 p-1 dark:bg-white/[0.04]">
+              {([['open', `Открытые ${openFeedback}`], ['all', 'Все'], ['resolved', 'Решённые']] as const).map(([filter, label]) => <button key={filter} type="button" onClick={() => setFeedbackFilter(filter)} className={cn('rounded-lg px-3 py-2 text-xs font-semibold transition', feedbackFilter === filter ? 'bg-white text-slate-950 shadow-sm dark:bg-white/10 dark:text-text' : 'text-muted hover:text-text')}>{label}</button>)}
+            </div>
+          </div>
         </div>
-        {feedback.length === 0 ? <p className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4 text-sm text-muted">Новых сообщений нет.</p> : (
-          <div className="mt-4 space-y-2">
-            {feedback.slice(0, 20).map((row) => (
-              <div key={row.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                <div className="flex flex-wrap items-center gap-2 text-xs">
+        {visibleFeedback.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-sm text-muted dark:border-white/10 dark:bg-white/[0.025]">В этой очереди сообщений нет.</p> : (
+          <div className="mt-5 max-h-[650px] divide-y divide-slate-200 overflow-y-auto border-y border-slate-200 pr-2 dark:divide-white/[0.07] dark:border-white/10">
+            {visibleFeedback.map((row) => {
+              const suspicious = /<script|javascript:|onerror\s*=/i.test(row.comment ?? '')
+              return (
+              <article key={row.id} className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className={row.rating < 0 ? 'font-semibold text-danger' : 'font-semibold text-teal'}>{row.rating < 0 ? 'Жалоба' : 'Отзыв'}</span>
-                  <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 text-muted">{row.topic || row.category}</span>
+                  <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-muted dark:bg-white/[0.04]">{row.topic || row.category}</span>
                   <span className={cn('rounded-md px-1.5 py-0.5', row.status === 'resolved' ? 'bg-teal/10 text-teal' : row.status === 'reviewing' ? 'bg-amber/10 text-amber' : 'bg-violet/10 text-violet')}>{row.status === 'new' ? 'Новое' : row.status === 'reviewing' ? 'В работе' : 'Решено'}</span>
+                  {suspicious && <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-medium text-rose-600 dark:bg-rose-500/10">подозрительный ввод</span>}
                   {row.contact_requested && <span className="text-accent-cyan">просит ответ</span>}
                   <span className="text-muted">{row.email || 'email unavailable'}</span>
-                  <span className="ml-auto text-fog">{new Date(row.created_at).toLocaleString('ru-RU')}</span>
+                  </div>
+                  <p className={cn('mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-text', suspicious && 'font-mono text-xs')}>{row.comment || 'Комментарий не добавлен'}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-fog"><span>{new Date(row.created_at).toLocaleString('ru-RU')}</span>{row.path && <span>Страница: {row.path}</span>}</div>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text">{row.comment || 'Комментарий не добавлен'}</p>
-                {row.path && <p className="mt-2 text-[11px] text-fog">Страница: {row.path}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 md:justify-end">
                   {row.status === 'new' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Взять в работу</Button>}
                   {row.status !== 'resolved' && <Button size="sm" onClick={() => void setFeedbackStatus(row, 'resolved')}>Отметить решённым</Button>}
                   {row.status === 'resolved' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Открыть снова</Button>}
                 </div>
-              </div>
-            ))}
+              </article>
+            )})}
           </div>
         )}
-      </section>
+      </section>}
 
-      <section id="skills" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
+      {activeSection === 'skills' && <section id="skills" className="card mt-6 rounded-[26px] p-6">
         <div className="flex items-center justify-between gap-3">
           <div><h2 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={16} className="text-violet" /> Проверка пользовательских skills</h2><p className="mt-1 text-xs text-muted">AI может предложить публикацию, но окончательное решение принимает администратор.</p></div>
           <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-muted">{skillReviews.filter((row) => row.status === 'shared_candidate').length}</span>
@@ -373,9 +426,9 @@ export default function AdminPage() {
             ))}
           </div>
         )}
-      </section>
+      </section>}
 
-      <section id="broadcast" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
+      {activeSection === 'broadcast' && <section id="broadcast" className="card mt-6 rounded-[26px] p-6">
         <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Coins size={16} className="text-violet" /> {t('adminPage.smsTitle')}</h2>
         <p className="mt-1 text-xs text-muted">{t('adminPage.smsDesc')}</p>
         <textarea value={bcMsg} onChange={(e) => setBcMsg(e.target.value)} rows={3} placeholder={t('adminPage.smsPh')} className="glass mt-3 w-full resize-y rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
@@ -383,10 +436,10 @@ export default function AdminPage() {
           <Button onClick={sendBroadcast} disabled={bcBusy || bcMsg.trim().length < 2}>{bcBusy ? <Loader2 size={15} className="animate-spin" /> : <Coins size={15} />} {t('adminPage.sendAll')}</Button>
           {bcResult && <span className="text-xs text-muted">{bcResult}</span>}
         </div>
-      </section>
+      </section>}
 
       {/* gift cards */}
-      <section id="gifts" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
+      {activeSection === 'gifts' && <section id="gifts" className="card mt-6 rounded-[26px] p-6">
         <p className="flex items-center gap-2 text-sm font-medium text-text">
           <Gift size={16} className="text-violet" /> {t('platform.adminPanel.giftTitle')}
         </p>
@@ -417,20 +470,26 @@ export default function AdminPage() {
             ))}
           </ul>
         )}
-      </section>
+      </section>}
 
       {/* accounts */}
-      <section id="accounts" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
-        <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text">
-          <Coins size={16} className="text-violet" /> {t('platform.adminPanel.accountsTitle')} · {accounts.length}
-        </p>
+      {activeSection === 'accounts' && <section id="accounts" className="card mt-6 rounded-[26px] p-5 md:p-6">
+        <div className="mb-5 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div><h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-text"><Users size={18} className="text-violet" /> Управление аккаунтами</h2><p className="mt-1 text-xs text-muted">Баланс, тариф и доступ — в одной рабочей таблице.</p></div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className="relative min-w-[240px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Найти аккаунт по email" className={cn(inputCls, 'h-10 pl-9')} /></label>
+            <select value={accountPlan} onChange={(event) => setAccountPlan(event.target.value)} className={cn(inputCls, 'h-10 min-w-[145px] cursor-pointer')} aria-label="Фильтр по тарифу"><option value="all">Все тарифы</option>{plans.map(([plan]) => <option key={plan} value={plan}>{plan}</option>)}</select>
+          </div>
+        </div>
         {loading ? (
           <p className="py-8 text-center text-sm text-muted">{t('common.loading')}</p>
+        ) : visibleAccounts.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-sm text-muted dark:border-white/10 dark:bg-white/[0.025]">Аккаунты по выбранному фильтру не найдены.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ice/[0.07] text-left text-xs text-muted">
+          <div className="max-h-[650px] overflow-auto rounded-2xl border border-slate-200 dark:border-white/10">
+            <table className="w-full min-w-[1080px] text-sm">
+              <thead className="sticky top-0 z-10 bg-white dark:bg-[#111827]">
+                <tr className="border-b border-slate-200 text-left text-xs text-muted dark:border-white/10">
                   <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colAccount')}</th>
                   <th className="py-2 pr-3 text-center font-normal">{t('platform.adminPanel.colAgents')}</th>
                   <th className="py-2 pr-3 font-normal">{t('platform.adminPanel.colLast')}</th>
@@ -440,9 +499,9 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.id} className="border-b border-ice/[0.05]">
-                    <td className="py-2.5 pr-3">
+                {visibleAccounts.map((a) => (
+                  <tr key={a.id} className="border-b border-slate-100 transition hover:bg-slate-50/80 dark:border-white/[0.05] dark:hover:bg-white/[0.025]">
+                    <td className="py-3 pl-3 pr-3">
                       <div className="flex items-center gap-2">
                         <span className="max-w-[180px] truncate text-text">{a.email}</span>
                         {a.is_admin && <span className="rounded-full bg-violet/15 px-1.5 py-0.5 text-[9px] text-violet">{t('platform.adminPanel.adminBadge')}</span>}
@@ -456,7 +515,7 @@ export default function AdminPage() {
                       </span>
                     </td>
                     <td className="py-2.5 pr-3 font-medium text-text">{a.token_balance.toLocaleString()}</td>
-                    <td className="py-2.5">
+                    <td className="py-2.5 pr-3">
                       <div className="flex items-center gap-2">
                         <input
                           value={amounts[a.id] ?? ''}
@@ -508,10 +567,10 @@ export default function AdminPage() {
             </table>
           </div>
         )}
-      </section>
+      </section>}
 
-      {adminCapabilities.moderate_agents && (
-        <section id="agents" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
+      {adminCapabilities.moderate_agents && activeSection === 'agents' && (
+        <section id="agents" className="card mt-6 rounded-[26px] p-6">
           <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Bot size={16} className="text-violet" /> Модерация агентов · {moderatedAgents.length}</h2>
           <p className="mt-1 text-xs text-muted">Остановите агента, который нарушает правила конфиденциальности или условия использования. Удаление не выполняется — решение можно отменить.</p>
           <div className="mt-4 grid gap-2 md:grid-cols-2">
