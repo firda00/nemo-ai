@@ -152,7 +152,7 @@ export default function App() {
         <Route path="email-assistant" element={<EmailAssistantPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="knowledge" element={<Navigate to="/app/settings?tab=integrations#knowledge-base" replace />} />
-        <Route path="integrations" element={<Navigate to="/app/settings?tab=integrations&section=services" replace />} />
+        <Route path="integrations" element={<Navigate to="/app/settings?tab=integrations&directory=connectors" replace />} />
         <Route path="lead-forms" element={<Navigate to="/app" replace />} />
         <Route path="templates" element={<MarketplacePage />} />
         <Route path="billing" element={<Navigate to="/app/settings?tab=billing" replace />} />

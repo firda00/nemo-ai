@@ -1,7 +1,7 @@
 import {
   Brain, Building2, Eye, EyeOff, Globe, KeyRound, Moon, RefreshCw,
   ShieldCheck, Sun, User as UserIcon, WalletCards, Webhook, GitBranch, Save,
-  BookOpen, Library, Link2, Plug, Sparkles, ArrowLeft,
+  BookOpen, Library, Link2, Plug, Sparkles,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -9,7 +9,6 @@ import { Button } from '../../components/ui/Button'
 import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import BillingPage from './BillingPage'
-import IntegrationsPage from './IntegrationsPage'
 import KnowledgePage from './KnowledgePage'
 import { CapabilityDirectory, type DirectoryTab } from '../../components/platform/CapabilityDirectory'
 import { useAuth } from '../../context/AuthContext'
@@ -240,43 +239,28 @@ function GitHubKeyCard() {
 
 function ConnectorsTab() {
   const { lang } = useI18n()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const querySection = searchParams.get('section')
-  const section = querySection === 'services' ? 'services' : null
   const directoryQuery = searchParams.get('directory')
   const requestedDirectory: DirectoryTab = directoryQuery === 'skills' || directoryQuery === 'plugins' ? directoryQuery : 'connectors'
-  const legacyDirectory = querySection === 'skills'
+  const legacyDirectory = querySection === 'skills' || querySection === 'services'
   const [directoryOpen, setDirectoryOpen] = useState(Boolean(directoryQuery || legacyDirectory))
   const [directoryTab, setDirectoryTab] = useState<DirectoryTab>(legacyDirectory && !searchParams.get('integration') ? 'skills' : requestedDirectory)
   const copy = lang === 'uz' ? {
     eyebrow: 'Bitta katalog', title: 'Directory', description: 'Ulanishlar, agent ko‘nikmalari va plaginlar endi bir joyda. Keraklisini toping va vazifa paytida ulang.',
     open: 'Directory’ni ochish', skills: 'Ko‘nikmalar', connections: 'Ulanishlar', plugins: 'Plaginlar',
-    knowledgeTitle: 'Bilimlar bazasi', knowledgeText: 'Agentlar va jamoalar uchun fayllar, havolalar va tasdiqlangan biznes ma’lumotlarini shu yerda saqlang.', back: 'Directory’ga qaytish', setup: 'Ulanishni sozlash',
+    knowledgeTitle: 'Bilimlar bazasi', knowledgeText: 'Agentlar va jamoalar uchun fayllar, havolalar va tasdiqlangan biznes ma’lumotlarini shu yerda saqlang.',
   } : lang === 'en' ? {
     eyebrow: 'One catalog', title: 'Directory', description: 'Connections, agent skills, and plugins now live in one place. Find what you need and connect it when a task calls for it.',
     open: 'Open Directory', skills: 'Skills', connections: 'Connections', plugins: 'Plugins',
-    knowledgeTitle: 'Knowledge base', knowledgeText: 'Keep files, links, and verified business context for agents and teams here.', back: 'Back to Directory', setup: 'Connection setup',
+    knowledgeTitle: 'Knowledge base', knowledgeText: 'Keep files, links, and verified business context for agents and teams here.',
   } : {
     eyebrow: 'Один каталог', title: 'Directory', description: 'Подключения, навыки агентов и плагины теперь находятся в одном месте. Находите нужное и подключайте только для конкретной задачи.',
     open: 'Открыть Directory', skills: 'Навыки', connections: 'Подключения', plugins: 'Плагины',
-    knowledgeTitle: 'База знаний', knowledgeText: 'Храните здесь файлы, ссылки и подтверждённый контекст бизнеса для агентов и команд.', back: 'Вернуться в Directory', setup: 'Настройка подключения',
+    knowledgeTitle: 'База знаний', knowledgeText: 'Храните здесь файлы, ссылки и подтверждённый контекст бизнеса для агентов и команд.',
   }
 
   const openDirectory = (next: DirectoryTab) => { setDirectoryTab(next); setDirectoryOpen(true) }
-  const clearSection = () => {
-    const params = new URLSearchParams(searchParams)
-    params.set('tab', 'integrations')
-    params.delete('section')
-    params.delete('integration')
-    setSearchParams(params, { replace: true })
-  }
-
-  if (section) return <div className="space-y-5">
-    <button type="button" onClick={clearSection} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition hover:bg-white/5 hover:text-text active:scale-[0.98]"><ArrowLeft size={16} />{copy.back}</button>
-    {section === 'services' && <IntegrationsPage embedded />}
-    <CapabilityDirectory key={directoryTab} open={directoryOpen} onClose={() => setDirectoryOpen(false)} initialTab={directoryTab} />
-  </div>
-
   return <div className="space-y-5">
     <section className="relative overflow-hidden rounded-[1.75rem] border border-cyan/15 bg-panel px-5 pb-6 pt-6 shadow-[0_18px_55px_rgba(14,31,58,.08)] sm:px-7 sm:pb-7">
       <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-cyan/[0.08] blur-3xl" />

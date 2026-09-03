@@ -74,7 +74,7 @@ export default function EmailAssistantPage() {
         <Button variant="ghost" onClick={load} disabled={Boolean(busy)}><RefreshCw size={15} className={busy === 'load' ? 'animate-spin' : ''} /> Обновить</Button>
       </div>
 
-      {connected === false && <section className="card mt-6 rounded-2xl p-5"><Mail className="text-violet" /><h2 className="mt-3 font-medium text-text">Сначала подключите Google</h2><p className="mt-1 text-sm text-muted">Nemo запросит только нужные права Gmail. Пароль Google не передаётся Nemo.</p><Button to="/app/settings?tab=integrations&section=services" className="mt-4">Открыть интеграции</Button></section>}
+      {connected === false && <section className="card mt-6 rounded-2xl p-5"><Mail className="text-violet" /><h2 className="mt-3 font-medium text-text">Сначала подключите Google</h2><p className="mt-1 text-sm text-muted">Nemo запросит только нужные права Gmail. Пароль Google не передаётся Nemo.</p><Button to="/app/settings?tab=integrations&directory=connectors" className="mt-4">Открыть интеграции</Button></section>}
       {needsReconnect && <section className="mt-6 rounded-2xl border border-amber/25 bg-amber/10 p-5"><AlertTriangle className="text-amber" /><h2 className="mt-3 font-medium text-text">Нужно один раз переподключить Google</h2><p className="mt-1 text-sm text-muted">Старое подключение разрешало только отправку. Новому ассистенту нужны чтение входящих и создание черновиков.</p><Button onClick={reconnect} disabled={Boolean(busy)} className="mt-4">{busy === 'reconnect' ? 'Открываю…' : 'Дать новые права'}</Button></section>}
       {message && <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-text">{message}</div>}
 

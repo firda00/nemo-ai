@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Blocks, ChevronLeft, KeyRound, Link2, Plug, Plus, Search, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
+import { Blocks, ChevronLeft, Link2, Plug, Plus, Search, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AGENT_SKILLS } from '../../data/agentSkills'
 import { useI18n } from '../../i18n'
-import { GoogleSetup } from './GoogleSetup'
 import { CustomToolsManager } from './CustomToolsManager'
+import { IntegrationCenter, type IntegrationProviderId } from '../settings/IntegrationCenter'
 import { cn } from '../../lib/cn'
 
 export type DirectoryTab = 'skills' | 'connectors' | 'plugins'
@@ -14,17 +14,17 @@ interface ConnectorItem {
   title: string
   description: string
   tools: string[]
-  href?: string
+  provider: IntegrationProviderId | 'google'
   color: string
 }
 
 const CONNECTORS: ConnectorItem[] = [
-  { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], color: '#4285F4' },
-  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], href: '/app/settings?tab=integrations&section=services&integration=telegram', color: '#2AABEE' },
-  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], href: '/app/settings?tab=integrations&section=services&integration=hubspot', color: '#FF7A59' },
-  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], href: '/app/settings?tab=integrations&section=services&integration=notion', color: '#A7ADC0' },
-  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], href: '/app/settings?tab=integrations&section=services&integration=slack', color: '#36C5F0' },
-  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], href: '/app/settings?tab=integrations&section=services&integration=browser', color: '#22B8CF' },
+  { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], provider: 'google', color: '#4285F4' },
+  { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], provider: 'telegram', color: '#2AABEE' },
+  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], provider: 'hubspot', color: '#FF7A59' },
+  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], provider: 'notion', color: '#A7ADC0' },
+  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], provider: 'slack', color: '#36C5F0' },
+  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], provider: 'hyperbrowser', color: '#22B8CF' },
 ]
 
 const TAB_ICONS: Record<DirectoryTab, typeof Sparkles> = { skills: Sparkles, connectors: Link2, plugins: Plug }
@@ -101,7 +101,7 @@ export function CapabilityDirectory({ open, onClose, initialTab = 'connectors' }
           <div className="p-4 pb-10 sm:p-7 sm:pb-12">
             {tab === 'connectors' && !selected && <><div className="rounded-2xl border border-cyan/15 bg-cyan/[0.045] px-4 py-3.5 text-sm leading-6 text-muted">{copy.connectorIntro}</div>{connectors.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">{connectors.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className="group flex min-h-28 items-start gap-3 rounded-2xl bg-white/[0.035] p-4 text-left ring-1 ring-inset ring-white/[0.07] transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.065] hover:ring-cyan/25 active:translate-y-0"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `${item.color}1f`, color: item.color }}><Blocks size={18} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text">{item.title}</span><span className="mt-1.5 block text-xs leading-5 text-muted">{item.description}</span></span><span className="rounded-lg p-2 text-fog transition group-hover:bg-cyan/10 group-hover:text-cyan"><Plus size={15} /></span></button>)}</div> : <EmptyDirectory text={copy.empty} />}</>}
 
-            {tab === 'connectors' && selected && <div className="mx-auto max-w-3xl"><div className="flex items-start gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${selected.color}1f`, color: selected.color }}><Blocks size={22} /></span><div><h4 className="text-xl font-semibold tracking-tight text-text">{selected.title}</h4><p className="mt-2 max-w-2xl text-sm leading-6 text-muted">{selected.description}</p></div></div><div className="mt-7 border-t border-ice/10 pt-5"><p className="text-sm font-semibold text-text">{copy.access}</p><div className="mt-3 flex flex-wrap gap-2">{selected.tools.map((tool) => <span key={tool} className="rounded-lg bg-white/[0.045] px-2.5 py-1.5 font-mono text-[11px] text-muted ring-1 ring-inset ring-white/[0.07]">{tool}</span>)}</div></div><div className="mt-6 rounded-2xl border border-teal/15 bg-teal/[0.045] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><ShieldCheck size={16} className="text-teal" />{copy.authTitle}</p><p className="mt-1.5 text-xs leading-5 text-muted">{copy.authText}</p></div><div className="mt-6">{selected.id === 'google' ? <GoogleSetup /> : selected.href ? <Link to={selected.href} onClick={closeDirectory} className="btn bg-brand px-4 py-2.5 text-sm text-white"><KeyRound size={15} />{copy.setup}</Link> : null}</div></div>}
+            {tab === 'connectors' && selected && <div className="mx-auto max-w-3xl"><div className="flex items-start gap-4"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${selected.color}1f`, color: selected.color }}><Blocks size={22} /></span><div><h4 className="text-xl font-semibold tracking-tight text-text">{selected.title}</h4><p className="mt-2 max-w-2xl text-sm leading-6 text-muted">{selected.description}</p></div></div><div className="mt-7 border-t border-ice/10 pt-5"><p className="text-sm font-semibold text-text">{copy.access}</p><div className="mt-3 flex flex-wrap gap-2">{selected.tools.map((tool) => <span key={tool} className="rounded-lg bg-white/[0.045] px-2.5 py-1.5 font-mono text-[11px] text-muted ring-1 ring-inset ring-white/[0.07]">{tool}</span>)}</div></div><div className="mt-6 rounded-2xl border border-teal/15 bg-teal/[0.045] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><ShieldCheck size={16} className="text-teal" />{copy.authTitle}</p><p className="mt-1.5 text-xs leading-5 text-muted">{copy.authText}</p></div><div className="mt-6"><IntegrationCenter focusProvider={selected.provider} /></div></div>}
 
             {tab === 'skills' && <><div className="flex flex-col gap-4 rounded-2xl border border-violet/15 bg-violet/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{copy.skillsTitle}</p><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.skillsText}</p></div><Link to="/app/agents" onClick={closeDirectory} className="btn shrink-0 bg-brand px-3 py-2 text-xs text-white"><Plus size={14} />{copy.addSkill}</Link></div>{skills.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">{skills.map((skill) => <article key={skill.id} className="rounded-2xl bg-white/[0.035] p-4 ring-1 ring-inset ring-white/[0.07]"><span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${skill.color}1f`, color: skill.color }}><skill.icon size={16} /></span><p className="mt-3 text-sm font-semibold text-text">{t(`agentEdit.skill_${skill.id}`)}</p><p className="mt-1 text-xs leading-5 text-muted">{t(`agentEdit.skill_${skill.id}Desc`)}</p></article>)}</div> : <EmptyDirectory text={copy.empty} />}</>}
 

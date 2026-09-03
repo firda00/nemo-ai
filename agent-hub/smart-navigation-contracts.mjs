@@ -26,16 +26,18 @@ assert.match(commandItems, /const commandItems = nav/, 'Command Palette must exp
 for (const route of ['content', 'finance', 'research', 'commerce', 'activity', 'run-workflow', 'results', 'approvals', 'lead-forms']) {
   assert.match(app, new RegExp(`path="${route}" element=\\{<Navigate to="\\/app" replace \\/>\\}`), `${route} must redirect to the chat with replace`)
 }
-assert.ok(app.includes('path="integrations" element={<Navigate to="/app/settings?tab=integrations&section=services" replace />}'), 'legacy integrations route must open Settings')
+assert.ok(app.includes('path="integrations" element={<Navigate to="/app/settings?tab=integrations&directory=connectors" replace />}'), 'legacy integrations route must open Directory instead of a separate page')
 assert.ok(app.includes('path="knowledge" element={<Navigate to="/app/settings?tab=integrations#knowledge-base" replace />}'), 'legacy knowledge route must open the embedded knowledge base')
 assert.ok(app.includes('path="tools" element={<Navigate to="/app/settings?tab=integrations&directory=skills" replace />}'), 'legacy tools route must open Directory instead of a separate page')
 assert.ok(app.includes('path="billing" element={<Navigate to="/app/settings?tab=billing" replace />}'), 'legacy billing route must open Settings')
 const settings = read('src/pages/app/SettingsPage.tsx')
 const directory = read('src/components/platform/CapabilityDirectory.tsx')
-assert.match(settings, /<IntegrationsPage embedded \/>/, 'integration catalog must render inside Settings')
+assert.doesNotMatch(settings, /<IntegrationsPage embedded \/>/, 'the old services catalog must not render inside Settings')
 assert.match(settings, /<KnowledgePage embedded \/>/, 'knowledge base must render inside Settings')
 assert.doesNotMatch(settings, /<IntegrationsToolsPage embedded \/>/, 'the old skills/tools page must not render inside Settings')
 assert.doesNotMatch(settings, /querySection === 'skills'.*\? querySection/, 'the old section=skills page must not remain routable')
+assert.doesNotMatch(settings, /querySection === 'services'.*\? 'services'/, 'the old section=services page must not remain routable')
+assert.match(settings, /querySection === 'skills' \|\| querySection === 'services'/, 'legacy resource URLs must open Directory instead of a page')
 assert.match(settings, /<CapabilityDirectory/, 'Settings must expose one capability Directory')
 assert.doesNotMatch(settings, /role="tablist" aria-label=\{t\('settingsPage\.resourcesAria'\)\}/, 'Settings must not duplicate resources as public top-level tabs')
 for (const tab of ["'skills'", "'connectors'", "'plugins'"]) {
