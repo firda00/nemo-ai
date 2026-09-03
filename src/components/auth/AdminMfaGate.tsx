@@ -44,6 +44,17 @@ export function AdminMfaGate({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer)
   }, [isAdmin, profileResolved])
 
+  useEffect(() => {
+    const requireFreshLogin = () => {
+      setError(lang === 'uz' ? 'Himoyalangan seans tugadi. Qayta kiring.' : lang === 'en' ? 'The protected session expired. Sign in again.' : 'Защищённая сессия истекла. Войдите ещё раз.')
+      setCode('')
+      setFactorId('')
+      setState('password')
+    }
+    window.addEventListener('nemo:admin-reauth-required', requireFreshLogin)
+    return () => window.removeEventListener('nemo:admin-reauth-required', requireFreshLogin)
+  }, [lang])
+
   const verifyPassword = async () => {
     if (!supabase || busy || password.length < 8) return
     setBusy(true); setError('')

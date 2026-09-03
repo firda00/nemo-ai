@@ -9,6 +9,7 @@ const widget = read('src/components/platform/FeedbackWidget.tsx')
 const telemetry = read('src/lib/telemetry.ts')
 const adminApi = read('supabase/functions/admin-api/index.ts')
 const adminPage = read('src/pages/app/AdminPage.tsx')
+const adminGate = read('src/components/auth/AdminMfaGate.tsx')
 const setup = read('src/pages/SetupPage.tsx')
 const migration = read('supabase/migrations/20260903103000_feedback_workflow.sql')
 
@@ -24,6 +25,9 @@ assert.match(adminPage, /activeSection === 'feedback'/, 'admin modules must rend
 assert.match(adminPage, /feedbackSearch.*feedbackFilter/s, 'the complaint queue must be searchable and filterable')
 assert.match(adminPage, /visibleAccounts.*accountPlan/s, 'the account table must support focused search and plan filtering')
 assert.match(adminPage, /runningAgents = moderatedAgents\.length > 0 \? activeAgents : totalAgents/, 'agent KPI must fall back to the authoritative account total')
+assert.match(adminPage, /list_onboarding.*Ответы онбординга/s, 'completed onboarding answers must be visible to administrators')
+assert.match(adminPage, /nemo:admin-reauth-required/, 'expired protected admin sessions must request reauthentication')
+assert.match(adminGate, /addEventListener\('nemo:admin-reauth-required'/, 'the admin gate must relock when a protected session expires')
 assert.match(setup, /sessionStorage\.setItem\('nemo\.setup\.draft'/, 'onboarding answers must survive an accidental refresh')
 assert.match(setup, /<FeedbackWidget \/>/, 'users must be able to report an onboarding problem without leaving setup')
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, Ban, Bot, Check, Coins, Gift, Layers3, Loader2, Lock, MessageSquareWarning, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Unlock, UserCog, Users } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowUpRight, Ban, Bot, Check, Coins, Gift, Layers3, Loader2, Lock, MessageSquareWarning, Plus, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Unlock, UserCog, Users } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
@@ -52,8 +52,21 @@ interface ModeratedAgent {
   status: string
   type: string
 }
+interface OnboardingRow {
+  account_id: string
+  email: string | null
+  name: string | null
+  operating_markets: string[]
+  owner_role: string | null
+  primary_goal: string | null
+  task_types: string[]
+  data_sources: string[]
+  default_action_policy: 'read_only' | 'approval_required'
+  updated_at: string
+}
 
-type AdminSection = 'overview' | 'feedback' | 'accounts' | 'skills' | 'broadcast' | 'gifts' | 'agents'
+type AdminSection = 'overview' | 'feedback' | 'onboarding' | 'accounts' | 'skills' | 'broadcast' | 'gifts' | 'agents'
+const ADMIN_SECTIONS: AdminSection[] = ['overview', 'feedback', 'onboarding', 'accounts', 'skills', 'broadcast', 'gifts', 'agents']
 
 const inputCls = 'glass w-full rounded-lg px-2.5 py-1.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50'
 
@@ -93,6 +106,7 @@ export default function AdminPage() {
   const [feedback, setFeedback] = useState<FeedbackRow[]>([])
   const [skillReviews, setSkillReviews] = useState<SkillReviewRow[]>([])
   const [moderatedAgents, setModeratedAgents] = useState<ModeratedAgent[]>([])
+  const [onboarding, setOnboarding] = useState<OnboardingRow[]>([])
   const [adminCapabilities, setAdminCapabilities] = useState({ set_admin: false, moderate_agents: false })
   const [amounts, setAmounts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -102,9 +116,10 @@ export default function AdminPage() {
   const [bcMsg, setBcMsg] = useState('')
   const [bcBusy, setBcBusy] = useState(false)
   const [bcResult, setBcResult] = useState<string | null>(null)
+  const [activeAction, setActiveAction] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<AdminSection>(() => {
     const hash = window.location.hash.slice(1) as AdminSection
-    return ['overview', 'feedback', 'accounts', 'skills', 'broadcast', 'gifts', 'agents'].includes(hash) ? hash : 'overview'
+    return ADMIN_SECTIONS.includes(hash) ? hash : 'overview'
   })
   const [feedbackFilter, setFeedbackFilter] = useState<'open' | 'all' | 'resolved'>('open')
   const [feedbackSearch, setFeedbackSearch] = useState('')
@@ -119,7 +134,7 @@ export default function AdminPage() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash.slice(1) as AdminSection
-      if (['overview', 'feedback', 'accounts', 'skills', 'broadcast', 'gifts', 'agents'].includes(hash)) setActiveSection(hash)
+      if (ADMIN_SECTIONS.includes(hash)) setActiveSection(hash)
     }
     window.addEventListener('hashchange', syncHash)
     return () => window.removeEventListener('hashchange', syncHash)
@@ -128,7 +143,14 @@ export default function AdminPage() {
   const call = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!isSupabaseEnabled || !supabase) return null
     const { data, error } = await supabase.functions.invoke('admin-api', { body: { action, ...extra } })
-    if (error || !(data as { ok?: boolean } | null)?.ok) return null
+    if (error || !(data as { ok?: boolean } | null)?.ok) {
+      const status = (error as { context?: { status?: number } } | null)?.context?.status
+      const code = (data as { error?: string } | null)?.error
+      if (status === 401 || status === 403 || code === 'fresh_password_and_mfa_required') {
+        window.dispatchEvent(new CustomEvent('nemo:admin-reauth-required'))
+      }
+      return null
+    }
     return data as Record<string, unknown>
   }, [])
 
@@ -137,7 +159,7 @@ export default function AdminPage() {
     const skillRequest = isSupabaseEnabled && supabase
       ? supabase.functions.invoke('review-skill', { body: { action: 'list_admin' } })
       : Promise.resolve({ data: null })
-    const [a, g, f, skills] = await Promise.all([call('list_accounts'), call('list_gifts'), call('list_feedback'), skillRequest])
+    const [a, g, f, onboardingRows, skills] = await Promise.all([call('list_accounts'), call('list_gifts'), call('list_feedback'), call('list_onboarding'), skillRequest])
     if (a) {
       setAccounts((a.accounts as Account[]) ?? [])
       const capabilities = (a.capabilities as { set_admin?: boolean; moderate_agents?: boolean } | undefined) ?? {}
@@ -149,6 +171,7 @@ export default function AdminPage() {
     }
     if (g) setGifts((g.gifts as GiftRow[]) ?? [])
     if (f) setFeedback((f.feedback as FeedbackRow[]) ?? [])
+    if (onboardingRows) setOnboarding((onboardingRows.onboarding as OnboardingRow[]) ?? [])
     const skillData = skills.data as { skills?: SkillReviewRow[] } | null
     if (skillData?.skills) setSkillReviews(skillData.skills)
     setLoading(false)
@@ -239,9 +262,14 @@ export default function AdminPage() {
   }
 
   const setFeedbackStatus = async (row: FeedbackRow, status: FeedbackRow['status']) => {
+    if (activeAction) return
+    const actionKey = `${row.id}:${status}`
+    setActiveAction(actionKey)
     const res = await call('update_feedback_status', { feedback_id: row.id, status })
-    if (!res) { toast(t('common.error')); return }
+    setActiveAction(null)
+    if (!res) { toast('Действие не выполнено. Если защищённая сессия истекла, войдите ещё раз.'); return }
     setFeedback((items) => items.map((item) => item.id === row.id ? { ...item, status } : item))
+    toast(status === 'resolved' ? 'Обращение отмечено решённым' : 'Обращение взято в работу')
   }
 
   const reviewSkill = async (id: string, action: 'publish' | 'reject') => {
@@ -290,6 +318,7 @@ export default function AdminPage() {
   const navItems: Array<{ id: AdminSection; label: string; count?: number }> = [
     { id: 'overview', label: 'Обзор' },
     { id: 'feedback', label: 'Обращения', count: openFeedback },
+    { id: 'onboarding', label: 'Онбординг', count: onboarding.length },
     { id: 'accounts', label: 'Аккаунты', count: accounts.length },
     { id: 'skills', label: 'Навыки', count: pendingSkills },
     { id: 'broadcast', label: 'Рассылки' },
@@ -324,8 +353,8 @@ export default function AdminPage() {
       </header>
 
       <nav aria-label="Разделы центра управления" className="mt-4 flex items-center gap-1 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-[0_14px_45px_-32px_rgba(15,23,42,0.38)] dark:border-white/10 dark:bg-[#111827]">
-        {navItems.map((item) => <button key={item.id} type="button" onClick={() => selectSection(item.id)} aria-current={activeSection === item.id ? 'page' : undefined} className={cn('flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500', activeSection === item.id ? 'bg-slate-950 text-white shadow-sm dark:bg-white dark:text-slate-950' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-muted dark:hover:bg-white/[0.05] dark:hover:text-text')}>
-          {item.label}{typeof item.count === 'number' && item.count > 0 && <span className={cn('rounded-full px-1.5 py-0.5 font-mono text-[9px]', activeSection === item.id ? 'bg-white/15 text-white dark:bg-slate-900/10 dark:text-slate-900' : 'bg-slate-100 text-slate-500 dark:bg-white/[0.06]')}>{item.count}</span>}
+        {navItems.map((item) => <button key={item.id} type="button" onClick={() => selectSection(item.id)} aria-current={activeSection === item.id ? 'page' : undefined} className={cn('flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500', activeSection === item.id ? '!bg-[#111827] !text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-muted dark:hover:bg-white/[0.05] dark:hover:text-text')}>
+          {item.label}{typeof item.count === 'number' && item.count > 0 && <span className={cn('rounded-full px-1.5 py-0.5 font-mono text-[9px]', activeSection === item.id ? '!bg-white/15 !text-white' : 'bg-slate-100 text-slate-500 dark:bg-white/[0.06]')}>{item.count}</span>}
         </button>)}
       </nav>
 
@@ -366,6 +395,20 @@ export default function AdminPage() {
         </div>
       </section>}
 
+      {activeSection === 'onboarding' && <section id="onboarding" className="card mt-6 rounded-[26px] p-5 md:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div><h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-text"><Rocket size={18} className="text-cyan" /> Ответы онбординга</h2><p className="mt-1 text-xs text-muted">Профиль бизнеса, цель, нужные задачи, источники данных и политика действий.</p></div>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono text-xs text-muted dark:bg-white/[0.05]">{onboarding.length}</span>
+        </div>
+        {loading ? <p className="py-10 text-center text-sm text-muted">{t('common.loading')}</p> : onboarding.length === 0 ? <p className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-sm text-muted dark:border-white/10 dark:bg-white/[0.025]">Завершённых анкет пока нет.</p> : <div className="mt-5 max-h-[650px] divide-y divide-slate-200 overflow-y-auto border-y border-slate-200 dark:divide-white/[0.07] dark:border-white/10">
+          {onboarding.map((row) => <article key={row.account_id} className="grid gap-4 py-4 lg:grid-cols-[220px_minmax(0,1fr)_260px]">
+            <div className="min-w-0"><p className="truncate text-sm font-semibold text-text">{row.name || 'Без названия'}</p><p className="mt-1 truncate text-xs text-muted">{row.email || row.account_id}</p><p className="mt-2 text-[11px] text-fog">Обновлено {new Date(row.updated_at).toLocaleString('ru-RU')}</p></div>
+            <div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">Главная цель</p><p className="mt-1 text-sm leading-6 text-text">{row.primary_goal || 'Не указана'}</p><div className="mt-3 flex flex-wrap gap-1.5">{row.task_types.map((task) => <span key={task} className="rounded-lg bg-violet/10 px-2 py-1 text-[10px] text-violet">{task}</span>)}</div></div>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs"><div><dt className="text-fog">Рынок</dt><dd className="mt-0.5 font-medium text-text">{row.operating_markets.join(', ') || '—'}</dd></div><div><dt className="text-fog">Роль</dt><dd className="mt-0.5 font-medium text-text">{row.owner_role || '—'}</dd></div><div className="col-span-2"><dt className="text-fog">Источники</dt><dd className="mt-0.5 text-text">{row.data_sources.join(', ') || '—'}</dd></div><div className="col-span-2"><dt className="text-fog">Политика агента</dt><dd className="mt-0.5 font-medium text-text">{row.default_action_policy === 'read_only' ? 'Только анализ' : 'Действия после подтверждения'}</dd></div></dl>
+          </article>)}
+        </div>}
+      </section>}
+
       {/* Feedback operations */}
       {activeSection === 'feedback' && <section id="feedback" className="card mt-6 rounded-[26px] p-5 md:p-6">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
@@ -399,9 +442,9 @@ export default function AdminPage() {
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-fog"><span>{new Date(row.created_at).toLocaleString('ru-RU')}</span>{row.path && <span>Страница: {row.path}</span>}</div>
                 </div>
                 <div className="flex flex-wrap gap-2 md:justify-end">
-                  {row.status === 'new' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Взять в работу</Button>}
-                  {row.status !== 'resolved' && <Button size="sm" onClick={() => void setFeedbackStatus(row, 'resolved')}>Отметить решённым</Button>}
-                  {row.status === 'resolved' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Открыть снова</Button>}
+                  {row.status === 'new' && <Button size="sm" variant="ghost" disabled={activeAction?.startsWith(row.id)} onClick={() => void setFeedbackStatus(row, 'reviewing')}>{activeAction === `${row.id}:reviewing` ? <Loader2 size={14} className="animate-spin" /> : null}Взять в работу</Button>}
+                  {row.status !== 'resolved' && <Button size="sm" disabled={activeAction?.startsWith(row.id)} onClick={() => void setFeedbackStatus(row, 'resolved')}>{activeAction === `${row.id}:resolved` ? <Loader2 size={14} className="animate-spin" /> : null}Отметить решённым</Button>}
+                  {row.status === 'resolved' && <Button size="sm" variant="ghost" disabled={activeAction?.startsWith(row.id)} onClick={() => void setFeedbackStatus(row, 'reviewing')}>{activeAction === `${row.id}:reviewing` ? <Loader2 size={14} className="animate-spin" /> : null}Открыть снова</Button>}
                 </div>
               </article>
             )})}

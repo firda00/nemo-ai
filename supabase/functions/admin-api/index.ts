@@ -138,6 +138,21 @@ Deno.serve(async (req) => {
       return json({ ok: true, feedback: (data ?? []).map((row: { user_id: string }) => ({ ...row, email: emailByUser.get(row.user_id) ?? null })) })
     }
 
+    if (action === 'list_onboarding') {
+      const { data: profiles, error } = await admin
+        .from('business_profiles')
+        .select('account_id,name,operating_markets,owner_role,primary_goal,task_types,data_sources,default_action_policy,updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(200)
+      if (error) return json({ error: error.message }, 400)
+      const accountIds = (profiles ?? []).map((row: { account_id: string }) => row.account_id)
+      const { data: users } = accountIds.length
+        ? await admin.from('users').select('account_id,email').in('account_id', accountIds)
+        : { data: [] as Array<{ account_id: string; email: string }> }
+      const emailByAccount = new Map((users ?? []).map((row: { account_id: string; email: string }) => [row.account_id, row.email]))
+      return json({ ok: true, onboarding: (profiles ?? []).map((row: { account_id: string }) => ({ ...row, email: emailByAccount.get(row.account_id) ?? null })) })
+    }
+
     if (action === 'update_feedback_status') {
       const feedbackId = String(body?.feedback_id ?? '')
       const status = String(body?.status ?? '')
