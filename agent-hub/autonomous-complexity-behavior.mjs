@@ -60,6 +60,7 @@ assert.match(orchestrator, /body\?\.preset_specs\) \? body\.preset_specs\.slice\
 assert.match(worker, /quickPath && run\.transition !== 'synth'/, 'worker must reject a quick plan on any multi-stage transition')
 assert.match(worker, /quickPath && executionPlan\.maxLogicalLlmCalls !== 1/, 'worker must validate the immutable quick budget')
 assert.match(worker, /slice\(0, specialistLimit\)/, 'worker must enforce the specialist ceiling selected by the server')
+assert.match(worker, /max_iterations: Math\.min\(3, activeGoal\.data\.max_iterations\)/, 'already queued runs must inherit the three-iteration ceiling')
 assert.match(orchestrator, /max_iterations: Math\.min\(3, Math\.max\(1, Number\(body\?\.max_iterations\) \|\| 3\)\)/, 'goal loops must be capped at three iterations')
 assert.match(worker, /execution_mode: quickPath \? 'quick' : 'team'/, 'synthesis must receive the server-selected mode')
 assert.match(orchestrator, /activeRun\?\.run_ref === runRef[\s\S]*another_run_active/, 'only an exact enqueue retry may adopt an active run')

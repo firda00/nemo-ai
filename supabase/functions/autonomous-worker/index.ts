@@ -142,7 +142,9 @@ Deno.serve(async (req) => {
     if (quickPath && executionPlan.maxLogicalLlmCalls !== 1) throw new Error('invalid_quick_budget')
     const goal = String(input.orchestratedGoal ?? input.goal ?? '')
     const activeGoal = GoalSchema.safeParse(state.goalContract ?? input.goalContract)
-    const currentIteration = activeGoal.success ? activeGoal.data.current_iteration : 1
+    const activeGoalContract = activeGoal.success ? { ...activeGoal.data, max_iterations: Math.min(3, activeGoal.data.max_iterations) } : null
+    if (activeGoalContract) state.goalContract = activeGoalContract
+    const currentIteration = activeGoalContract?.current_iteration ?? 1
     const webResearchAllowed = !/(?:do not|don't|dont|never)\s+(?:use|browse|search)(?:\s+the)?\s+(?:web|internet|online)|(?:without|no)\s+(?:web(?:\s+research)?|internet)|\boffline\b|без\s+(?:поиска\s+в\s+)?интернет\S*|не\s+(?:использ\S*|ищ\S*)\s+(?:в\s+)?интернет\S*/i.test(goal)
     const artifacts = Array.isArray(input.inputArtifacts) ? input.inputArtifacts : []
     if (run.transition === 'staff') {
@@ -152,7 +154,7 @@ Deno.serve(async (req) => {
       state.specs = created
       await finish({ state, phase: 'team', transition: 'observe_plan', specialist: 0, review: 0, revision: 0 })
     } else if (run.transition === 'observe_plan') {
-      const goalContract = activeGoal.success ? activeGoal.data : null
+      const goalContract = activeGoalContract
       if (!goalContract) throw new Error('invalid_goal_contract')
       const remaining = state.goalEvaluation?.criteria.filter((criterion) => !criterion.achieved).map((criterion) => criterion.criterion) ?? goalContract.definition_of_done
       const planned = await invoke({
