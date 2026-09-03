@@ -40,6 +40,7 @@ const mfaGate = read('src/components/auth/MfaChallengeGate.tsx')
 const adminMfaGate = read('src/components/auth/AdminMfaGate.tsx')
 const adminApi = read('supabase/functions/admin-api/index.ts')
 const assurance = read('supabase/functions/_shared/authAssurance.ts')
+const appLayout = read('src/components/layout/AppLayout.tsx')
 const appSrc = read('src/App.tsx')
 const authContext = read('src/context/AuthContext.tsx')
 
@@ -47,7 +48,10 @@ check('TOTP enrollment requires a verified six-digit challenge', /mfa\.enroll\(\
 check('authenticated app is gated on AAL2 when a verified factor exists', /getAuthenticatorAssuranceLevel/.test(mfaGate) && /nextLevel === 'aal2'/.test(mfaGate) && /currentLevel !== 'aal2'/.test(mfaGate) && /MfaChallengeGate/.test(appSrc))
 check('MFA assurance inspection fails closed', /aalError \|\| factorsError/.test(mfaGate) && /setCheckFailed\(true\)/.test(mfaGate) && /if \(checkFailed\) return/.test(mfaGate))
 check('super-admin enrollment is mandatory before the admin UI opens', /AdminMfaGate/.test(appSrc) && /state === 'enroll'/.test(adminMfaGate) && /MfaSetupPanel/.test(adminMfaGate))
-check('super-admin API requires a validated AAL2 session', /auth\.getUser\(\)/.test(adminApi) && /hasAal2\(authHeader\)/.test(adminApi) && /claims\.aal === 'aal2'/.test(assurance))
+check('super-admin API requires a recent password and validated AAL2 session', /auth\.getUser\(\)/.test(adminApi) && /hasRecentPasswordAndAal2\(authHeader\)/.test(adminApi) && /claims\?\.aal !== 'aal2'/.test(assurance) && /entry\?\.method === 'password'/.test(assurance))
+check('old admin URL is closed and control access uses a neutral route', /path="admin" element=\{<Navigate to="\/app" replace \/>\}/.test(appSrc) && /path="control-center" element=\{<AdminMfaGate>/.test(appSrc) && !/\/app\/admin/.test(appLayout))
+check('control access requires password before a fresh TOTP challenge', /signInWithPassword/.test(adminMfaGate) && /state === 'password'/.test(adminMfaGate) && /mfa\.challenge/.test(adminMfaGate) && /mfa\.verify/.test(adminMfaGate))
+check('recent password proof rejects future and stale timestamps', /ageSeconds >= 0/.test(assurance) && /ageSeconds <= 10 \* 60/.test(assurance))
 check('logout explicitly revokes sessions on all devices', /signOut\(\{ scope: 'global' \}\)/.test(authContext))
 
 // Extract PLACEHOLDER_RE and both validator functions from the actual source,

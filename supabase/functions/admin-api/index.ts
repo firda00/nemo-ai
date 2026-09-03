@@ -7,7 +7,7 @@
 //   body { "action": "list_accounts" | "list_feedback" | "grant" | "set" | "create_gift" | "list_gifts", ... }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { hasAal2 } from '../_shared/authAssurance.ts'
+import { hasRecentPasswordAndAal2 } from '../_shared/authAssurance.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
   if (!me?.is_admin) return json({ error: 'forbidden' }, 403)
   // getUser() above validates the bearer token. Only after that validation do
   // we trust its AAL claim and require a second factor for every admin action.
-  if (!hasAal2(authHeader)) return json({ error: 'mfa_required' }, 403)
+  if (!hasRecentPasswordAndAal2(authHeader)) return json({ error: 'fresh_password_and_mfa_required' }, 403)
 
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? '')

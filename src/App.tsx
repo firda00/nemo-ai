@@ -156,7 +156,8 @@ export default function App() {
         <Route path="lead-forms" element={<Navigate to="/app" replace />} />
         <Route path="templates" element={<MarketplacePage />} />
         <Route path="billing" element={<Navigate to="/app/settings?tab=billing" replace />} />
-        <Route path="admin" element={<AdminMfaGate><AdminPage /></AdminMfaGate>} />
+        <Route path="admin" element={<Navigate to="/app" replace />} />
+        <Route path="control-center" element={<AdminMfaGate><AdminPage /></AdminMfaGate>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
