@@ -11,6 +11,7 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? ''
 const NEMO_REPLICATE_KEY = Deno.env.get('REPLICATE_API_KEY') ?? '' // "included"/trial video runs on Nemo's key
+const NEMO_OPENROUTER_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function keyFor(admin: any, accountId: string, provider: string): Promise<string | null> {
@@ -19,6 +20,7 @@ async function keyFor(admin: any, accountId: string, provider: string): Promise<
   // No own key → the job was created on Nemo's included/trial key; poll it with the same key.
   // (resolveMediaAccess picks BYO-first at creation, so "has own key" matches "created on own key".)
   if (provider === 'replicate' && NEMO_REPLICATE_KEY) return NEMO_REPLICATE_KEY
+  if (provider === 'openrouter' && NEMO_OPENROUTER_KEY) return NEMO_OPENROUTER_KEY
   return null
 }
 
@@ -32,6 +34,17 @@ async function fail(admin: any, job: any, error: string) {
   return { status: 'failed', error }
 }
 
+async function hostOpenRouterVideo(admin: any, job: any, key: string, sourceUrl: string): Promise<string> {
+  const response = await fetch(sourceUrl, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(60_000) })
+  if (!response.ok) return ''
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  if (!bytes.length || bytes.length > 100 * 1024 * 1024) return ''
+  const path = `${job.account_id}/${Date.now()}-${job.id}.mp4`
+  const { error } = await admin.storage.from('media').upload(path, bytes, { contentType: response.headers.get('content-type') || 'video/mp4', upsert: false })
+  if (error) return ''
+  return admin.storage.from('media').getPublicUrl(path).data?.publicUrl ?? ''
+}
+
 async function pollJob(admin: any, job: any): Promise<any> {
   const key = await keyFor(admin, job.account_id, job.provider)
   if (!key) return fail(admin, job, 'нет ключа провайдера')
@@ -40,6 +53,20 @@ async function pollJob(admin: any, job: any): Promise<any> {
       const r = await fetch(`https://api.replicate.com/v1/predictions/${job.external_id}`, { headers: { Authorization: `Bearer ${key}` } }).then((x) => x.json())
       if (r?.status === 'succeeded') { const out = Array.isArray(r.output) ? r.output[0] : r.output; return out ? finalize(admin, job, out) : fail(admin, job, 'пустой вывод') }
       if (r?.status === 'failed' || r?.status === 'canceled') return fail(admin, job, r?.error ?? 'failed')
+      return { status: 'processing' }
+    }
+    if (job.provider === 'openrouter') {
+      const response = await fetch(`https://openrouter.ai/api/v1/videos/${encodeURIComponent(job.external_id)}`, {
+        headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000),
+      })
+      const r = await response.json().catch(() => ({}))
+      if (!response.ok) return response.status === 404 ? fail(admin, job, 'задача OpenRouter не найдена') : { status: 'processing' }
+      if (r?.status === 'completed') {
+        const sourceUrl = Array.isArray(r.unsigned_urls) ? r.unsigned_urls[0] : ''
+        const url = sourceUrl ? await hostOpenRouterVideo(admin, job, key, sourceUrl) : ''
+        return url ? finalize(admin, job, url) : fail(admin, job, 'Не удалось сохранить готовое видео')
+      }
+      if (['failed', 'cancelled', 'expired'].includes(r?.status)) return fail(admin, job, r?.error ?? r.status)
       return { status: 'processing' }
     }
     if (job.provider === 'heygen') {

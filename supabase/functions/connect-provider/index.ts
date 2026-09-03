@@ -18,6 +18,7 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // Media providers power generation; integration providers become tools for the AI agent.
 const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> = {
   // media / voice / video generation
+  openrouter: { label: 'OpenRouter (текст, изображения, видео и голос)', ok: (k) => k.startsWith('sk-or-') && k.length > 24 },
   openai: { label: 'OpenAI (изображения)', ok: (k) => k.startsWith('sk-') && k.length > 20 },
   replicate: { label: 'Replicate (видео/фото)', ok: (k) => k.length >= 20 },
   heygen: { label: 'HeyGen (аватары)', ok: (k) => k.length >= 16 },

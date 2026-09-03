@@ -51,7 +51,27 @@ type ChatTurn = {
   direct?: boolean
 }
 
-const CHAT_FILE_ACCEPT = '.pdf,.docx,.xlsx,.csv,.txt,.md,.json,.mp3,.m4a,.wav,.mp4'
+const CHAT_FILE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.csv,.txt,.md,.json,.mp3,.m4a,.wav,.mp4'
+const CHAT_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+
+const fileToDataUrl = (file: Blob): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result ?? ''))
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(file)
+})
+
+const imageFileToDataUrl = async (file: File): Promise<string> => {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('image')), 'image/jpeg', 0.84))
+  return fileToDataUrl(blob)
+}
 const CHAT_FILE_LIMIT = 4
 const CHAT_FILE_MAX_BYTES = 180 * 1024 * 1024
 
@@ -210,8 +230,12 @@ export function SmartTaskDesk() {
       try {
         if (!supabase) throw new Error('auth')
         const history = turns.flatMap((turn) => turn.text ? [{ role: turn.role, content: turn.text }] : []).slice(-10)
+        const imageFiles = selectedFiles.filter((file) => file.type.startsWith('image/') && file.size <= CHAT_IMAGE_MAX_BYTES).slice(0, 2)
+        const userContent = imageFiles.length
+          ? [{ type: 'text', text: value }, ...await Promise.all(imageFiles.map(async (file) => ({ type: 'image_url', image_url: { url: await imageFileToDataUrl(file) } })))]
+          : value
         const { data: body, error } = await supabase.functions.invoke('cli-chat', {
-          body: { model: 'openai/gpt-4o-mini', messages: [...history, { role: 'user', content: value }], tools: [] },
+          body: { model: 'openai/gpt-4o-mini', messages: [...history, { role: 'user', content: userContent }], tools: [] },
         })
         const answer = typeof body?.message?.content === 'string' ? body.message.content.trim() : ''
         if (error || !answer) throw new Error('answer')

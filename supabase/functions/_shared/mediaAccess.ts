@@ -21,8 +21,8 @@ export interface MediaAccess {
 // provider_keys entries that count as the customer's OWN key for each media kind
 const BYO_PROVIDERS: Record<MediaKind, string[]> = {
   image: ['openrouter'], // nemoImage runs on an OpenRouter key
-  video: ['replicate'],
-  voice: ['elevenlabs', 'openai'],
+  video: ['openrouter'],
+  voice: ['openrouter', 'elevenlabs', 'openai'],
 }
 
 const MSG_TRIAL_OUT =

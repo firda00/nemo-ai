@@ -58,7 +58,12 @@ Deno.serve(async (req) => {
 
   // Expensive models are a plan entitlement, not a client-controlled escape hatch.
   const requested = parsed.data.model
-  const model = plan.premium && PREMIUM_MODELS.has(requested) ? requested : PRIMARY_MODEL
+  // The everyday chat path must feel instant. The inexpensive fast model is available
+  // on every plan; premium models remain an entitlement.
+  const model = requested === 'openai/gpt-4o-mini'
+    ? requested
+    : plan.premium && PREMIUM_MODELS.has(requested) ? requested : PRIMARY_MODEL
+  const directChat = parsed.data.tools.length === 0
   const requestId = crypto.randomUUID()
   let provider: Response
   try {
@@ -73,10 +78,11 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model,
         messages: [{ role: 'system', content: CLIENT_RESPONSE_STYLE }, ...parsed.data.messages],
-        max_tokens: CLI_MAX_COMPLETION_TOKENS,
+        max_tokens: directChat ? 900 : CLI_MAX_COMPLETION_TOKENS,
+        provider: directChat ? { sort: 'throughput', allow_fallbacks: true } : undefined,
         ...(parsed.data.tools.length ? { tools: parsed.data.tools, tool_choice: 'auto' } : {}),
       }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(directChat ? 20_000 : 45_000),
     })
   } catch {
     return json({ ok: false, code: 'MODEL_PROVIDER_UNAVAILABLE' }, 502)

@@ -4,7 +4,7 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { useI18n } from '../../i18n'
-import { VIDEO_MODEL_CATALOG, DEFAULT_VIDEO_MODEL } from '../../lib/models'
+import { VIDEO_MODEL_CATALOG, DEFAULT_VIDEO_MODEL, IMAGE_MODEL_CATALOG, DEFAULT_IMAGE_MODEL } from '../../lib/models'
 
 /**
  * Media tab — connect your OWN generative provider (key stored server-only, write-only)
@@ -13,10 +13,8 @@ import { VIDEO_MODEL_CATALOG, DEFAULT_VIDEO_MODEL } from '../../lib/models'
  */
 interface Cap { id: string; icon: typeof ImageIcon; color: string; providers: string; steps: string[]; link: string; live?: boolean }
 const CAPS: Cap[] = [
-  { id: 'openai', icon: ImageIcon, color: '#22D3EE', providers: 'OpenAI (gpt-image)', link: 'https://platform.openai.com/api-keys', live: true,
+  { id: 'openrouter', icon: Sparkles, color: '#22D3EE', providers: 'OpenRouter · Chat, Nano Banana, GPT Image, Veo, Kling, Seedance, TTS', link: 'https://openrouter.ai/settings/keys', live: true,
     steps: ['openaiStep1', 'openaiStep2', 'openaiStep3'] },
-  { id: 'replicate', icon: Video, color: '#8B7CF8', providers: 'Replicate (Kling/LTX) · Runway', link: 'https://replicate.com/account/api-tokens',
-    steps: ['replicateStep1', 'replicateStep2', 'replicateStep3'] },
   { id: 'heygen', icon: UserSquare2, color: '#13C5B4', providers: 'HeyGen · D-ID', link: 'https://app.heygen.com',
     steps: ['heygenStep1', 'heygenStep2', 'heygenStep3'] },
   { id: 'elevenlabs', icon: Volume2, color: '#F59F00', providers: 'ElevenLabs', link: 'https://elevenlabs.io/app/settings/api-keys',
@@ -33,6 +31,7 @@ export function MediaConnectPanel() {
   const [msg, setMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
   // image tester
   const [imgPrompt, setImgPrompt] = useState('')
+  const [imgModel, setImgModel] = useState(DEFAULT_IMAGE_MODEL)
   const [imgBusy, setImgBusy] = useState(false)
   const [img, setImg] = useState<string | null>(null)
   const [imgErr, setImgErr] = useState('')
@@ -44,6 +43,10 @@ export function MediaConnectPanel() {
   // async video/avatar testers
   const [vidText, setVidText] = useState('')
   const [vidModel, setVidModel] = useState(DEFAULT_VIDEO_MODEL)
+  const [vidAspect, setVidAspect] = useState('16:9')
+  const [vidResolution, setVidResolution] = useState('720p')
+  const [vidDuration, setVidDuration] = useState(6)
+  const [vidAudio, setVidAudio] = useState(true)
   const [vidState, setVidState] = useState<{ busy: boolean; url?: string; err?: string; note?: string }>({ busy: false })
   const [avaText, setAvaText] = useState('')
   const [avaState, setAvaState] = useState<{ busy: boolean; url?: string; err?: string; note?: string }>({ busy: false })
@@ -75,7 +78,7 @@ export function MediaConnectPanel() {
     if (!supabase || imgBusy || imgPrompt.trim().length < 3) return
     setImgBusy(true); setImgErr(''); setImg(null)
     try {
-      const { data } = await supabase.functions.invoke('generate-image', { body: { prompt: imgPrompt.trim() } })
+      const { data } = await supabase.functions.invoke('generate-image', { body: { prompt: imgPrompt.trim(), image_model: imgModel } })
       const p = data as { ok?: boolean; image?: string; url?: string; message?: string; error?: string } | null
       if (p?.ok) setImg(p.image || p.url || null)
       else setImgErr(p?.message || p?.error || t('mediaConnectPanel.imgFailed'))
@@ -170,6 +173,9 @@ export function MediaConnectPanel() {
       {/* image generation tester (works on connected OpenAI) */}
       <div className="card mt-4 rounded-3xl p-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={15} className="text-violet" /> {t('mediaConnectPanel.testImageTitle')}</h3>
+        <select value={imgModel} onChange={(e) => setImgModel(e.target.value)} className="mt-3 w-full rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
+          {IMAGE_MODEL_CATALOG.map((m) => <option key={m.id} value={m.id} className="bg-panel">{m.label}</option>)}
+        </select>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <input value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} placeholder={t('mediaConnectPanel.imagePromptPlaceholder')} className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
           <Button onClick={genImage} disabled={imgBusy || imgPrompt.trim().length < 3}>{imgBusy ? <><Loader2 size={15} className="animate-spin" /> {t('mediaConnectPanel.generatingImg')}</> : <><ImageIcon size={15} /> {t('mediaConnectPanel.generateBtn')}</>}</Button>
@@ -189,16 +195,22 @@ export function MediaConnectPanel() {
         {audio && <audio controls src={audio} className="mt-3 w-full" />}
       </div>
 
-      {/* video generation tester (Replicate, async) */}
+      {/* video generation tester (OpenRouter, async) */}
       <div className="card mt-4 rounded-3xl p-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-text"><Video size={15} className="text-violet" /> {t('mediaConnectPanel.testVideoTitle')}</h3>
         <div className="mt-3 space-y-2">
           <select value={vidModel} onChange={(e) => setVidModel(e.target.value)} className="w-full rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none focus:border-violet/50">
             {VIDEO_MODEL_CATALOG.map((m) => <option key={m.id} value={m.id} className="bg-panel">{m.label}</option>)}
           </select>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <select value={vidAspect} onChange={(e) => setVidAspect(e.target.value)} className="rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text"><option>16:9</option><option>9:16</option><option>1:1</option></select>
+            <select value={vidResolution} onChange={(e) => setVidResolution(e.target.value)} className="rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text"><option>720p</option><option>1080p</option><option>2K</option></select>
+            <select value={vidDuration} onChange={(e) => setVidDuration(Number(e.target.value))} className="rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text"><option value={4}>4 сек</option><option value={6}>6 сек</option><option value={8}>8 сек</option></select>
+            <label className="flex items-center gap-2 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text"><input type="checkbox" checked={vidAudio} onChange={(e) => setVidAudio(e.target.checked)} /> Со звуком</label>
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input value={vidText} onChange={(e) => setVidText(e.target.value)} placeholder={t('mediaConnectPanel.videoPlaceholder')} className="flex-1 rounded-xl border border-ice/10 bg-black/20 px-3 py-2 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
-            <Button onClick={() => runAsync('generate-video', { prompt: vidText.trim(), model: vidModel }, setVidState)} disabled={vidState.busy || vidText.trim().length < 3}>{vidState.busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Video size={15} /> {t('mediaConnectPanel.generateBtn')}</>}</Button>
+            <Button onClick={() => runAsync('generate-video', { prompt: vidText.trim(), model: vidModel, aspect_ratio: vidAspect, resolution: vidResolution, duration: vidDuration, generate_audio: vidAudio }, setVidState)} disabled={vidState.busy || vidText.trim().length < 3}>{vidState.busy ? <><Loader2 size={15} className="animate-spin" /> …</> : <><Video size={15} /> {t('mediaConnectPanel.generateBtn')}</>}</Button>
           </div>
         </div>
         {vidState.note && <p className="mt-2 text-xs text-muted">{vidState.note}</p>}

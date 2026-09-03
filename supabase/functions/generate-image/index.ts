@@ -1,7 +1,7 @@
 // Image generation. Default engine = NEMO's OpenRouter image model (INCLUDED in the
-// subscription — no customer key needed), fair-use limited per plan. If the customer
-// connected their own OpenAI key, it is used as a fallback. Saved to media_assets.
-//   POST /functions/v1/generate-image  (Bearer jwt)  { prompt } -> { ok, image } | { ok:false, code }
+// subscription — no customer key needed), fair-use limited per plan. Supports the
+// current OpenRouter image catalog and saves the result to media_assets.
+//   POST /functions/v1/generate-image  (Bearer jwt)  { prompt, image_model? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'

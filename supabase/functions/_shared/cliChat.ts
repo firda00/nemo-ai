@@ -1,11 +1,16 @@
 export const CLI_MAX_MESSAGES = 80
 export const CLI_MAX_TOOLS = 64
-export const CLI_MAX_BODY_BYTES = 180_000
+export const CLI_MAX_BODY_BYTES = 6_000_000
 export const CLI_MAX_COMPLETION_TOKENS = 2_000
 
 export type CliMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  content: string | null | Array<{
+    type: 'text' | 'image_url' | 'video_url'
+    text?: string
+    image_url?: { url: string }
+    video_url?: { url: string }
+  }>
   tool_call_id?: string
   name?: string
   tool_calls?: Array<{
@@ -40,8 +45,22 @@ export function parseCliChatInput(value: unknown): { ok: true; data: CliChatInpu
     if (!item || typeof item !== 'object') return { ok: false, code: 'INVALID_MESSAGE' }
     const message = item as Record<string, unknown>
     if (typeof message.role !== 'string' || !ROLES.has(message.role)) return { ok: false, code: 'INVALID_MESSAGE' }
-    if (message.content !== null && typeof message.content !== 'string') return { ok: false, code: 'INVALID_MESSAGE' }
+    if (message.content !== null && typeof message.content !== 'string' && !Array.isArray(message.content)) return { ok: false, code: 'INVALID_MESSAGE' }
     if (typeof message.content === 'string' && message.content.length > 40_000) return { ok: false, code: 'MESSAGE_TOO_LARGE' }
+    if (Array.isArray(message.content)) {
+      if (!message.content.length || message.content.length > 8) return { ok: false, code: 'INVALID_MESSAGE' }
+      for (const rawPart of message.content) {
+        if (!rawPart || typeof rawPart !== 'object') return { ok: false, code: 'INVALID_MESSAGE' }
+        const part = rawPart as Record<string, unknown>
+        if (!['text', 'image_url', 'video_url'].includes(String(part.type))) return { ok: false, code: 'INVALID_MESSAGE' }
+        if (part.type === 'text' && (typeof part.text !== 'string' || part.text.length > 20_000)) return { ok: false, code: 'INVALID_MESSAGE' }
+        const media = part.type === 'image_url' ? part.image_url : part.type === 'video_url' ? part.video_url : null
+        if (media) {
+          const url = (media as Record<string, unknown>).url
+          if (typeof url !== 'string' || url.length > 3_000_000 || !/^(https?:\/\/|data:(image|video)\/)/.test(url)) return { ok: false, code: 'INVALID_MESSAGE' }
+        }
+      }
+    }
     checked.push(message as CliMessage)
   }
 

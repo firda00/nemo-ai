@@ -3,7 +3,7 @@
 //   POST /functions/v1/generate-voice  (Bearer jwt)  { text, voice_id? } -> { ok, audio }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.108.2'
 import { corsPreflight, json } from '../_shared/cors.ts'
-import { elevenTTS, openaiTTS, uploadAudio } from '../_shared/media.ts'
+import { elevenTTS, openaiTTS, openRouterTTS, uploadAudio } from '../_shared/media.ts'
 import { planOf } from '../_shared/plans.ts'
 import { resolveMediaAccess } from '../_shared/mediaAccess.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
@@ -14,6 +14,7 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // Nemo's own voice keys power "included" TTS (Pro/Max) — set as secrets to enable it
 const NEMO_ELEVEN_KEY = Deno.env.get('ELEVENLABS_API_KEY') ?? ''
 const NEMO_OPENAI_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
+const NEMO_OPENROUTER_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? ''
 const DEFAULT_VOICE = '21m00Tcm4TlvDq8ikWAM' // ElevenLabs "Rachel" (multilingual)
 
 Deno.serve(async (req) => {
@@ -39,7 +40,7 @@ Deno.serve(async (req) => {
 
   // own key (BYO) → Nemo included (Pro/Max) → weekly trial (Standard/Plus). Nemo prefers its
   // ElevenLabs key, else its OpenAI key, for the included/trial path.
-  const nemoVoiceKey = NEMO_ELEVEN_KEY || NEMO_OPENAI_KEY
+  const nemoVoiceKey = NEMO_OPENROUTER_KEY || NEMO_ELEVEN_KEY || NEMO_OPENAI_KEY
   const access = await resolveMediaAccess(admin, accountId, planOf(acc?.plan), 'voice', nemoVoiceKey, Boolean(prof?.is_admin))
   if (!access.ok) return json({ ok: false, code: access.code, message: access.message }, 200)
 
@@ -47,11 +48,13 @@ Deno.serve(async (req) => {
     // pick the engine: BYO uses the matched provider's key; included/trial uses Nemo's key
     let audio = '', provider = ''
     if (access.source === 'byo') {
-      if (access.provider === 'elevenlabs') { audio = await elevenTTS(access.key as string, text, voiceId); if (audio) provider = 'elevenlabs' }
+      if (access.provider === 'openrouter') { audio = await openRouterTTS(access.key as string, text, String(body?.model ?? 'openai/gpt-4o-mini-tts-2025-12-15'), String(body?.voice ?? 'alloy')); if (audio) provider = 'openrouter' }
+      else if (access.provider === 'elevenlabs') { audio = await elevenTTS(access.key as string, text, voiceId); if (audio) provider = 'elevenlabs' }
       else { audio = await openaiTTS(access.key as string, text); if (audio) provider = 'openai' }
     } else {
-      // Nemo's included/trial key — try ElevenLabs, fall back to OpenAI if it fails
-      if (NEMO_ELEVEN_KEY) { audio = await elevenTTS(NEMO_ELEVEN_KEY, text, voiceId); if (audio) provider = 'elevenlabs' }
+      // Nemo's included/trial path: one OpenRouter key covers modern TTS models.
+      if (NEMO_OPENROUTER_KEY) { audio = await openRouterTTS(NEMO_OPENROUTER_KEY, text, String(body?.model ?? 'openai/gpt-4o-mini-tts-2025-12-15'), String(body?.voice ?? 'alloy')); if (audio) provider = 'openrouter' }
+      if (!audio && NEMO_ELEVEN_KEY) { audio = await elevenTTS(NEMO_ELEVEN_KEY, text, voiceId); if (audio) provider = 'elevenlabs' }
       if (!audio && NEMO_OPENAI_KEY) { audio = await openaiTTS(NEMO_OPENAI_KEY, text); if (audio) provider = 'openai' }
     }
     if (!audio) {

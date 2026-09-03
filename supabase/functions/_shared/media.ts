@@ -13,13 +13,17 @@ import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts'
 // because generation bills Nemo's paid key.
 export type ImgModelDef = { id: string; label: string; endpoint: 'images' | 'chat'; realistic: boolean }
 export const IMAGE_MODELS: ImgModelDef[] = [
-  { id: 'bytedance-seed/seedream-4.5', label: 'Seedream 4.5 — фотореализм', endpoint: 'images', realistic: true },
+  { id: 'google/gemini-3.1-flash-lite-image', label: 'Nano Banana 2 Lite — быстро', endpoint: 'images', realistic: true },
+  { id: 'google/gemini-3.1-flash-image', label: 'Nano Banana 2 — баланс', endpoint: 'images', realistic: true },
+  { id: 'google/gemini-3-pro-image', label: 'Nano Banana Pro — качество', endpoint: 'images', realistic: true },
+  { id: 'openai/gpt-image-2', label: 'GPT Image 2 — точный текст и фото', endpoint: 'images', realistic: true },
+  { id: 'bytedance-seed/seedream-5-0-lite', label: 'Seedream 5 Lite — быстро', endpoint: 'images', realistic: true },
+  { id: 'bytedance-seed/seedream-5-0-pro', label: 'Seedream 5 Pro — фотореализм', endpoint: 'images', realistic: true },
   { id: 'black-forest-labs/flux.2-flex', label: 'FLUX.2 Flex — фото + детали', endpoint: 'images', realistic: true },
-  { id: 'black-forest-labs/flux.2-pro', label: 'FLUX.2 Pro — макс. качество', endpoint: 'images', realistic: true },
-  { id: 'google/gemini-2.5-flash-image', label: 'Gemini Flash — иллюстрация (быстро)', endpoint: 'chat', realistic: false },
+  { id: 'black-forest-labs/flux.2-max', label: 'FLUX.2 Max — макс. качество', endpoint: 'images', realistic: true },
 ]
 // realistic model by default (env override still wins if set to a valid id)
-const DEFAULT_IMAGE_MODEL = Deno.env.get('IMAGE_MODEL') ?? 'bytedance-seed/seedream-4.5'
+const DEFAULT_IMAGE_MODEL = Deno.env.get('IMAGE_MODEL') ?? 'google/gemini-3.1-flash-image'
 export const imgModelDef = (id?: string): ImgModelDef =>
   IMAGE_MODELS.find((m) => m.id === id) ?? IMAGE_MODELS.find((m) => m.id === DEFAULT_IMAGE_MODEL) ?? IMAGE_MODELS[0]
 
@@ -39,7 +43,7 @@ export async function nemoImage(apiKey: string, prompt: string, modelId?: string
 
 // diffusion image models via OpenRouter's OpenAI-compatible images API -> { data:[{ b64_json }] }
 async function imagesGen(apiKey: string, prompt: string, model: string): Promise<ImgResult> {
-  const r = await fetch('https://openrouter.ai/api/v1/images/generations', {
+  const r = await fetch('https://openrouter.ai/api/v1/images', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://nemo.ai', 'X-Title': 'Nemo AI' },
     body: JSON.stringify({ model, prompt }),
@@ -61,6 +65,26 @@ async function imagesGen(apiKey: string, prompt: string, model: string): Promise
   }
   if (item?.url) return { image: String(item.url), tokens }
   return { error: 'Пустой ответ генератора изображений.', tokens }
+}
+
+// Text-to-speech through the same OpenRouter key used by the rest of Nemo.
+export async function openRouterTTS(
+  key: string,
+  text: string,
+  model = 'openai/gpt-4o-mini-tts-2025-12-15',
+  voice = 'alloy',
+): Promise<string> {
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://nemoai.uz', 'X-Title': 'Nemo AI' },
+      body: JSON.stringify({ model, input: text.slice(0, 5000), voice, response_format: 'mp3' }),
+      signal: AbortSignal.timeout(45_000),
+    })
+    if (!r.ok) return ''
+    const buf = new Uint8Array(await r.arrayBuffer())
+    return `data:audio/mpeg;base64,${encodeBase64(buf)}`
+  } catch { return '' }
 }
 
 // image-output chat models (e.g. gemini image) via /chat/completions modalities
