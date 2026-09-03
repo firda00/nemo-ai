@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Blocks, ChevronLeft, ExternalLink, KeyRound, Link2, Plug, Plus, Search, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
+import { Blocks, ChevronLeft, KeyRound, Link2, Plug, Plus, Search, ShieldCheck, Sparkles, Wrench, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AGENT_SKILLS } from '../../data/agentSkills'
 import { useI18n } from '../../i18n'
@@ -21,10 +21,10 @@ interface ConnectorItem {
 const CONNECTORS: ConnectorItem[] = [
   { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], color: '#4285F4' },
   { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], href: '/app/settings?tab=integrations&section=services&integration=telegram', color: '#2AABEE' },
-  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], href: '/app/settings?tab=integrations&section=skills&integration=hubspot', color: '#FF7A59' },
-  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], href: '/app/settings?tab=integrations&section=skills&integration=notion', color: '#A7ADC0' },
-  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], href: '/app/settings?tab=integrations&section=skills&integration=slack', color: '#36C5F0' },
-  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], href: '/app/settings?tab=integrations&section=skills#browser-agent', color: '#22B8CF' },
+  { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], href: '/app/settings?tab=integrations&section=services&integration=hubspot', color: '#FF7A59' },
+  { id: 'notion', title: 'Notion', description: 'Поиск и чтение рабочих страниц по запросу агента.', tools: ['search_pages', 'read_page'], href: '/app/settings?tab=integrations&section=services&integration=notion', color: '#A7ADC0' },
+  { id: 'slack', title: 'Slack', description: 'Чтение каналов и подготовка сообщений с подтверждением.', tools: ['search_messages', 'read_thread', 'draft_message'], href: '/app/settings?tab=integrations&section=services&integration=slack', color: '#36C5F0' },
+  { id: 'browser', title: 'Browser agent', description: 'Открывает публичные страницы и выполняет ограниченную задачу.', tools: ['open_page', 'extract_text', 'complete_task'], href: '/app/settings?tab=integrations&section=services&integration=browser', color: '#22B8CF' },
 ]
 
 const TAB_ICONS: Record<DirectoryTab, typeof Sparkles> = { skills: Sparkles, connectors: Link2, plugins: Plug }
@@ -105,7 +105,7 @@ export function CapabilityDirectory({ open, onClose, initialTab = 'connectors' }
 
             {tab === 'skills' && <><div className="flex flex-col gap-4 rounded-2xl border border-violet/15 bg-violet/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-text">{copy.skillsTitle}</p><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.skillsText}</p></div><Link to="/app/agents" onClick={closeDirectory} className="btn shrink-0 bg-brand px-3 py-2 text-xs text-white"><Plus size={14} />{copy.addSkill}</Link></div>{skills.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">{skills.map((skill) => <article key={skill.id} className="rounded-2xl bg-white/[0.035] p-4 ring-1 ring-inset ring-white/[0.07]"><span className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: `${skill.color}1f`, color: skill.color }}><skill.icon size={16} /></span><p className="mt-3 text-sm font-semibold text-text">{t(`agentEdit.skill_${skill.id}`)}</p><p className="mt-1 text-xs leading-5 text-muted">{t(`agentEdit.skill_${skill.id}Desc`)}</p></article>)}</div> : <EmptyDirectory text={copy.empty} />}</>}
 
-            {tab === 'plugins' && <div><div className="mb-5 rounded-2xl border border-amber/15 bg-amber/[0.04] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><Wrench size={16} className="text-amber" />{copy.pluginsTitle}</p><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{copy.pluginsText}</p></div><CustomToolsManager /><Link to="/app/settings?tab=integrations&section=skills" onClick={closeDirectory} className="mt-4 inline-flex items-center gap-1.5 text-xs text-violet hover:underline">{copy.allTools}<ExternalLink size={12} /></Link></div>}
+            {tab === 'plugins' && <div><div className="mb-5 rounded-2xl border border-amber/15 bg-amber/[0.04] p-4"><p className="flex items-center gap-2 text-sm font-semibold text-text"><Wrench size={16} className="text-amber" />{copy.pluginsTitle}</p><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{copy.pluginsText}</p></div><CustomToolsManager /></div>}
           </div>
         </section>
       </div>

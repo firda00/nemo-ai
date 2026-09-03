@@ -125,7 +125,7 @@ export default function App() {
         <Route path="activity" element={<Navigate to="/app" replace />} />
         <Route path="approvals" element={<Navigate to="/app" replace />} />
         <Route path="library" element={<LibraryPage />} />
-        <Route path="tools" element={<Navigate to="/app/settings?tab=integrations&section=skills" replace />} />
+        <Route path="tools" element={<Navigate to="/app/settings?tab=integrations&directory=skills" replace />} />
         <Route path="create-agent" element={<Navigate to="/app?create=agent" replace />} />
         <Route path="create-team" element={<Navigate to="/app?create=team" replace />} />
         <Route path="teams" element={<AgentsPage />} />
@@ -151,7 +151,7 @@ export default function App() {
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="email-assistant" element={<EmailAssistantPage />} />
         <Route path="settings" element={<SettingsPage />} />
-        <Route path="knowledge" element={<Navigate to="/app/settings?tab=integrations&section=knowledge" replace />} />
+        <Route path="knowledge" element={<Navigate to="/app/settings?tab=integrations#knowledge-base" replace />} />
         <Route path="integrations" element={<Navigate to="/app/settings?tab=integrations&section=services" replace />} />
         <Route path="lead-forms" element={<Navigate to="/app" replace />} />
         <Route path="templates" element={<MarketplacePage />} />

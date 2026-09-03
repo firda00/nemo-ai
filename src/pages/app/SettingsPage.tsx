@@ -10,7 +10,6 @@ import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import BillingPage from './BillingPage'
 import IntegrationsPage from './IntegrationsPage'
-import IntegrationsToolsPage from './IntegrationsToolsPage'
 import KnowledgePage from './KnowledgePage'
 import { CapabilityDirectory, type DirectoryTab } from '../../components/platform/CapabilityDirectory'
 import { useAuth } from '../../context/AuthContext'
@@ -239,15 +238,16 @@ function GitHubKeyCard() {
   </section>
 }
 
-type ResourceSection = 'services' | 'knowledge' | 'skills'
-
 function ConnectorsTab() {
   const { lang } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const querySection = searchParams.get('section')
-  const section: ResourceSection | null = querySection === 'services' || querySection === 'knowledge' || querySection === 'skills' ? querySection : null
-  const [directoryOpen, setDirectoryOpen] = useState(false)
-  const [directoryTab, setDirectoryTab] = useState<DirectoryTab>('connectors')
+  const section = querySection === 'services' ? 'services' : null
+  const directoryQuery = searchParams.get('directory')
+  const requestedDirectory: DirectoryTab = directoryQuery === 'skills' || directoryQuery === 'plugins' ? directoryQuery : 'connectors'
+  const legacyDirectory = querySection === 'skills'
+  const [directoryOpen, setDirectoryOpen] = useState(Boolean(directoryQuery || legacyDirectory))
+  const [directoryTab, setDirectoryTab] = useState<DirectoryTab>(legacyDirectory && !searchParams.get('integration') ? 'skills' : requestedDirectory)
   const copy = lang === 'uz' ? {
     eyebrow: 'Bitta katalog', title: 'Directory', description: 'Ulanishlar, agent ko‘nikmalari va plaginlar endi bir joyda. Keraklisini toping va vazifa paytida ulang.',
     open: 'Directory’ni ochish', skills: 'Ko‘nikmalar', connections: 'Ulanishlar', plugins: 'Plaginlar',
@@ -274,8 +274,6 @@ function ConnectorsTab() {
   if (section) return <div className="space-y-5">
     <button type="button" onClick={clearSection} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition hover:bg-white/5 hover:text-text active:scale-[0.98]"><ArrowLeft size={16} />{copy.back}</button>
     {section === 'services' && <IntegrationsPage embedded />}
-    {section === 'knowledge' && <KnowledgePage embedded />}
-    {section === 'skills' && <IntegrationsToolsPage embedded />}
     <CapabilityDirectory key={directoryTab} open={directoryOpen} onClose={() => setDirectoryOpen(false)} initialTab={directoryTab} />
   </div>
 
@@ -298,7 +296,7 @@ function ConnectorsTab() {
       </div>
     </section>
 
-    <section className="rounded-[1.75rem] border border-ice/10 bg-panel p-5 sm:p-7">
+    <section id="knowledge-base" className="scroll-mt-24 rounded-[1.75rem] border border-ice/10 bg-panel p-5 sm:p-7">
       <div className="mb-6 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.055] text-text"><BookOpen size={18} /></span><div><h2 className="text-lg font-semibold text-text">{copy.knowledgeTitle}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.knowledgeText}</p></div></div>
       <KnowledgePage embedded />
     </section>
