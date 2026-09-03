@@ -35,11 +35,37 @@ export async function recordClientError(error: unknown, source = 'ui'): Promise<
   } catch { /* avoid recursive failures while offline */ }
 }
 
-export async function submitFeedback(rating: -1 | 1, category: 'product' | 'agent_result' | 'bug' | 'idea', comment: string): Promise<boolean> {
-  if (!isSupabaseEnabled || !supabase) return false
-  const { error } = await supabase.from('customer_feedback').insert({ rating, category, comment: comment.trim().slice(0, 2000) || null, path: safePath() })
-  if (!error) void trackEvent('feedback_submitted', { rating, category })
-  return !error
+export type FeedbackTopic = 'agent_quality' | 'speed' | 'technical' | 'billing' | 'onboarding' | 'other'
+
+export async function submitFeedback(
+  rating: -1 | 1,
+  category: 'product' | 'agent_result' | 'bug' | 'idea',
+  comment: string,
+  options: { topic?: FeedbackTopic; contactRequested?: boolean } = {},
+): Promise<{ ok: boolean; id?: string }> {
+  if (!isSupabaseEnabled || !supabase) return { ok: false }
+  let result = await supabase.from('customer_feedback').insert({
+    rating,
+    category,
+    topic: options.topic ?? null,
+    contact_requested: options.contactRequested === true,
+    comment: comment.trim().slice(0, 2000) || null,
+    path: safePath(),
+  }).select('id').single()
+  // During a rolling deploy the frontend can reach an older database for a few minutes.
+  // Keep the complaint instead of losing it; the prefix remains visible to the administrator.
+  if (result.error && /topic|contact_requested|schema cache/i.test(result.error.message)) {
+    const prefix = `[topic:${options.topic ?? 'none'}; contact:${options.contactRequested === true ? 'yes' : 'no'}] `
+    result = await supabase.from('customer_feedback').insert({
+      rating,
+      category,
+      comment: `${prefix}${comment.trim()}`.slice(0, 2000) || prefix.trim(),
+      path: safePath(),
+    }).select('id').single()
+  }
+  const { data, error } = result
+  if (!error) void trackEvent('feedback_submitted', { rating, category, topic: options.topic ?? 'none' })
+  return { ok: !error, id: data?.id }
 }
 
 function stableBucket(value: string): number {

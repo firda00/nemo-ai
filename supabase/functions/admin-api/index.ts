@@ -112,11 +112,23 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'list_feedback') {
-      const { data, error } = await admin
+      let result = await admin
         .from('customer_feedback')
-        .select('id, account_id, user_id, rating, category, comment, path, created_at')
+        .select('id, account_id, user_id, rating, category, topic, status, contact_requested, comment, path, created_at, updated_at')
         .order('created_at', { ascending: false })
         .limit(100)
+      if (result.error && /topic|status|contact_requested|updated_at|schema cache/i.test(result.error.message)) {
+        const legacy = await admin
+          .from('customer_feedback')
+          .select('id, account_id, user_id, rating, category, comment, path, created_at')
+          .order('created_at', { ascending: false })
+          .limit(100)
+        result = {
+          ...legacy,
+          data: (legacy.data ?? []).map((row) => ({ ...row, topic: null, status: 'new', contact_requested: false, updated_at: row.created_at })),
+        } as typeof result
+      }
+      const { data, error } = result
       if (error) return json({ error: error.message }, 400)
       const userIds = [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
       const { data: users } = userIds.length
@@ -124,6 +136,20 @@ Deno.serve(async (req) => {
         : { data: [] as Array<{ id: string; email: string }> }
       const emailByUser = new Map((users ?? []).map((row: { id: string; email: string }) => [row.id, row.email]))
       return json({ ok: true, feedback: (data ?? []).map((row: { user_id: string }) => ({ ...row, email: emailByUser.get(row.user_id) ?? null })) })
+    }
+
+    if (action === 'update_feedback_status') {
+      const feedbackId = String(body?.feedback_id ?? '')
+      const status = String(body?.status ?? '')
+      if (!feedbackId || !['new', 'reviewing', 'resolved'].includes(status)) return json({ error: 'invalid feedback status' }, 400)
+      const { data, error } = await admin
+        .from('customer_feedback')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', feedbackId)
+        .select('id,status,updated_at')
+        .single()
+      if (error) return json({ error: error.message }, 400)
+      return json({ ok: true, feedback: data })
     }
 
     if (action === 'block') {

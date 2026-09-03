@@ -53,6 +53,7 @@
     "test:approvals": "node agent-hub/approval-queue-contracts.mjs",
     "test:agent-publish-gate": "node agent-hub/agent-publish-gate-contracts.mjs",
     "test:onboarding": "node agent-hub/mandatory-onboarding-contracts.mjs",
+    "test:feedback-workflow": "node agent-hub/feedback-workflow-contracts.mjs",
     "test:first-team": "node agent-hub/first-team-recommendation-contracts.mjs",
     "test:atomic-teams": "node agent-hub/atomic-team-creation-contracts.mjs",
     "test:data-leakage": "node agent-hub/data-leakage-contracts.mjs",

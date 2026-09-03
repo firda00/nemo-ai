@@ -28,6 +28,9 @@ interface FeedbackRow {
   email: string | null
   rating: -1 | 1
   category: string
+  topic: string | null
+  status: 'new' | 'reviewing' | 'resolved'
+  contact_requested: boolean
   comment: string | null
   path: string | null
   created_at: string
@@ -187,6 +190,12 @@ export default function AdminPage() {
     toast(quarantined ? 'Агент остановлен' : 'Агент восстановлен')
   }
 
+  const setFeedbackStatus = async (row: FeedbackRow, status: FeedbackRow['status']) => {
+    const res = await call('update_feedback_status', { feedback_id: row.id, status })
+    if (!res) { toast(t('common.error')); return }
+    setFeedback((items) => items.map((item) => item.id === row.id ? { ...item, status } : item))
+  }
+
   const reviewSkill = async (id: string, action: 'publish' | 'reject') => {
     if (!supabase) return
     const { data, error } = await supabase.functions.invoke('review-skill', { body: { action, id } })
@@ -223,20 +232,27 @@ export default function AdminPage() {
             <h2 className="flex items-center gap-2 text-sm font-bold text-text"><MessageSquareWarning size={16} className="text-amber" /> Жалобы и обратная связь</h2>
             <p className="mt-1 text-xs text-muted">Последние сообщения пользователей. Доступно только администраторам.</p>
           </div>
-          <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-muted">{feedback.length}</span>
+          <span className="rounded-lg border border-white/10 px-2.5 py-1 font-mono text-xs text-muted">{feedback.filter((row) => row.status !== 'resolved').length} открыто</span>
         </div>
         {feedback.length === 0 ? <p className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4 text-sm text-muted">Новых сообщений нет.</p> : (
           <div className="mt-4 space-y-2">
             {feedback.slice(0, 20).map((row) => (
               <div key={row.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className={row.rating < 0 ? 'text-danger' : 'text-teal'}>{row.rating < 0 ? 'Жалоба' : 'Отзыв'}</span>
-                  <span className="text-muted">{row.category}</span>
+                  <span className={row.rating < 0 ? 'font-semibold text-danger' : 'font-semibold text-teal'}>{row.rating < 0 ? 'Жалоба' : 'Отзыв'}</span>
+                  <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 text-muted">{row.topic || row.category}</span>
+                  <span className={cn('rounded-md px-1.5 py-0.5', row.status === 'resolved' ? 'bg-teal/10 text-teal' : row.status === 'reviewing' ? 'bg-amber/10 text-amber' : 'bg-violet/10 text-violet')}>{row.status === 'new' ? 'Новое' : row.status === 'reviewing' ? 'В работе' : 'Решено'}</span>
+                  {row.contact_requested && <span className="text-accent-cyan">просит ответ</span>}
                   <span className="text-muted">{row.email || 'email unavailable'}</span>
                   <span className="ml-auto text-fog">{new Date(row.created_at).toLocaleString('ru-RU')}</span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text">{row.comment || 'Комментарий не добавлен'}</p>
                 {row.path && <p className="mt-2 text-[11px] text-fog">Страница: {row.path}</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {row.status === 'new' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Взять в работу</Button>}
+                  {row.status !== 'resolved' && <Button size="sm" onClick={() => void setFeedbackStatus(row, 'resolved')}>Отметить решённым</Button>}
+                  {row.status === 'resolved' && <Button size="sm" variant="ghost" onClick={() => void setFeedbackStatus(row, 'reviewing')}>Открыть снова</Button>}
+                </div>
               </div>
             ))}
           </div>
