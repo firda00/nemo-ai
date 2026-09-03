@@ -23,6 +23,7 @@ import { StoreSnapshotArtifact } from '../../components/platform/StoreSnapshotAr
 import { isStoreSnapshotIntent } from '../../lib/storeArtifactIntent'
 import { isAnalyticalArtifactIntent } from '../../lib/analyticalArtifactIntent'
 import { AnalyticalReportArtifact } from '../../components/platform/AnalyticalReportArtifact'
+import { isTeamQuickReplyIntent } from '../../lib/teamQuickReplyIntent'
 
 interface Sub { id: string; role: string; name: string; model: string; skills?: string[]; prompt: { role?: string; tasks?: string } }
 interface Dept { id: string; name: string; niche?: string; subs: Sub[] }
@@ -72,6 +73,7 @@ export default function TeamDetailPage() {
   const [pendingTask, setPendingTask] = useState<string | null>(null)
   const [runnerStatus, setRunnerStatus] = useState<'idle' | 'queued' | 'running' | 'completed' | 'failed'>('idle')
   const [fastStoreArtifact, setFastStoreArtifact] = useState<{ task: string; runRef: string } | null>(null)
+  const [fastReply, setFastReply] = useState<{ loading: boolean; text: string; error: boolean } | null>(null)
   const streamEndRef = useRef<HTMLDivElement | null>(null)
 
   const loadResults = useCallback(async (deptId: string) => {
@@ -239,7 +241,7 @@ export default function TeamDetailPage() {
   useEffect(() => {
     if (!pendingTask && !latestRunId) return
     streamEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [pendingTask, runnerStatus, latestRunId])
+  }, [pendingTask, runnerStatus, latestRunId, fastReply])
 
   if (loading) return <div className="grid min-h-[60vh] place-items-center text-2xl text-muted">…</div>
   if (!team && !dept && hydrated) {
@@ -304,9 +306,9 @@ export default function TeamDetailPage() {
                 {latestRun.report && latestRun.kind === 'store_snapshot' ? <div className="ml-0 min-w-0 sm:ml-11"><StoreSnapshotArtifact lang={lang} task={latestRun.task} /></div> : latestRun.report && isAnalyticalArtifactIntent(latestRun.task) ? <div className="ml-0 min-w-0 sm:ml-11"><AnalyticalReportArtifact task={latestRun.task} report={latestRun.report} lang={lang} /></div> : latestRun.report && <article className="ml-0 max-w-[96%] overflow-hidden rounded-2xl border border-teal/20 bg-teal/[0.045] sm:ml-11"><header className="flex items-center gap-3 border-b border-teal/10 px-4 py-3"><FileText size={17} className="shrink-0 text-teal" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-text">{t('teamDetailPage.resultReady')}</p><p className="mt-0.5 text-[10px] text-muted">{t('teamDetailPage.resultReadyHint', { n: latestRun.steps?.length ?? 0 })}</p></div><button type="button" onClick={() => { setOpenRun(latestRun.id); setActiveTab('runs') }} className="text-[10px] font-semibold text-cyan transition hover:text-text">{t('teamDetailPage.viewAll')}</button></header><div className="max-h-80 overflow-y-auto px-4 py-3 text-sm leading-6"><Markdown content={latestRun.report} /></div></article>}
                 {latestRun.report && isCodeCreationIntent(latestRun.task) && <div className="ml-0 min-w-0 sm:ml-11"><LiveCodeSandboxArtifact prompt={latestRun.task} compact /></div>}
               </>}
-              {pendingTask && (fastStoreArtifact || runnerStatus !== 'completed') && <>
+              {pendingTask && (fastStoreArtifact || fastReply || runnerStatus !== 'completed') && <>
                 <article className="team-message-in ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-cyan/[0.08] px-4 py-3"><p className="mb-1 text-[10px] font-semibold text-cyan">{t('teamDetailPage.you')}</p><p className="break-words text-sm leading-6 text-text">{pendingTask}</p></article>
-                {!fastStoreArtifact && <article className="team-working-message max-w-[92%]" role="status" aria-live="polite">
+                {!fastStoreArtifact && !fastReply && <article className="team-working-message max-w-[92%]" role="status" aria-live="polite">
                   <div className="flex items-start gap-3">
                     <span className="team-working-avatar relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan/[0.09] text-cyan"><Activity size={16} /><span className="absolute inset-0 rounded-xl border border-cyan/35" /></span>
                     <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-ice/[0.07] bg-white/[0.025] px-4 py-3.5">
@@ -316,6 +318,12 @@ export default function TeamDetailPage() {
                     </div>
                   </div>
                 </article>}
+                {fastReply && <article className={cn('ml-0 max-w-[96%] overflow-hidden rounded-2xl border sm:ml-11', fastReply.error ? 'border-danger/20 bg-danger/[0.045]' : 'border-cyan/15 bg-cyan/[0.035]')} aria-live="polite">
+                  <div className="flex items-start gap-3 px-4 py-3.5">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-cyan/[0.09] text-cyan">{fastReply.loading ? <Loader2 size={15} className="animate-spin" /> : <Bot size={15} />}</span>
+                    <div className="min-w-0 flex-1 text-sm leading-6 text-muted">{fastReply.loading ? (lang === 'ru' ? 'Отвечаю…' : lang === 'uz' ? 'Javob tayyorlanmoqda…' : 'Answering…') : <Markdown content={fastReply.text} />}</div>
+                  </div>
+                </article>}
                 {fastStoreArtifact && <div className="min-w-0 sm:ml-11"><StoreSnapshotArtifact lang={lang} departmentId={dept?.id} task={fastStoreArtifact.task} runRef={fastStoreArtifact.runRef} onSettled={(ok) => setRunnerStatus(ok ? 'completed' : 'failed')} onSaved={async () => { if (dept) await loadResults(dept.id); setFastStoreArtifact(null); setPendingTask(null) }} /></div>}
               </>}
               <div ref={streamEndRef} />
@@ -323,7 +331,25 @@ export default function TeamDetailPage() {
 
             <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-4">
               {isRegulated && <p className="mb-3 rounded-xl border border-amber/20 bg-amber/[0.06] p-3 text-xs leading-5 text-amber">{safetyCopy.notice}</p>}
-              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} adaptiveTeam contextHint={`${goal}\n\nПостоянный состав команды: ${(dept?.subs ?? []).map((s) => `${s.name} — ${s.role}`).join('; ')}. Координатор может собрать временных профильных субагентов, если постоянному составу не хватает компетенции для точного результата.`} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={(task) => { setPendingTask(task); setFastStoreArtifact(null) }} onFastTask={async (task) => { if (!isMarketplaceWorkspace || !isStoreSnapshotIntent(task)) return false; setFastStoreArtifact({ task, runRef: crypto.randomUUID() }); return true }} onRunStateChange={setRunnerStatus} onRunSaved={async () => { if (dept) await loadResults(dept.id); setPendingTask(null) }} />
+              <AutonomousRunner key={dept?.id ?? 'team'} defaultGoal={marketplaceDefaultGoal} presetSpecs={(dept?.subs ?? []).map((s) => ({ role: s.role, name: s.name, skills: s.skills ?? [], prompt: s.prompt }))} adaptiveTeam contextHint={`${goal}\n\nПостоянный состав команды: ${(dept?.subs ?? []).map((s) => `${s.name} — ${s.role}`).join('; ')}. Координатор может собрать временных профильных субагентов, если постоянному составу не хватает компетенции для точного результата.`} placeholder={t('teamDetailPage.streamPlaceholder')} departmentId={dept?.id} streamMode onTaskSubmitted={(task) => { setPendingTask(task); setFastStoreArtifact(null); setFastReply(null) }} onFastTask={async (task, context) => {
+                if (!context.hasInputArtifacts && isMarketplaceWorkspace && isStoreSnapshotIntent(task)) {
+                  setFastStoreArtifact({ task, runRef: crypto.randomUUID() })
+                  return true
+                }
+                if (context.hasInputArtifacts || !isTeamQuickReplyIntent(task) || !supabase) return false
+                setFastReply({ loading: true, text: '', error: false })
+                try {
+                  const teamContext = `${teamName}. ${goal}. Состав: ${(dept?.subs ?? []).map((member) => `${member.name} — ${member.role}`).join('; ') || 'не указан'}.`
+                  const previousResult = latestRun?.report ? `\nПоследний результат команды для контекста:\n${latestRun.report.slice(0, 3500)}` : ''
+                  const { data, error } = await supabase.functions.invoke('cli-chat', { body: { model: 'openai/gpt-4o-mini', messages: [{ role: 'system', content: `Ты отвечаешь внутри комнаты этой AI-команды. Контекст команды: ${teamContext}${previousResult}` }, { role: 'user', content: task }], tools: [] } })
+                  const answer = typeof data?.message?.content === 'string' ? data.message.content.trim() : ''
+                  if (error || !answer) throw new Error('quick_reply_failed')
+                  setFastReply({ loading: false, text: answer, error: false })
+                } catch {
+                  setFastReply({ loading: false, text: lang === 'ru' ? 'Не удалось быстро получить ответ. Попробуйте ещё раз.' : lang === 'uz' ? 'Tez javobni olish imkoni bo‘lmadi. Qayta urinib ko‘ring.' : 'The quick answer failed. Please try again.', error: true })
+                }
+                return true
+              }} onRunStateChange={setRunnerStatus} onRunSaved={async () => { if (dept) await loadResults(dept.id); setPendingTask(null) }} />
             </div>
 
             {isOps && <details className="group border-t border-ice/[0.07] bg-bg/10 [&_summary]:list-none"><summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-xs font-semibold text-muted transition hover:text-text"><ChevronDown size={14} className="transition group-open:rotate-180" />{t('teamDetailPage.operationsTools')}<span className="ml-auto text-[10px] text-fog">{t('teamDetailPage.optionalBadge')}</span></summary><div className="space-y-4 border-t border-ice/[0.06] p-4">

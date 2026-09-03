@@ -134,7 +134,7 @@ export function AutonomousRunner({
   /** Optimistic chat event: lets a parent place the user's message in the stream immediately. */
   onTaskSubmitted?: (task: string) => void
   /** Optional fast path for deterministic chat artifacts that do not need a goal loop. */
-  onFastTask?: (task: string) => boolean | Promise<boolean>
+  onFastTask?: (task: string, context: { hasInputArtifacts: boolean }) => boolean | Promise<boolean>
   onComplete?: (result: string) => void
   /** Optional measurable completion contract; defaults are derived from the goal. */
   definitionOfDone?: string[]
@@ -422,7 +422,7 @@ export function AutonomousRunner({
       if (onFastTask) {
         setRunning(true)
         try {
-          if (await onFastTask(task)) return
+          if (await onFastTask(task, { hasInputArtifacts: inputArtifacts.length > 0 })) return
         } finally {
           setRunning(false)
         }
