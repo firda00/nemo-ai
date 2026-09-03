@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ShieldCheck, Plus, Check, Coins, Gift, Loader2, Lock, Unlock, Ban, Bot, MessageSquareWarning, Sparkles, UserCog } from 'lucide-react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Activity, AlertTriangle, ArrowUpRight, Ban, Bot, Check, Coins, Gift, Layers3, Loader2, Lock, MessageSquareWarning, Plus, RefreshCw, ShieldCheck, Sparkles, Unlock, UserCog, Users } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ui/Toast'
 import { Button } from '../../components/ui/Button'
@@ -54,6 +54,30 @@ interface ModeratedAgent {
 }
 
 const inputCls = 'glass w-full rounded-lg px-2.5 py-1.5 text-sm text-text outline-none placeholder:text-muted/70 focus:border-violet/50'
+
+function MetricTile({ label, value, detail, icon, loading }: { label: string; value: string; detail: string; icon: ReactNode; loading: boolean }) {
+  return (
+    <article className="group min-w-0 rounded-[22px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_45px_-34px_rgba(15,23,42,0.45)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.035]">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-fog">{label}</p>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition group-hover:bg-slate-900 group-hover:text-white dark:bg-white/[0.06] dark:text-muted">{icon}</span>
+      </div>
+      {loading ? <div className="mt-5 h-8 w-24 animate-pulse rounded-lg bg-slate-100 dark:bg-white/[0.06]" /> : <p className="mt-4 font-mono text-[2rem] font-semibold leading-none tracking-[-0.06em] text-slate-950 dark:text-text">{value}</p>}
+      <p className="mt-3 truncate text-xs text-slate-500 dark:text-muted">{detail}</p>
+    </article>
+  )
+}
+
+function AttentionRow({ label, value, tone = 'neutral', href }: { label: string; value: number; tone?: 'neutral' | 'warning' | 'danger'; href: string }) {
+  return (
+    <a href={href} className="group flex items-center gap-3 rounded-xl px-3 py-3 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:hover:bg-white/[0.04]">
+      <span className={cn('h-2 w-2 rounded-full', tone === 'danger' ? 'bg-rose-500' : tone === 'warning' ? 'bg-amber-500' : 'bg-slate-400')} />
+      <span className="min-w-0 flex-1 text-sm font-medium text-slate-700 dark:text-muted">{label}</span>
+      <span className="font-mono text-sm font-semibold tabular-nums text-slate-950 dark:text-text">{value.toLocaleString('ru-RU')}</span>
+      <ArrowUpRight size={14} className="text-slate-400 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+    </a>
+  )
+}
 
 export default function AdminPage() {
   const { t } = useI18n()
@@ -213,20 +237,93 @@ export default function AdminPage() {
     )
   }
 
-  return (
-    <div className="container-page max-w-5xl py-8">
-      <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand text-white shadow-btn">
-          <ShieldCheck size={22} />
-        </span>
-        <div>
-          <h1 className="text-2xl font-normal tracking-tight text-text">{t('platform.nav.admin')}</h1>
-          <p className="text-sm text-muted">{t('platform.adminPanel.subtitle')}</p>
-        </div>
-      </div>
+  const openFeedback = feedback.filter((row) => row.status !== 'resolved').length
+  const pendingSkills = skillReviews.filter((row) => row.status === 'shared_candidate').length
+  const activeAccounts = accounts.filter((row) => !row.blocked).length
+  const blockedAccounts = accounts.length - activeAccounts
+  const activeAgents = moderatedAgents.filter((row) => row.status !== 'paused').length
+  const pausedAgents = moderatedAgents.length - activeAgents
+  const totalAgents = accounts.reduce((sum, row) => sum + row.agents, 0)
+  const tokenReserve = accounts.reduce((sum, row) => sum + row.token_balance, 0)
+  const planCounts = accounts.reduce<Record<string, number>>((result, row) => {
+    const plan = row.plan || 'free'
+    result[plan] = (result[plan] ?? 0) + 1
+    return result
+  }, {})
+  const plans = Object.entries(planCounts).sort((a, b) => b[1] - a[1])
+  const number = (value: number) => new Intl.NumberFormat('ru-RU', { notation: value >= 100_000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value)
 
-      {/* SMS broadcast — Nemo news/ads to all saved phones */}
-      <section className="card mt-6 rounded-3xl p-6">
+  return (
+    <div className="container-page max-w-[1440px] pb-16 pt-7">
+      <header className="relative overflow-hidden rounded-[30px] bg-[#111827] px-6 pb-7 pt-6 text-white shadow-[0_30px_90px_-48px_rgba(15,23,42,0.9)] md:px-8 md:pb-8">
+        <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-0 left-1/3 h-px w-1/2 bg-gradient-to-r from-transparent via-cyan-300/40 to-transparent" />
+        <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-end">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.9)]" />
+              Операционный центр Nemo
+            </div>
+            <h1 className="mt-4 max-w-3xl text-balance text-3xl font-semibold tracking-[-0.045em] md:text-[2.6rem] md:leading-[1.05]">Центр управления платформой</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">Пользователи, агенты, обращения и доступы — единая оперативная картина без переходов между модулями.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="hidden text-right sm:block">
+              <p className="text-xs font-medium text-slate-200">Состояние системы</p>
+              <p className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Данные синхронизированы</p>
+            </div>
+            <button onClick={() => void loadAll()} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.07] px-3.5 text-xs font-semibold text-white transition hover:bg-white/[0.12] active:scale-[0.98] disabled:opacity-50">
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Обновить
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <nav aria-label="Разделы центра управления" className="sticky top-3 z-20 mx-auto -mt-3 flex w-[calc(100%-2rem)] items-center gap-1 overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-[0_14px_45px_-28px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-white/10 dark:bg-[#111827]/90">
+        {[
+          ['#overview', 'Обзор'], ['#feedback', 'Обращения'], ['#accounts', 'Аккаунты'], ['#skills', 'Навыки'], ['#broadcast', 'Рассылки'], ['#gifts', 'Промокоды'],
+        ].map(([href, label]) => <a key={href} href={href} className="whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 dark:text-muted dark:hover:bg-white/[0.05] dark:hover:text-text">{label}</a>)}
+      </nav>
+
+      <section id="overview" className="scroll-mt-24 pt-8" aria-label="Обзор платформы">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <MetricTile loading={loading} label="Аккаунты" value={number(accounts.length)} detail={`${number(activeAccounts)} доступны`} icon={<Users size={16} />} />
+          <MetricTile loading={loading} label="Агенты" value={number(totalAgents)} detail={`${number(adminCapabilities.moderate_agents ? activeAgents : totalAgents)} работают`} icon={<Bot size={16} />} />
+          <MetricTile loading={loading} label="Открытые обращения" value={number(openFeedback)} detail={openFeedback ? 'требуют реакции' : 'очередь обработана'} icon={<MessageSquareWarning size={16} />} />
+          <MetricTile loading={loading} label="Токены на счетах" value={number(tokenReserve)} detail="совокупный баланс" icon={<Coins size={16} />} />
+          <MetricTile loading={loading} label="На модерации" value={number(pendingSkills)} detail="пользовательских skills" icon={<Layers3 size={16} />} />
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(310px,0.75fr)]">
+          <article className="rounded-[26px] border border-slate-200/80 bg-white p-6 shadow-[0_18px_55px_-38px_rgba(15,23,42,0.45)] dark:border-white/10 dark:bg-white/[0.035]">
+            <div className="flex items-start justify-between gap-4">
+              <div><p className="text-base font-semibold tracking-tight text-slate-950 dark:text-text">Структура клиентской базы</p><p className="mt-1 text-xs text-slate-500 dark:text-muted">Распределение аккаунтов по действующим тарифам</p></div>
+              <Activity size={18} className="text-slate-400" />
+            </div>
+            {loading ? <div className="mt-8 h-32 animate-pulse rounded-2xl bg-slate-100 dark:bg-white/[0.05]" /> : plans.length === 0 ? <p className="mt-8 rounded-2xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 dark:bg-white/[0.03] dark:text-muted">Аккаунты пока не загружены</p> : (
+              <div className="mt-7 space-y-4">
+                {plans.slice(0, 6).map(([plan, count]) => {
+                  const share = accounts.length ? Math.round((count / accounts.length) * 100) : 0
+                  return <div key={plan} className="grid grid-cols-[88px_1fr_72px] items-center gap-3"><span className="truncate text-xs font-semibold capitalize text-slate-700 dark:text-muted">{plan}</span><div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.06]"><div className="h-full rounded-full bg-slate-900 transition-[width] duration-500 dark:bg-cyan-300" style={{ width: `${Math.max(share, 3)}%` }} /></div><span className="text-right font-mono text-xs tabular-nums text-slate-500 dark:text-fog">{count} · {share}%</span></div>
+                })}
+              </div>
+            )}
+          </article>
+
+          <aside className="rounded-[26px] bg-slate-100/80 p-3 dark:bg-white/[0.025]">
+            <div className="flex items-center justify-between px-3 pb-2 pt-2"><div><p className="text-base font-semibold tracking-tight text-slate-950 dark:text-text">Требует внимания</p><p className="mt-1 text-xs text-slate-500 dark:text-muted">Очереди и ограничения</p></div><AlertTriangle size={17} className="text-amber-500" /></div>
+            <div className="mt-2 divide-y divide-slate-200/70 dark:divide-white/[0.06]">
+              <AttentionRow href="#feedback" label="Открытые обращения" value={openFeedback} tone={openFeedback ? 'danger' : 'neutral'} />
+              <AttentionRow href="#skills" label="Skills на проверке" value={pendingSkills} tone={pendingSkills ? 'warning' : 'neutral'} />
+              <AttentionRow href="#accounts" label="Заблокированные аккаунты" value={blockedAccounts} tone={blockedAccounts ? 'warning' : 'neutral'} />
+              {adminCapabilities.moderate_agents && <AttentionRow href="#agents" label="Остановленные агенты" value={pausedAgents} tone={pausedAgents ? 'warning' : 'neutral'} />}
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      {/* Feedback operations */}
+      <section id="feedback" className="card mt-8 scroll-mt-24 rounded-[26px] p-6">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="flex items-center gap-2 text-sm font-bold text-text"><MessageSquareWarning size={16} className="text-amber" /> Жалобы и обратная связь</h2>
@@ -259,7 +356,7 @@ export default function AdminPage() {
         )}
       </section>
 
-      <section className="card mt-6 rounded-3xl p-6">
+      <section id="skills" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
         <div className="flex items-center justify-between gap-3">
           <div><h2 className="flex items-center gap-2 text-sm font-bold text-text"><Sparkles size={16} className="text-violet" /> Проверка пользовательских skills</h2><p className="mt-1 text-xs text-muted">AI может предложить публикацию, но окончательное решение принимает администратор.</p></div>
           <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-muted">{skillReviews.filter((row) => row.status === 'shared_candidate').length}</span>
@@ -278,7 +375,7 @@ export default function AdminPage() {
         )}
       </section>
 
-      <div className="card mt-6 rounded-3xl p-6">
+      <section id="broadcast" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
         <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Coins size={16} className="text-violet" /> {t('adminPage.smsTitle')}</h2>
         <p className="mt-1 text-xs text-muted">{t('adminPage.smsDesc')}</p>
         <textarea value={bcMsg} onChange={(e) => setBcMsg(e.target.value)} rows={3} placeholder={t('adminPage.smsPh')} className="glass mt-3 w-full resize-y rounded-xl px-3 py-2.5 text-sm text-text outline-none placeholder:text-fog focus:border-violet/50" />
@@ -286,10 +383,10 @@ export default function AdminPage() {
           <Button onClick={sendBroadcast} disabled={bcBusy || bcMsg.trim().length < 2}>{bcBusy ? <Loader2 size={15} className="animate-spin" /> : <Coins size={15} />} {t('adminPage.sendAll')}</Button>
           {bcResult && <span className="text-xs text-muted">{bcResult}</span>}
         </div>
-      </div>
+      </section>
 
       {/* gift cards */}
-      <section className="card mt-6 rounded-2xl p-5">
+      <section id="gifts" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
         <p className="flex items-center gap-2 text-sm font-medium text-text">
           <Gift size={16} className="text-violet" /> {t('platform.adminPanel.giftTitle')}
         </p>
@@ -323,7 +420,7 @@ export default function AdminPage() {
       </section>
 
       {/* accounts */}
-      <section className="card mt-6 rounded-2xl p-5">
+      <section id="accounts" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
         <p className="mb-3 flex items-center gap-2 text-sm font-medium text-text">
           <Coins size={16} className="text-violet" /> {t('platform.adminPanel.accountsTitle')} · {accounts.length}
         </p>
@@ -414,7 +511,7 @@ export default function AdminPage() {
       </section>
 
       {adminCapabilities.moderate_agents && (
-        <section className="card mt-6 rounded-2xl p-5">
+        <section id="agents" className="card mt-6 scroll-mt-24 rounded-[26px] p-6">
           <h2 className="flex items-center gap-2 text-sm font-bold text-text"><Bot size={16} className="text-violet" /> Модерация агентов · {moderatedAgents.length}</h2>
           <p className="mt-1 text-xs text-muted">Остановите агента, который нарушает правила конфиденциальности или условия использования. Удаление не выполняется — решение можно отменить.</p>
           <div className="mt-4 grid gap-2 md:grid-cols-2">
