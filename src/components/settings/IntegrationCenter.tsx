@@ -35,7 +35,11 @@ export function IntegrationCenter({ onChanged, focusProvider }: { onChanged?: ()
     { id: 'slack' as const, title: 'Slack', desc: 'Каналы, треды и подготовка сообщений.', icon: Link2, primary: c.token, placeholder: 'xoxb-…' },
     { id: 'hyperbrowser' as const, title: 'Browser agent', desc: 'Облачная браузерная сессия для задач агента.', icon: Link2, primary: c.primary, placeholder: 'Hyperbrowser API key' },
   ], [c])
-  const visibleProviders = focusProvider && focusProvider !== 'google' ? providers.filter((provider) => provider.id === focusProvider) : providers
+  const visibleProviders = focusProvider === 'google'
+    ? []
+    : focusProvider
+      ? providers.filter((provider) => provider.id === focusProvider)
+      : providers
 
   const refresh = useCallback(async () => {
     if (!supabase) return

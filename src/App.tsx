@@ -19,7 +19,6 @@ import AdminPage from './pages/app/AdminPage'
 import SwarmsPage from './pages/app/swarms/SwarmsPage'
 import SwarmArchitectPage from './pages/app/swarms/SwarmArchitectPage'
 import DemoPage from './pages/app/DemoPage'
-import MarketplacePage from './pages/app/MarketplacePage'
 import CompanyBrainPage from './pages/app/CompanyBrainPage'
 import QualityPage from './pages/app/QualityPage'
 import RuntimePage from './pages/app/RuntimePage'
@@ -137,7 +136,7 @@ export default function App() {
         <Route path="demo" element={<DemoPage />} />
         <Route path="swarms" element={<SwarmsPage />} />
         <Route path="swarms/:id" element={<SwarmArchitectPage />} />
-        <Route path="marketplace" element={<Navigate to="/app/templates" replace />} />
+        <Route path="marketplace" element={<Navigate to="/app?create=team" replace />} />
         <Route path="company-brain" element={<CompanyBrainPage />} />
         <Route path="quality" element={<QualityPage />} />
         <Route path="runtime" element={<RuntimePage />} />
@@ -154,7 +153,7 @@ export default function App() {
         <Route path="knowledge" element={<Navigate to="/app/settings?tab=integrations#knowledge-base" replace />} />
         <Route path="integrations" element={<Navigate to="/app/settings?tab=integrations&directory=connectors" replace />} />
         <Route path="lead-forms" element={<Navigate to="/app" replace />} />
-        <Route path="templates" element={<MarketplacePage />} />
+        <Route path="templates" element={<Navigate to="/app?create=team" replace />} />
         <Route path="billing" element={<Navigate to="/app/settings?tab=billing" replace />} />
         <Route path="admin" element={<Navigate to="/app" replace />} />
         <Route path="control-center" element={<AdminMfaGate><AdminPage /></AdminMfaGate>} />

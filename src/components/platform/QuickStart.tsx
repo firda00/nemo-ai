@@ -50,7 +50,7 @@ export function QuickStart() {
   }, [])
 
   const steps: Step[] = [
-    { key: 'template', title: t('quickStart.templateTitle'), desc: t('quickStart.templateDesc'), done: agents.length > 0, to: '/app/templates', cta: t('quickStart.templateCta'), icon: LayoutTemplate },
+    { key: 'template', title: t('quickStart.templateTitle'), desc: t('quickStart.templateDesc'), done: agents.length > 0, to: '/app?create=team', cta: t('quickStart.templateCta'), icon: LayoutTemplate },
     { key: 'team', title: t('quickStart.teamTitle'), desc: t('quickStart.teamDesc'), done: agents.length > 0, to: '/app?create=team', cta: t('quickStart.teamCta'), icon: Bot },
     { key: 'tg', title: t('quickStart.tgTitle'), desc: t('quickStart.tgDesc'), done: channels > 0, to: '/app/teams', cta: t('quickStart.tgCta'), icon: Send, help: t('quickStart.tgHelp') },
     { key: 'google', title: t('quickStart.googleTitle'), desc: t('quickStart.googleDesc'), done: google, to: '/app/settings?tab=integrations&directory=connectors', cta: t('quickStart.googleCta'), icon: Mail, help: t('quickStart.googleHelp') },

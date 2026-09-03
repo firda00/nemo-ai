@@ -166,7 +166,6 @@ export function AppLayout() {
     '/app/lead-forms': t('teamOffice.marketingTabs.leads'),
     '/app/integrations': t('appLayout.navTools'),
     '/app/tools': t('appLayout.navToolsHub'),
-    '/app/templates': t('mvp.sidebar.templates'),
     '/app/approvals': t('teamOffice.marketingTabs.approvals'),
     '/app/memory': t('appLayout.navMemory'),
     '/app/library': t('appLayout.navLibrary'),

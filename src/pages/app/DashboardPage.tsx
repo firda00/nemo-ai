@@ -147,7 +147,7 @@ export default function DashboardPage() {
             <h2 className="mt-2 text-2xl font-extrabold text-text">{t('mvp.pilot.title')}</h2>
             <p className="mt-1 text-sm text-muted">{t('mvp.pilot.subtitle')}</p>
           </div>
-          <Button to="/app/templates" variant="outline">{t('mvp.pilot.openTemplates')}</Button>
+          <Button to="/app?create=team" variant="outline">{t('mvp.pilot.openTemplates')}</Button>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           <PilotAction n="01" title={t('mvp.pilot.courseConsultant')} desc={t('mvp.pilot.courseConsultantDesc')} onClick={createCourseConsultant} />
