@@ -83,7 +83,9 @@ try {
   const publicRoutes = ['/', '/pricing', '/demo', '/pitch', '/auth', '/terms', '/privacy']
   // /app/memory входит сюда после того, как страница была задеплоена без пункта в меню: маршрут
   // существовал, дойти до него было нельзя, и ни одна проверка этого не заметила.
-  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/lead-forms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/integrations', '/app/templates', '/app/memory']
+  // Retired standalone modules intentionally redirect into the unified desk or
+  // Settings Directory, so the smoke gate checks only canonical page routes.
+  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/memory', '/app/settings']
 
   async function checkRoute(route) {
     // Vite keeps a development/HMR connection open, so networkidle0 can hang

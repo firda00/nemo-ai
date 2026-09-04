@@ -36,6 +36,7 @@ import { LiveCodeSandboxArtifact } from './LiveCodeSandboxArtifact'
 import { runExtensionBrowserTask, type BrowserTaskResult } from '../../lib/extensionLink'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { Markdown } from '../ui/Markdown'
+import { VideoMontageArtifact } from './VideoMontageArtifact'
 
 type ChatTurn = {
   id: number
@@ -119,6 +120,7 @@ const ARTIFACT_META = {
   marketing: { icon: Film, route: '/app/content', titleKey: 'smartTaskDesk.marketingTitle', tint: 'text-violet bg-violet/10' },
   finance: { icon: Landmark, route: '/app/finance', titleKey: 'smartTaskDesk.financeTitle', tint: 'text-teal bg-teal/10' },
   research: { icon: NotebookTabs, route: '/app/research', titleKey: 'smartTaskDesk.researchTitle', tint: 'text-accent-cyan bg-accent-cyan/10' },
+  'video-edit': { icon: Film, route: null, titleKey: 'smartTaskDesk.videoEditTitle', tint: 'text-violet bg-violet/10' },
   code: { icon: Code2, route: '/app/teams', titleKey: 'smartTaskDesk.codeTitle', tint: 'text-teal bg-teal/10' },
 } as const
 
@@ -183,8 +185,10 @@ export function SmartTaskDesk() {
     const value = text.trim() || (selectedFiles.length ? t('smartTaskDesk.analyzeAttachments') : '')
     if (!value || creating || answering) return
     const entityIntent = classifyChatEntityIntent(value)
-    const hasMultimodalSource = selectedFiles.some((file) => /^(audio|video)\//.test(file.type) || /\.(pdf|docx|xlsx|csv|txt|md|json)$/i.test(file.name))
-    const artifact = forcedKind ?? (hasMultimodalSource ? 'research' : classifyTaskArtifact(value))
+    const hasVideo = selectedFiles.some((file) => file.type.startsWith('video/') || /\.mp4$/i.test(file.name))
+    const asksForVideoEdit = /монтаж|смонтир|субтитр|motion|моушн|нарежь|обработай видео|edit (?:the )?video/i.test(value)
+    const hasResearchSource = selectedFiles.some((file) => file.type.startsWith('audio/') || /\.(pdf|docx|xlsx|csv|txt|md|json)$/i.test(file.name))
+    const artifact = forcedKind ?? (hasVideo && asksForVideoEdit ? 'video-edit' : hasVideo || hasResearchSource ? 'research' : classifyTaskArtifact(value))
     const stamp = turnId.current += 2
     setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value, attachments: selectedFiles }])
     setDraft('')
@@ -250,7 +254,7 @@ export function SmartTaskDesk() {
     const response: ChatTurn = activeEntity
       ? { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.teamRunReady', entity: activeEntity, teamRunGoal: value }
       : artifact
-        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact, artifactPrompt: value }
+        ? { id: stamp + 1, role: 'assistant', copyKey: `smartTaskDesk.${artifact}Ready`, artifact, artifactPrompt: value, attachments: selectedFiles }
         : { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.generalReady' }
     setTurns((current) => [...current, response])
     setActiveArtifactId(artifact ? stamp + 1 : null)
@@ -419,6 +423,7 @@ function ArtifactCard({ runKey, kind, prompt, attachments, expanded, onToggle }:
       {kind === 'marketing' && <MarketingCampaignStudio />}
       {kind === 'finance' && <FinanceCashFlowDashboard />}
       {kind === 'research' && <ResearchNotebookHub initialFiles={attachments} autoAnalyze />}
+      {kind === 'video-edit' && <VideoMontageArtifact file={attachments?.find((file) => file.type.startsWith('video/') || /\.mp4$/i.test(file.name))} prompt={prompt} />}
       {kind === 'code' && <LiveCodeSandboxArtifact prompt={prompt} />}
     </div>}
   </section>

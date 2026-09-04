@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action ?? 'render')
-  if (action !== 'status' && await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
+  if (!['status', 'edit_status'].includes(action) && await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
 
   if (!WORKER || !RSECRET) return json({ ok: false, code: 'NO_WORKER', message: 'Видео-движок временно недоступен (не настроен).' }, 200)
 
@@ -44,17 +44,59 @@ Deno.serve(async (req) => {
 
   const H = { 'Content-Type': 'application/json', 'x-render-secret': RSECRET }
 
-  if (action === 'status') {
+  if (action === 'status' || action === 'edit_status') {
     const jobId = String(body?.job_id ?? '')
     if (!jobId) return json({ ok: false, error: 'job_id required' }, 200)
     // ownership: the render branch records each job id in tool_runs — only the owning account
     // may read its status/url (otherwise any user could read another tenant's rendered video)
-    const { data: own } = await admin.from('tool_runs').select('id').eq('account_id', accountId).eq('tool', 'render_video').eq('result', jobId).maybeSingle()
+    const tool = action === 'edit_status' ? 'edit_video' : 'render_video'
+    const { data: own } = await admin.from('tool_runs').select('id, args').eq('account_id', accountId).eq('tool', tool).eq('result', jobId).maybeSingle()
     if (!own) return json({ ok: false, error: 'job not found' }, 200)
     try {
-      const r = await fetch(`${WORKER}/render/${encodeURIComponent(jobId)}`, { headers: H }).then((x) => x.json())
+      const endpoint = action === 'edit_status' ? 'edit' : 'render'
+      const r = await fetch(`${WORKER}/${endpoint}/${encodeURIComponent(jobId)}`, { headers: H }).then((x) => x.json())
+      if (action === 'edit_status' && (r?.status === 'done' || r?.status === 'error')) {
+        const sourcePath = typeof own.args?.storage_path === 'string' ? own.args.storage_path : ''
+        if (sourcePath.startsWith(`${user.id}/audio/`)) await admin.storage.from('private-audio').remove([sourcePath]).catch(() => undefined)
+      }
       return json({ ok: r?.status !== 'error', status: r?.status, url: r?.url ?? null, error: r?.error ?? null })
     } catch (e) { return json({ ok: false, status: 'error', error: String(e).slice(0, 200) }, 200) }
+  }
+
+  if (action === 'edit') {
+    if (!prof?.is_admin) {
+      if (!plan.media) return json({ ok: false, code: 'PLAN', message: 'Монтаж видео входит в тариф Starter и выше.' }, 200)
+      const used = await monthlyVideo(admin, accountId)
+      if (used >= plan.videoMonthly) return json({ ok: false, code: 'LIMIT', message: `Лимит обработки видео (${plan.videoMonthly}/мес) исчерпан.` }, 200)
+    }
+    const storagePath = String(body?.storage_path ?? '').replace(/^\/+/, '')
+    if (!storagePath.startsWith(`${user.id}/audio/`) || !/\.mp4$/i.test(storagePath) || storagePath.length > 500) {
+      return json({ ok: false, error: 'Разрешено монтировать только ваше MP4-видео, загруженное в Nemo.' }, 200)
+    }
+    const transcript = String(body?.transcript ?? '').trim().slice(0, 18_000)
+    const title = String(body?.title ?? '').trim().slice(0, 90)
+    const ratio = ['9:16', '16:9', '1:1', 'original'].includes(String(body?.ratio)) ? String(body.ratio) : '9:16'
+    const { data: signed, error: signedError } = await admin.storage.from('private-audio').createSignedUrl(storagePath, 900)
+    if (signedError || !signed?.signedUrl) return json({ ok: false, error: 'Не удалось открыть исходное видео.' }, 200)
+    try {
+      const response = await fetch(`${WORKER}/edit`, {
+        method: 'POST', headers: H,
+        body: JSON.stringify({
+          accountId, sourceUrl: signed.signedUrl, transcript, title,
+          options: { ratio, maxDuration: Math.min(120, Math.max(1, Number(body?.duration_seconds) || 120)), accent: String(body?.accent ?? '#20D9E8') },
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok || !result?.jobId) return json({ ok: false, error: result?.error ?? 'Не удалось запустить монтаж.' }, 200)
+      await admin.from('tool_runs').insert({
+        account_id: accountId, tool: 'edit_video',
+        args: { storage_path: storagePath, ratio, subtitles: Boolean(transcript), motion_graphics: Boolean(title) },
+        result: result.jobId, ok: true,
+      })
+      return json({ ok: true, job_id: result.jobId, status: 'queued' })
+    } catch (e) {
+      return json({ ok: false, error: `Видео-движок недоступен: ${String(e).slice(0, 140)}` }, 200)
+    }
   }
 
   // render — included in subscription, fair-use gated (admins exempt)

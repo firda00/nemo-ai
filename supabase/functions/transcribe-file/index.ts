@@ -367,6 +367,10 @@ Deno.serve(async (req) => {
   }
 
   const requestedPath = String(body?.storage_path ?? '').trim()
+  // Video editing needs the staged source after transcription. This flag is
+  // accepted only for an already ownership-checked tenant path; the edit
+  // broker removes the source after the render reaches a terminal state.
+  const keepSource = body?.keep_source === true
   const audioB64 = String(body?.audio_b64 ?? '').trim()
   let storagePath = requestedPath ? ownedAudioPath(requestedPath, user.id) : ''
   if (requestedPath && !storagePath) {
@@ -427,7 +431,7 @@ Deno.serve(async (req) => {
           .single()
         if (!jobError && jobRow) {
           // the Gemini file now holds the audio — free the storage copy right away
-          if (storagePath) {
+          if (storagePath && !keepSource) {
             await admin.storage.from(MEDIA_BUCKET).remove([storagePath]).catch(() => undefined)
             storagePath = ''
           }
@@ -478,6 +482,6 @@ Deno.serve(async (req) => {
   } finally {
     // The browser also performs best-effort cleanup. Server-side deletion is the
     // authoritative cleanup path and runs even when transcription fails.
-    if (storagePath) await admin.storage.from(MEDIA_BUCKET).remove([storagePath]).catch(() => undefined)
+    if (storagePath && !keepSource) await admin.storage.from(MEDIA_BUCKET).remove([storagePath]).catch(() => undefined)
   }
 })

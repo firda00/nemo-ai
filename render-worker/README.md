@@ -11,10 +11,16 @@ the gateway exposes it only under `${NEMO_API_GATEWAY_URL}/render-api/` behind a
 
 - `POST /render` `{ accountId, props }` → `202 { jobId }`
 - `GET  /render/:jobId` → `{ status: queued|rendering|done|error, url?, error? }`
+- `POST /edit` `{ accountId, sourceUrl, transcript?, title?, options? }` → `202 { jobId }`
+- `GET  /edit/:jobId` → `{ status: queued|rendering|done|error, url?, error? }`
 - `GET  /health` → `{ ok, busy, queued }` (no auth)
 
 `props`: `{ title?, brand?, accent?(#hex), audioUrl?, scenes: [{ imageUrl?, caption?, durationSec? }] }`
 (max 8 scenes; captions/durations are clamped server-side).
+
+`/edit` performs a bounded (max 120 seconds / 180 MB) FFmpeg pass over a staged MP4: social-ratio
+crop, loudness normalization, fades, burned-in subtitles, and an animated title card. The signed
+source URL is issued by the authenticated Edge Function and is never exposed as a public object.
 
 ## Deploy (VPS, /opt/nemo-render)
 

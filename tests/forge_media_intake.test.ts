@@ -131,9 +131,14 @@ assert.ok(ffmpegPlan.args.includes('0.7'))
 assert.match(ffmpegPlan.args[ffmpegPlan.args.indexOf('-filter_complex') + 1], /xfade=/)
 assert.match(ffmpegPlan.args[ffmpegPlan.args.indexOf('-filter_complex') + 1], /loudnorm=I=-14/)
 
+assert.equal(
+  MediaIntakePayloadSchema.parse({ ...rawPayload, clips: rawPayload.clips.slice(0, 1) }).clips.length,
+  1,
+  'a single uploaded video must be accepted for chat montage',
+)
 assert.throws(
-  () => MediaIntakePayloadSchema.parse({ ...rawPayload, clips: rawPayload.clips.slice(0, 2) }),
-  /upload 3 to 5 clips/,
+  () => MediaIntakePayloadSchema.parse({ ...rawPayload, clips: [] }),
+  /upload 1 to 5 clips/,
 )
 assert.throws(
   () => MediaIntakePayloadSchema.parse({
@@ -174,4 +179,4 @@ assert.throws(
 const bytes = new TextEncoder().encode('deterministic-render-output')
 assert.equal(sha256MediaArtifact(bytes), createHash('sha256').update(bytes).digest('hex'))
 
-console.log('Forge media intake passed: 3–5 clips, tenant paths, rights, VAD cuts, karaoke, sound design, and output integrity.')
+console.log('Forge media intake passed: 1–5 clips, tenant paths, rights, VAD cuts, karaoke, sound design, and output integrity.')

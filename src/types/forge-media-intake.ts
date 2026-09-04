@@ -115,7 +115,7 @@ export const MediaIntakePayloadSchema = z.object({
   workflowId: UUID,
   executionId: UUID,
   stepId: UUID,
-  clips: z.array(VideoClipInputSchema).min(3, 'upload 3 to 5 clips').max(5, 'upload 3 to 5 clips'),
+  clips: z.array(VideoClipInputSchema).min(1, 'upload 1 to 5 clips').max(5, 'upload 1 to 5 clips'),
   targetPreset: z.enum(['business_explainer', 'cinematic_short']),
   targetRatio: z.enum(['9:16', '16:9', '1:1']),
   maxDurationSeconds: z.number().positive().max(120).default(30),
