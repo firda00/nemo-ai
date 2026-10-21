@@ -45,6 +45,13 @@ for (const name of ['ass', 'xfade', 'sidechaincompress', 'loudnorm', 'amix', 'as
 const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nemo-render-'))
 console.log(`рабочий каталог: ${workDir}`)
 
+/**
+ * Ожидаемый отказ пробы — в отличие от неожиданного исключения, печатается без трассировки.
+ * Бросок вместо process.exit(1) обязателен: exit внутри try пропускает finally, и рабочий каталог
+ * с мегабайтами исходников оставался бы жить в Temp после каждого неудачного прогона.
+ */
+class ProbeFailure extends Error {}
+
 try {
   // Исходники пишутся НАПРЯМУЮ, а не через ffmpeg: демультиплексора lavfi в доступной сборке нет,
   // то есть инструмент, которым надо проверять рендер, не может создать материал для проверки.
@@ -95,7 +102,7 @@ try {
   if (!outcome.ok) {
     console.error('--- хвост stderr ---')
     console.error(outcome.stderrTail.split('\n').slice(-12).join('\n'))
-    process.exit(1)
+    throw new ProbeFailure(`ffmpeg завершился неудачей: код=${outcome.code}, таймаут=${outcome.timedOut}`)
   }
 
   const stat = await fs.stat(outputPath)
@@ -105,15 +112,33 @@ try {
   // заказанными. Успешный код возврата ffmpeg этого не гарантирует.
   const probeBinary = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, (m) => m.replace('ffmpeg', 'ffprobe'))
   const probe = await runCommand(probeBinary, [
-    '-v', 'error', '-show_entries', 'stream=codec_name,width,height,r_frame_rate:format=duration',
+    '-v', 'error', '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate:format=duration',
     '-of', 'default=noprint_wrappers=1', outputPath,
   ], 30_000).catch(() => null)
-  if (probe?.stdout) {
-    console.log('--- что получилось на самом деле ---')
-    console.log(probe.stdout.trim())
-  } else {
-    console.log('ffprobe недоступен — содержимое файла не сверено')
+  if (!probe?.stdout) {
+    throw new ProbeFailure('ffprobe недоступен — проба не может подтвердить содержимое файла')
   }
+  console.log('--- что получилось на самом деле ---')
+  console.log(probe.stdout.trim())
+  // Обе дорожки обязаны существовать: успешный код возврата ffmpeg не гарантирует, что звук не
+  // потерялся при микшировании или видео — при склейке.
+  const codecTypes = [...probe.stdout.matchAll(/codec_type=(\w+)/g)].map((match) => match[1])
+  if (!codecTypes.includes('video') || !codecTypes.includes('audio')) {
+    throw new ProbeFailure(`в файле нет обеих дорожек, найдено: ${codecTypes.join(', ') || 'ни одной'}`)
+  }
+  // Длительность обязана совпасть с заказанной: тихая обрезка последней сцены или потеря хвоста
+  // звука проявляются именно здесь. Полсекунды допуска — на паддинг аудиокодека.
+  const duration = Number(probe.stdout.match(/duration=([\d.]+)/)?.[1])
+  if (!Number.isFinite(duration) || Math.abs(duration - plan.totalDurationSec) > 0.5) {
+    throw new ProbeFailure(`длительность ${duration} с вместо заказанных ${plan.totalDurationSec} с`)
+  }
+  console.log(`дорожки на месте: видео и звук; длительность ${duration} с при заказанных ${plan.totalDurationSec} с`)
+} catch (error) {
+  // Неожиданное исключение пробрасывается дальше — finally всё равно уберёт каталог, а трассировка
+  // нужна для диагностики. Ожидаемый отказ печатается коротко и даёт ненулевой код возврата.
+  if (!(error instanceof ProbeFailure)) throw error
+  console.error(error.message)
+  process.exitCode = 1
 } finally {
   await fs.rm(workDir, { recursive: true, force: true })
   console.log('рабочий каталог удалён')

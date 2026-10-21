@@ -25,6 +25,9 @@ const SECOND_INTENT_RE = /\b(tell me (?:if|whether|which|who|what)|should (?:i|w
 const REGULATED_CONTEXT_RE = /\b(nda|agreement|bloodwork|blood test|lab results?|metformin|prescription|applications?|applicants?|resumes?|curriculum vitae)\b|(?:анализ[ыа].{0,15}кров|лаборатор|метформин|рецепт|заявк[аи]|резюме|соглашени|подпис[ьы])|(?:qon tahlil|laborator|retsept|ariza|rezyume|kelishuv)/i
 const TRANSFER_RE = /(?:\b\d+(?:[.,]\d+)?\s*(?:usd|eur|uzs|sum|сум|руб|₽|\$|€).{0,40}(?:\bto\b|для|алине|кому|ga\b))|(?:переведи\s+\d)/i
 const QUICK_QUESTION_RE = /^(?:а\s+|и\s+|но\s+)?(?:кто|что|как|почему|зачем|где|когда|како[йея]|какие|сколько|можешь\s+ли|объясни|сократи|перефразируй|переведи|дай\s+(?:до\s+)?\d+\s+(?:иде|вариант)|сделай\s+(?:короче|понятнее|заголовок)|who\b|what\b|how\b|why\b|where\b|when\b|which\b|can\s+you\b|explain\b|shorten\b|rewrite\b|translate\b|give\s+(?:up\s+to\s+)?\d+\b|kim\b|nima\b|qanday\b|nega\b|qayerda\b|qachon\b)/i
+// Exact greetings / thanks in RU/UZ/EN. Anchored on both ends: any trailing task text
+// ("Привет, переведи…") breaks the match and takes the normal classification path.
+const GREETING_RE = /^(?:привет|здравствуй(?:те)?|доброе утро|добрый (?:день|вечер)|спасибо|благодарю|пока|до свидания|salom|assalomu alaykum|rahmat|raxmat|xayr|hi|hello|hey|good (?:morning|afternoon|evening)|thanks|thank you|bye|goodbye)[\s!.,)]*$/i
 const QUICK_DASHBOARD_RE = /(?:сделай|покажи|дай|создай|построй).{0,35}(?:дашборд|сводк|обзор).{0,60}(?:магазин|продаж)|(?:dashboard|snapshot|summary).{0,60}(?:store|sales)/i
 
 export function chooseExecutionPlan(input: {
@@ -48,6 +51,11 @@ export function chooseExecutionPlan(input: {
   // or "Uzum" and fan out to a full team. Complexity is decided from the user's turn and data.
   const inspectedText = `${goal}\n${artifacts.map((item) => String(item?.content ?? '')).join('\n')}`
   if (CURRENT_OR_WEB_RE.test(inspectedText) || MUTATION_RE.test(inspectedText) || CONSEQUENTIAL_RE.test(inspectedText) || HIGH_IMPACT_RE.test(inspectedText) || SECOND_INTENT_RE.test(inspectedText) || REGULATED_CONTEXT_RE.test(inspectedText) || TRANSFER_RE.test(inspectedText)) return team('complex_or_sensitive')
+  // A bare greeting/thanks answers in one call. Runs AFTER the sensitive/action screens
+  // above, and never with attachments — attached data always takes the normal path.
+  if (!artifacts.length && GREETING_RE.test(goal)) {
+    return { version: 1, path: 'quick', reason: 'greeting_small_talk', maxLogicalLlmCalls: 1, maxSpecialists: 0, maxReviewRounds: 0 }
+  }
   if (hasBoundedQuickShape(goal, artifacts.length > 0) || (!artifacts.length && goal.length <= 420 && (QUICK_QUESTION_RE.test(goal) || QUICK_DASHBOARD_RE.test(goal)))) {
     return { version: 1, path: 'quick', reason: 'bounded_read_only_answer', maxLogicalLlmCalls: 1, maxSpecialists: 0, maxReviewRounds: 0 }
   }

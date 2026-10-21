@@ -9,7 +9,8 @@ const PROMPT_LIMIT = 16_384
 
 const SIGNALS = {
   research: /\b(research|analyse|analyze|competitor|market|monitor|watch|source|evidence)\b|исслед|анализ|конкурент|рынок|монитор|наблюд|источник|доказатель|raqobat|bozor|tadqiq/i,
-  documents: /\b(document|report|proposal|presentation|slides|pdf|plan|article|copy|caption)\b|документ|отч[её]т|предложен|презентац|слайд|контент.?план|стать|текст|пост|reja|hisobot/i,
+  // word/docx/pptx are explicit: «Сделай Word» must route to documents, never fall to research
+  documents: /\b(document|report|proposal|presentation|slides?|pdf|docx?|word|pptx?|powerpoint|plan|article|copy|caption)\b|документ|отч[её]т|предложен|презентац|слайд|контент.?план|стать|текст|пост|reja|hisobot|taqdimot/i,
   media: /\b(image|video|media|reel|shorts|avatar|voice|audio|storyboard)\b|изображен|картин|видео|ролик|рилс|аватар|озвуч|аудио|раскадров|tasvir|rasm|ovoz/i,
   publish: /\b(publish|send|email|schedule|post to|upload to|update crm|write to crm)\b|опублик|отправ|размест|запланир|запис.*crm|обнов.*crm|jo['’]?nat|nashr/i,
 } as const

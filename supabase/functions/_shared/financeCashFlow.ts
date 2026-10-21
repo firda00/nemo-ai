@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { FinanceInstantSchema, FinancePeriodSchema } from './financeTime.ts'
 
 const EntityIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/)
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/)
@@ -49,7 +50,7 @@ export const FinanceCategorySchema = z.object({
 export const FinanceTransactionSourceSchema = z.object({
   source_id: EntityIdSchema,
   source_kind: FinanceSourceKindSchema,
-  imported_at: z.string().datetime({ offset: true }),
+  imported_at: FinanceInstantSchema,
   external_id: z.string().trim().min(1).max(240).optional(),
   source_row: z.number().int().positive().optional(),
   source_page: z.number().int().positive().optional(),
@@ -59,8 +60,8 @@ export const FinanceTransactionSourceSchema = z.object({
 const TransactionBaseSchema = z.object({
   transaction_id: EntityIdSchema,
   workspace_id: z.string().uuid(),
-  occurred_at: z.string().datetime({ offset: true }),
-  posted_at: z.string().datetime({ offset: true }).optional(),
+  occurred_at: FinanceInstantSchema,
+  posted_at: FinanceInstantSchema.optional(),
   amount_minor: MinorAmountSchema.positive(),
   currency: CurrencySchema,
   status: z.enum(['pending', 'posted', 'reversed']),
@@ -114,10 +115,7 @@ export const FinanceTransactionSchema = z.discriminatedUnion('direction', [
 
 export const CashFlowAnalyticsRequestSchema = z.object({
   workspace_id: z.string().uuid(),
-  period: z.object({
-    from: z.string().datetime({ offset: true }),
-    to: z.string().datetime({ offset: true }),
-  }).strict(),
+  period: FinancePeriodSchema,
   base_currency: CurrencySchema,
   opening_balance_minor: z.number().int().safe(),
   transactions: z.array(FinanceTransactionSchema).min(1).max(10_000),
@@ -133,7 +131,10 @@ export const CashFlowAnalyticsRequestSchema = z.object({
   if (Date.parse(request.period.from) >= Date.parse(request.period.to)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'period.from must be before period.to' })
   }
+  const ids = new Set<string>()
   request.transactions.forEach((transaction, index) => {
+    if (ids.has(transaction.transaction_id)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['transactions', index, 'transaction_id'], message: 'duplicate transaction id' })
+    ids.add(transaction.transaction_id)
     if (transaction.workspace_id !== request.workspace_id) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['transactions', index, 'workspace_id'], message: 'workspace mismatch' })
     }
@@ -182,7 +183,7 @@ export const FinanceNarrativeSchema = z.object({
 }).strict()
 
 export const CashFlowAnalyticsOutputSchema = z.object({
-  period: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }) }).strict(),
+  period: FinancePeriodSchema,
   currency: CurrencySchema,
   summary: z.object({
     opening_balance_minor: z.number().int().safe(),
@@ -205,8 +206,8 @@ export const CashFlowAnalyticsOutputSchema = z.object({
   recommendations: FinanceNarrativeSchema.shape.recommendations,
   data_quality: z.object({
     completeness_score: z.number().finite().min(0).max(1),
-    uncategorized_transaction_ids: z.array(EntityIdSchema).max(2000),
-    missing_evidence_transaction_ids: z.array(EntityIdSchema).max(2000),
+    uncategorized_transaction_ids: z.array(EntityIdSchema).max(10_000),
+    missing_evidence_transaction_ids: z.array(EntityIdSchema).max(10_000),
     warnings: z.array(z.string().trim().min(1).max(500)).max(100),
   }).strict(),
 }).strict().superRefine((output, context) => {

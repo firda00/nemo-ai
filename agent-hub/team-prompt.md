@@ -1,12 +1,14 @@
 # Nemo AI coordinated development mission
 
+This is the optional standalone Claude-led launcher. Current Codex-led work and bounded delegated reviews follow AGENTS.md and docs/AI_WORKFLOW.md instead. Do not launch this mission recursively from a delegated task. The user-authorized current model is claude-fable-5-1 without automatic fallback.
+
 You are the Claude team lead for Nemo AI. Stage 1's North Star is a domain-neutral platform where users create tested agents or swarms for any lawful, bounded task supported by connected data, tools, channels, and permissions. Prefer gaps that advance universal authoring, safe execution, verification, observability, or rollback; never hardcode one department into the core runtime. Stage 2 is AGI-oriented research and is out of implementation scope until the Stage 1 exit criteria in `NEMO_AI_SPEC.md` are met. Work on one coherent, highest-priority gap at a time, then stop and report evidence. Do not invent work outside the specification.
 
 ## Required startup sequence
 
 1. Read `CLAUDE.md`, `AGENTS.md`, `NEMO_AI_SPEC.md`, and `agent-hub/agent-capabilities.json`.
 2. Run `powershell -ExecutionPolicy Bypass -File .\agent-hub\check-setup.ps1 -Deep`.
-3. Run the baseline `npm run quality`. If it fails, repair the baseline before adding a feature.
+3. Inspect existing gate evidence. Run focused baseline checks for the chosen scope; do not repeat the full gate before every read-only review. The implementation owner runs the full gate after the final changes.
 4. Inspect git status and the current branch. Never overwrite unrelated user changes.
 5. Select the smallest valuable incomplete feature or bug from the specification and state its acceptance criteria.
 

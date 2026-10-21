@@ -76,7 +76,7 @@ assert.match(teamDetailPage, /adaptiveTeam/, 'saved teams must be able to recrui
 assert.match(teamDetailPage, /max-h-80 overflow-y-auto/, 'the full client-facing report must be readable inside the command stream')
 assert.match(teamDetailPage, /latestRun\.kind === 'store_snapshot'/, 'saved store snapshots must reopen as dashboard artifacts')
 assert.match(teamDetailPage, /platformAgents=\{\[\]\}/, 'the graph must use the normalized live team nodes rather than stale platform state')
-assert.match(runner, /await onFastTask\(task, \{ hasInputArtifacts: inputArtifacts\.length > 0 \}\)/, 'the runner must support deterministic fast artifacts without bypassing attached evidence')
+assert.match(runner, /await onFastTask\(task, \{ hasInputArtifacts: inputArtifacts\.length > 0, inputArtifacts \}\)/, 'the runner must support deterministic fast artifacts without bypassing attached evidence')
 assert.match(storeArtifact, /action: 'status'/)
 assert.match(storeArtifact, /action: 'list_skus'/)
 assert.match(storeArtifact, /sold_units_7d/)

@@ -6,7 +6,9 @@ import { corsPreflight, json } from '../_shared/cors.ts'
 import { resolveOpenRouterKey } from '../_shared/keys.ts'
 import { callOpenRouter, estimateCostUsd, stripJsonFence, type ChatMsg, type OpenRouterResult } from '../_shared/llm.ts'
 import { CashFlowAnalyticsRequestSchema, FinanceNarrativeSchema } from '../_shared/financeCashFlow.ts'
-import { FinanceAnalyzeApiInputSchema, ingestFinanceSources } from '../_shared/financeIngestion.ts'
+import { FinanceAnalyzeApiInputSchema } from '../_shared/financeIngestion.ts'
+import { prepareFinanceAnalysis } from '../_shared/financePreparation.ts'
+import { readBytesBounded } from '../_shared/boundedBody.ts'
 import {
   FINANCE_NARRATIVE_JSON_SCHEMA,
   assembleCashFlowAnalysis,
@@ -114,8 +116,10 @@ Deno.serve(async (req) => {
 
   const declaredLength = Number(req.headers.get('content-length') ?? 0)
   if (declaredLength > MAX_REQUEST_BYTES) return json({ ok: false, code: 'REQUEST_TOO_LARGE' }, 413)
-  const rawText = await req.text().catch(() => '')
-  if (new TextEncoder().encode(rawText).byteLength > MAX_REQUEST_BYTES) return json({ ok: false, code: 'REQUEST_TOO_LARGE' }, 413)
+  const read = await readBytesBounded(req, { maxBytes: MAX_REQUEST_BYTES, deadlineAt: Date.now() + 20_000, now: Date.now })
+  if (!read.ok) return json({ ok: false, code: 'REQUEST_UNREADABLE' }, 400)
+  let rawText: string
+  try { rawText = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch { return json({ ok: false, code: 'INVALID_REQUEST' }, 400) }
   let rawBody: unknown = null
   try { rawBody = JSON.parse(rawText) } catch { /* handled by schema */ }
   const inputResult = FinanceAnalyzeApiInputSchema.safeParse(rawBody)
@@ -125,29 +129,13 @@ Deno.serve(async (req) => {
   const input = inputResult.data
   if (input.workspace_id !== accountId) return json({ ok: false, code: 'WORKSPACE_FORBIDDEN' }, 403)
 
-  const ingestion = ingestFinanceSources(input.sources, accountId)
-  const ids = new Set<string>()
-  const transactions = [...input.transactions, ...ingestion.transactions]
-  for (const transaction of transactions) {
-    if (transaction.workspace_id !== accountId) return json({ ok: false, code: 'WORKSPACE_FORBIDDEN' }, 403)
-    if (ids.has(transaction.transaction_id)) return json({ ok: false, code: 'DUPLICATE_TRANSACTION_ID', transaction_id: transaction.transaction_id }, 400)
-    ids.add(transaction.transaction_id)
-  }
-  const requestResult = CashFlowAnalyticsRequestSchema.safeParse({
-    workspace_id: accountId,
-    period: input.period,
-    base_currency: input.base_currency,
-    opening_balance_minor: input.opening_balance_minor,
-    transactions,
-    business_objectives: input.business_objectives,
-  })
-  if (!requestResult.success) {
-    return json({ ok: false, code: 'NORMALIZATION_FAILED', issues: requestResult.error.issues.slice(0, 20).map((issue) => ({ path: issue.path.join('.'), message: issue.message })), ingestion }, 400)
-  }
-  const financeRequest = requestResult.data
+  const prepared = prepareFinanceAnalysis(input, accountId)
+  if (!prepared.ok) return json({ ok: false, code: prepared.code, ...(prepared.ingestion ? { ingestion: { rejected: prepared.ingestion.rejected.slice(0, 20), warnings: prepared.ingestion.warnings } } : {}) }, prepared.status)
+  const { request: financeRequest, ingestion, selection, transactions } = prepared
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } })
   const { data: account } = await admin.from('accounts').select('blocked, token_balance').eq('id', accountId).single()
+  if (!account) return json({ ok: false, code: 'ACCOUNT_UNAVAILABLE' }, 503)
   if (account?.blocked) return json({ ok: false, code: 'ACCOUNT_BLOCKED' }, 403)
   if (account && Number(account.token_balance) <= 0) return json({ ok: false, code: 'NO_TOKENS' }, 402)
   const apiKey = await resolveOpenRouterKey(admin, accountId, PLATFORM_OPENROUTER_KEY)
@@ -180,6 +168,8 @@ Deno.serve(async (req) => {
     ok: true,
     request_id: requestId,
     analysis,
+    transactions,
+    selection,
     grounding: {
       evidence_bound: true,
       cited_sources: [...new Set(allFindings.flatMap((item) => item.evidence.map((evidence) => evidence.source_id)))],

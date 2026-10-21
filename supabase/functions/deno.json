@@ -1,5 +1,8 @@
 {
   "imports": {
-    "zod": "npm:zod@3.23.8"
+    "zod": "npm:zod@3.23.8",
+    "fflate": "npm:fflate@0.8.3",
+    "pdf-lib": "npm:pdf-lib@1.17.1",
+    "saxes": "npm:saxes@6.0.0"
   }
 }

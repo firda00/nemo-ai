@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'node_modules', '.claude', 'render-worker']),
+  // Generated bundles and archived evidence are not source files; their embedded
+  // dependency comments can also refer to plugins outside this lint config.
+  globalIgnores(['dist', 'node_modules', '.claude', 'render-worker', 'agent-hub/artifacts/**']),
   {
     files: ['src/**/*.{ts,tsx}'],
     extends: [

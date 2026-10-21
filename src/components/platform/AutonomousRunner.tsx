@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowUp, Loader2, Users, Check, RotateCcw, Save, Sparkles, Image as ImageIcon, Send, Download, X, Paperclip, FileSpreadsheet, AlertTriangle, ExternalLink, Square } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
@@ -24,6 +24,39 @@ import { defaultDefinitionOfDone, GoalSchema, type GoalContract, type GoalEvalua
 import { teamDisplayName } from '../../lib/teamDisplayName'
 
 const live = isSupabaseEnabled
+const AUTONOMOUS_ACCEPT = `${KNOWLEDGE_ACCEPT},.png,.jpg,.jpeg,.webp,.gif`
+const MAX_PASTED_IMAGE_BYTES = 12 * 1024 * 1024
+const MAX_PASTED_IMAGE_DATA_CHARS = 220_000
+
+const blobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result ?? ''))
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(blob)
+})
+
+async function imageToDataUrl(file: File): Promise<string> {
+  if (file.size <= 0) throw new Error('EMPTY_FILE')
+  if (file.size > MAX_PASTED_IMAGE_BYTES) throw new Error('FILE_TOO_LARGE')
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, 1100 / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('IMAGE_ENCODE_FAILED')), 'image/jpeg', 0.72))
+    const dataUrl = await blobToDataUrl(blob)
+    if (dataUrl.length > MAX_PASTED_IMAGE_DATA_CHARS) throw new Error('IMAGE_TOO_LARGE')
+    return dataUrl
+  } catch (error) {
+    if (error instanceof Error && ['FILE_TOO_LARGE', 'IMAGE_TOO_LARGE'].includes(error.message)) throw error
+    const dataUrl = await blobToDataUrl(file)
+    if (dataUrl.length > MAX_PASTED_IMAGE_DATA_CHARS) throw new Error('IMAGE_TOO_LARGE', { cause: error })
+    return dataUrl
+  }
+}
 interface Review { approved: boolean; score: number; issues: string[]; fix: string }
 interface Spec {
   role: string
@@ -134,7 +167,7 @@ export function AutonomousRunner({
   /** Optimistic chat event: lets a parent place the user's message in the stream immediately. */
   onTaskSubmitted?: (task: string) => void
   /** Optional fast path for deterministic chat artifacts that do not need a goal loop. */
-  onFastTask?: (task: string, context: { hasInputArtifacts: boolean }) => boolean | Promise<boolean>
+  onFastTask?: (task: string, context: { hasInputArtifacts: boolean; inputArtifacts: AutonomousInputArtifact[] }) => boolean | Promise<boolean>
   onComplete?: (result: string) => void
   /** Optional measurable completion contract; defaults are derived from the goal. */
   definitionOfDone?: string[]
@@ -187,15 +220,27 @@ export function AutonomousRunner({
     return () => { active = false }
   }, [live])
 
-  const addInputFiles = async (files: FileList | null) => {
+  const addInputFiles = async (files: FileList | File[] | null) => {
     if (!files?.length || filesBusy) return
+    const incoming = Array.from(files)
     setFilesBusy(true)
     setError('')
     setDataWarning('')
     try {
       const next = [...inputArtifacts]
       let remaining = MAX_AUTONOMOUS_TOTAL_CHARS - next.reduce((sum, item) => sum + item.content.length, 0)
-      for (const file of Array.from(files).slice(0, Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - next.length))) {
+      for (const file of incoming.slice(0, Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - next.length))) {
+        if (file.type.startsWith('image/')) {
+          const dataUrl = await imageToDataUrl(file)
+          next.push({
+            name: file.name.replace(/[\r\n\t]/g, ' ').trim() || `clipboard-image-${Date.now()}.jpg`,
+            content: '[Вставленное изображение. Используйте его как визуальный источник задачи.]',
+            originalChars: 0,
+            truncated: false,
+            imageData: dataUrl,
+          })
+          continue
+        }
         if (remaining <= 0) break
         const text = await extractText(file)
         const artifact = boundedArtifact(file.name, text, remaining)
@@ -204,13 +249,15 @@ export function AutonomousRunner({
         remaining -= artifact.content.length
       }
       setInputArtifacts(next)
-      if (files.length > Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - inputArtifacts.length)) {
+      if (incoming.length > Math.max(0, MAX_AUTONOMOUS_INPUT_FILES - inputArtifacts.length)) {
         setError(t('autonomousRunner.fileLimit'))
       }
     } catch (fileError) {
       const code = fileError instanceof Error ? fileError.message : ''
       setError(code === 'FILE_TOO_LARGE'
         ? t('autonomousRunner.fileTooLarge')
+        : code === 'IMAGE_TOO_LARGE'
+          ? (lang === 'ru' ? 'Изображение слишком большое. Вставьте изображение меньшего размера.' : lang === 'uz' ? 'Rasm juda katta. Kichikroq rasmni joylashtiring.' : 'The image is too large. Paste a smaller image.')
         : code === 'UNSUPPORTED_FILE_TYPE'
           ? t('autonomousRunner.fileUnsupported')
           : t('autonomousRunner.fileReadFailed'))
@@ -414,7 +461,10 @@ export function AutonomousRunner({
 
   const run = async (resume?: RunCheckpoint) => {
     const restored = resume?.state
-    const task = restored?.goal?.trim() || goal.trim()
+    const imageOnlyTask = inputArtifacts.some((artifact) => Boolean(artifact.imageData))
+    const task = restored?.goal?.trim() || goal.trim() || (imageOnlyTask
+      ? (lang === 'ru' ? 'Проанализируй прикреплённое изображение.' : lang === 'uz' ? 'Biriktirilgan rasmni tahlil qil.' : 'Analyse the attached image.')
+      : '')
     if (task.length < 4 || running) return
     if (!resume) {
       setResumeCheckpoint(null)
@@ -424,7 +474,7 @@ export function AutonomousRunner({
       if (onFastTask) {
         setRunning(true)
         try {
-          if (await onFastTask(task, { hasInputArtifacts: inputArtifacts.length > 0 })) return
+          if (await onFastTask(task, { hasInputArtifacts: inputArtifacts.length > 0, inputArtifacts })) return
         } finally {
           setRunning(false)
         }
@@ -643,6 +693,16 @@ export function AutonomousRunner({
     }
   }
 
+  const onComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+    if (!images.length) return
+    event.preventDefault()
+    void addInputFiles(images)
+  }
+
   const saveTeam = async () => {
     if (saving || !specs.length) return
     setSaving(true)
@@ -697,6 +757,7 @@ export function AutonomousRunner({
         <textarea
           value={composerCleared ? '' : goal}
           onChange={(e) => { setComposerCleared(false); setGoal(e.target.value) }}
+          onPaste={onComposerPaste}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run() }}
           rows={2}
           disabled={running}
@@ -717,7 +778,7 @@ export function AutonomousRunner({
           <input
             type="file"
             multiple
-            accept={KNOWLEDGE_ACCEPT}
+            accept={AUTONOMOUS_ACCEPT}
             disabled={running || filesBusy || inputArtifacts.length >= MAX_AUTONOMOUS_INPUT_FILES}
             className="sr-only"
             onChange={(event) => {
@@ -732,7 +793,7 @@ export function AutonomousRunner({
         <div className="mt-2 flex flex-wrap gap-2">
           {inputArtifacts.map((artifact, index) => (
             <span key={`${artifact.name}-${index}`} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-cyan/15 bg-cyan/[0.05] px-2.5 py-1.5 text-xs text-text">
-              <FileSpreadsheet size={13} className="shrink-0 text-cyan" />
+              {artifact.imageData ? <img src={artifact.imageData} alt="" className="h-7 w-7 shrink-0 rounded-md object-cover" /> : <FileSpreadsheet size={13} className="shrink-0 text-cyan" />}
               <span className="max-w-52 truncate">{artifact.name}</span>
               <span className="shrink-0 text-[10px] text-muted">{Math.max(1, Math.round(artifact.content.length / 1000))}K</span>
               {artifact.truncated && (

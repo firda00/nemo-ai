@@ -1,5 +1,6 @@
 import type { Lang } from '../types'
 import { extraUz, extraRu, extraEn } from './extra'
+import { employeeCopy } from './employees'
 
 // Full UZ/RU dictionaries. UZ is the default language (TZ 2 UX goal).
 // Both languages mirror the same shape so the t() resolver is symmetric.
@@ -2374,8 +2375,8 @@ const en = deepMerge(ru, enOverride)
 // Base dictionaries + the auto-generated per-screen extras (deep-merged so a new
 // screen namespace adds keys without touching the hand-written base above).
 export const translations: Record<Lang, typeof uz> = {
-  uz: deepMerge(uz, extraUz),
-  ru: deepMerge(ru, extraRu),
-  en: deepMerge(en, extraEn),
+  uz: deepMerge(uz, { ...extraUz, employees: employeeCopy.uz }),
+  ru: deepMerge(ru, { ...extraRu, employees: employeeCopy.ru }),
+  en: deepMerge(en, { ...extraEn, employees: employeeCopy.en }),
 }
 export type Dict = typeof uz

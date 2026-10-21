@@ -32,18 +32,23 @@ export default function WaitlistPage() {
 
   return (
     <div className="container-page max-w-6xl py-8">
+      <nav className="mb-6 flex flex-wrap items-center gap-3" aria-label={t('nav.login')}>
+        <Button to="/" variant="ghost">{t('waitlistFlow.back')}</Button>
+        <Button to="/auth" variant="outline">{t('nav.login')}</Button>
+        <Button to="/auth/signup">{t('auth.toSignupLink')}</Button>
+      </nav>
       <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="rounded-3xl border border-white/10 bg-panel/80 p-8">
-          <p className="mono-label">Pilot waitlist</p>
-          <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-text">Book a demo for your business</h1>
+          <p className="mono-label">{t('waitlistFlow.pilot')}</p>
+          <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-text">{t('waitlistFlow.title')}</h1>
           <p className="mt-4 text-sm leading-relaxed text-muted">
-            We are onboarding high-growth businesses that lose leads because follow-up and CRM are manual. The pilot focuses on one workflow: qualify business leads, write follow-ups, update CRM, and send daily reports.
+            {t('waitlistFlow.intro')}
           </p>
           <div className="mt-6 space-y-3">
             {[
-              ['30-minute demo', 'See the AI Sales Team process your lead examples.'],
-              ['Pilot setup', 'Telegram/Sheets/CRM can be connected after the demo.'],
-              ['Founder-led onboarding', 'We work directly with our pilot companies.'],
+              [t('waitlistFlow.step1'), t('waitlistFlow.body1')],
+              [t('waitlistFlow.step2'), t('waitlistFlow.body2')],
+              [t('waitlistFlow.step3'), t('waitlistFlow.body3')],
             ].map(([title, desc]) => (
               <div key={title} className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-teal" />
@@ -62,24 +67,24 @@ export default function WaitlistPage() {
                 <p className="mt-2 max-w-md text-sm text-muted">
                   {isSupabaseEnabled ? t('waitlistPage.receivedNote') : t('waitlistPage.demoSavedNote')}
                 </p>
-                <div className="mt-6 flex justify-center gap-3"><Button to="/app?create=team">Back to demo</Button><Button to="/app/results" variant="outline">View results</Button></div>
+                <div className="mt-6 flex justify-center gap-3"><Button to="/">{t('waitlistFlow.back')}</Button><Button to="/auth" variant="outline">{t('waitlistFlow.login')}</Button></div>
               </div>
             </div>
           ) : (
-            <>
+            <form onSubmit={(event) => { event.preventDefault(); void submit() }}>
               <div className="flex items-center gap-3">
                 <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand text-white"><CalendarDays size={20} /></span>
-                <div><h2 className="text-xl font-bold text-text">Request pilot access</h2><p className="text-xs text-muted">{isSupabaseEnabled ? t('waitlistPage.replyNote') : t('waitlistPage.demoNote')}</p></div>
+                <div><h2 className="text-xl font-bold text-text">{t('waitlistFlow.request')}</h2><p className="text-xs text-muted">{isSupabaseEnabled ? t('waitlistPage.replyNote') : t('waitlistPage.demoNote')}</p></div>
               </div>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                <Field icon={User} label="Name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldCls} placeholder="Founder / manager" /></Field>
-                <Field icon={Mail} label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fieldCls} placeholder="you@company.com" /></Field>
-                <Field icon={Phone} label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fieldCls} placeholder="+998..." /></Field>
-                <Field icon={Building2} label="Company"><input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className={fieldCls} placeholder="Company name" /></Field>
+                <Field icon={User} label={t('waitlistFlow.name')}><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldCls} placeholder={t('waitlistFlow.nameHint')} /></Field>
+                <Field icon={Mail} label={t('waitlistFlow.email')}><input type="email" required autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fieldCls} placeholder="you@company.com" /></Field>
+                <Field icon={Phone} label={t('waitlistFlow.phone')}><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fieldCls} placeholder="+998..." /></Field>
+                <Field icon={Building2} label={t('waitlistFlow.company')}><input required autoComplete="organization" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className={fieldCls} placeholder={t('waitlistFlow.companyHint')} /></Field>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="block space-y-1.5"><span className="text-xs text-muted">Monthly leads</span><select value={form.leads} onChange={(e) => setForm({ ...form, leads: e.target.value })} className={fieldCls}><option>0-100/month</option><option>100-300/month</option><option>300-1000/month</option><option>1000+/month</option></select></label>
-                <label className="block space-y-1.5"><span className="text-xs text-muted">Biggest problem</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={fieldCls} placeholder="Follow-up, CRM, reporting..." /></label>
+                <label className="block space-y-1.5"><span className="text-xs text-muted">{t('waitlistFlow.volume')}</span><select value={form.leads} onChange={(e) => setForm({ ...form, leads: e.target.value })} className={fieldCls}><option value="0-100/month">0-100</option><option value="100-300/month">100-300</option><option value="300-1000/month">300-1000</option><option value="1000+/month">1000+</option></select></label>
+                <label className="block space-y-1.5"><span className="text-xs text-muted">{t('waitlistFlow.problem')}</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className={fieldCls} placeholder={t('waitlistFlow.problemHint')} /></label>
               </div>
               {/* Honeypot: вне экрана, недоступно людям — боты заполняют его сами. */}
               <input
@@ -92,9 +97,9 @@ export default function WaitlistPage() {
                 aria-hidden="true"
                 className="absolute -left-[9999px] h-0 w-0 opacity-0"
               />
-              {error && <p className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{t('waitlistPage.error')}</p>}
-              <Button onClick={submit} disabled={busy || !form.email.trim() || !form.company.trim()} fullWidth className="mt-5"><Send size={16} /> {busy ? '…' : 'Book demo'}</Button>
-            </>
+              {error && <p role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-center text-xs text-danger">{t('waitlistPage.error')}</p>}
+              <Button type="submit" disabled={busy || !form.email.trim() || !form.company.trim()} fullWidth className="mt-5"><Send size={16} /> {busy ? '…' : t('waitlistFlow.send')}</Button>
+            </form>
           )}
         </div>
       </div>

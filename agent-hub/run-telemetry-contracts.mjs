@@ -83,11 +83,13 @@ assert.match(orchestrate, /Math\.min\(2, Number\(s\.revisions\)/, 'persisted tel
 const runner = read('src/components/platform/AutonomousRunner.tsx')
 assert.match(runner, /runRef\.current = resume\?\.run_ref \|\| crypto\.randomUUID\(\)/, 'each new run needs one id and resumed runs must retain it')
 assert.match(runner, /run_ref: runRef\.current/, 'every call in the run must carry it')
-const researchPage = read('src/pages/app/ResearchPage.tsx')
-assert.match(researchPage, /s\.review\.score \?\? 0/, 'reopened team runs must expose their persisted peer-review score')
-assert.match(researchPage, /s\.review\.needs_human_review/, 'reopened team runs must preserve the human-review warning')
-assert.match(researchPage, /result\?\.status === 'needs_review'/, 'the persisted run status must drive the reopened warning')
-assert.match(researchPage, /autonomousRunner\.escalatedBanner/, 'human review must be prominent above the reopened deliverable')
+// Saved team runs now reopen in TeamDetailPage; ResearchPage is a notebook wrapper.
+const reopenedRuns = read('src/pages/app/TeamDetailPage.tsx')
+assert.match(reopenedRuns, /from\('research_runs'\).*human_review_status.*\.eq\('department_id', deptId\)/, 'reopened runs must load persisted review state for this team')
+assert.match(reopenedRuns, /s\.review\.score \?\? 0/, 'reopened team runs must expose their persisted peer-review score')
+assert.match(reopenedRuns, /s\.review\.needs_human_review/, 'reopened team runs must preserve the human-review warning')
+assert.match(reopenedRuns, /run\.human_review_status === 'pending' \|\| \(!run\.human_review_status && run\.status === 'needs_review'\)/, 'pending or legacy persisted run status must drive the reopened warning')
+assert.match(reopenedRuns, /teamDetailPage\.humanReview'[\s\S]*<\/button>\s*\{isOpen && \(/, 'human review must be visible before opening the persisted deliverable')
 
 // No pipeline label may sit in the model column: that is what made 23% of tokens belong to
 // models that do not exist, and made estimateCostUsd price a 4o run at the cheap tier.

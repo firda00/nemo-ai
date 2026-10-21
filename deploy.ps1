@@ -144,6 +144,31 @@ Apply-Migration .\supabase\migrations\20260813160000_extension_submit.sql
 Apply-Migration .\supabase\migrations\20260822140000_uzum_merchant.sql
 # Goal-conditioned team runtime: allow the durable worker's deterministic goal_check transition.
 Apply-Migration .\supabase\migrations\20260831100000_goal_conditioned_loop.sql
+# Daily briefing Step 2a: opt-in settings + RLS. Additive; no cron/delivery objects yet.
+Apply-Migration .\supabase\migrations\20260905190000_daily_briefing_settings.sql
+# Daily briefing Step 2b: verified-recipient claim, lease-fenced delivery runs, outcomes, cron.
+Apply-Migration .\supabase\migrations\20260905200000_daily_briefing_delivery.sql
+# Margin report: private storage bucket (service-role only). Cleanup worker ships separately —
+# raw storage.objects DELETE would orphan blobs, so no SQL purge here.
+Apply-Migration .\supabase\migrations\20260905210000_margin_files_bucket.sql
+# Monthly reminders foundation: schedules, immutable-month occurrences + atomic tasks, outbox
+# RPCs. No cron yet — the worker wiring ships after the foundation review.
+Apply-Migration .\supabase\migrations\20260905220000_monthly_reminders.sql
+# Monthly product-report FILES: upload registry with declared periods, schedule kind, frozen
+# source snapshots, freeze/set-period RPCs (save/claim recreated — grants reapplied inside).
+Apply-Migration .\supabase\migrations\20260905233000_product_report_files.sql
+# Document jobs D2 lifecycle: waiting_compute state + transitions, idempotent enqueue,
+# manifest-gated CAS finalizer, sweep. ROLLBACK FORBIDDEN while waiting_compute rows exist
+# (drain via finalize first). Requires the runtime chain (phase1..compute jobs) already applied.
+Apply-Migration .\supabase\migrations\20260906000000_document_jobs_lifecycle.sql
+# Document artifact storage boundary: private bucket, append-only registration (publication
+# fence with claim/epoch re-check), canonical attempt/content-qualified paths, finalizer now
+# requires a matching registration for success. document-artifact-upload function must ship
+# in the same release (worker-token auth; needs NEMO_DOCUMENT_WORKER_TOKEN secret).
+Apply-Migration .\supabase\migrations\20260906010000_document_artifacts_storage.sql
+
+Write-Host "Enabling registered typed PDF documents..." -ForegroundColor Cyan
+Apply-Migration .\supabase\migrations\20260906020000_document_pdf_artifacts.sql
 
 $schemaCheckSql = @'
 select

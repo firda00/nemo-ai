@@ -1,55 +1,58 @@
+import { useState } from 'react'
 import {
+  ArrowLeftRight,
   ArrowRight,
   BrainCircuit,
-  Check,
+  CalendarClock,
   CheckCircle2,
-  ClipboardCheck,
+  Cpu,
   Database,
   Globe,
   Layers,
+  Lock,
   MessageCircleMore,
   Mic,
   Plug,
-  Repeat,
   Rocket,
   ShieldCheck,
   Sparkles,
-  UserRoundCheck,
   X,
   Zap,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { MarketingFooter } from '../components/layout/MarketingFooter'
 import { MarketingHeader } from '../components/layout/MarketingHeader'
 import { Accordion } from '../components/ui/Accordion'
 import { Button } from '../components/ui/Button'
+import { HeroInteractiveShowcase } from '../components/platform/HeroInteractiveShowcase'
 import { useI18n } from '../i18n'
 import { cn } from '../lib/cn'
 
 const copy = {
   ru: {
     launch: "Закрытая бета",
-    heroKicker: "AI-платформа для автоматизации бизнеса",
-    title: "Оркестрируйте\nAI-команды\nза минуты",
-    subtitle: "Интегрируйте координированные команды AI-агентов в ваши бизнес-процессы. От квалификации лидов и поддержки до сложных операций — без кода.",
-    primaryCta: "Записаться в очередь",
+    heroKicker: "PR-релиз · Создание вашего AI-Джарвиса по 1 промпту",
+    title: "Поручите задачу.\nПолучите AI-Джарвиса.",
+    subtitle: "Что умеет наш сервис: собирает корпоративного AI-Джарвиса по одному промпту. Автономные агенты 24/7 в облаке, двусторонняя интеграция с 1С и CRM, расписания задач и нулевой риск галлюцинаций.",
+    primaryCta: "Создать аккаунт",
     secondaryCta: "Посмотреть, как работает",
     openTeam: "Получить доступ",
     notes: ["По коду приглашения", "Без кода", "UZ / RU / EN"],
-    statsTitle: "Платформа, готовая к масштабированию",
+    statsTitle: "Что можно изучить в закрытой бете",
     stats: [
-      ["12", "интеграций работают"],
-      ["790", "сервисов в каталоге"],
-      ["3", "языка интерфейса"],
-      ["5 мин", "до первой команды"],
+      ["Файлы", "документы и исходники"],
+      ["Расчёты", "периоды и строки-основания"],
+      ["Задачи", "сценарии и правила"],
+      ["3 языка", "UZ / RU / EN"],
     ],
     painKicker: "Как это работает",
-    painTitle: "От идеи до рабочей AI-команды — четыре шага",
-    painSubtitle: "Не нужно писать код или разбираться в API. Опишите задачу, настройте поведение, подключите каналы — и команда работает.",
+    painTitle: "От задачи до проверенного результата",
+    painSubtitle: "Начните с одного процесса. Подключите нужные источники, проверьте разрешения и результат на тестовых данных.",
     flow: [
-      ["Опишите задачу", "Расскажите, что должна делать команда — на любом языке"],
+      ["Опишите задачу", "Расскажите, что должна делать команда. на любом языке"],
       ["Настройте роли", "Выберите специалистов, инструменты, базу знаний и каналы"],
-      ["Запустите", "Подключите Telegram, виджет на сайте или API"],
-      ["Масштабируйте", "Добавляйте агентов, создавайте новые AI-команды и отделы"],
+      ["Согласуйте действие", "Владелец проверяет параметры перед выполнением"],
+      ["Проверьте результат", "Сверьте сохранённый результат с исходной задачей"],
     ],
     before: "Без AI-агентов",
     after: "С Nemo AI",
@@ -60,26 +63,37 @@ const copy = {
       "Нет единой системы для отслеживания рабочих процессов",
     ],
     afterItems: [
-      "Первый ответ всегда соответствует высшему стандарту компании",
-      "Единая платформа для агентов, команд и каналов связи",
-      "Масштабирование — это просто запуск ещё одной AI-команды",
+      "Ответы по вашим инструкциям с нулевым риском галлюцинаций",
+      "Единая платформа: двусторонняя интеграция и автономный шедулер задач",
+      "Новые процессы добавляются после проверки на ваших данных",
       "Полный аудит: история действий, метрики качества и передача человеку",
     ],
+    connectorsKicker: "Двусторонняя интеграция",
+    connectorsTitle: "Интегрируйте ваши данные в Nemo — или Nemo в свои системы",
+    connectorsSubtitle: "Двусторонний обмен 24/7: подключайте 1С, amoCRM, Sheets и мессенджеры к нам, либо встраивайте веб-виджет Nemo, REST API и MCP Server в свои существующие продукты.",
+    connectorsTabs: {
+      all: "Все системы",
+      crm: "CRM & Продажи",
+      docs: "Таблицы & Файлы",
+      chat: "Мессенджеры & Виджет",
+      erp: "1C & Склад",
+      data: "Базы, API & Шедулер",
+    },
     workflowKicker: "Координированные AI-команды",
-    workflowTitle: "Не один бот, а координированная AI-команда с ролями",
-    workflowSubtitle: "Operations Lead распределяет задачи между специалистами. Вы видите, кто что сделал и какой шаг будет следующим.",
+    workflowTitle: "Запись на занятие с решением владельца",
+    workflowSubtitle: "Этот путь проверен локально на тестовых данных: от сообщения и выбора занятия до согласования и чтения сохранённой записи. Ниже — иллюстрация процесса, не рабочая клиентская запись.",
     capKicker: "Возможности AI-команды",
-    capTitle: "Всё, что нужно для умной автоматизации",
+    capTitle: "Инструменты под вашу задачу",
     capabilities: [
-      ["Мессенджеры", "Telegram и виджет на сайте; WhatsApp и Instagram — в разработке", MessageCircleMore],
-      ["База знаний", "Загрузите PDF, DOCX, XLSX — агенты учатся на ваших данных", Database],
-      ["Инструменты", "CRM, Google Sheets, API, браузер, генерация файлов", Plug],
-      ["Голос", "Распознавание и генерация речи для голосовых каналов", Mic],
-      ["Автопосты", "Планируйте и автоматически публикуйте контент по расписанию", Repeat],
-      ["Аналитика", "Отслеживайте эффективность каждого агента и всей команды", Layers],
+      ["Мессенджеры & Виджет", "Telegram, WhatsApp, виджет на сайте и интеграция в сторонние CRM", MessageCircleMore],
+      ["База знаний без галлюцинаций", "Документы PDF, DOCX и XLSX как строгие первоисточники для ответов", Database],
+      ["Двусторонние инструменты", "1C, CRM, Google Sheets, REST API, браузер, генерация файлов", Plug],
+      ["Голос", "Голосовые сценарии требуют доступного провайдера и настройки", Mic],
+      ["Автономный шедулер", "Агент сам ставит себе cron-задачи: утренние дайджесты и follow-up клиентам", CalendarClock],
+      ["Аналитика и аудит", "Отслеживайте эффективность каждого агента и полной цепочки шагов", Layers],
     ],
     templatesKicker: "Сценарии использования",
-    templatesTitle: "AI-команды для любой сферы бизнеса",
+    templatesTitle: "Выберите процесс для совместной проверки",
     templates: [
       ["Поддержка клиентов", "Мгновенные ответы, маршрутизация и передача оператору"],
       ["Продажи и лиды", "Квалификация заявок, follow-up и обновление CRM"],
@@ -88,22 +102,54 @@ const copy = {
       ["HR и рекрутинг", "Скрининг резюме, ответы кандидатам, онбординг"],
       ["Исследования", "Поиск информации, анализ конкурентов и рынка"],
     ],
-    controlKicker: "Безопасность и контроль",
-    controlTitle: "AI-агенты помогают команде, но не действуют вслепую",
+    controlKicker: "Стек защиты от ошибок",
+    controlTitle: "6 технологических барьеров: сведение галлюцинаций к нулю",
+    controlSubtitle: "Модель — лишь исполнитель в рамках детерминированного кода. Проверки схем, песочницы и строгий отказ от фантазий исключают искажение реальных данных.",
     controls: [
-      ["История действий", "Каждое действие и результат доступны вам в реальном времени.", ClipboardCheck],
-      ["Передача человеку", "Сложные или критичные случаи передаются оператору.", UserRoundCheck],
-      ["Изоляция данных", "Данные каждого аккаунта изолированы политиками доступа.", ShieldCheck],
-      ["Ваши инструменты", "Подключайте свои API, модели и базы данных.", Database],
+      {
+        title: "Детерминированные схемы (Zod)",
+        text: "Строгая типизация входящих и исходящих данных блокирует невалидные структуры до сохранения в базу.",
+        tag: "SCHEMA_GUARD",
+        icon: ShieldCheck,
+      },
+      {
+        title: "Изолированная песочница (Sandbox)",
+        text: "Математика, формулы и пересчеты курсов вычисляются кодом в песочнице, а не придумываются моделью.",
+        tag: "WASM_EXEC",
+        icon: Cpu,
+      },
+      {
+        title: "Grounded RAG & Строгий отказ",
+        text: "Ответы строго по файлам компании (1С, XLSX, CRM). Если данных нет, агент не угадывает, а запрашивает документ.",
+        tag: "ZERO_HALLUCINATION",
+        icon: Database,
+      },
+      {
+        title: "Автономный шедулер задач (Cron)",
+        text: "Агент сам ставит себе отложенные задачи (follow-up через 48ч, утренний дайджест в 09:00) в облачном рантайме.",
+        tag: "AUTO_SCHEDULER",
+        icon: CalendarClock,
+      },
+      {
+        title: "Двойной аудит Supervisor-Worker",
+        text: "Независимый агент-аудитор перепроверяет промежуточный результат до совершения ключевого действия.",
+        tag: "A2A_CONSENSUS",
+        icon: CheckCircle2,
+      },
+      {
+        title: "Осознанный Human-in-the-Loop",
+        text: "Ручное подтверждение владельцем сохранено только для критических финансовых проводок и договоров.",
+        tag: "OWNER_GATE",
+        icon: Lock,
+      },
     ],
     faqTitle: "Частые вопросы",
     faq: [
-      { q: "Что такое AI-агент?", a: "AI-агент — это автономная программа, которая выполняет задачи по вашим правилам: отвечает клиентам, обрабатывает заявки, генерирует контент или анализирует данные. Агент работает 24/7 и подключается к вашим каналам и инструментам." },
-      { q: "Нужно ли уметь программировать?", a: "Нет. Вы описываете задачу на обычном языке, выбираете инструменты и каналы — Nemo настроит команду автоматически. Для продвинутых пользователей есть API и кастомные инструменты." },
-      { q: "Какие каналы поддерживаются?", a: "Сейчас работают Telegram, веб-виджет и API. WhatsApp и Instagram — в разработке: вебхуки написаны, но канал не включаем, пока в продакшене не проверена подпись Meta. Статус каждого сервиса виден на странице «Интеграции»." },
-      { q: "Что такое AI-команда?", a: "AI-команда — это несколько агентов с разными ролями, управляемых координатором. Например: один агент квалифицирует заявку, другой готовит ответ, третий обновляет CRM. Координатор распределяет работу автоматически." },
-      { q: "Агенты работают без ошибок?", a: "Ни одна AI-система не гарантирует нулевой риск ошибок. Nemo снижает риск через историю действий, проверку результатов и автоматическую передачу сложных случаев человеку." },
-      { q: "Сколько это стоит?", a: "Сейчас идёт закрытая бета — доступ по коду приглашения. Участие в бете бесплатно: 50 диалогов на старте. Платные планы — от $59/мес, лимиты и расход на странице тарифов." },
+      { q: "Что такое AI-агент?", a: "AI-агент. это автономная программа, которая выполняет задачи по вашим правилам: отвечает клиентам, обрабатывает заявки, генерирует контент или анализирует данные. Агент работает 24/7 в облаке и подключается к вашим каналам и инструментам." },
+      { q: "Как Nemo борется с галлюцинациями?", a: "Мы не полагаемся на слепое доверие к модели. Nemo использует 6 уровней защиты: детерминированные Zod-схемы, вычисления в изолированной песочнице (WASM), 100% привязку к первоисточникам с отказом от выдумок, перекрестный аудит Supervisor-Worker и автономный шедулер задач." },
+      { q: "Можно ли интегрировать Nemo в нашу систему?", a: "Да, поддерживается двусторонняя интеграция: вы можете как подключить свои сервисы (1С, amoCRM, Sheets, базы данных) в Nemo, так и встроить веб-виджет Nemo на свой сайт, вызывать агентов через REST API или подключить Nemo как MCP Server к другим системам." },
+      { q: "Может ли агент сам ставить задачи по расписанию?", a: "Да! Агент обладает встроенным шедулером (Cron & Delayed Tasks): он может сам назначить follow-up клиенту через 48 часов, поставить утреннюю сверку отчетов на 09:00 или настроить еженедельный аудит остатков." },
+      { q: "Сколько это стоит?", a: "Сейчас идёт закрытая бета. доступ по коду приглашения. Участие в бете бесплатно: 50 диалогов на старте. Платные планы. от $59/мес, лимиты и расход на странице тарифов." },
     ],
     previewSales: {
       process: "AI-команда Nemo", request: "Квалификация лида (B2B)", done: "В процессе", team: "Состав команды", message: "Входящий запрос",
@@ -112,38 +158,38 @@ const copy = {
       steps: ["Запрос демо классифицирован (50 лицензий)", "Сетка корпоративных цен найдена в базе знаний", "Лид сохранен в CRM с высоким приоритетом", "Черновик ответа с тарифами проверен и отправлен"],
     },
     previewOps: {
-      process: "AI-команда Nemo", request: "Разбор встречи и задачи", done: "Завершено", team: "Состав команды", message: "Стенограмма встречи",
-      quote: "«Синхронизация по онбордингу клиентов. Дилшод должен позвонить должникам до пятницы. Мадина пишет инструкции.»", history: "История действий", next: "Следующий шаг", action: "Отправить напоминания исполнителям в Slack/Telegram",
-      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
-      steps: ["Стенограмма встречи проанализирована", "Созданы задачи для Дилшода (звонки) и Мадины (инструкции)", "Сроки и ответственные занесены в таблицу задач", "Сводный операционный отчет отправлен руководству"],
+      process: "Локальный тестовый сценарий", request: "Запись на пробное занятие", done: "Иллюстрация", team: "Участники процесса", message: "Сообщение в чате",
+      quote: "«Запиши тестового ученика на пробное занятие по английскому в 15:00.»", history: "Проверяемые шаги", next: "Подтверждение", action: "Показать номер записи только после отдельного чтения сохранённого результата",
+      agents: ["Оператор", "Nemo", "Владелец", "Исполнитель записи"],
+      steps: ["Прочитать расписание и проверить место", "Сохранить заявку с выбранным занятием", "Получить решение владельца", "Создать запись и повторно прочитать результат"],
     },
     finalTitle: "Займите место в закрытой бете",
-    finalText: "Есть код приглашения — заходите. Нет — оставьте почту, и мы напишем первыми, когда откроется место.",
+    finalText: "Расскажите о вашей задаче в форме заявки. Доступ к закрытой бете предоставляется по приглашению.",
   },
   uz: {
     launch: "Yopiq beta",
     heroKicker: "Biznesni avtomatlashtirish uchun AI-platforma",
-    title: "AI-jamoalarni\nminutlarda\nboshqaring",
-    subtitle: "AI-agentlar jamoasini biznes jarayonlaringizga integratsiya qiling. Sotuv va qo'llab-quvvatlashdan tortib murakkab operatsiyalargacha — kodsiz.",
-    primaryCta: "Navbatga yozilish",
+    title: "Vazifani topshiring.\nAI-Jarvisni oling.",
+    subtitle: "Bizning servis bitta promt orqali kompaniya uchun avtonom AI-Jarvisni yig‘ib beradi. 24/7 bulutli agentlar, 1C va CRM bilan ikki tomonlama integratsiya va nol gallyutsinatsiya.",
+    primaryCta: "Hisob yaratish",
     secondaryCta: "Qanday ishlashini ko'rish",
     openTeam: "Kirish olish",
     notes: ["Taklif kodi bo'yicha", "Kodsiz", "UZ / RU / EN"],
-    statsTitle: "Masshtablashga tayyor platforma",
+    statsTitle: "Yopiq betada tanishish mumkin",
     stats: [
-      ["12", "integratsiya ishlaydi"],
-      ["790", "katalogdagi xizmat"],
-      ["3", "interfeys tili"],
-      ["5 min", "birinchi jamoagacha"],
+      ["Fayllar", "hujjatlar va manbalar"],
+      ["Hisob-kitob", "davrlar va manba satrlari"],
+      ["Vazifalar", "ssenariylar va qoidalar"],
+      ["3 til", "UZ / RU / EN"],
     ],
     painKicker: "Qanday ishlaydi",
-    painTitle: "G'oyadan ishlaydigan AI-jamoagacha — to'rt qadam",
-    painSubtitle: "Kod yozish yoki API bilan ishlash shart emas. Vazifani tushuntiring, xatti-harakatni sozlang, kanallarni ulang — jamoa ishlaydi.",
+    painTitle: "Vazifadan tekshirilgan natijagacha",
+    painSubtitle: "Bitta jarayondan boshlang. Kerakli manbalarni ulang, ruxsatlar va natijani sinov maʼlumotlarida tekshiring.",
     flow: [
-      ["Vazifani tushuntiring", "Jamoa nima qilishi kerakligini aytib bering — istalgan tilda"],
+      ["Vazifani tushuntiring", "Jamoa nima qilishi kerakligini aytib bering. istalgan tilda"],
       ["Rollarni sozlang", "Mutaxassislar, asboblar, bilim bazasi va kanallarni tanlang"],
-      ["Ishga tushiring", "Telegram, saytdagi vidjet yoki APIni ulang"],
-      ["Masshtablang", "Agentlar qo'shing, yangi AI-jamoalar va bo'limlar yarating"],
+      ["Amalni tasdiqlang", "Bajarishdan oldin egasi parametrlarni tekshiradi"],
+      ["Natijani tekshiring", "Saqlangan natijani asl vazifa bilan solishtiring"],
     ],
     before: "AI-agentlarsiz",
     after: "Nemo AI bilan",
@@ -154,26 +200,37 @@ const copy = {
       "Ish jarayonlarini kuzatish uchun yagona tizim yo'q",
     ],
     afterItems: [
-      "Birinchi javob doimo kompaniyaning eng yuqori standartiga mos keladi",
-      "Agentlar, jamoalar va aloqa kanallari uchun yagona platforma",
-      "Masshtablash — shunchaki yana bitta AI-jamoani ishga tushirish",
+      "Javoblar ko‘rsatmalaringiz asosida nol-xatolik bilan beriladi",
+      "Yagona platforma: ikki tomonlama integratsiya va avtonom cron-rejachi",
+      "Yangi jarayonlar maʼlumotlaringizda tekshirilgandan so‘ng qo‘shiladi",
       "To'liq audit: harakatlar tarixi, sifat ko'rsatkichlari va insonga topshirish",
     ],
+    connectorsKicker: "Ikki tomonlama integratsiya",
+    connectorsTitle: "Maʼlumotlaringizni Nemoga ulang — yoki Nemoning o‘zini tizimingizga integratsiya qiling",
+    connectorsSubtitle: "24/7 ikki tomonlama almashinuv: 1C, amoCRM, Jadvallar va messenjerlarni ulang yoki Nemoning veb-vidjeti, REST API va MCP Serverini o‘z tizimingizga kiriting.",
+    connectorsTabs: {
+      all: "Barcha tizimlar",
+      crm: "CRM va Savdo",
+      docs: "Jadvallar va Fayllar",
+      chat: "Messenjerlar va Vidjet",
+      erp: "1C va Ombor",
+      data: "Bazalar, API va Rejachi",
+    },
     workflowKicker: "Muvofiqlashtirilgan AI-jamoalar",
-    workflowTitle: "Bitta bot emas, rollar bilan muvofiqlashtirilgan AI-jamoa",
-    workflowSubtitle: "Operations Lead vazifalarni mutaxassislarga taqsimlaydi. Kim nima qilganini va keyingi qadamni ko'rasiz.",
+    workflowTitle: "Egasi tasdiqlashi bilan darsga yozilish",
+    workflowSubtitle: "Bu yo‘l mahalliy sinov maʼlumotlarida tekshirildi: xabar va dars tanlashdan tasdiqlash hamda saqlangan yozuvni o‘qishgacha. Quyida jarayon tasviri, haqiqiy mijoz yozuvi emas.",
     capKicker: "AI-jamoa imkoniyatlari",
-    capTitle: "Aqlli avtomatlashtirish uchun kerak bo'lgan hamma narsa",
+    capTitle: "Vazifangiz uchun vositalar",
     capabilities: [
-      ["Messenjerlar", "Telegram va saytdagi vidjet; WhatsApp va Instagram — ishlab chiqilmoqda", MessageCircleMore],
-      ["Bilim bazasi", "PDF, DOCX, XLSX yuklang — agentlar ma'lumotlaringizdan o'rganadi", Database],
-      ["Asboblar", "CRM, Google Sheets, API, brauzer, fayl yaratish", Plug],
-      ["Ovoz", "Ovozli kanallar uchun nutq tanish va yaratish", Mic],
-      ["Autopostlar", "Kontentni rejaga ko'ra rejalashtiring va joylashtiring", Repeat],
-      ["Analitika", "Har bir agent va jamoa samaradorligini kuzating", Layers],
+      ["Messenjerlar va Vidjet", "Telegram, WhatsApp, sayt vidjeti va tashqi CRM-larga integratsiya", MessageCircleMore],
+      ["Nol-xatolik bilimlar bazasi", "PDF, DOCX va XLSX hujjatlari javoblar uchun qatʼiy manba sifatida", Database],
+      ["Ikki tomonlama vositalar", "1C, CRM, Google Sheets, REST API, brauzer, fayl yaratish", Plug],
+      ["Ovoz", "Ovozli ssenariylar uchun mavjud provayder va sozlash kerak", Mic],
+      ["Avtonom vazifalar rejachisi", "Agent o‘zi uchun cron-vazifalar qo‘yadi: tonggi monitoring va mijozga follow-up", CalendarClock],
+      ["Analitika va audit", "Har bir agent va jarayon samaradorligini kuzating", Layers],
     ],
     templatesKicker: "Foydalanish senariylari",
-    templatesTitle: "Har qanday biznes sohasi uchun AI-agentlar",
+    templatesTitle: "Birgalikda tekshirish uchun jarayon tanlang",
     templates: [
       ["Mijozlarni qo'llab-quvvatlash", "Tezkor javoblar, yo'naltirish va operatorga topshirish"],
       ["Savdo va lidlar", "Arizalarni saralash, follow-up va CRM yangilash"],
@@ -182,22 +239,54 @@ const copy = {
       ["HR va recruiting", "Rezumeni skrining qilish, nomzodlarga javob, onboarding"],
       ["Tadqiqotlar", "Ma'lumot qidirish, raqobatchilar va bozor tahlili"],
     ],
-    controlKicker: "Xavfsizlik va nazorat",
-    controlTitle: "AI-agentlar jamoaga yordam beradi, lekin nazoratsiz ishlamaydi",
+    controlKicker: "Xavfsizlik va aniqlik steki",
+    controlTitle: "Xatolik va gallyutsinatsiyalardan 6 bosqichli texnologik himoya",
+    controlSubtitle: "Model — tizimning faqat bir qismi. Barcha qatʼiy tekshiruvlar, qumloq va to‘qib yozishni qatʼiy rad etish kodi orqali xavfsiz bajariladi.",
     controls: [
-      ["Harakatlar tarixi", "Har bir harakat va natijani real vaqtda ko'rasiz.", ClipboardCheck],
-      ["Insonga topshirish", "Murakkab yoki muhim holatlar operatorga o'tadi.", UserRoundCheck],
-      ["Ma'lumot izolyatsiyasi", "Har bir akkaunt ma'lumoti kirishlar siyosati bilan ajratiladi.", ShieldCheck],
-      ["Sizning vositalaringiz", "O'z API, modellar va ma'lumotlar bazangizni ulang.", Database],
+      {
+        title: "Deterministik sxemalar (Zod)",
+        text: "Kiruvchi va chiquvchi maʼlumotlar turlarini qatʼiy tekshirish bazaga xato yozilishini oldini oladi.",
+        tag: "SCHEMA_GUARD",
+        icon: ShieldCheck,
+      },
+      {
+        title: "Izolyatsiyalangan qumloq (Sandbox)",
+        text: "Matematika va kurs hisob-kitoblari model tomonidan to‘qilmaydi, xavfsiz kod orqali hisoblanadi.",
+        tag: "WASM_EXEC",
+        icon: Cpu,
+      },
+      {
+        title: "Manbali RAG & Rad etish qoidasi",
+        text: "Faktlar faqat sizning hujjatlaringizdan olinadi. Agar maʼlumot bo‘lmasa, agent taxmin qilmaydi, balki so‘raydi.",
+        tag: "ZERO_HALLUCINATION",
+        icon: Database,
+      },
+      {
+        title: "Avtonom vazifalar rejachisi (Cron)",
+        text: "Agent o‘zi uchun kechiktirilgan vazifalar qo‘yadi (48 soatdan so‘ng follow-up, 09:00 dagi monitoring).",
+        tag: "AUTO_SCHEDULER",
+        icon: CalendarClock,
+      },
+      {
+        title: "Nazoratchi agent auditi",
+        text: "Mustaqil nazoratchi agent asosiy harakatni bajarishdan oldin oraliq natijani qayta tekshiradi.",
+        tag: "A2A_CONSENSUS",
+        icon: CheckCircle2,
+      },
+      {
+        title: "Ongli ravishda inson nazorati",
+        text: "Faqat moliyaviy o‘tkazmalar va mijozga yuboriladigan muhim shartnomalar uchun rahbar tasdig‘i.",
+        tag: "OWNER_GATE",
+        icon: Lock,
+      },
     ],
     faqTitle: "Ko'p beriladigan savollar",
     faq: [
-      { q: "AI-agent nima?", a: "AI-agent — bu sizning qoidalaringiz bo'yicha vazifalarni bajaradigan avtonom dastur: mijozlarga javob beradi, arizalarni qayta ishlaydi, kontent yaratadi yoki ma'lumotlarni tahlil qiladi. Agent 24/7 ishlaydi va sizning kanallar va vositalaringizga ulanadi." },
-      { q: "Dasturlash bilish kerakmi?", a: "Yo'q. Vazifani oddiy tilda tushuntirasiz, vositalar va kanallarni tanlaysiz — Nemo agentni avtomatik sozlaydi. Ilg'or foydalanuvchilar uchun API va maxsus vositalar mavjud." },
-      { q: "Qaysi kanallar qo'llab-quvvatlanadi?", a: "Hozir Telegram, veb-vidjet va API ishlaydi. WhatsApp va Instagram — ishlab chiqilmoqda: webhook kodi tayyor, lekin Meta imzosi produksiyada tekshirilmaguncha kanal yoqilmaydi. Har bir xizmat holati «Integratsiyalar» sahifasida ko'rinadi." },
-      { q: "AI-jamoa nima?", a: "AI-jamoa — turli rollarga ega bir nechta agentlar, koordinator tomonidan boshqariladi. Masalan: bitta agent arizani saralaydi, ikkinchisi javob tayyorlaydi, uchinchisi CRM yangilaydi." },
-      { q: "Agentlar xatosiz ishlaydimi?", a: "Hech bir AI tizimida xato xavfi nol emas. Nemo harakatlar tarixi, natijalarni tekshirish va murakkab holatlarni avtomatik insonga topshirish orqali xavfni kamaytiradi." },
-      { q: "Narxi qancha?", a: "Hozir yopiq beta — kirish taklif kodi bo'yicha. Betada ishtirok bepul: boshlanishida 50 dialog. Pullik rejalar — $59/oy dan, limitlar va sarf tariflar sahifasida." },
+      { q: "AI-agent nima?", a: "AI-agent. bu sizning qoidalaringiz bo'yicha vazifalarni bajaradigan avtonom dastur: mijozlarga javob beradi, arizalarni qayta ishlaydi, kontent yaratadi yoki ma'lumotlarni tahlil qiladi. Agent 24/7 bulutda ishlaydi." },
+      { q: "Nemo qanday qilib gallyutsinatsiyalarni yo‘qotadi?", a: "Biz modelga ko‘r-ko‘rona ishonmaymiz: Zod-sxemalar, qumloqdagi hisob-kitoblar, asl manbaga 100% tayanib to‘qishni rad etish va nazoratchi auditi orqali xatolar bartaraf etiladi." },
+      { q: "Nemoning o‘zini tizimimizga integratsiya qilsa bo‘ladimi?", a: "Ha! Ikki tomonlama integratsiya mavjud: ham o‘z 1C, CRM va jadvallaringizni Nemoga ulashingiz, ham Nemoning vidjeti, REST API va MCP Serverini o‘z tizimlaringizga kiritishingiz mumkin." },
+      { q: "Agent o‘ziga vazifa rejalashtira oladimi?", a: "Albatta! Ichki Cron va rejalashtirish tizimi orqali agent 48 soatdan keyin follow-up vazifasini qo‘yishi yoki har tong soat 09:00 ga hisobot tayyorlashni o‘zi belgilashi mumkin." },
+      { q: "Narxi qancha?", a: "Hozir yopiq beta. kirish taklif kodi bo'yicha. Betada ishtirok bepul: boshlanishida 50 dialog. Pullik rejalar $59/oy dan boshlanadi." },
     ],
     previewSales: {
       process: "Nemo AI-jamoasi", request: "Lid malakasi (B2B)", done: "Faol", team: "Jamoa tarkibi", message: "Kiruvchi so'rov",
@@ -206,38 +295,38 @@ const copy = {
       steps: ["Demo so'rovi klassifikatsiya qilindi (50 litsenziya)", "Korporativ narxlar bilimlar bazasidan olindi", "Lid yuqori ustuvorlik bilan CRM-ga saqlandi", "Korporativ tariflar bilan javob loyihasi tekshirildi va yuborildi"],
     },
     previewOps: {
-      process: "Nemo AI-jamoasi", request: "Uchrashuv tahlili va vazifalar", done: "Bajarildi", team: "Jamoa tarkibi", message: "Uchrashuv transkripti",
-      quote: "«Mijozlarni jalb qilish bo'yicha sinxronizatsiya. Dilshod juma kunigacha qarzdorlarga qo'ng'iroq qilishi kerak. Madina qo'llanmalarni yozadi.»", history: "Harakatlar tarixi", next: "Keyingi qadam", action: "Slack/Telegram orqali mas'ullarga eslatmalar yuborish",
-      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
-      steps: ["Uchrashuv transkripti tahlil qilindi va qarorlar olindi", "Vazifalar yaratildi: Dilshod (qo'ng'iroqlar), Madina (qo'llanmalar)", "Muddati va mas'ullar vazifalar jadvaliga kiritildi", "Operatsion hisobot tuzildi va rahbarga yuborildi"],
+      process: "Mahalliy sinov ssenariysi", request: "Sinov darsiga yozilish", done: "Namuna", team: "Jarayon ishtirokchilari", message: "Chatdagi xabar",
+      quote: "«Sinov o‘quvchisini soat 15:00 dagi ingliz tili sinov darsiga yozing.»", history: "Tekshiriladigan qadamlar", next: "Tasdiq", action: "Yozuv raqamini faqat saqlangan natijani alohida o‘qigandan keyin ko‘rsatish",
+      agents: ["Operator", "Nemo", "Egasi", "Yozuv ijrochisi"],
+      steps: ["Jadval va bo‘sh joyni tekshirish", "Tanlangan dars bilan arizani saqlash", "Egasining qarorini olish", "Yozuv yaratish va natijani qayta o‘qish"],
     },
     finalTitle: "Yopiq betada joy oling",
-    finalText: "Taklif kodingiz bo'lsa — kiring. Bo'lmasa — email qoldiring, joy ochilganda birinchi bo'lib xabar beramiz.",
+    finalText: "Arizada vazifangiz haqida yozing. Yopiq betaga kirish taklif orqali beriladi.",
   },
   en: {
     launch: "Closed beta",
     heroKicker: "AI platform for modern business operations",
-    title: "Orchestrate\nAI Teams\nin Minutes",
-    subtitle: "Integrate coordinated teams of AI agents into your business workflows. From inbound sales and support to complex operations — zero code required.",
-    primaryCta: "Join the waitlist",
+    title: "Delegate the work.\nGet your custom Jarvis.",
+    subtitle: "What our platform does: builds an autonomous enterprise Jarvis from a single prompt. 24/7 cloud agent swarm, bi-directional 1C & CRM integration, self-scheduled cron tasks, and zero hallucinations.",
+    primaryCta: "Create account",
     secondaryCta: "See How It Works",
     openTeam: "Request access",
     notes: ["By invite code", "No code required", "UZ / RU / EN"],
-    statsTitle: "A platform ready to scale",
+    statsTitle: "Explore the private beta",
     stats: [
-      ["12", "integrations live"],
-      ["790", "services catalogued"],
-      ["3", "interface languages"],
-      ["5 min", "to first team"],
+      ["Files", "documents and sources"],
+      ["Calculations", "periods and source rows"],
+      ["Tasks", "workflows and rules"],
+      ["3 languages", "UZ / RU / EN"],
     ],
     painKicker: "How it works",
-    painTitle: "From idea to a working AI team — four steps",
-    painSubtitle: "No code, no API docs. Describe a task, configure behavior, connect channels — and the team is live.",
+    painTitle: "From a task to a verified result",
+    painSubtitle: "Start with one process. Connect its sources, check permissions, and verify the result using test data.",
     flow: [
-      ["Describe the task", "Tell the team what to do — in any language"],
+      ["Describe the task", "Tell the team what to do. in any language"],
       ["Configure roles", "Choose specialists, tools, knowledge base, and channels"],
-      ["Launch", "Connect Telegram, the website widget, or API"],
-      ["Scale", "Add agents, build new AI teams and departments"],
+      ["Approve the action", "The owner reviews its parameters before execution"],
+      ["Verify the result", "Compare the saved result with the original task"],
     ],
     before: "Without AI agents",
     after: "With Nemo AI",
@@ -248,26 +337,37 @@ const copy = {
       "No single system of record for workflow execution",
     ],
     afterItems: [
-      "First response always matches your highest company standard",
-      "One platform for agents, swarms, and channels",
-      "Scaling operations means deploying another AI team",
+      "Responses follow your instructions with near-zero hallucinations",
+      "Unified platform: two-way integrations and autonomous task scheduling",
+      "Add new processes after checking them against your data",
       "Full audit trail: action history, evaluation metrics, and human handoff",
     ],
+    connectorsKicker: "Two-Way Integration",
+    connectorsTitle: "Connect your enterprise data to Nemo — or embed Nemo into your systems",
+    connectorsSubtitle: "Bi-directional sync 24/7: integrate 1C, amoCRM, spreadsheets, and messengers into Nemo, or embed the Nemo web widget, REST API, and MCP Server into your existing platforms.",
+    connectorsTabs: {
+      all: "All Systems",
+      crm: "CRM & Sales",
+      docs: "Sheets & Files",
+      chat: "Messengers & Widget",
+      erp: "ERP & Inventory",
+      data: "Databases, API & Scheduler",
+    },
     workflowKicker: "Coordinated AI teams",
-    workflowTitle: "Not a single bot — a coordinated AI team with roles",
-    workflowSubtitle: "An Operations Lead routes tasks to specialists. You see who did what and what happens next.",
+    workflowTitle: "Book a lesson with owner approval",
+    workflowSubtitle: "This path was verified locally with test data: from a message and lesson selection to approval and reading the saved booking. The example below illustrates the process; it is not a live customer booking.",
     capKicker: "Agent capabilities",
-    capTitle: "Everything you need for intelligent automation",
+    capTitle: "Tools for your task",
     capabilities: [
-      ["Messengers", "Telegram and the website widget; WhatsApp and Instagram in development", MessageCircleMore],
-      ["Knowledge base", "Upload PDF, DOCX, XLSX — the agent learns from your data", Database],
-      ["Tools", "CRM, Google Sheets, API, browser, file generation", Plug],
-      ["Voice", "Speech recognition and generation for voice channels", Mic],
-      ["Auto-posts", "Plan and publish content on a schedule", Repeat],
-      ["Analytics", "Track the performance of every agent and team", Layers],
+      ["Messengers & Widget", "Telegram, WhatsApp, web widget, and embedded CRM integration", MessageCircleMore],
+      ["Zero-Hallucination Knowledge", "PDF, DOCX, and XLSX documents as strict grounding sources for answers", Database],
+      ["Two-Way Tools", "1C, CRM, Google Sheets, REST API, browser, file generation", Plug],
+      ["Voice", "Voice workflows require an available provider and setup", Mic],
+      ["Autonomous Scheduler", "Agents self-schedule cron jobs: morning summaries and customer follow-ups", CalendarClock],
+      ["Analytics & Audit", "Track performance of every agent and verified execution trajectory", Layers],
     ],
     templatesKicker: "Use cases",
-    templatesTitle: "AI agents for any business domain",
+    templatesTitle: "Choose a process to verify together",
     templates: [
       ["Customer support", "Instant replies, routing, and human handoff"],
       ["Sales & leads", "Lead qualification, follow-up, and CRM updates"],
@@ -276,77 +376,323 @@ const copy = {
       ["HR & recruiting", "Resume screening, candidate replies, onboarding"],
       ["Research", "Information search, competitor and market analysis"],
     ],
-    controlKicker: "Security & control",
-    controlTitle: "AI agents help the team without operating blindly",
+    controlKicker: "Reliability Architecture",
+    controlTitle: "6 technological barriers: driving hallucinations down to near-zero",
+    controlSubtitle: "The model is only an operator inside deterministic code. Schema validation, execution sandboxes, and strict abstention policies eliminate data distortion.",
     controls: [
-      ["Action history", "Every action and result is available to you in real time.", ClipboardCheck],
-      ["Human handoff", "Complex or critical cases are routed to a human operator.", UserRoundCheck],
-      ["Data isolation", "Each account's data is separated by access policies.", ShieldCheck],
-      ["Your tools", "Connect your own APIs, models, and databases.", Database],
+      {
+        title: "Deterministic Schemas (Zod)",
+        text: "Strict data validation gates prevent malformed data from ever touching your production database.",
+        tag: "SCHEMA_GUARD",
+        icon: ShieldCheck,
+      },
+      {
+        title: "Isolated Code Sandbox",
+        text: "Pricing math, margins, and currency conversions run in a secured runtime rather than being guessed.",
+        tag: "WASM_EXEC",
+        icon: Cpu,
+      },
+      {
+        title: "Grounded RAG & Strict Abstention",
+        text: "Grounding in enterprise files (1C, XLSX, CRM). If data is absent, the agent abstains from guessing and requests clarification.",
+        tag: "ZERO_HALLUCINATION",
+        icon: Database,
+      },
+      {
+        title: "Autonomous Task Scheduler (Cron)",
+        text: "Agents autonomously schedule their own delayed tasks (48h follow-ups, 09:00 morning audits) in the cloud runtime.",
+        tag: "AUTO_SCHEDULER",
+        icon: CalendarClock,
+      },
+      {
+        title: "Dual Supervisor-Worker Audit",
+        text: "An independent auditor agent inspects execution steps before any consequential action is recorded.",
+        tag: "A2A_CONSENSUS",
+        icon: CheckCircle2,
+      },
+      {
+        title: "Deliberate Human-in-the-Loop",
+        text: "Owner authorization is reserved specifically for high-stakes financial transactions and contract signing.",
+        tag: "OWNER_GATE",
+        icon: Lock,
+      },
     ],
     faqTitle: "Frequently asked questions",
     faq: [
       { q: "What is an AI agent?", a: "An AI agent is an autonomous program that performs tasks by your rules: answers customers, processes requests, generates content, or analyzes data. It works 24/7 and connects to your channels and tools." },
-      { q: "Do I need to code?", a: "No. Describe the task in plain language, choose tools and channels — Nemo configures the agent automatically. Advanced users can use the API and custom tools." },
-      { q: "Which channels are supported?", a: "Telegram, the web widget and the API are live today. WhatsApp and Instagram are in development: the webhooks are written, but we keep the channel off until Meta signature verification is confirmed in production. Every service shows its status on the Integrations page." },
-      { q: "What is an AI team?", a: "An AI team is multiple agents with different roles managed by a coordinator. For example: one agent qualifies a request, another prepares a reply, a third updates the CRM. The coordinator routes work automatically." },
-      { q: "Do agents work without errors?", a: "No AI system guarantees zero errors. Nemo reduces risk through action history, result checks, and automatic handoff of complex cases to humans." },
-      { q: "How much does it cost?", a: "We are in closed beta — access is by invite code. Taking part is free: 50 dialogues to start. Paid plans start at $59/mo; limits and usage are on the pricing page." },
+      { q: "How does Nemo eliminate hallucinations?", a: "We do not rely on blind trust. Nemo enforces 6 reliability layers: deterministic Zod schemas, WASM execution sandboxes, 100% grounded RAG with strict abstention, supervisor consensus, and autonomous task queues." },
+      { q: "Can we integrate Nemo into our platform?", a: "Yes, bi-directional integration is native: connect your sources (1C, amoCRM, Sheets, databases) into Nemo, or embed the Nemo web widget, REST API, and MCP Server into your software." },
+      { q: "Can the agent schedule tasks autonomously?", a: "Yes! With its native scheduler engine, an agent can queue follow-ups in 48 hours, schedule daily 09:00 morning checks, or set up weekly inventory reconciliations." },
+      { q: "How much does it cost?", a: "We are in closed beta. access is by invite code. Taking part is free: 50 dialogues to start. Paid plans start at $59/mo; limits and usage are on the pricing page." },
     ],
     previewSales: {
       process: "Nemo AI Team", request: "Lead Qualification (B2B)", done: "Active", team: "Team Swarm", message: "Inbound Inquiry",
       quote: "\"Hi! We would like to request an enterprise demo for 50 users. What are your corporate rates?\"", history: "Action History", next: "Next Action", action: "Schedule enterprise demo call with sales director",
       agents: ["Coordinator", "Lead Qualifier", "Product Expert", "Quality Reviewer"],
-      steps: ["Demo request classified for 50 licenses", "Enterprise pricing retrieved from knowledge base", "Lead saved to CRM with high priority", "Draft response with corporate rates verified and sent"],
+      steps: ["Demo inquiry classified (50 seats)", "Corporate rate deck matched in grounded RAG", "Lead logged in CRM with High Priority", "Checked proposal draft dispatched to prospect"],
     },
     previewOps: {
-      process: "Nemo AI Team", request: "Meeting Sync & Task Dispatch", done: "Done", team: "Team Swarm", message: "Meeting Transcript",
-      quote: "\"Sync on customer onboarding. Dilshod must call unpaid clients by Friday. Madina will write the help guides.\"", history: "Action History", next: "Next Action", action: "Send automated task reminders to owners via Slack/Telegram",
-      agents: ["Operations Lead", "Meeting Analyst", "Task Manager", "Report Agent"],
-      steps: ["Sync transcript parsed and decisions extracted", "Tasks created: Dilshod (calls), Madina (guides)", "Deadlines and owners mapped in task table", "Operations report compiled and delivered to manager"],
+      process: "Local Test Scenario", request: "Book a trial lesson", done: "Illustration", team: "Participants", message: "Chat message",
+      quote: "\"Book a trial student for an English lesson at 3:00 PM.\"", history: "Verification steps", next: "Confirmation", action: "Display booking code only after confirming state in database",
+      agents: ["Operator", "Nemo", "Owner", "Booking Executor"],
+      steps: ["Check schedule and slot availability", "Record appointment draft with selected slot", "Obtain owner resolution", "Create booking and re-verify database state"],
     },
-    finalTitle: "Take your place in the closed beta",
-    finalText: "Have an invite code — come in. If not, leave your email and we will write first when a place opens.",
+    finalTitle: "Claim your private beta seat",
+    finalText: "Tell us about your business workflow in the request form. Access is granted on a rolling invite basis.",
   },
 }
 
-function SectionIntro({ kicker, title, text }: { kicker: string; title: string; text?: string }) {
+interface ConnectorItem {
+  id: string
+  name: string
+  category: 'crm' | 'docs' | 'chat' | 'erp' | 'data'
+  protocol: string
+  flowDirection: 'two-way' | 'inbound' | 'outbound'
+  status: string
+  description: { ru: string; uz: string; en: string }
+}
+
+const CONNECTORS_LIST: ConnectorItem[] = [
+  {
+    id: '1c',
+    name: '1С:Предприятие',
+    category: 'erp',
+    protocol: 'REST / OData',
+    flowDirection: 'two-way',
+    status: 'Двусторонний обмен',
+    description: {
+      ru: 'Чтение номенклатуры, выгрузка накладных и переоценка 1 420 SKU без ручного ввода',
+      uz: 'Tovarlar qoldig‘ini o‘qish, schyot-fakturalar yuklash va narxlarni avtomatlashtirish',
+      en: 'Realtime inventory sync, SKU reconciliation, and bi-directional invoicing',
+    },
+  },
+  {
+    id: 'amocrm',
+    name: 'amoCRM',
+    category: 'crm',
+    protocol: 'Bi-directional Sync',
+    flowDirection: 'two-way',
+    status: 'Двусторонний обмен',
+    description: {
+      ru: 'Прием лидов из воронки, авто-скоринг BANT и обратная запись сделок и задач',
+      uz: 'Lidlarni qabul qilish, BANT baholash va bitimlarni avtomatik yangilash',
+      en: 'Lead ingestion, BANT scoring, and automatic deal pipeline updates',
+    },
+  },
+  {
+    id: 'gsheets',
+    name: 'Google Sheets',
+    category: 'docs',
+    protocol: 'Two-Way OAuth',
+    flowDirection: 'two-way',
+    status: 'Двусторонний обмен',
+    description: {
+      ru: 'Чтение таблиц в реальном времени и авто-запись формул и отчетов без искажений',
+      uz: 'Jadvallarni real vaqtda o‘qish va hisobotlarni xatosiz qayta yozish',
+      en: 'Spreadsheet ingestion, anomaly detection, and clean formula writes',
+    },
+  },
+  {
+    id: 'widget',
+    name: 'Nemo Web Widget',
+    category: 'chat',
+    protocol: 'Embed Script',
+    flowDirection: 'outbound',
+    status: 'Встраивание в ваш сайт',
+    description: {
+      ru: 'Встраивание автономного AI-агента Nemo на любой сайт одной строчкой <script>',
+      uz: 'Istalgan veb-saytingizga bir qator <script> kodi bilan agentni o‘rnatish',
+      en: 'Embed autonomous Nemo agents into any website or web application via a script tag',
+    },
+  },
+  {
+    id: 'mcp-server',
+    name: 'Nemo MCP Server',
+    category: 'data',
+    protocol: 'Model Context Protocol',
+    flowDirection: 'outbound',
+    status: 'Встраивание в сторонние LLM',
+    description: {
+      ru: 'Подключение инструментов Nemo в другие агентские среды, IDE и внешние платформы',
+      uz: 'Nemo asboblarini tashqi LLM va agent tizimlariga MCP orqali ulash',
+      en: 'Expose Nemo enterprise tools and databases to external LLM runtimes via MCP',
+    },
+  },
+  {
+    id: 'scheduler',
+    name: 'Автономный Шедулер (Cron)',
+    category: 'data',
+    protocol: 'Cloud Queue / Cron',
+    flowDirection: 'two-way',
+    status: 'Самостоятельные задачи',
+    description: {
+      ru: 'Агент сам ставит отложенные задачи: follow-up через 48ч, утренний мониторинг в 09:00',
+      uz: 'Agent o‘zi kechiktirilgan vazifalar qo‘yadi: 48 soatdan keyin follow-up, 09:00 monitoring',
+      en: 'Agents autonomously schedule cron and delayed follow-up tasks in the cloud runtime',
+    },
+  },
+  {
+    id: 'bitrix24',
+    name: 'Bitrix24',
+    category: 'crm',
+    protocol: 'Webhook & REST',
+    flowDirection: 'two-way',
+    status: 'Двусторонний обмен',
+    description: {
+      ru: 'Двусторонняя интеграция с задачами, сделками и карточками клиентов 24/7',
+      uz: 'Vazifalar, bitimlar va mijozlar kartalari bilan 24/7 ikki tomonlama integratsiya',
+      en: 'Bi-directional integration with tasks, deals, and client profiles in the cloud',
+    },
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram',
+    category: 'chat',
+    protocol: 'Bot & Group Mesh',
+    flowDirection: 'two-way',
+    status: 'Live Sync',
+    description: {
+      ru: 'Личные боты для клиентов и внутренние боты-задачники для рабочих групп',
+      uz: 'Mijozlar uchun shaxsiy botlar va jamoalar uchun guruh botlari',
+      en: 'Customer-facing bots and internal taskbots across private group chats',
+    },
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp Business',
+    category: 'chat',
+    protocol: 'Official Cloud API',
+    flowDirection: 'two-way',
+    status: 'Cloud Ready',
+    description: {
+      ru: 'Мгновенный ответ входящим обращениям за 2.4 секунды без потерь заявок',
+      uz: 'Kiruvchi murojaatlarga soniyalar ichida arizalarni yo‘qotmasdan javob berish',
+      en: 'Instant 24/7 response to inbound customer inquiries within seconds',
+    },
+  },
+  {
+    id: 'moysklad',
+    name: 'МойСклад',
+    category: 'erp',
+    protocol: 'Webhook & API',
+    flowDirection: 'two-way',
+    status: 'Двусторонний обмен',
+    description: {
+      ru: 'Синхронизация заказов, отгрузок и остатков на складе в реальном времени',
+      uz: 'Buyurtmalar, jo‘natmalar va ombor qoldiqlarini real vaqtda yangilash',
+      en: 'Realtime order processing, shipments, and inventory balance sync',
+    },
+  },
+  {
+    id: 'excel',
+    name: 'MS Excel (OneDrive)',
+    category: 'docs',
+    protocol: 'Office 365 Sync',
+    flowDirection: 'two-way',
+    status: 'Cloud Ready',
+    description: {
+      ru: 'Парсинг сложных корпоративных смет и автоматическая выгрузка отчетов XLSX',
+      uz: 'Murakkab smetalarni tahlil qilish va XLSX hisobotlarini yig‘ish',
+      en: 'Corporate budget parsing, margin checks, and typed XLSX generation',
+    },
+  },
+  {
+    id: 'postgres',
+    name: 'PostgreSQL & Supabase',
+    category: 'data',
+    protocol: 'Direct SQL & RLS',
+    flowDirection: 'two-way',
+    status: 'Live Sync',
+    description: {
+      ru: 'Изолированное хранение данных, строгие политики RLS и неизменяемый аудит-лог',
+      uz: 'Xavfsiz maʼlumotlar ombori, qatʼiy RLS huquqlari va to‘liq audit jurnali',
+      en: 'Isolated tenant storage, strict RLS access policies, and immutable audit logs',
+    },
+  },
+]
+
+function ConnectorsExplorer({ lang, copyData }: { lang: 'ru' | 'uz' | 'en'; copyData: typeof copy.ru }) {
+  const [filter, setFilter] = useState<'all' | 'crm' | 'docs' | 'chat' | 'erp' | 'data'>('all')
+
+  const filtered = filter === 'all'
+    ? CONNECTORS_LIST
+    : CONNECTORS_LIST.filter((item) => item.category === filter)
+
   return (
-    <div className="max-w-3xl">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan">{kicker}</p>
-      <h2 className="mt-4 text-[clamp(2rem,4vw,3.35rem)] font-black leading-[1.05] tracking-tight text-text">{title}</h2>
-      {text && <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{text}</p>}
+    <div className="mt-10">
+      {/* Category selector */}
+      <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-[#060813] p-1.5 border border-white/8 max-w-2xl mx-auto">
+        {(['all', 'crm', 'docs', 'chat', 'erp', 'data'] as const).map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => setFilter(cat)}
+            className={cn(
+              'rounded-xl px-3.5 py-2 text-xs font-semibold transition-colors',
+              filter === cat
+                ? 'bg-[#182346] text-[#42edf5] shadow-sm'
+                : 'text-[#94A3B8] hover:text-white hover:bg-white/5'
+            )}
+          >
+            {copyData.connectorsTabs[cat]}
+          </button>
+        ))}
+      </div>
+
+      {/* Grid of connectors */}
+      <div className="mt-8 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {filtered.map((item) => (
+          <div
+            key={item.id}
+            className="group rounded-2xl border border-white/10 bg-[#090D1C] p-4 transition-all hover:border-[#42edf5]/40 hover:bg-[#0D152D]"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-white">{item.name}</span>
+              <span className="inline-flex items-center gap-1 rounded bg-[#42edf5]/10 px-2 py-0.5 font-mono text-[9px] text-[#42edf5] border border-[#42edf5]/20">
+                {item.protocol}
+              </span>
+            </div>
+            <p className="mt-2.5 text-xs text-[#94A3B8] leading-relaxed">
+              {item.description[lang] ?? item.description.ru}
+            </p>
+            <div className="mt-4 flex items-center justify-between border-t border-white/6 pt-2.5">
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#34D399]">
+                <ArrowLeftRight size={11} className="text-[#10B981]" />
+                {item.status}
+              </span>
+              <span className="text-[10px] font-mono text-muted uppercase">24/7 Mesh</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-type PreviewCopy = {
-  process: string
-  request: string
-  done: string
-  team: string
-  message: string
-  quote: string
-  history: string
-  next: string
-  action: string
-  agents: string[]
-  steps: string[]
+function SectionIntro({ kicker, title, text }: { kicker: string; title: string; text?: string }) {
+  return (
+    <div className="max-w-2xl">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan">{kicker}</p>
+      <h2 className="mt-4 text-3xl font-black tracking-tight text-text sm:text-4xl">{title}</h2>
+      {text ? <p className="mt-4 text-base leading-relaxed text-muted">{text}</p> : null}
+    </div>
+  )
 }
 
-function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
+function WorkflowPreview({ copy: preview }: { copy: (typeof copy.ru)['previewSales'] }) {
   return (
-    <div className="relative mx-auto w-full max-w-3xl">
-      <div className="absolute -inset-8 rounded-[2rem] bg-cyan/10 blur-3xl" />
-      <div className="relative overflow-hidden rounded-[1.65rem] border border-cyan/25 bg-[#08111d] shadow-2xl shadow-black/40">
-        <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-          <div>
-            <p className="text-xs font-semibold text-muted">{preview.process}</p>
-            <p className="mt-1 text-sm font-bold text-text">{preview.request}</p>
-          </div>
-          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {preview.done}
-          </span>
+    <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#070b14] shadow-2xl">
+      <div className="flex items-center justify-between border-b border-white/8 px-5 py-3.5">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-cyan animate-pulse" />
+          <span className="text-xs font-semibold text-text">{preview.process}</span>
+        </div>
+        <span className="rounded-full bg-cyan/10 px-2.5 py-1 text-[11px] font-semibold text-cyan">{preview.done}</span>
+      </div>
+      <div className="p-5">
+        <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4">
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan">{preview.request}</p>
+          <p className="mt-2 text-sm font-bold text-text">{preview.quote}</p>
         </div>
         <div className="grid gap-4 p-4 sm:grid-cols-[0.72fr_1.28fr] sm:p-5">
           <div className="glass-card lift rounded-2xl p-4">
@@ -384,57 +730,15 @@ function WorkflowPreview({ copy: preview }: { copy: PreviewCopy }) {
   )
 }
 
-function NeonBrandShowcase() {
-  return (
-    <div className="relative mx-auto w-full max-w-[540px]" aria-label="Nemo AI brand">
-      <div className="absolute -inset-12 rounded-full bg-[#b94cff]/12 blur-3xl" />
-      <div className="absolute -inset-8 translate-x-10 translate-y-10 rounded-full bg-[#42edf5]/10 blur-3xl" />
-      <div className="relative aspect-[4/5] overflow-hidden rounded-[2.25rem] border border-[#7ceef4]/20 bg-[#080b18] shadow-[0_40px_100px_-48px_rgba(64,232,244,0.7)]">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:42px_42px]" />
-        <img
-          src="/brand/nemo-logo-neon.jpeg"
-          alt="Nemo AI"
-          width="1792"
-          height="2400"
-          fetchPriority="high"
-          className="absolute left-1/2 top-1/2 w-[122%] max-w-none -translate-x-1/2 -translate-y-[47%]"
-        />
-        <div className="absolute inset-x-5 bottom-5 flex items-center justify-between rounded-2xl border border-white/10 bg-[#0a0d1c]/80 px-4 py-3 backdrop-blur-xl">
-          <div>
-            <p className="font-brand text-[10px] font-semibold uppercase tracking-[0.22em] text-[#51e9f2]">Nemo workspace</p>
-            <p className="mt-1 text-xs text-[#b9c4d8]">Agents · workflows · human control</p>
-          </div>
-          <span className="relative flex h-3 w-3">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#51e9f2] opacity-50" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-[#51e9f2]" />
-          </span>
-        </div>
-      </div>
-    </div>
-  )
+function NeonBrandShowcase({ lang }: { lang: 'ru' | 'uz' | 'en' }) {
+  return <HeroInteractiveShowcase lang={lang} />
 }
 
 export default function LandingPage() {
-  const { lang } = useI18n()
+  const { lang, t } = useI18n()
   const c = copy[lang]
 
   return (
-    // Deliberately single-theme: the marketing page always renders on the brand's navy
-    // ground. `theme-dark-scope` carries every colour token plus color-scheme, so native
-    // controls and the page frame stay dark for a light-theme visitor too.
-    /*
-     * overflow-x-CLIP, А НЕ HIDDEN — ИНАЧЕ ШАПКА НЕ ПРИЛИПАЕТ.
-     *
-     * `overflow-x: hidden` делает элемент КОНТЕЙНЕРОМ ПРОКРУТКИ: браузер вычисляет для него
-     * `overflow-y: auto`. А `position: sticky` липнет к ближайшему такому контейнеру — то есть к
-     * этому div, который сам никогда не прокручивается, потому что прокручивается окно. Шапка
-     * при этом уезжала вверх вместе со страницей, хотя в стилях честно стояло sticky top-0.
-     *
-     * Измерено: при scrollY = 1359 верх шапки оказывался на −1359px, то есть за экраном.
-     *
-     * `clip` обрезает то же горизонтальное переполнение, но контейнера прокрутки НЕ создаёт, и
-     * sticky продолжает считать от окна.
-     */
     <div className="theme-dark-scope landing-brand min-h-screen overflow-x-clip">
       <MarketingHeader />
 
@@ -442,37 +746,47 @@ export default function LandingPage() {
         {/* ─── HERO ─── */}
         <section className="relative overflow-hidden border-b border-white/8 bg-[#090c19]">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_16%,rgba(66,237,245,0.16),transparent_34%),radial-gradient(circle_at_12%_40%,rgba(185,76,255,0.14),transparent_34%)]" />
-          <div className="container-page relative grid min-h-[calc(100vh-76px)] items-center gap-12 py-14 lg:grid-cols-[0.96fr_1.04fr] lg:py-20">
+          <div className="container-page relative grid min-h-[calc(88dvh-64px)] items-center gap-10 py-12 lg:grid-cols-[1.12fr_0.88fr] lg:py-14">
             <div className="max-w-2xl">
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[#51e9f2]">{c.heroKicker}</p>
-              <h1 className="mt-4 max-w-2xl whitespace-pre-line text-[clamp(2.8rem,5.2vw,4.6rem)] font-black leading-[0.96] tracking-[-0.055em] text-text">{c.title}</h1>
-              <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">{c.subtitle}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan">{c.heroKicker}</p>
+              <h1 className="mt-3 max-w-2xl whitespace-pre-line text-[clamp(1.85rem,2.8vw,3rem)] font-black leading-[1.1] tracking-[-0.03em] text-text">{c.title}</h1>
+              <p className="mt-5 max-w-lg text-base leading-relaxed text-muted sm:text-lg">{c.subtitle}</p>
               <div className="mt-9 flex flex-wrap gap-3">
-                <Button to="/app" size="lg" className="lift !bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_18px_50px_-20px_rgba(66,237,245,0.9)] hover:!brightness-110">
+                <Button to="/auth/signup" size="lg" className="lift !bg-none !bg-[#42edf5] !text-[#050816] shadow-[0_18px_50px_-20px_rgba(66,237,245,0.9)] hover:!brightness-110">
                   {c.primaryCta}<ArrowRight size={17} />
                 </Button>
-                <Button href="#workflow" variant="outline" size="lg">{c.secondaryCta}</Button>
+                <Button href="#product" variant="outline" size="lg">{c.secondaryCta}</Button>
               </div>
-              <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-fog">
-                {c.notes.map((note) => <span key={note} className="inline-flex items-center gap-2"><Check size={14} className="text-emerald-300" />{note}</span>)}
-              </div>
+              <Link to="/waitlist" className="mt-5 inline-flex text-sm text-muted underline underline-offset-4 hover:text-text">{t('marketingHeader.book')}</Link>
             </div>
-            <NeonBrandShowcase />
+            <NeonBrandShowcase lang={lang} />
           </div>
         </section>
 
         {/* ─── SOCIAL PROOF STATS ─── */}
         <section className="border-b border-white/8 bg-[#08101c]">
-          <div className="container-page py-16 sm:py-20">
+          <div className="container-page py-10 sm:py-12">
             <p className="text-center text-sm font-bold uppercase tracking-[0.16em] text-muted">{c.statsTitle}</p>
             <div className="mt-10 grid grid-cols-2 gap-6 lg:grid-cols-4">
               {c.stats.map(([value, label]) => (
                 <div key={label} className="text-center">
-                  <p className="text-[clamp(2.5rem,5vw,4rem)] font-black tracking-tight text-cyan">{value}</p>
+                  <p className="text-[clamp(1.35rem,2.4vw,2rem)] font-black tracking-tight text-cyan">{value}</p>
                   <p className="mt-1 text-sm font-medium text-muted">{label}</p>
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* ─── CONNECTORS HUB (TWO-WAY INTEGRATION) ─── */}
+        <section id="connectors" className="border-b border-white/8 bg-[#070B18] py-20 sm:py-28">
+          <div className="container-page">
+            <div className="text-center max-w-3xl mx-auto">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan">{c.connectorsKicker}</p>
+              <h2 className="mt-4 text-3xl font-black tracking-tight text-text sm:text-4xl">{c.connectorsTitle}</h2>
+              <p className="mt-4 text-base leading-relaxed text-muted">{c.connectorsSubtitle}</p>
+            </div>
+            <ConnectorsExplorer lang={lang} copyData={c} />
           </div>
         </section>
 
@@ -506,7 +820,7 @@ export default function LandingPage() {
               <div className="mt-5 space-y-3">
                 {c.afterItems.map((item) => (
                   <p key={item} className="flex gap-3 text-sm leading-relaxed text-text">
-                    <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-cyan animate-pulse" />
+                    <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-cyan" />
                     {item}
                   </p>
                 ))}
@@ -520,7 +834,7 @@ export default function LandingPage() {
           <div className="container-page grid items-center gap-12 py-20 sm:py-28 lg:grid-cols-[0.82fr_1.18fr]">
             <div>
               <SectionIntro kicker={c.workflowKicker} title={c.workflowTitle} text={c.workflowSubtitle} />
-              <Button to="/app" variant="outline" className="mt-8">{c.openTeam}<ArrowRight size={15} /></Button>
+              <Button to="/auth/signup" variant="outline" className="mt-8">{c.primaryCta}<ArrowRight size={15} /></Button>
             </div>
             <WorkflowPreview copy={c.previewOps} />
           </div>
@@ -568,17 +882,30 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ─── SECURITY & CONTROL ─── */}
+        {/* ─── 6 LAYERS OF RELIABILITY & ZERO-HALLUCINATION ─── */}
         <section id="features" className="container-page py-20 sm:py-28">
-          <SectionIntro kicker={c.controlKicker} title={c.controlTitle} />
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {c.controls.map(([title, text, Icon]) => (
-              <div key={title as string} className="rounded-2xl border border-white/10 bg-white/[0.035] p-6">
-                <Icon size={21} className="text-cyan" />
-                <h3 className="mt-6 text-lg font-bold text-text">{title as string}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted">{text as string}</p>
-              </div>
-            ))}
+          <SectionIntro kicker={c.controlKicker} title={c.controlTitle} text={c.controlSubtitle} />
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {c.controls.map((ctrl) => {
+              const Icon = ctrl.icon
+              return (
+                <div
+                  key={ctrl.title}
+                  className="rounded-2xl border border-white/10 bg-[#090D1C] p-6 transition-colors hover:border-[#42edf5]/30 hover:bg-[#0D1429]"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#42edf5]/10 border border-[#42edf5]/20">
+                      <Icon size={20} className="text-[#42edf5]" />
+                    </div>
+                    <span className="font-mono text-[10px] text-[#42edf5] bg-[#42edf5]/10 px-2 py-0.5 rounded border border-[#42edf5]/20">
+                      {ctrl.tag}
+                    </span>
+                  </div>
+                  <h3 className="mt-5 text-base font-bold text-white">{ctrl.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-[#94A3B8]">{ctrl.text}</p>
+                </div>
+              )
+            })}
           </div>
         </section>
 
@@ -603,7 +930,7 @@ export default function LandingPage() {
               <h2 className="mt-6 text-[clamp(2.2rem,4.5vw,4rem)] font-black leading-[1.02] text-text">{c.finalTitle}</h2>
               <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{c.finalText}</p>
             </div>
-            <Button to="/app" size="lg" className="relative mt-8 !bg-cyan !bg-none !text-[#041018] shadow-none hover:!brightness-110 lg:mt-0">{c.primaryCta}<ArrowRight size={17} /></Button>
+            <Button to="/auth/signup" size="lg" className="relative mt-8 !bg-cyan !bg-none !text-[#041018] shadow-none hover:!brightness-110 lg:mt-0">{c.primaryCta}<ArrowRight size={17} /></Button>
           </div>
         </section>
       </main>

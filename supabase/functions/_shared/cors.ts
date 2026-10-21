@@ -1,7 +1,9 @@
 // CORS + JSON helpers for browser-invoked Edge Functions.
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-setup-secret',
+  // x-file-name / x-currency: metadata of the margin-report binary upload — headers, not URL
+  // params, so filenames never land in request-line logs
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-setup-secret, x-file-name, x-currency',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 

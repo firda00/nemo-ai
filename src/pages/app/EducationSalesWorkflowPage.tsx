@@ -500,8 +500,6 @@ export default function EducationSalesWorkflowPage() {
 
       <div className="mt-5 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
         <Button to="/app/results" size="sm" variant={page === 'results' ? 'primary' : 'ghost'}>All results</Button>
-        <Button to="/app/lead-forms" size="sm" variant="ghost">Лиды</Button>
-        <Button to="/app/lead-forms" size="sm" variant="ghost">Lead forms</Button>
         <Button to="/app/analytics" size="sm" variant="ghost">Analytics</Button>
       </div>
 

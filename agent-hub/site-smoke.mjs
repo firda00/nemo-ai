@@ -85,7 +85,8 @@ try {
   // существовал, дойти до него было нельзя, и ни одна проверка этого не заметила.
   // Retired standalone modules intentionally redirect into the unified desk or
   // Settings Directory, so the smoke gate checks only canonical page routes.
-  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/analytics', '/app/autopost', '/app/followups', '/app/quality', '/app/runtime', '/app/memory', '/app/settings']
+  const appRoutes = ['/app', '/app/agents', '/app/swarms', '/app/analytics', '/app/quality', '/app/runtime', '/app/memory', '/app/settings']
+  const retiredAppRoutes = ['/app/dialogues', '/app/marketing', '/app/autopost', '/app/followups']
 
   async function checkRoute(route) {
     // Vite keeps a development/HMR connection open, so networkidle0 can hang
@@ -123,11 +124,21 @@ try {
     console.log(`[OK] ${status} ${url}`)
   }
 
+  async function checkRetiredRoute(route) {
+    const url = baseUrl + route
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    if (!response) throw new Error(`${url} — ответа нет`)
+    if (response.status() >= 400) throw new Error(`${url} — HTTP ${response.status()}`)
+    await page.waitForFunction(() => window.location.pathname === '/app', { timeout: 30_000 })
+    console.log(`[OK] ${response.status()} ${url} → /app`)
+  }
+
   for (const route of publicRoutes) await checkRoute(route)
   await page.evaluate(() => localStorage.setItem('nemo.user', JSON.stringify({
     id: 'smoke-user', email: 'smoke@nemo.local', name: 'Smoke User', lang: 'uz', role: 'user', onboardingCompleted: true, createdAt: '2026-07-10', quotaUsed: 0, quotaLimit: 100,
   })))
   for (const route of appRoutes) await checkRoute(route)
+  for (const route of retiredAppRoutes) await checkRetiredRoute(route)
 
   await page.setViewport({ width: 390, height: 844, isMobile: true })
   await checkRoute('/app')

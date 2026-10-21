@@ -50,16 +50,39 @@ Deno.serve(async (request) => {
   } catch {
     return response({ error: { code: 'INVALID_REQUEST' } }, 400)
   }
-  if (payload.rpc !== 'runtime_claim_compute_jobs' && payload.rpc !== 'runtime_finish_compute_job') {
+  // claim/finish stay available to both worker classes (backward compatible); the document
+  // lifecycle RPCs answer ONLY to the DOCUMENT token — the media token cannot finalize
+  const DOCUMENT_ONLY_RPCS = ['document_finalize_workflow', 'document_list_unfinalized']
+  const SHARED_RPCS = ['runtime_claim_compute_jobs', 'runtime_finish_compute_job']
+  const rpcName = typeof payload.rpc === 'string' ? payload.rpc : ''
+  if (!SHARED_RPCS.includes(rpcName) && !DOCUMENT_ONLY_RPCS.includes(rpcName)) {
+    return response({ error: { code: 'COMPUTE_RPC_DENIED' } }, 403)
+  }
+  if (DOCUMENT_ONLY_RPCS.includes(rpcName) && !isDocument) {
     return response({ error: { code: 'COMPUTE_RPC_DENIED' } }, 403)
   }
   if (!payload.args || typeof payload.args !== 'object' || Array.isArray(payload.args)) {
     return response({ error: { code: 'INVALID_REQUEST' } }, 400)
   }
   const args = payload.args as Record<string, unknown>
-  if (payload.rpc === 'runtime_claim_compute_jobs') {
+  if (rpcName === 'runtime_claim_compute_jobs') {
     const allowedProfile = isMedia ? 'PROFILE_C_BROWSER' : 'PROFILE_B_DOCS'
     if (args.p_profile !== allowedProfile) return response({ error: { code: 'COMPUTE_PROFILE_DENIED' } }, 403)
+  }
+  // strict bounded params for the new lifecycle RPCs — nothing beyond their exact shapes
+  if (rpcName === 'document_finalize_workflow') {
+    const keys = Object.keys(args).sort()
+    if (keys.join(',') !== 'p_account_id,p_workflow_id'
+      || typeof args.p_account_id !== 'string' || typeof args.p_workflow_id !== 'string') {
+      return response({ error: { code: 'INVALID_REQUEST' } }, 400)
+    }
+  }
+  if (rpcName === 'document_list_unfinalized') {
+    const keys = Object.keys(args)
+    if (keys.length > 1 || (keys.length === 1 && keys[0] !== 'p_limit')
+      || (args.p_limit !== undefined && (typeof args.p_limit !== 'number' || !Number.isInteger(args.p_limit) || args.p_limit < 1 || args.p_limit > 25))) {
+      return response({ error: { code: 'INVALID_REQUEST' } }, 400)
+    }
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {

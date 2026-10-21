@@ -60,34 +60,35 @@ export function MarketingHeader() {
               </Button>
             ) : (
               <>
-                <Link to="/app" className="text-sm font-medium text-muted transition-colors hover:text-text">
+                <Link to="/auth" className="text-sm font-medium text-muted transition-colors hover:text-text">
                   {t('nav.login')}
                 </Link>
-                <Button to="/app" size="sm" className="!bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_12px_32px_-16px_rgba(66,237,245,0.9)] hover:brightness-110">
-                  {t('marketingHeader.book')}
+                <Button to="/auth/signup" size="sm" className="!bg-none !bg-[#42edf5] !text-[#050816] shadow-[0_12px_32px_-16px_rgba(66,237,245,0.9)] hover:brightness-110">
+                  {t('auth.toSignupLink')}
                 </Button>
               </>
             )}
           </div>
 
-          <button className="rounded-full p-2 text-text lg:hidden" onClick={() => setOpen((v) => !v)} aria-label={t('common.menu')}>
+          <button className="rounded-full p-2 text-text lg:hidden" onClick={() => setOpen((v) => !v)} aria-label={t('common.menu')} aria-expanded={open} aria-controls="marketing-mobile-menu">
             {open ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
 
         {open && (
-          <div className="mb-3 rounded-2xl border border-ice/10 bg-panel p-3 shadow-lg lg:hidden">
+          <div id="marketing-mobile-menu" className="mb-3 rounded-2xl border border-ice/10 bg-panel p-3 shadow-lg lg:hidden">
             <div className="flex flex-col gap-1">
               {links.map((l) => (
                 <a key={l.href} href={l.href} onClick={() => setOpen(false)} className="rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-white/5 hover:text-text">
                   {l.label}
                 </a>
               ))}
-              <div className="mt-2 flex items-center justify-between gap-3 px-1">
-                <LanguageToggle />
-                <Button to="/app" size="sm" className="!bg-[linear-gradient(135deg,#42edf5_0%,#b74cff_100%)] !text-[#050816] shadow-[0_12px_32px_-16px_rgba(66,237,245,0.9)] hover:brightness-110">
-                  {t('marketingHeader.book')}
-                </Button>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-3 px-1">
+                <div className="shrink-0"><LanguageToggle /></div>
+                {isAuthed ? <Button to="/app" size="sm">{t('nav.openApp')}</Button> : <div className="flex items-center gap-3">
+                  <Link to="/auth" onClick={() => setOpen(false)} className="text-sm text-text">{t('nav.login')}</Link>
+                  <Button to="/auth/signup" size="sm" className="!bg-none !bg-[#42edf5] !text-[#050816] hover:brightness-110">{t('auth.toSignupLink')}</Button>
+                </div>}
               </div>
             </div>
           </div>

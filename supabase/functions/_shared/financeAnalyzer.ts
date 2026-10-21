@@ -4,8 +4,9 @@ import {
   FinanceNarrativeSchema,
   type CashFlowAnalyticsOutput,
   type CashFlowAnalyticsRequest,
-  type FinanceTransaction,
 } from './financeCashFlow.ts'
+import { selectFinanceTransactions, financeNarrativeTransactions } from './financeSelection.ts'
+import { financeSafeSum } from './financeAmounts.ts'
 
 const FINDING_PROPERTIES = {
   title: { type: 'string', minLength: 1, maxLength: 240 },
@@ -82,38 +83,32 @@ export const FINANCE_NARRATIVE_JSON_SCHEMA = {
   },
 } as const
 
-function posted(transactions: FinanceTransaction[]): FinanceTransaction[] {
-  return transactions.filter((transaction) => transaction.status === 'posted')
-}
-
 export function calculateCashFlow(request: CashFlowAnalyticsRequest) {
-  const transactions = posted(request.transactions)
-  let inflow = 0
-  let outflow = 0
-  let transfers = 0
+  const { transactions, selection } = selectFinanceTransactions(request)
+  const inflow = financeSafeSum(transactions.filter(t => t.direction === 'inflow').map(t => t.amount_minor))
+  const outflow = financeSafeSum(transactions.filter(t => t.direction === 'outflow').map(t => t.amount_minor))
+  const transfers = financeSafeSum(transactions.filter(t => t.direction === 'transfer').map(t => t.amount_minor))
   const categories = new Map<string, { category_id: string; category_name: string; direction: 'inflow' | 'outflow'; amount_minor: number; transaction_count: number }>()
   for (const transaction of transactions) {
-    if (transaction.direction === 'transfer') { transfers += transaction.amount_minor; continue }
-    if (transaction.direction === 'inflow') inflow += transaction.amount_minor
-    else outflow += transaction.amount_minor
+    if (transaction.direction === 'transfer') continue
     const categoryId = transaction.category?.id ?? 'uncategorized'
     const key = `${transaction.direction}:${categoryId}`
     const existing = categories.get(key) ?? {
       category_id: categoryId, category_name: transaction.category?.name ?? 'Uncategorized',
       direction: transaction.direction, amount_minor: 0, transaction_count: 0,
     }
-    existing.amount_minor += transaction.amount_minor
+    existing.amount_minor = financeSafeSum([existing.amount_minor, transaction.amount_minor])
     existing.transaction_count++
     categories.set(key, existing)
   }
-  const net = inflow - outflow
+  const net = financeSafeSum([inflow, -outflow])
   const category_breakdown = [...categories.values()].map((category) => ({
     ...category,
     share_of_direction: category.amount_minor / Math.max(1, category.direction === 'inflow' ? inflow : outflow),
   })).sort((a, b) => b.amount_minor - a.amount_minor)
   const uncategorized = transactions.filter((transaction) => transaction.direction !== 'transfer' && !transaction.category).map((transaction) => transaction.transaction_id)
   const missingEvidence = transactions.filter((transaction) => transaction.evidence.length === 0).map((transaction) => transaction.transaction_id)
-  const pendingCount = request.transactions.filter((transaction) => transaction.status === 'pending').length
+  const pendingCount = selection.pending_in_period_count
   const totalQualityChecks = Math.max(1, transactions.length * 2)
   return {
     summary: {
@@ -121,38 +116,45 @@ export function calculateCashFlow(request: CashFlowAnalyticsRequest) {
       inflow_minor: inflow,
       outflow_minor: outflow,
       net_cash_flow_minor: net,
-      closing_balance_minor: request.opening_balance_minor + net,
+      closing_balance_minor: financeSafeSum([request.opening_balance_minor, net]),
       transfer_volume_minor: transfers,
     },
     category_breakdown,
     data_quality: {
-      completeness_score: Math.max(0, 1 - ((uncategorized.length + missingEvidence.length) / totalQualityChecks)),
+      completeness_score: transactions.length ? Math.max(0, 1 - ((uncategorized.length + missingEvidence.length) / totalQualityChecks)) : 0,
       uncategorized_transaction_ids: uncategorized,
       missing_evidence_transaction_ids: missingEvidence,
       warnings: [
+        'Source coverage for the period is not verified; opening balance is user supplied at period start',
+        ...(selection.outside_period_count ? [`${selection.outside_period_count} transaction(s) outside [from,to) excluded by occurred_at`] : []),
+        ...(selection.reversed_in_period_count ? [`${selection.reversed_in_period_count} reversed transaction(s) in the period excluded`] : []),
         ...(pendingCount ? [`${pendingCount} pending transaction(s) excluded from cash-flow totals`] : []),
+        ...(!transactions.length ? ['No posted transactions in the selected period'] : []),
+        ...(transactions.filter(t => t.evidence.length).length > 250 ? ['Narrative evidence is limited to the first 250 eligible transactions; totals cover all selected transactions'] : []),
         ...(missingEvidence.length ? ['Transactions without evidence cannot support impact or ROI claims'] : []),
       ],
     },
   }
 }
 
-function evidenceKey(value: { source_id: string; source_kind: string; locator: Record<string, unknown> }): string {
-  return `${value.source_id}:${value.source_kind}:${JSON.stringify(value.locator, Object.keys(value.locator).sort())}`
+function evidenceKey(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(evidenceKey).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => `${JSON.stringify(key)}:${evidenceKey(v)}`).join(',')}}`
+  return JSON.stringify(value)
 }
 
 export function validateFinanceNarrative(value: unknown, request: CashFlowAnalyticsRequest) {
   const parsed = FinanceNarrativeSchema.safeParse(value)
   if (!parsed.success) return { narrative: null, errors: parsed.error.issues.slice(0, 12).map((issue) => `${issue.path.join('.')}: ${issue.message}`) }
-  const transactionIds = new Set(request.transactions.map((transaction) => transaction.transaction_id))
-  const transactionAmounts = new Map(request.transactions.map((transaction) => [transaction.transaction_id, transaction.amount_minor]))
-  const allowedEvidence = new Set(request.transactions.flatMap((transaction) => transaction.evidence.map(evidenceKey)))
-  const categorySpend = new Map<string, number>()
-  request.transactions.forEach((transaction) => {
-    if (transaction.status === 'posted' && transaction.direction === 'outflow' && transaction.category) {
-      categorySpend.set(transaction.category.id, (categorySpend.get(transaction.category.id) ?? 0) + transaction.amount_minor)
-    }
-  })
+  const selected = financeNarrativeTransactions(request)
+  const expenseTransactions = selected.filter(transaction => transaction.direction === 'outflow')
+  const transactionIds = new Set(expenseTransactions.map((transaction) => transaction.transaction_id))
+  const transactionAmounts = new Map(expenseTransactions.map((transaction) => [transaction.transaction_id, transaction.amount_minor]))
+  const allowedEvidence = new Set(selected.flatMap((transaction) => transaction.evidence.map(evidenceKey)))
+  const citedExpenses = (evidence: typeof selected[number]['evidence']) => {
+    const keys = new Set(evidence.map(evidenceKey))
+    return expenseTransactions.filter(transaction => transaction.evidence.some(ref => keys.has(evidenceKey(ref))))
+  }
   const errors: string[] = []
   const findings = [...parsed.data.impact_assessments, ...parsed.data.inefficiencies, ...parsed.data.recommendations]
   findings.forEach((finding, index) => finding.evidence.forEach((evidence) => {
@@ -162,22 +164,31 @@ export function validateFinanceNarrative(value: unknown, request: CashFlowAnalyt
     if (!transactionIds.has(id)) errors.push(`unknown affected transaction: ${id}`)
   }))
   parsed.data.inefficiencies.forEach((finding) => {
-    const affectedTotal = finding.affected_transaction_ids.reduce((sum, id) => sum + (transactionAmounts.get(id) ?? 0), 0)
+    const citedIds = new Set(citedExpenses(finding.evidence).map(transaction => transaction.transaction_id))
+    if (finding.affected_transaction_ids.some(id => !citedIds.has(id))) errors.push('each affected transaction must have evidence cited by this finding')
+    if (new Set(finding.affected_transaction_ids).size !== finding.affected_transaction_ids.length) errors.push('duplicate affected transaction id')
+    const affectedTotal = financeSafeSum([...new Set(finding.affected_transaction_ids)].map(id => transactionAmounts.get(id) ?? 0))
     if (finding.avoidable_amount_minor != null && finding.avoidable_amount_minor > affectedTotal) errors.push('avoidable amount exceeds affected transaction total')
   })
   parsed.data.impact_assessments.forEach((impact) => {
-    if (impact.spend_minor > (categorySpend.get(impact.category_id) ?? 0)) errors.push(`impact spend exceeds posted category spend: ${impact.category_id}`)
-    if (impact.attribution_quality === 'insufficient_data' && impact.roi_ratio !== null) errors.push('ROI must be null when attribution data is insufficient')
-    if (impact.attribution_quality === 'measured' && !impact.metric_changes.length) errors.push('measured impact requires metric changes')
+    const cited = citedExpenses(impact.evidence).filter(transaction => transaction.category?.id === impact.category_id)
+    if (!cited.length || impact.spend_minor > financeSafeSum(cited.map(transaction => transaction.amount_minor))) errors.push(`impact spend exceeds cited category spend: ${impact.category_id}`)
+    // Transactions and objective targets do not establish before/after outcomes
+    // or causal attribution. A typed, dated outcome source is not supported yet.
+    if (impact.attribution_quality !== 'insufficient_data' || impact.roi_ratio !== null || impact.impact_status !== 'unknown' || impact.metric_changes.length) errors.push('verified outcome evidence is unavailable: use unknown impact, insufficient_data, null ROI and no metric changes')
+  })
+  parsed.data.recommendations.forEach(finding => {
+    if (finding.estimated_saving_minor != null && finding.estimated_saving_minor > financeSafeSum(citedExpenses(finding.evidence).map(transaction => transaction.amount_minor))) errors.push('estimated saving exceeds cited expenses')
   })
   return { narrative: errors.length ? null : parsed.data, errors }
 }
 
 export function buildFinanceAnalysisPrompt(request: CashFlowAnalyticsRequest): string {
   const deterministic = calculateCashFlow(request)
-  const supported = request.transactions.filter((transaction) => transaction.status === 'posted' && transaction.evidence.length).slice(0, 250)
+  const supported = financeNarrativeTransactions(request)
   const evidenceFacts = supported.map((transaction) => ({
     transaction_id: transaction.transaction_id,
+    occurred_at: transaction.occurred_at,
     direction: transaction.direction,
     amount_minor: transaction.amount_minor,
     currency: transaction.currency,
@@ -189,7 +200,9 @@ export function buildFinanceAnalysisPrompt(request: CashFlowAnalyticsRequest): s
     'Analyze cash-flow impact using only the deterministic aggregates and evidence facts below.',
     'Do not recalculate totals. Do not infer ROI, savings, duplicates, subscription usage or outcomes without cited evidence.',
     'Copy evidence references exactly. If attribution is missing, use impact_status="unknown", attribution_quality="insufficient_data", roi_ratio=null.',
+    'This input does not contain verified dated before/after outcome evidence. All impact assessments must use impact_status="unknown", attribution_quality="insufficient_data", roi_ratio=null and metric_changes=[]. Targets or actual objective values alone do not prove causal impact.',
     'Recommendations are advisory and requires_human_approval must always be true.',
+    `Period: ${JSON.stringify(request.period)}; occurred_at >= from and < to; posted only. Opening balance is the user's balance at from.`,
     `Deterministic aggregates: ${JSON.stringify(deterministic)}`,
     `Business objectives: ${JSON.stringify(request.business_objectives)}`,
     `Evidence facts: ${JSON.stringify(evidenceFacts)}`,

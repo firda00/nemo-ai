@@ -11,6 +11,10 @@ import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { cn } from '../../lib/cn'
 import type { AgentTraceStep, ChannelType, Dialogue, DialogueMessage, DialogueStatus } from '../../types/platform'
 import { KnowledgeIntegrationNav } from '../../components/platform/KnowledgeIntegrationNav'
+import { useAuth } from '../../context/AuthContext'
+import { invokeScopedFunction } from '../../lib/scopedFunctionCall'
+import { withDialogueSession, loadDialogueRows, updateDialogueState } from '../../lib/dialogueSession'
+import { ownerWorkflowCopy } from '../../i18n/ownerWorkflow'
 
 // per-dialogue trace layout: parsed traces by their row id, plus reply-id -> trace-id links
 interface TraceLayout {
@@ -56,13 +60,19 @@ const statusKey: Record<DialogueStatus, string> = {
 let mid = 0
 
 export default function DialoguesPage() {
-  const { t } = useI18n()
+  const { user, sessionGeneration } = useAuth()
+  return <DialogueInbox key={`${user?.id ?? 'guest'}:${sessionGeneration}`} userId={user?.id ?? ''} />
+}
+
+function DialogueInbox({ userId }: { userId: string }) {
+  const { t, lang } = useI18n()
+  const copy = ownerWorkflowCopy[lang]
   const toast = useToast()
   const getAgent = useAgentStore((s) => s.getAgent)
   const [params] = useSearchParams()
   const [dialogues, setDialogues] = useState<Dialogue[]>(live ? [] : mockDialogues)
   const [agentNames, setAgentNames] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(live)
+  const [loading, setLoading] = useState(live && Boolean(userId))
   const [loadError, setLoadError] = useState(false)
   const loadBusy = useRef(false)
   const loadQueued = useRef(false)
@@ -74,51 +84,42 @@ export default function DialoguesPage() {
   const [custOpen, setCustOpen] = useState(false)
   const [reply, setReply] = useState('')
   const [resolving, setResolving] = useState(false)
+  const [sending, setSending] = useState(false)
+  const actionBusy = useRef(false)
+  const loadRevision = useRef(0)
+  const mounted = useRef(true)
+  const sessionController = useRef(new AbortController())
+  const selectedIdRef = useRef(selectedId)
   const messageEndRef = useRef<HTMLDivElement | null>(null)
+
+  const selectDialogue = (id: string | null) => {
+    selectedIdRef.current = id
+    replyRev.current++
+    setSelectedId(id)
+    setReply('')
+    setCustOpen(false)
+  }
 
   // live mode: load dialogues + messages from Supabase, refresh on realtime events.
   // Loads are SERIALIZED (one in flight; overlapping triggers queue exactly one
   // follow-up), so every completed request lands — a slow backend can never be
   // starved into showing neither data nor the error banner by the 7s poll.
   const load = useCallback(async () => {
-    if (!live || !supabase) return
+    if (!live || !supabase || !userId || !mounted.current || sessionController.current.signal.aborted) return
     if (loadBusy.current) {
       loadQueued.current = true
       return
     }
     loadBusy.current = true
-    do {
+    const controller = sessionController.current
+    const current = () => mounted.current && controller === sessionController.current && !controller.signal.aborted
+    try { do {
       loadQueued.current = false
-      const dialogueResult = await supabase
-        .from('dialogues')
-        .select('*')
-        .order('updated_at', { ascending: false })
-        .limit(200)
-      if (dialogueResult.error) {
-        // keep whatever is already on screen and say so, instead of rendering
-        // a fake-empty inbox (the 7s safety poll retries on its own)
-        setLoading(false)
-        setLoadError(true)
-        continue
-      }
-      // Do not depend on nested PostgREST relationships here. Older production
-      // schemas do not expose messages.agent_id -> agents in the schema cache,
-      // which made the former nested select fail the whole inbox with HTTP 400.
-      const dialogueRows = (dialogueResult.data ?? []) as Row[]
-      const dialogueIds = dialogueRows.map((row) => row.id)
-      let messageRows: Row[] = []
-      if (dialogueIds.length) {
-        const messageResult = await supabase.from('messages').select('*').in('dialogue_id', dialogueIds).order('created_at', { ascending: true })
-        if (messageResult.error) { setLoading(false); setLoadError(true); continue }
-        messageRows = (messageResult.data ?? []) as Row[]
-      }
-      const agentIds = Array.from(new Set([...dialogueRows.map((row) => row.agent_id), ...messageRows.map((row) => row.agent_id)].filter(Boolean))) as string[]
-      let agentRows: Row[] = []
-      if (agentIds.length) {
-        const agentResult = await supabase.from('agents').select('id, name').in('id', agentIds)
-        if (agentResult.error) { setLoading(false); setLoadError(true); continue }
-        agentRows = (agentResult.data ?? []) as Row[]
-      }
+      const revision = loadRevision.current
+      const loaded = await withDialogueSession(supabase, { userId, alive: current, signal: controller.signal }, loadDialogueRows)
+      if (!current()) return
+      if (revision !== loadRevision.current) { loadQueued.current = true; continue }
+      const dialogueRows = loaded.dialogues as Row[], messageRows = loaded.messages as Row[], agentRows = loaded.agents as Row[]
       const namesById = new Map(agentRows.map((row) => [row.id, row.name]))
       const messagesByDialogue = new Map<string, Row[]>()
       for (const message of messageRows) {
@@ -133,15 +134,21 @@ export default function DialoguesPage() {
       setAgentNames(names)
       setLoading(false)
       setLoadError(false)
-    } while (loadQueued.current)
-    loadBusy.current = false
-  }, [])
+    } while (loadQueued.current && current()) }
+    catch { if (current()) { setLoading(false); setLoadError(true) } }
+    finally { if (controller === sessionController.current) loadBusy.current = false }
+  }, [userId])
 
   useEffect(() => {
-    if (!live || !supabase) return
-    window.setTimeout(() => void load(), 0)
+    mounted.current = true
+    sessionController.current = new AbortController()
+    loadBusy.current = false
+    loadQueued.current = false
+    if (!live || !supabase || !userId) return () => { mounted.current = false; sessionController.current.abort() }
+    const initial = window.setTimeout(() => void load(), 0)
+    const auth = supabase.auth.onAuthStateChange((event, session) => { if (event === 'SIGNED_OUT' || session?.user.id !== userId) { mounted.current = false; sessionController.current.abort() } }).data.subscription
     const ch = supabase
-      .channel('dialogues-rt')
+      .channel(`dialogues-rt-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'dialogues' }, () => load())
       .subscribe()
@@ -149,9 +156,14 @@ export default function DialoguesPage() {
     const iv = setInterval(load, 7000)
     return () => {
       supabase?.removeChannel(ch)
+      mounted.current = false
+      sessionController.current.abort()
+      loadQueued.current = false
+      clearTimeout(initial)
       clearInterval(iv)
+      auth.unsubscribe()
     }
-  }, [load])
+  }, [load, userId])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -175,61 +187,73 @@ export default function DialoguesPage() {
   }, [selectedId, selected?.messages.length])
 
   const toggleTakeover = async () => {
-    if (!selected) return
+    if (!selected || actionBusy.current || !mounted.current) return
+    const id = selected.id
     const next = !selected.operatorTakeover
-    setSelected({ operatorTakeover: next, status: next ? 'needs_operator' : 'open' })
-    if (live && supabase) {
-      await supabase
-        .from('dialogues')
-        .update({ operator_takeover: next, status: next ? 'needs_operator' : 'open' })
-        .eq('id', selected.id)
-    }
+    actionBusy.current = true
+    setResolving(true)
+    const controller = sessionController.current
+    const current = () => mounted.current && controller === sessionController.current && !controller.signal.aborted
+    loadRevision.current++
+    try {
+      if (live && supabase) await withDialogueSession(supabase, { userId, alive: current, signal: controller.signal }, scope => updateDialogueState(scope, id, selected.agentId, { operator_takeover: next, status: next ? 'needs_operator' : 'open' }))
+      if (current()) { loadRevision.current++; setDialogues(rows => rows.map(d => d.id === id ? { ...d, operatorTakeover: next, status: next ? 'needs_operator' : 'open' } : d)) }
+    } catch { if (current()) toast(copy.takeoverError, 'error') }
+    finally { if (current()) { actionBusy.current = false; setResolving(false) } }
   }
 
   const resolveDialogue = async () => {
-    if (!selected || resolving) return
+    if (!selected || actionBusy.current || !mounted.current) return
     const id = selected.id
-    const previous = selected
+    actionBusy.current = true
     setResolving(true)
-    setDialogues((rows) => rows.map((d) => d.id === id ? { ...d, status: 'resolved', operatorTakeover: false } : d))
-    setSelectedId(null)
-    if (live && supabase) {
-      const { error } = await supabase.from('dialogues').update({ status: 'resolved', operator_takeover: false }).eq('id', id)
-      if (error) {
-        setDialogues((rows) => rows.map((d) => d.id === id ? previous : d))
-        setSelectedId(id)
-        toast(t('platform.dialogues.resolveError'), 'error')
+    const controller = sessionController.current
+    const current = () => mounted.current && controller === sessionController.current && !controller.signal.aborted
+    loadRevision.current++
+    try {
+      if (live && supabase) await withDialogueSession(supabase, { userId, alive: current, signal: controller.signal }, scope => updateDialogueState(scope, id, selected.agentId, { status: 'resolved', operator_takeover: false }))
+      if (current()) {
+        loadRevision.current++
+        setDialogues(rows => rows.map(d => d.id === id ? { ...d, status: 'resolved', operatorTakeover: false } : d))
+        if (selectedIdRef.current === id) selectDialogue(null)
       }
-    }
-    setResolving(false)
+    } catch { if (current()) toast(t('platform.dialogues.resolveError'), 'error') }
+    finally { if (current()) { actionBusy.current = false; setResolving(false) } }
   }
 
   const sendReply = async () => {
     const text = reply.trim()
-    if (!text || !selected) return
+    if (!text || !selected || actionBusy.current || !mounted.current) return
     const dialogueId = selected.id
-    const optimisticId = `op${++mid}`
-    const rev = ++replyRev.current // composer revision at send time
-    setReply('')
-    setSelected({
-      messages: [...selected.messages, { id: optimisticId, author: 'operator', content: text, time: nowTime() }],
-      updatedAt: nowTime(),
-    })
-    if (!live || !supabase) return
-    const { data, error } = await supabase.functions.invoke('operator-send', { body: { dialogue_id: dialogueId, text } })
-    const res = data as { ok?: boolean; delivered?: boolean } | null
-    if (error || !res?.ok) {
-      // not persisted — take the optimistic bubble back (by id: selection/state may
-      // have moved on) and hand the draft back, unless a newer draft exists or a
-      // newer send already claimed the composer (revision check)
-      setDialogues((ds) => ds.map((d) => (d.id === dialogueId ? { ...d, messages: d.messages.filter((m) => m.id !== optimisticId) } : d)))
-      if (replyRev.current === rev) setReply((cur) => (cur ? cur : text))
-      toast(t('platform.dialogues.sendError'), 'error')
+    if (!live || !supabase) {
+      setSelected({ messages: [...selected.messages, { id: `op${++mid}`, author: 'operator', content: text, time: nowTime() }], updatedAt: nowTime() })
+      setReply('')
       return
     }
-    // persisted but the channel hand-off failed (e.g. Telegram down): keep the
-    // bubble — it is in the dialogue — but do not pretend the customer got it
-    if (res.delivered === false) toast(t('platform.dialogues.sendNotDelivered'), 'error')
+    actionBusy.current = true
+    setSending(true)
+    const rev = ++replyRev.current
+    const controller = sessionController.current
+    const current = () => mounted.current && controller === sessionController.current && !controller.signal.aborted
+    loadRevision.current++
+    try {
+      const { data, error } = await invokeScopedFunction(supabase, 'operator-send', { dialogue_id: dialogueId, text }, { userId, alive: current, signal: controller.signal }, 20_000)
+      if (!current()) return
+      const res = data as { ok?: boolean; delivered?: boolean } | null
+      if (error || !res?.ok) throw new Error('SEND_UNCONFIRMED')
+      if (selectedIdRef.current === dialogueId && replyRev.current === rev) setReply('')
+      if (res.delivered === false) toast(t('platform.dialogues.sendNotDelivered'), 'error')
+      loadRevision.current++
+      void load()
+    } catch {
+      if (current()) {
+        // A timeout may follow persistence/delivery. Keep the draft and refresh;
+        // never auto-retry or manufacture a sent bubble after an uncertain result.
+        toast(copy.sendUncertain, 'error')
+        void load()
+      }
+    }
+    finally { if (current()) { actionBusy.current = false; setSending(false) } }
   }
 
   return (
@@ -281,7 +305,7 @@ export default function DialoguesPage() {
                 const preview = chats[chats.length - 1]?.content
                 return (
                   <li key={d.id}>
-                    <button onClick={() => { setSelectedId(d.id); setCustOpen(false) }} className={cn('flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors', active ? 'bg-ice/[0.08]' : 'hover:bg-ice/[0.04]')}>
+                    <button onClick={() => selectDialogue(d.id)} className={cn('flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors', active ? 'bg-ice/[0.08]' : 'hover:bg-ice/[0.04]')}>
                       <span className="relative mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: `${meta.color}22`, color: meta.color }}>
                         <meta.Icon size={16} />
                       </span>
@@ -308,9 +332,9 @@ export default function DialoguesPage() {
       {/* conversation */}
       {selected ? (
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-ice/[0.07] bg-panel/60 px-4 py-3 backdrop-blur">
+          <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-ice/[0.07] bg-panel/60 px-4 py-3 backdrop-blur">
             <div className="flex items-center gap-2.5">
-              <button onClick={() => setSelectedId(null)} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.05] sm:hidden">
+              <button onClick={() => selectDialogue(null)} className="rounded-lg p-1.5 text-muted hover:bg-ice/[0.05] sm:hidden">
                 <ArrowLeft size={18} />
               </button>
               <div>
@@ -319,10 +343,10 @@ export default function DialoguesPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={resolveDialogue} disabled={resolving || selected.status === 'resolved'} className="inline-flex items-center gap-1.5 rounded-lg border border-teal/30 bg-teal/10 px-3 py-1.5 text-xs font-normal text-teal transition-colors hover:bg-teal/15 disabled:cursor-not-allowed disabled:opacity-45">
+              <button onClick={resolveDialogue} disabled={resolving || sending || selected.status === 'resolved'} className="inline-flex items-center gap-1.5 rounded-lg border border-teal/30 bg-teal/10 px-3 py-1.5 text-xs font-normal text-teal transition-colors hover:bg-teal/15 disabled:cursor-not-allowed disabled:opacity-45">
                 <CheckCircle2 size={14} /> {t('platform.dialogues.resolve')}
               </button>
-              <button onClick={toggleTakeover} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-normal transition-colors', selected.operatorTakeover ? 'bg-amber/15 text-amber' : 'glass text-text hover:bg-ice/[0.09]')}>
+              <button onClick={toggleTakeover} disabled={resolving || sending} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-normal transition-colors disabled:opacity-45', selected.operatorTakeover ? 'bg-amber/15 text-amber' : 'glass text-text hover:bg-ice/[0.09]')}>
                 <Hand size={14} /> {selected.operatorTakeover ? t('platform.dialogues.handBack') : t('platform.dialogues.takeover')}
               </button>
               <button onClick={() => setCustOpen(true)} className="rounded-lg border border-ice/10 p-2 text-muted hover:bg-ice/[0.05] xl:hidden" aria-label={t('platform.dialogues.customer')}>
@@ -369,6 +393,7 @@ export default function DialoguesPage() {
             {selected.operatorTakeover ? (
               <div className="glass flex items-end gap-2 rounded-xl p-2">
                 <textarea
+                  disabled={sending || resolving}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                   onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -379,7 +404,7 @@ export default function DialoguesPage() {
                   aria-label={t('platform.dialogues.replyPh')}
                   className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text outline-none placeholder:text-muted/70"
                 />
-                <button onClick={sendReply} disabled={!reply.trim()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-cobalt/50 text-cobalt transition-colors hover:bg-cobalt/10 disabled:opacity-40">
+                <button onClick={sendReply} disabled={!reply.trim() || sending || resolving} aria-label={t('platform.dialogues.replyPh')} className="flex h-9 w-9 items-center justify-center rounded-lg border border-cobalt/50 text-cobalt transition-colors hover:bg-cobalt/10 disabled:opacity-40">
                   <Send size={16} />
                 </button>
               </div>
@@ -388,7 +413,7 @@ export default function DialoguesPage() {
                 <span className="flex items-center gap-2 text-xs text-muted">
                   <Bot size={15} className="text-violet" /> {agentName}
                 </span>
-                <button onClick={toggleTakeover} className="text-xs font-normal text-violet hover:underline">
+                <button onClick={toggleTakeover} disabled={resolving || sending} className="text-xs font-normal text-violet hover:underline disabled:opacity-45">
                   {t('platform.dialogues.takeover')}
                 </button>
               </div>

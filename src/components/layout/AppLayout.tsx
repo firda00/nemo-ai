@@ -155,6 +155,7 @@ export function AppLayout() {
 
   // Header title: fall back to the create pages' own headings when not in nav.
   const titleFallback: Record<string, string> = {
+    '/app/employees': t('employees.title'),
     '/app/agents': t('mvp.sidebar.agents'),
     '/app/autonomous': t('appLayout.navAutonomous'),
     '/app/research': t('appLayout.navResearch'),

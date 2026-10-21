@@ -288,12 +288,32 @@ describe('ADR 001/002 multimodal business pipeline', () => {
       const pngPath = path.join(mediaDirectory, 'vehicle.png')
       const mp4Path = path.join(mediaDirectory, 'vehicle-promo.mp4')
       await writeFile(pngPath, png)
-      const ffmpegPath = process.env.FFMPEG_PATH ?? path.join(
-        import.meta.dirname, '..', 'render-worker', 'node_modules', '@remotion',
-        'compositor-win32-x64-msvc', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
-      )
-      const capabilities = await probeCapabilities(ffmpegPath)
+      // Production renders on a full ffmpeg (docker-compose pins FFMPEG_PATH=/usr/bin/ffmpeg), and
+      // the storyboard-engine defaults (motion presets, procedural soundtrack) need filters the
+      // stripped @remotion compositor build lacks (zoompan/xfade/sine/afade). Honor an explicit
+      // FFMPEG_PATH pin; otherwise prefer a full ffmpeg from PATH over the stripped fallback.
+      const storyboardFilters = ['zoompan', 'xfade', 'sine', 'afade']
+      const resolveFfmpeg = async (): Promise<{ ffmpegPath: string; capabilities: Awaited<ReturnType<typeof probeCapabilities>> }> => {
+        const pinned = process.env.FFMPEG_PATH
+        if (pinned) return { ffmpegPath: pinned, capabilities: await probeCapabilities(pinned) }
+        const stripped = path.join(
+          import.meta.dirname, '..', 'render-worker', 'node_modules', '@remotion',
+          'compositor-win32-x64-msvc', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+        )
+        for (const candidate of ['ffmpeg', stripped]) {
+          const capabilities = await probeCapabilities(candidate)
+          if (!capabilities.missingRequired.length && storyboardFilters.every((name) => capabilities.has(name))) {
+            return { ffmpegPath: candidate, capabilities }
+          }
+        }
+        return { ffmpegPath: stripped, capabilities: await probeCapabilities(stripped) }
+      }
+      const { ffmpegPath, capabilities } = await resolveFfmpeg()
       expect(capabilities.missingRequired).toEqual([])
+      expect(
+        storyboardFilters.filter((name) => !capabilities.has(name)),
+        `resolved ffmpeg (${ffmpegPath}) lacks filters the storyboard defaults require — install a full ffmpeg or set FFMPEG_PATH`,
+      ).toEqual([])
 
       const executor: SubagentExecutor = async (task) => {
         const profile = String(task.input.profile) as 'PROFILE_A_WASI' | 'PROFILE_B_DOCS' | 'PROFILE_C_BROWSER'
@@ -368,6 +388,16 @@ console.log(JSON.stringify({ labor, materials: parameters.materials, total, curr
             mime_type: 'image/png',
             size_bytes: png.byteLength,
             sha256: createHash('sha256').update(png).digest('hex'),
+            // Truthful provenance: the PNG is synthesized in-test by makeSolidPng, so the
+            // suite owns it outright. verified_at is fixed (not now()) to keep runs deterministic.
+            rights: {
+              source_type: 'owned',
+              license_identifier: 'LicenseRef-nemo-e2e-synthetic-fixture',
+              proof_ref: 'tests/e2e_multimodal_flow.test.ts#makeSolidPng-vehicle-fixture',
+              commercial_use_allowed: true,
+              derivatives_allowed: true,
+              verified_at: '2026-09-05T00:00:00+00:00',
+            },
           }],
           width: 320,
           height: 180,

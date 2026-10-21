@@ -1,0 +1,19 @@
+{
+  "status": "NOT_EXECUTED_REQUIRES_OWNER_APPROVAL",
+  "provider": "OpenRouter",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "requestedModel": "openai/gpt-4o-mini",
+  "upstream": "openai",
+  "maxRequests": 2,
+  "maxSerializedPromptBytes": 16000,
+  "conservativeInputTokensPerRequest": 20000,
+  "maxOutputTokensPerRequest": 512,
+  "inputUsdPerMillion": 0.15,
+  "outputUsdPerMillion": 0.6,
+  "conservativeTokenCostUsd": 0.0066144,
+  "proposedOwnerCeilingUsd": 5,
+  "automaticRetries": 0,
+  "modelFallbacks": false,
+  "providerFallbacks": false,
+  "scope": "real model response + local authenticated schedule read only; not full LLM booking E2E"
+}

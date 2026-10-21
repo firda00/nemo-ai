@@ -1,0 +1,15 @@
+{
+  "kind": "real-local-auth-token-expiry",
+  "mocks": false,
+  "modelCalls": 0,
+  "checks": [
+    "real Auth accepts signed local fixture; real PostgREST rejects its expired variant with 401",
+    "real refresh grant restores same user and existing operation without creating a booking",
+    "missing session fails closed; same-user sign-in recovers persisted operation",
+    "different signed-in user refused by pinned identity; real server independently denies foreign organization"
+  ],
+  "refreshRequests": 1,
+  "sourceSha256": "e405bbb7621feaad183621512ff6b52185acb15eb3bfa30bab394a9a98b64f10",
+  "status": "passed",
+  "sourceSha256After": "e405bbb7621feaad183621512ff6b52185acb15eb3bfa30bab394a9a98b64f10"
+}

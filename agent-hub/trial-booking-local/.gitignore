@@ -1,0 +1,6 @@
+supabase/migrations/
+supabase/.temp/
+supabase/.branches/
+results.json
+source-version.json
+local-login.json

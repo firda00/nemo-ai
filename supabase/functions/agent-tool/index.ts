@@ -12,6 +12,7 @@ import { corsPreflight, json } from '../_shared/cors.ts'
 import { redactText, redactValue } from '../_shared/redact.ts'
 import { openSecret, providerSecretContext } from '../_shared/secretBox.ts'
 import { blocksExternalActions, PRODUCTION_E2E_EXTERNAL_BLOCK } from '../_shared/productionE2E.ts'
+import { guardAgentAction } from '../_shared/agentActionPolicy.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -29,20 +30,6 @@ const TOOLS: Record<string, { provider: string; spec: any }> = {
   slack_send_message: { provider: 'slack', spec: { type: 'function', function: { name: 'slack_send_message', description: 'Send a message to a Slack channel', parameters: { type: 'object', properties: { channel: { type: 'string', description: '#channel or channel id' }, text: { type: 'string' } }, required: ['channel', 'text'] } } } },
   hubspot_create_contact: { provider: 'hubspot', spec: { type: 'function', function: { name: 'hubspot_create_contact', description: 'Create a contact in HubSpot CRM', parameters: { type: 'object', properties: { email: { type: 'string' }, firstname: { type: 'string' }, lastname: { type: 'string' }, phone: { type: 'string' } }, required: ['email'] } } } },
   browser_task: { provider: 'hyperbrowser', spec: { type: 'function', function: { name: 'browser_task', description: 'Read verified marketplace information from an allowed URL. Never log in, fill forms, submit, publish, change listings, buy, pay, or create accounts.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'allowed marketplace URL' }, task: { type: 'string', description: 'read-only audit or data lookup' } }, required: ['url', 'task'] } } } },
-}
-
-async function queueAgentApproval(admin: any, accountId: string, actionType: string, args: any, source = 'agent'): Promise<{ ok: boolean; result: string }> {
-  const { data, error } = await admin.from('approval_requests').insert({
-    account_id: accountId,
-    source,
-    action_type: actionType.slice(0, 120),
-    summary: `Agent requested ${actionType}; no external action was performed.`,
-    evidence: redactValue(args),
-    expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-  }).select('id').single()
-  return error || !data
-    ? { ok: false, result: 'Не удалось создать запрос на подтверждение.' }
-    : { ok: true, result: `Действие не выполнено. Создан owner approval request ${data.id}.` }
 }
 
 async function execTool(name: string, args: any, key: string): Promise<{ ok: boolean; result: string }> {
@@ -143,9 +130,9 @@ Deno.serve(async (req) => {
   const userDb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } })
   const { data: { user } } = await userDb.auth.getUser()
   if (!user) return json({ error: 'unauthorized' }, 401)
-  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
+  const { data: prof, error: profileError } = await userDb.from('users').select('account_id').eq('id', user.id).maybeSingle()
   const accountId = prof?.account_id
-  if (!accountId) return json({ error: 'no account' }, 403)
+  if (profileError || !accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   if (await blocksExternalActions(admin, accountId)) return json(PRODUCTION_E2E_EXTERNAL_BLOCK, 403)
 
@@ -153,11 +140,9 @@ Deno.serve(async (req) => {
   const instruction = String(body?.instruction ?? '').trim()
   if (instruction.length < 3) return json({ ok: false, error: 'Опишите задачу для агента.' }, 200)
   const agentId = String(body?.agent_id ?? '')
-  let actionPolicy = 'approval_required'
   if (agentId) {
-    const { data: agent } = await admin.from('agents').select('account_id, action_policy').eq('id', agentId).eq('account_id', accountId).maybeSingle()
-    if (!agent) return json({ ok: false, error: 'Агент не найден в текущем аккаунте.' }, 403)
-    actionPolicy = agent.action_policy === 'read_only' ? 'read_only' : 'approval_required'
+    const { data: agent, error } = await admin.from('agents').select('id, account_id').eq('id', agentId).eq('account_id', accountId).maybeSingle()
+    if (error || !agent || agent.id !== agentId || agent.account_id !== accountId) return json({ ok: false, error: 'Агент не найден в текущем аккаунте.' }, 403)
   }
 
   // which integrations are connected -> which tools are available
@@ -186,23 +171,17 @@ Deno.serve(async (req) => {
     if (!call) return json({ ok: true, tool: null, result: choice?.content ?? 'Не нашёл подходящий инструмент.' })
     const name = call.function?.name
     const args = (() => { try { return JSON.parse(call.function?.arguments ?? '{}') } catch { return {} } })()
+    if (!availableTools.some((spec: any) => spec?.function?.name === name)) return json({ ok: false, error: 'Инструмент недоступен.' }, 200)
     const browserValidation = name === 'browser_task'
       ? validateReadOnlyMarketplaceBrowserTask(String(args.url ?? ''), String(args.task ?? ''))
       : null
-    const isExplicitRead = name === 'github_list_repos' || (name === 'browser_task' && !browserValidation?.includes('owner approval'))
     // The only connected tools allowed to execute immediately are explicit reads.
     // Every mutation becomes an auditable owner decision, never an implicit side effect.
-    if (!isExplicitRead) {
-      if (!GOOGLE_TOOLS[name] && !TOOLS[name]) return json({ ok: false, error: 'Инструмент недоступен.' }, 200)
-      if (actionPolicy === 'read_only') return json({ ok: false, tool: name, result: 'Политика этого агента: read-only. Внешнее действие заблокировано.' }, 200)
-      if (name === 'browser_task') {
-        const out = await queueAgentApproval(admin, accountId, 'browser_mutation', { ...args, validation: browserValidation }, 'browser')
-        await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
-        return json({ ok: out.ok, tool: name, args, result: out.result, pending_approval: out.ok })
-      }
-      const out = await queueAgentApproval(admin, accountId, String(name ?? 'agent_action'), args)
+    const out = await guardAgentAction(admin, accountId, name, args,
+      { agentId: agentId || undefined, actorUserId: user.id, accountToolTester: true }, browserValidation)
+    if (out) {
       await admin.from('tool_runs').insert({ account_id: accountId, tool: String(name ?? 'agent_action'), args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
-      return json({ ok: out.ok, tool: name, args, result: out.result, pending_approval: out.ok })
+      return json({ ok: out.ok, tool: name, args, result: out.result, pending_approval: Boolean(out.pending_approval) })
     }
     // Google tools use the account's OAuth token
     if (GOOGLE_TOOLS[name]) {
@@ -215,9 +194,9 @@ Deno.serve(async (req) => {
     const def = TOOLS[name]
     const toolKey = def && def.provider === 'hyperbrowser' ? (keyByProvider['hyperbrowser'] || NEMO_HB_KEY) : (def ? keyByProvider[def.provider] : '')
     if (!def || !toolKey) return json({ ok: false, error: 'Инструмент недоступен.' }, 200)
-    const out = await execTool(name, args, toolKey)
-    await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(out.result).slice(0, 1000), ok: out.ok })
-    return json({ ok: out.ok, tool: name, args, result: out.result })
+    const result = await execTool(name, args, toolKey)
+    await admin.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(result.result).slice(0, 1000), ok: result.ok })
+    return json({ ok: result.ok, tool: name, args, result: result.result })
   } catch (e) {
     return json({ ok: false, error: `Ошибка: ${String(e).slice(0, 200)}` }, 502)
   }

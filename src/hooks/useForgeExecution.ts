@@ -26,12 +26,22 @@ export interface ForgeApproval {
 
 export interface ForgeApprovalArtifact {
   name: string
-  mimeType: 'application/pdf' | 'video/mp4'
+  mimeType:
+    | 'application/pdf'
+    | 'video/mp4'
+    | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    | 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
   sizeBytes: number
   sha256: string
   url: string
   expiresAt: string
 }
+
+const FORGE_APPROVAL_MIME_TYPES: ReadonlySet<string> = new Set([
+  'application/pdf', 'video/mp4',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+])
 
 interface ApprovalQueueItem {
   id: string
@@ -54,7 +64,7 @@ const SIGNED_URL_MAX_TTL_MS = 305_000
 function parseApprovalArtifact(raw: unknown, now = Date.now()): ForgeApprovalArtifact | null {
   if (!raw || typeof raw !== 'object') return null
   const item = raw as Record<string, unknown>
-  if (item.mime_type !== 'application/pdf' && item.mime_type !== 'video/mp4') return null
+  if (typeof item.mime_type !== 'string' || !FORGE_APPROVAL_MIME_TYPES.has(item.mime_type)) return null
   if (typeof item.url !== 'string' || typeof item.expires_at !== 'string') return null
   const expiresAt = Date.parse(item.expires_at)
   if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt - now > SIGNED_URL_MAX_TTL_MS) return null
@@ -66,7 +76,7 @@ function parseApprovalArtifact(raw: unknown, now = Date.now()): ForgeApprovalArt
   if (typeof item.size_bytes !== 'number' || !Number.isSafeInteger(item.size_bytes) || item.size_bytes <= 0) return null
   return {
     name: item.name.slice(0, 160),
-    mimeType: item.mime_type,
+    mimeType: item.mime_type as ForgeApprovalArtifact['mimeType'],
     sizeBytes: item.size_bytes,
     sha256: item.sha256,
     url: item.url,

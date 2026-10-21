@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { Role, User } from '../types'
 import { supabase, isSupabaseEnabled } from '../lib/supabase'
+import { clearDocumentJobsStorage } from '../lib/documentJobs'
 
 const STORAGE_KEY = 'nemo.user'
 const ACCOUNT_STORAGE_KEY = 'nemo.local-account-id'
@@ -43,6 +44,8 @@ function clearAccountLocalData() {
     const key = window.localStorage.key(i)
     if (key?.startsWith('nemo-team-blueprint:')) window.localStorage.removeItem(key)
   }
+  // документные request_id и кэш сгенерированного содержимого — тоже account-данные
+  clearDocumentJobsStorage()
 }
 
 function bindLocalDataToAccount(userId: string | null) {
@@ -59,6 +62,8 @@ interface AuthResult {
 
 interface AuthContextValue {
   user: User | null
+  /** Changes on identity loss/replacement, including logout/login as the same user. */
+  sessionGeneration: number
   isAuthed: boolean
   loading: boolean
   /** True when running against the live Supabase backend (vs demo mode). */
@@ -135,6 +140,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const live = isSupabaseEnabled
   const [user, setUser] = useState<User | null>(() => (live ? null : loadUser()))
   const [loading, setLoading] = useState<boolean>(live)
+  const [sessionGeneration, setSessionGeneration] = useState(0)
+  const sessionIdentity = useRef(user?.id ?? null)
+  const observeIdentity = useCallback((id: string | null, signedOut = false) => {
+    if (signedOut || sessionIdentity.current !== id) setSessionGeneration((value) => value + 1)
+    sessionIdentity.current = id
+  }, [])
   const [recoveryReady, setRecoveryReady] = useState(false)
   // Ref-дубль recoveryReady: updatePassword проверяет его САМ, не полагаясь на дисциплину UI,
   // и не ловит устаревшее значение из замыкания.
@@ -155,13 +166,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const client = supabase
     if (!live || !client) return
     let active = true
+    let authRevision = 0
     client.auth.getSession().then(({ data }) => {
-      if (!active) return
+      // A newer auth event wins over a slow bootstrap getSession result.
+      if (!active || authRevision !== 0) return
+      observeIdentity(data.session?.user.id ?? null)
       bindLocalDataToAccount(data.session?.user.id ?? null)
       setUser(data.session ? userFromSession(data.session.user) : null)
       setLoading(false)
     })
     const { data: sub } = client.auth.onAuthStateChange((event, session) => {
+      if (!active) return
+      authRevision += 1
+      observeIdentity(session?.user.id ?? null, event === 'SIGNED_OUT')
       if (event === 'PASSWORD_RECOVERY') setRecovery(true)
       if (event === 'SIGNED_OUT') setRecovery(false)
       bindLocalDataToAccount(session?.user.id ?? null)
@@ -172,18 +189,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false
       sub.subscription.unsubscribe()
     }
-  }, [live, setRecovery])
+  }, [live, setRecovery, observeIdentity])
 
   // --- demo persistence ---
   const persist = useCallback(
     (next: User | null) => {
       if (live) return
+      observeIdentity(next?.id ?? null)
       setUser(next)
       if (typeof window === 'undefined') return
       if (next) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       else window.localStorage.removeItem(STORAGE_KEY)
     },
-    [live],
+    [live, observeIdentity],
   )
 
   const login = useCallback(
@@ -262,6 +280,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setRecovery(false)
+    observeIdentity(null, true)
+    setUser(null)
     bindLocalDataToAccount(null)
     if (live && supabase) {
       // Explicitly revoke refresh tokens on every device. Supabase currently
@@ -272,7 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     persist(null)
-  }, [live, persist, setRecovery])
+  }, [live, persist, setRecovery, observeIdentity])
 
   const updateUser = useCallback((patch: Partial<User>) => {
     setUser((prev) => {
@@ -302,6 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      sessionGeneration,
       isAuthed: !!user,
       loading,
       live,
@@ -314,7 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updatePassword,
       recoveryReady,
     }),
-    [user, loading, live, login, signup, loginWithGoogle, logout, updateUser, resetPassword, updatePassword, recoveryReady],
+    [user, sessionGeneration, loading, live, login, signup, loginWithGoogle, logout, updateUser, resetPassword, updatePassword, recoveryReady],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

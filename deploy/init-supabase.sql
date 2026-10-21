@@ -11,7 +11,7 @@
 -- когда CLI недоступен. Для существующего проекта используйте db push: повторный прогон всего
 -- файла целиком безопаснее не стал — часть миграций не идемпотентна.
 --
--- Собрано из 170 миграций: 20260624090000_init.sql … 20260903103000_feedback_workflow.sql
+-- Собрано из 179 миграций: 20260624090000_init.sql … 20260908120000_trial_booking.sql
 
 begin;
 -- ЛИЧНЫЕ АДРЕСА ЗАМЕНЕНЫ НА redacted@invalid.
@@ -20390,5 +20390,3047 @@ alter table public.customer_feedback
 
 create index if not exists customer_feedback_status_created_idx
   on public.customer_feedback(status, created_at desc);
+
+-- ─── 20260905190000_daily_briefing_settings.sql ──────────────────────────────────────────────
+-- Personal daily briefing — Step 2a: explicit per-account opt-in settings. ADDITIVE ONLY.
+-- No cron jobs, no delivery machinery, no changes to morning-brief/daily-digest.
+--
+-- Consent model: a row exists only after the OWNER (or same-account admin) saves it through the
+-- daily-briefing function — no backfill, no defaults-on, so auto-enable is structurally impossible.
+--
+-- Recipient model: the row binds the EXACT bot channel + chat id (never "first bot of the
+-- account" — the ambiguity 20260805130000_commerce_notify_channel.sql exists to kill).
+-- recipient_verified_at stays NULL in Step 2a: the legacy telegram-webhook binding does not
+-- validate a private chat, so a configured pair is NOT proof of a verified recipient. Only the
+-- future delivery-phase atomic recipient-link claim may set it; every settings write resets it.
+
+create table if not exists public.briefing_settings (
+  account_id uuid primary key references public.accounts(id) on delete cascade,
+  morning_enabled boolean not null default false,
+  evening_enabled boolean not null default false,
+  weather_lat numeric(8,5),
+  weather_lon numeric(8,5),
+  notify_channel_id uuid,
+  notify_chat_id text,
+  recipient_verified_at timestamptz,
+  updated_by uuid references public.users(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  constraint briefing_settings_lat_range check (weather_lat is null or (weather_lat >= -90 and weather_lat <= 90)),
+  constraint briefing_settings_lon_range check (weather_lon is null or (weather_lon >= -180 and weather_lon <= 180)),
+  constraint briefing_settings_coords_pair check ((weather_lat is null) = (weather_lon is null)),
+  constraint briefing_settings_chat_id_shape check (notify_chat_id is null or notify_chat_id ~ '^-?[0-9]{1,20}$'),
+  -- The current channels table is agent-scoped and does not duplicate account_id. The trigger
+  -- below enforces the same-account invariant through channels.agent_id -> agents.account_id.
+  constraint briefing_settings_channel_exists
+    foreign key (notify_channel_id) references public.channels (id) on delete cascade,
+  -- consent without a destination cannot exist: enabling either briefing requires the BOT
+  -- binding. The chat id is deliberately NOT required here — the verification /start discovers
+  -- the real chat, and delivery refuses unverified recipients anyway.
+  constraint briefing_settings_enabled_needs_recipient
+    check ((not morning_enabled and not evening_enabled) or (notify_channel_id is not null))
+);
+
+alter table public.briefing_settings enable row level security;
+
+-- reads: owner/is_admin of the account only — the row carries the owner's private chat id and
+-- home coordinates, which an operator has no business seeing. public.current_account_id()
+-- already joins accounts and excludes blocked ones (20260723121000_blocked_accounts_fail_closed).
+create policy briefing_settings_read on public.briefing_settings for select
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+      where u.id = auth.uid()
+        -- defense in depth: the privileged user must belong to THIS row's account, even if the
+        -- session's account context were ever forged apart from the uid
+        and u.account_id = briefing_settings.account_id
+        and (u.role = 'owner' or u.is_admin = true)
+    )
+  );
+
+-- writes: the browser has NO write path at all. The daily-briefing function (service role,
+-- which bypasses RLS) is the sole writer and must itself enforce owner/is_admin membership
+-- AND the blocked-account denial before every write.
+revoke all on table public.briefing_settings from public, anon;
+revoke insert, update, delete on table public.briefing_settings from authenticated;
+grant select on table public.briefing_settings to authenticated;
+
+create or replace function public.briefing_settings_channel_account_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.notify_channel_id is not null and not exists (
+    select 1
+    from public.channels c
+    join public.agents a on a.id = c.agent_id
+    where c.id = new.notify_channel_id
+      and a.account_id = new.account_id
+  ) then
+    raise exception using errcode = '23514', message = 'briefing channel belongs to another account';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.briefing_settings_channel_account_guard() from public, anon, authenticated;
+
+drop trigger if exists briefing_settings_channel_account_guard on public.briefing_settings;
+create trigger briefing_settings_channel_account_guard
+  before insert or update of account_id, notify_channel_id on public.briefing_settings
+  for each row execute function public.briefing_settings_channel_account_guard();
+
+-- ─── 20260905200000_daily_briefing_delivery.sql ──────────────────────────────────────────────
+-- Daily briefing — Step 2b delivery: verified recipient claim, durable runs, outcomes.
+-- Incorporates both Codex review rounds:
+--   1) claim consumption AND settings verification happen in ONE function (single transaction),
+--      serialized with issuance and saves by locking the account's settings row FIRST everywhere;
+--      supersession uses a monotonic current_claim_id pointer, never timestamp comparison;
+--   2) delivery runs are fenced by a lease token; the dispatch marker atomically re-validates the
+--      CURRENT consent and snapshots channel/chat/revision into the run BEFORE any send; an
+--      expired lease after dispatch is terminal 'unknown' and is never resent; expired
+--      undispatched rows out of attempts terminal-fail instead of hanging in 'sending';
+--      stale-dated rows are closed by recovery, never sent hours or days late;
+--   3) outcomes are captured ONLY from a reply matching the run's own dispatch snapshot
+--      (channel+chat+message id — message ids are chat-local) or an explicit /day_result command;
+--      idempotency is per-channel update id (update ids are bot-local, not global);
+--   4) blocked accounts are refused inside the RPCs themselves, not only at the endpoints;
+--   5) LEAST/GREATEST are used as plain SQL expressions (they are grammar, not schema-qualified
+--      functions) with lower AND upper bounds.
+
+-- ── settings: revision + monotonic claim pointer; every consent write resets both bindings ──────
+alter table public.briefing_settings
+  add column if not exists settings_revision integer not null default 0;
+alter table public.briefing_settings
+  add column if not exists current_claim_id uuid;
+
+-- ── recipient claims — service-role only, no browser surface at all ─────────────────────────────
+create table if not exists public.briefing_recipient_claims (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  channel_id uuid not null,
+  settings_revision integer not null,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  consumed_chat_id text,
+  foreign key (channel_id) references public.channels (id) on delete cascade
+);
+create index if not exists briefing_recipient_claims_account_idx
+  on public.briefing_recipient_claims (account_id, created_at desc);
+alter table public.briefing_recipient_claims enable row level security;
+revoke all on table public.briefing_recipient_claims from public, anon, authenticated;
+
+create or replace function public.briefing_recipient_channel_account_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not exists (
+    select 1
+    from public.channels c
+    join public.agents a on a.id = c.agent_id
+    where c.id = new.channel_id
+      and a.account_id = new.account_id
+  ) then
+    raise exception using errcode = '23514', message = 'briefing channel belongs to another account';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.briefing_recipient_channel_account_guard() from public, anon, authenticated;
+drop trigger if exists briefing_recipient_channel_account_guard on public.briefing_recipient_claims;
+create trigger briefing_recipient_channel_account_guard
+  before insert or update of account_id, channel_id on public.briefing_recipient_claims
+  for each row execute function public.briefing_recipient_channel_account_guard();
+
+-- ── durable delivery runs, with the dispatch-time recipient snapshot ────────────────────────────
+create table if not exists public.briefing_runs (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  kind text not null check (kind in ('morning', 'evening')),
+  run_date date not null,
+  status text not null default 'prepared'
+    check (status in ('prepared', 'sending', 'sent', 'unknown', 'failed', 'skipped')),
+  attempt_count integer not null default 0,
+  lease_token uuid,
+  lease_until timestamptz,
+  dispatched_at timestamptz,
+  -- snapshot of WHERE this run was dispatched: message ids are chat-local, so a later rebind
+  -- must never let a reply in another chat attach to this run
+  dispatch_channel_id uuid,
+  dispatch_chat_id text,
+  dispatch_settings_revision integer,
+  telegram_message_id bigint,
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (account_id, kind, run_date)
+);
+create index if not exists briefing_runs_claim_idx
+  on public.briefing_runs (kind, run_date, status, lease_until);
+create index if not exists briefing_runs_reply_idx
+  on public.briefing_runs (dispatch_channel_id, dispatch_chat_id, telegram_message_id);
+alter table public.briefing_runs enable row level security;
+create policy briefing_runs_read on public.briefing_runs for select
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+      where u.id = auth.uid()
+        and u.account_id = briefing_runs.account_id
+        and (u.role = 'owner' or u.is_admin = true)
+    )
+  );
+revoke all on table public.briefing_runs from public, anon;
+revoke insert, update, delete on table public.briefing_runs from authenticated;
+grant select on table public.briefing_runs to authenticated;
+
+-- ── evening outcomes — one per account per day; idempotent per (channel, update id) ─────────────
+create table if not exists public.briefing_outcomes (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  run_date date not null,
+  channel_id uuid not null,
+  chat_id text not null,
+  text text not null check (length(text) between 1 and 2000),
+  telegram_update_id bigint not null,
+  via text not null check (via in ('reply', 'command')),
+  collected_at timestamptz not null default now(),
+  primary key (account_id, run_date),
+  -- update ids are BOT-local: two bots can legitimately deliver the same update id
+  unique (channel_id, telegram_update_id)
+);
+alter table public.briefing_outcomes enable row level security;
+create policy briefing_outcomes_read on public.briefing_outcomes for select
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+      where u.id = auth.uid()
+        and u.account_id = briefing_outcomes.account_id
+        and (u.role = 'owner' or u.is_admin = true)
+    )
+  );
+revoke all on table public.briefing_outcomes from public, anon;
+revoke insert, update, delete on table public.briefing_outcomes from authenticated;
+grant select on table public.briefing_outcomes to authenticated;
+
+-- ── claim issuance: settings row locked FIRST; the new claim becomes the only valid one ─────────
+create or replace function public.briefing_issue_claim(
+  p_account uuid, p_token_hash text
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_settings public.briefing_settings%rowtype;
+  v_blocked boolean;
+  v_claim_id uuid;
+begin
+  select * into v_settings from public.briefing_settings
+   where account_id = p_account for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_settings'); end if;
+  if v_settings.notify_channel_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'no_channel');
+  end if;
+  select blocked into v_blocked from public.accounts where id = p_account;
+  if v_blocked is distinct from false then
+    return jsonb_build_object('ok', false, 'reason', 'blocked');
+  end if;
+  delete from public.briefing_recipient_claims
+   where account_id = p_account and consumed_at is null;
+  insert into public.briefing_recipient_claims (account_id, channel_id, settings_revision, token_hash, expires_at)
+  values (p_account, v_settings.notify_channel_id, v_settings.settings_revision, p_token_hash,
+          pg_catalog.now() + interval '15 minutes')
+  returning id into v_claim_id;
+  update public.briefing_settings
+     set current_claim_id = v_claim_id, updated_at = pg_catalog.now()
+   where account_id = p_account;
+  return jsonb_build_object('ok', true, 'claim_id', v_claim_id, 'channel_id', v_settings.notify_channel_id);
+end;
+$$;
+
+-- ── claim consumption + verification: ONE transaction; settings locked first (same order as
+--    issuance, so concurrent issue/consume serialize instead of deadlocking) ────────────────────
+create or replace function public.briefing_consume_claim(
+  p_token_hash text, p_chat_id text, p_channel_id uuid
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_account uuid;
+  v_settings public.briefing_settings%rowtype;
+  v_claim public.briefing_recipient_claims%rowtype;
+  v_blocked boolean;
+begin
+  select account_id into v_account from public.briefing_recipient_claims
+   where token_hash = p_token_hash and consumed_at is null and expires_at > pg_catalog.now();
+  if not found then return jsonb_build_object('ok', false, 'reason', 'invalid'); end if;
+  select * into v_settings from public.briefing_settings
+   where account_id = v_account for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'stale'); end if;
+  -- re-read the claim UNDER the settings lock: issuance deletes unconsumed claims under the
+  -- same lock, so a claim that survives this re-read is the current one
+  select * into v_claim from public.briefing_recipient_claims
+   where token_hash = p_token_hash and consumed_at is null and expires_at > pg_catalog.now()
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'invalid'); end if;
+  -- monotonic pointer, not timestamps: only the claim the settings row points at may verify
+  if v_settings.current_claim_id is distinct from v_claim.id then
+    return jsonb_build_object('ok', false, 'reason', 'superseded');
+  end if;
+  if v_claim.channel_id <> p_channel_id then
+    return jsonb_build_object('ok', false, 'reason', 'wrong_channel');
+  end if;
+  if v_settings.settings_revision <> v_claim.settings_revision
+     or v_settings.notify_channel_id is distinct from v_claim.channel_id then
+    return jsonb_build_object('ok', false, 'reason', 'stale');
+  end if;
+  select blocked into v_blocked from public.accounts where id = v_account;
+  if v_blocked is distinct from false then
+    return jsonb_build_object('ok', false, 'reason', 'blocked');
+  end if;
+  update public.briefing_recipient_claims
+     set consumed_at = pg_catalog.now(), consumed_chat_id = p_chat_id
+   where id = v_claim.id;
+  -- the verified chat id comes from the /start message itself, never from typed input
+  update public.briefing_settings
+     set recipient_verified_at = pg_catalog.now(), notify_chat_id = p_chat_id,
+         current_claim_id = null, updated_at = pg_catalog.now()
+   where account_id = v_account;
+  return jsonb_build_object('ok', true, 'account_id', v_account);
+end;
+$$;
+
+-- ── set-based preparation: EVERY eligible account gets its row before anyone is sent to ─────────
+create or replace function public.briefing_prepare_runs(p_kind text, p_run_date date)
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare v_count integer;
+begin
+  insert into public.briefing_runs (account_id, kind, run_date)
+  select s.account_id, p_kind, p_run_date
+    from public.briefing_settings s
+    join public.accounts a on a.id = s.account_id and a.blocked = false
+   where s.recipient_verified_at is not null
+     and case p_kind when 'morning' then s.morning_enabled
+                     when 'evening' then s.evening_enabled
+                     else false end
+  on conflict (account_id, kind, run_date) do nothing;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- ── lease-fenced batch claim (SKIP LOCKED): re-claimable ONLY while nothing was dispatched ──────
+create or replace function public.briefing_claim_runs(
+  p_kind text, p_run_date date, p_limit integer, p_lease_seconds integer
+) returns setof public.briefing_runs
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  return query
+  update public.briefing_runs r
+     set status = 'sending',
+         lease_token = gen_random_uuid(),
+         lease_until = pg_catalog.now() + pg_catalog.make_interval(secs => greatest(30, least(p_lease_seconds, 300))),
+         attempt_count = r.attempt_count + 1,
+         updated_at = pg_catalog.now()
+   where r.id in (
+     select b.id from public.briefing_runs b
+      where b.kind = p_kind and b.run_date = p_run_date
+        and (b.status = 'prepared'
+             or (b.status = 'sending' and b.lease_until < pg_catalog.now()
+                 and b.dispatched_at is null and b.attempt_count < 2))
+      order by b.account_id
+      limit greatest(1, least(p_limit, 25))
+      for update skip locked
+   )
+  returning r.*;
+end;
+$$;
+
+-- ── recovery: terminal transitions for everything that can no longer be sent honestly ───────────
+create or replace function public.briefing_recover_runs(p_kind text, p_today date)
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare v_total integer := 0; v_count integer;
+begin
+  -- an expired lease AFTER dispatch: outcome unknown, never resent
+  update public.briefing_runs
+     set status = 'unknown', error = 'dispatch_lease_expired', lease_token = null,
+         updated_at = pg_catalog.now()
+   where kind = p_kind and run_date <= p_today
+     and status = 'sending' and lease_until < pg_catalog.now() and dispatched_at is not null;
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  -- attempts exhausted BEFORE any dispatch: definite failure, not eternal 'sending'
+  update public.briefing_runs
+     set status = 'failed', error = 'attempts_exhausted', lease_token = null,
+         updated_at = pg_catalog.now()
+   where kind = p_kind and run_date <= p_today
+     and status = 'sending' and lease_until < pg_catalog.now()
+     and dispatched_at is null and attempt_count >= 2;
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  -- a briefing for a PAST day must never be sent late — close stranded rows honestly
+  update public.briefing_runs
+     set status = 'skipped', error = 'expired_unsent', lease_token = null,
+         updated_at = pg_catalog.now()
+   where kind = p_kind and run_date < p_today
+     and (status = 'prepared'
+          or (status = 'sending' and lease_until < pg_catalog.now() and dispatched_at is null));
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  return v_total;
+end;
+$$;
+
+-- ── CAS dispatch marker: atomically re-validates CURRENT consent and snapshots the recipient.
+--    The send may happen ONLY when this returned ok, and only to the returned snapshot ──────────
+create or replace function public.briefing_mark_dispatch(p_run_id uuid, p_lease_token uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_run public.briefing_runs%rowtype;
+  v_settings public.briefing_settings%rowtype;
+  v_blocked boolean;
+  v_enabled boolean;
+begin
+  select * into v_run from public.briefing_runs
+   where id = p_run_id and lease_token = p_lease_token
+     and status = 'sending' and dispatched_at is null and lease_until > pg_catalog.now()
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'lease_lost'); end if;
+  select * into v_settings from public.briefing_settings
+   where account_id = v_run.account_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_settings'); end if;
+  v_enabled := case v_run.kind when 'morning' then v_settings.morning_enabled else v_settings.evening_enabled end;
+  if not v_enabled or v_settings.recipient_verified_at is null
+     or v_settings.notify_channel_id is null or v_settings.notify_chat_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'recipient_not_verified');
+  end if;
+  select blocked into v_blocked from public.accounts where id = v_run.account_id;
+  if v_blocked is distinct from false then
+    return jsonb_build_object('ok', false, 'reason', 'blocked');
+  end if;
+  update public.briefing_runs
+     set dispatched_at = pg_catalog.now(),
+         dispatch_channel_id = v_settings.notify_channel_id,
+         dispatch_chat_id = v_settings.notify_chat_id,
+         dispatch_settings_revision = v_settings.settings_revision,
+         updated_at = pg_catalog.now()
+   where id = p_run_id;
+  return jsonb_build_object('ok', true,
+    'channel_id', v_settings.notify_channel_id, 'chat_id', v_settings.notify_chat_id);
+end;
+$$;
+
+-- ── terminal transition, fenced by the same lease token ─────────────────────────────────────────
+create or replace function public.briefing_finish_run(
+  p_run_id uuid, p_lease_token uuid, p_status text, p_message_id bigint, p_error text
+) returns boolean
+language plpgsql security definer set search_path = ''
+as $$
+declare v_count integer;
+begin
+  if p_status not in ('sent', 'failed', 'skipped', 'unknown') then
+    raise exception using errcode = '22023', message = 'BRIEFING_BAD_FINISH_STATUS';
+  end if;
+  update public.briefing_runs
+     set status = p_status,
+         telegram_message_id = p_message_id,
+         error = p_error,
+         lease_token = null,
+         lease_until = null,
+         updated_at = pg_catalog.now()
+   where id = p_run_id and lease_token = p_lease_token and status = 'sending';
+  get diagnostics v_count = row_count;
+  return v_count = 1;
+end;
+$$;
+
+-- ── outcome capture: reply must match the run's own dispatch snapshot; command is explicit ──────
+create or replace function public.briefing_capture_outcome(
+  p_channel_id uuid, p_chat_id text, p_reply_message_id bigint,
+  p_update_id bigint, p_text text, p_via text
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_settings public.briefing_settings%rowtype;
+  v_run public.briefing_runs%rowtype;
+  v_blocked boolean;
+  v_date date;
+  v_today date := ((pg_catalog.now() + interval '5 hours') at time zone 'UTC')::date;
+begin
+  if p_text is null or length(p_text) < 1 or length(p_text) > 2000 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_text');
+  end if;
+  if p_via not in ('reply', 'command') then
+    return jsonb_build_object('ok', false, 'reason', 'bad_via');
+  end if;
+  -- only the VERIFIED recipient chat on the bound channel may record outcomes
+  select * into v_settings from public.briefing_settings
+   where notify_channel_id = p_channel_id and notify_chat_id = p_chat_id
+     and recipient_verified_at is not null
+   limit 1;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_verified'); end if;
+  select blocked into v_blocked from public.accounts where id = v_settings.account_id;
+  if v_blocked is distinct from false then
+    return jsonb_build_object('ok', false, 'reason', 'blocked');
+  end if;
+  if p_via = 'reply' then
+    -- the reply must point at THIS channel+chat's own sent evening run: message ids are
+    -- chat-local, so the run's dispatch snapshot is the only honest join key
+    select * into v_run from public.briefing_runs
+     where account_id = v_settings.account_id and kind = 'evening' and status = 'sent'
+       and telegram_message_id = p_reply_message_id
+       and dispatch_channel_id = p_channel_id and dispatch_chat_id = p_chat_id
+       and run_date >= v_today - 1
+     limit 1;
+    if not found then return jsonb_build_object('ok', false, 'reason', 'no_match'); end if;
+    v_date := v_run.run_date;
+  else
+    v_date := v_today;
+  end if;
+  begin
+    insert into public.briefing_outcomes (account_id, run_date, channel_id, chat_id, text, telegram_update_id, via)
+    values (v_settings.account_id, v_date, p_channel_id, p_chat_id, p_text, p_update_id, p_via);
+  exception
+    when unique_violation then
+      -- a Telegram retry of the same update, or a second answer for an already-recorded day:
+      -- both are idempotent no-ops, never overwrites of the first answer
+      return jsonb_build_object('ok', true, 'duplicate', true, 'run_date', v_date);
+  end;
+  return jsonb_build_object('ok', true, 'run_date', v_date);
+end;
+$$;
+
+-- ── consent save: revision bump + claim/verification invalidation are ONE atomic statement ──────
+-- The Step 2a upsert could not express `settings_revision + 1`; this RPC is the only save path.
+create or replace function public.briefing_save_settings(
+  p_account uuid, p_morning boolean, p_evening boolean,
+  p_lat numeric, p_lon numeric, p_channel uuid, p_chat text, p_updated_by uuid
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare v_row public.briefing_settings%rowtype;
+begin
+  insert into public.briefing_settings as s
+    (account_id, morning_enabled, evening_enabled, weather_lat, weather_lon,
+     notify_channel_id, notify_chat_id, recipient_verified_at, settings_revision,
+     current_claim_id, updated_by, updated_at)
+  values (p_account, p_morning, p_evening, p_lat, p_lon, p_channel, p_chat, null, 1, null,
+          p_updated_by, pg_catalog.now())
+  on conflict (account_id) do update
+     set morning_enabled = excluded.morning_enabled,
+         evening_enabled = excluded.evening_enabled,
+         weather_lat = excluded.weather_lat,
+         weather_lon = excluded.weather_lon,
+         notify_channel_id = excluded.notify_channel_id,
+         notify_chat_id = excluded.notify_chat_id,
+         -- every save invalidates verification AND any outstanding claim, monotonically
+         recipient_verified_at = null,
+         settings_revision = s.settings_revision + 1,
+         current_claim_id = null,
+         updated_by = excluded.updated_by,
+         updated_at = pg_catalog.now()
+  returning * into v_row;
+  return to_jsonb(v_row);
+end;
+$$;
+
+-- lock everything down: service role only
+revoke all on function public.briefing_save_settings(uuid, boolean, boolean, numeric, numeric, uuid, text, uuid) from public, anon, authenticated;
+grant execute on function public.briefing_save_settings(uuid, boolean, boolean, numeric, numeric, uuid, text, uuid) to service_role;
+revoke all on function public.briefing_issue_claim(uuid, text) from public, anon, authenticated;
+revoke all on function public.briefing_consume_claim(text, text, uuid) from public, anon, authenticated;
+revoke all on function public.briefing_prepare_runs(text, date) from public, anon, authenticated;
+revoke all on function public.briefing_claim_runs(text, date, integer, integer) from public, anon, authenticated;
+revoke all on function public.briefing_recover_runs(text, date) from public, anon, authenticated;
+revoke all on function public.briefing_mark_dispatch(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.briefing_finish_run(uuid, uuid, text, bigint, text) from public, anon, authenticated;
+revoke all on function public.briefing_capture_outcome(uuid, text, bigint, bigint, text, text) from public, anon, authenticated;
+grant execute on function public.briefing_issue_claim(uuid, text) to service_role;
+grant execute on function public.briefing_consume_claim(text, text, uuid) to service_role;
+grant execute on function public.briefing_prepare_runs(text, date) to service_role;
+grant execute on function public.briefing_claim_runs(text, date, integer, integer) to service_role;
+grant execute on function public.briefing_recover_runs(text, date) to service_role;
+grant execute on function public.briefing_mark_dispatch(uuid, uuid) to service_role;
+grant execute on function public.briefing_finish_run(uuid, uuid, text, bigint, text) to service_role;
+grant execute on function public.briefing_capture_outcome(uuid, text, bigint, bigint, text, text) to service_role;
+
+-- ── cron: two send ticks + a bounded drain/recovery tick (all through the vault dispatcher) ─────
+create or replace function runtime.invoke_daily_briefing_cron(p_kind text)
+returns bigint
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_functions_url text;
+  v_cron_secret text;
+  v_request_id bigint;
+begin
+  select decrypted_secret into v_functions_url from vault.decrypted_secrets
+   where name = 'nemo_functions_url' order by created_at desc limit 1;
+  select decrypted_secret into v_cron_secret from vault.decrypted_secrets
+   where name = 'nemo_cron_secret' order by created_at desc limit 1;
+  if nullif(btrim(v_functions_url), '') is null or nullif(btrim(v_cron_secret), '') is null then
+    raise exception using errcode = '22023', message = 'DAILY_BRIEFING_CRON_NOT_CONFIGURED';
+  end if;
+  select net.http_post(
+    url := rtrim(v_functions_url, '/') || '/daily-briefing-worker',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_cron_secret),
+    body := jsonb_build_object('kind', p_kind, 'source', 'pg_cron', 'scheduled_for', clock_timestamp()),
+    timeout_milliseconds := 30000
+  ) into v_request_id;
+  return v_request_id;
+end;
+$$;
+revoke all on function runtime.invoke_daily_briefing_cron(text) from public, anon, authenticated;
+grant execute on function runtime.invoke_daily_briefing_cron(text) to service_role;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname in
+      ('nemo-briefing-morning', 'nemo-briefing-evening', 'nemo-briefing-drain');
+    -- 08:30 and 20:00 Asia/Tashkent (UTC+5, no DST)
+    perform cron.schedule('nemo-briefing-morning', '30 3 * * *',
+      'select runtime.invoke_daily_briefing_cron(''morning'');');
+    perform cron.schedule('nemo-briefing-evening', '0 15 * * *',
+      'select runtime.invoke_daily_briefing_cron(''evening'');');
+    -- drain/recovery: closes expired leases and finishes prepared batches; preparation itself is
+    -- gated on the Tashkent due time inside the worker, so a drain can never send early
+    perform cron.schedule('nemo-briefing-drain', '*/10 * * * *',
+      'select runtime.invoke_daily_briefing_cron(''drain'');');
+  end if;
+end;
+$$;
+
+-- ─── 20260905210000_margin_files_bucket.sql ──────────────────────────────────────────────────
+-- Приватный бакет для маржинального отчёта из чата: исходные XLSX и готовые отчёты.
+--
+-- Приватный и БЕЗ политик для браузера — это принципиально. Все пути строит edge-функция
+-- margin-report из аккаунта АУТЕНТИФИЦИРОВАННОГО пользователя (tenants/<account_id>/...);
+-- клиентского пути не существует вовсе, поэтому и политика, сверяющая путь с аккаунтом, здесь
+-- не нужна: storage.objects по умолчанию закрыт, пишет и читает только service role, а браузер
+-- получает файлы по подписанным ссылкам, живущим минуты.
+--
+-- В бакет попадают ТОЛЬКО байты, уже разобранные как настоящий XLSX (проверка в обработчике до
+-- сохранения) — произвольный мусор сюда не пишется.
+--
+-- УБОРКИ ЗДЕСЬ НЕТ, И ЭТО СОЗНАТЕЛЬНО. Прямой DELETE из storage.objects удаляет ЗАПИСЬ, а не
+-- сам файл в хранилище: блоб осиротеет и продолжит занимать место, счётчик расходов не
+-- уменьшится. Настоящая уборка обязана идти через Storage API (remove) ограниченными партиями,
+-- с повтором и учётом сбоев — это отдельный worker, план которого проходит ревью до включения
+-- какого-либо cron. До тех пор бакет копит файлы, и это честно видно здесь.
+insert into storage.buckets (id, name, public, file_size_limit)
+values (
+  'margin-files',
+  'margin-files',
+  false,
+  -- Загрузка ограничена обработчиком 15 МБ; запас — под готовые отчёты (CSV/HTML по большим
+  -- файлам бывают крупнее исходника).
+  20 * 1024 * 1024
+)
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit;
+
+-- ─── 20260905220000_monthly_reminders.sql ────────────────────────────────────────────────────
+-- Ежемесячные напоминания (Plan B, фундамент): расписания «каждое N-е число», атомарные
+-- occurrence→task, и СВОЙ outbox по проверенному протоколу брифинга (lease-CAS, снимок
+-- получателя до отправки, неоднозначная отправка = терминальный unknown).
+--
+-- Принципиальные решения (условия двух раундов ревью):
+--   • НИ ОДНОЙ строки в briefing_runs и ни одного нового kind в briefing_* RPC: у брифинга
+--     dispatch читает morning/evening-флаги и держит дневную уникальность — месячный поток
+--     живёт в СВОИХ таблицах и функциях;
+--   • получатель ПЕРЕИСПОЛЬЗУЕТСЯ: та же верификация briefing_settings (deep-link /start),
+--     но включённость и ревизия месячного расписания НЕЗАВИСИМЫ: выключенные morning/evening
+--     не выключают напоминания, а пересохранение получателя (сброс верификации) закрывает
+--     И месячную отправку до повторной верификации — dispatch проверяет только
+--     recipient_verified_at/канал/чат, НИКОГДА не morning/evening;
+--   • СОГЛАСИЕ — ПО ВРЕМЕНИ, не по дате: планировщик создаёт occurrence только при
+--     due_at >= GREATEST(enabled_at текущей ревизии, recipient_verified_at). Каждое
+--     сохранение включённого расписания сдвигает enabled_at на «сейчас», поэтому ни правка,
+--     ни повторная верификация не открывают догон в прошлое до текущего согласия;
+--   • occurrence НИКОГДА не удаляется, идентичность (расписание, аккаунт, месяц) заморожена
+--     триггером. Правка расписания ПЕРЕНОСИТ ещё не отправлявшиеся occurrence на новую
+--     дату/время (задача пользователя сохраняется: обновляется только её deadline — заголовок
+--     и исполнителя после создания правит только человек). Выключение переводит planned в
+--     терминальный skipped:schedule_disabled, задачи остаются. Поэтому месяц, в котором
+--     occurrence уже СУЩЕСТВУЕТ (отправленная, неизвестная, отменённая), второй отправки не
+--     получит — документированное поведение, не недосмотр;
+--   • порядок блокировок ЕДИНЫЙ: сначала reminder_schedules, потом reminder_occurrences —
+--     и в save, и в планировщике (FOR UPDATE OF s), и в mark_dispatch. Взаимная блокировка
+--     save↔dispatch исключается порядком, а не удачей. PGlite-тесты одноподключённые, поэтому
+--     сам порядок — инвариант кода и настоящих деплоев, не «доказан гонкой»;
+--   • день клампится: LEAST(день, последний день месяца); UI обязан показывать это правило;
+--   • Ташкент — фиксированный UTC+5 (без перевода часов), поэтому due_at считается смещением,
+--     а не именованной таймзоной: SQL-тесты идут в PGlite без базы tzdata.
+--
+-- Cron здесь НЕ ставится: воркер-обвязка приходит следующим шагом после ревью фундамента.
+
+create table if not exists public.reminder_schedules (
+  id                uuid primary key default gen_random_uuid(),
+  account_id        uuid not null references public.accounts(id) on delete cascade,
+  title             text not null check (char_length(title) between 1 and 200),
+  day_of_month      integer not null check (day_of_month between 1 and 31),
+  -- минуты от местной полуночи; 540 = 09:00 Ташкента
+  send_minute       integer not null default 540 check (send_minute between 0 and 1439),
+  enabled           boolean not null default false,
+  -- момент, с которого действует согласие ТЕКУЩЕЙ ревизии; каждый enabled-save сдвигает его
+  enabled_at        timestamptz,
+  schedule_revision integer not null default 1,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now(),
+  -- составная цель для FK арендаторского инварианта occurrence
+  unique (id, account_id)
+);
+
+create table if not exists public.reminder_occurrences (
+  id                         uuid primary key default gen_random_uuid(),
+  schedule_id                uuid not null,
+  account_id                 uuid not null references public.accounts(id) on delete cascade,
+  -- НЕИЗМЕНЯЕМАЯ месячная идентичность: единственная отправка расписания в календарный месяц
+  month_key                  text not null check (month_key ~ '^\d{4}-\d{2}$'),
+  due_date                   date not null,
+  due_at                     timestamptz not null,
+  schedule_revision          integer not null,
+  status                     text not null default 'planned'
+    check (status in ('planned', 'sending', 'sent', 'failed', 'skipped', 'unknown')),
+  error                      text,
+  attempt_count              integer not null default 0,
+  lease_token                uuid,
+  lease_until                timestamptz,
+  dispatched_at              timestamptz,
+  dispatch_channel_id        uuid,
+  dispatch_chat_id           text,
+  dispatch_settings_revision integer,
+  telegram_message_id        bigint,
+  created_at                 timestamptz not null default now(),
+  updated_at                 timestamptz not null default now(),
+  unique (schedule_id, month_key),
+  -- арендаторский инвариант: occurrence не может ссылаться на чужое расписание
+  foreign key (schedule_id, account_id)
+    references public.reminder_schedules(id, account_id) on delete cascade
+);
+
+-- атомарная связь occurrence→task: у задачи не бывает двух источников-напоминаний
+alter table public.tasks add column if not exists reminder_occurrence_id uuid
+  unique references public.reminder_occurrences(id) on delete set null;
+
+create index if not exists reminder_schedules_acc_idx on public.reminder_schedules (account_id, created_at desc);
+create index if not exists reminder_occurrences_due_idx on public.reminder_occurrences (status, due_at);
+create index if not exists reminder_occurrences_acc_idx on public.reminder_occurrences (account_id, due_date desc);
+
+-- месячная идентичность заморожена: «переехавшая» occurrence обошла бы месячную уникальность.
+-- due_date/due_at сознательно НЕ заморожены — перенос внутри месяца и есть безопасная правка.
+create or replace function public.reminder_occurrence_identity_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.month_key is distinct from old.month_key
+     or new.schedule_id is distinct from old.schedule_id
+     or new.account_id is distinct from old.account_id then
+    raise exception using errcode = '22023', message = 'REMINDER_IDENTITY_IMMUTABLE';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists reminder_occurrence_identity on public.reminder_occurrences;
+create trigger reminder_occurrence_identity
+  before update on public.reminder_occurrences
+  for each row execute function public.reminder_occurrence_identity_guard();
+
+-- ── RLS: читают владелец/админ своего аккаунта; пишут только RPC под service_role ───────────────
+alter table public.reminder_schedules enable row level security;
+alter table public.reminder_occurrences enable row level security;
+
+drop policy if exists reminder_schedules_read on public.reminder_schedules;
+create policy reminder_schedules_read on public.reminder_schedules for select to authenticated
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+       where u.id = auth.uid() and (u.role = 'owner' or u.is_admin = true)
+         -- защита в глубину: подделанная строка users с чужим account_id не открывает чужие строки
+         and u.account_id = reminder_schedules.account_id
+    )
+  );
+
+drop policy if exists reminder_occurrences_read on public.reminder_occurrences;
+create policy reminder_occurrences_read on public.reminder_occurrences for select to authenticated
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+       where u.id = auth.uid() and (u.role = 'owner' or u.is_admin = true)
+         and u.account_id = reminder_occurrences.account_id
+    )
+  );
+
+revoke insert, update, delete on public.reminder_schedules from anon, authenticated;
+revoke insert, update, delete on public.reminder_occurrences from anon, authenticated;
+
+-- ── создание/правка расписания. Любая правка поднимает ревизию. Блокировки: расписание,
+--    затем occurrence. planned-строки ПЕРЕНОСЯТСЯ (не удаляются); выключение делает их
+--    терминальными; задачи пользователя не стираются никогда ────────────────────────────────────
+create or replace function public.reminder_save_schedule(
+  p_account_id uuid, p_schedule_id uuid, p_title text,
+  p_day_of_month integer, p_send_minute integer, p_enabled boolean, p_now timestamptz
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_row public.reminder_schedules%rowtype;
+  v_verified timestamptz;
+begin
+  if p_title is null or char_length(pg_catalog.btrim(p_title)) not between 1 and 200 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_title');
+  end if;
+  if p_day_of_month is null or p_day_of_month not between 1 and 31 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_day');
+  end if;
+  if p_send_minute is null or p_send_minute not between 0 and 1439 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_minute');
+  end if;
+  -- включение требует ПРОВЕРЕННОГО получателя (та же верификация, что у брифинга).
+  -- Ровно проверка согласия — флаги morning/evening НЕ читаются нигде в этом файле.
+  if p_enabled then
+    select recipient_verified_at into v_verified
+      from public.briefing_settings where account_id = p_account_id;
+    if v_verified is null then
+      return jsonb_build_object('ok', false, 'reason', 'recipient_not_verified');
+    end if;
+  end if;
+
+  if p_schedule_id is null then
+    -- лимит расписаний — АТОМАРНО, под замком строки аккаунта: два одновременных создания на
+    -- границе сериализуются здесь, а не в проверке приложения. Замок аккаунта берётся только в
+    -- этой ветке (никаких замков расписаний следом), поэтому инверсии с порядком
+    -- «расписание → occurrence» остальных функций нет. Правка существующих НЕ ограничена —
+    -- на лимите всё остаётся управляемым и выключаемым.
+    perform 1 from public.accounts where id = p_account_id for update;
+    if (select count(*) from public.reminder_schedules where account_id = p_account_id) >= 30 then
+      return jsonb_build_object('ok', false, 'reason', 'schedule_limit');
+    end if;
+    insert into public.reminder_schedules (account_id, title, day_of_month, send_minute, enabled, enabled_at)
+    values (p_account_id, pg_catalog.btrim(p_title), p_day_of_month, p_send_minute, p_enabled,
+            case when p_enabled then p_now end)
+    returning * into v_row;
+    return jsonb_build_object('ok', true, 'schedule', to_jsonb(v_row));
+  end if;
+
+  -- порядок блокировок: РАСПИСАНИЕ первым, occurrence после (как в mark_dispatch и планировщике)
+  select * into v_row from public.reminder_schedules
+   where id = p_schedule_id and account_id = p_account_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+
+  update public.reminder_schedules
+     set title = pg_catalog.btrim(p_title),
+         day_of_month = p_day_of_month,
+         send_minute = p_send_minute,
+         enabled = p_enabled,
+         -- согласие ТЕКУЩЕЙ ревизии: каждый enabled-save начинается «с этого момента»
+         enabled_at = case when p_enabled then p_now end,
+         schedule_revision = v_row.schedule_revision + 1,
+         updated_at = pg_catalog.now()
+   where id = v_row.id
+  returning * into v_row;
+
+  if p_enabled then
+    -- сначала deadline задач — и ТОЛЬКО у демонстрационно нетронутых: строка ещё 'todo' и её
+    -- deadline всё ещё равен сгенерированной дате. Правленный пользователем срок, взятая в
+    -- работу или закрытая задача — собственность человека, расписание их не переписывает.
+    update public.tasks t
+       set deadline = (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1))::date
+      from public.reminder_occurrences o
+     where o.schedule_id = v_row.id and o.status = 'planned'
+       and t.reminder_occurrence_id = o.id
+       and t.status = 'todo'
+       and t.deadline = o.due_date;
+    -- безопасный перенос: та же occurrence (месяц неизменен), новые день/время/ревизия.
+    -- Перенос может дать due_at в прошлом относительно enabled_at этой правки — такая
+    -- occurrence НЕ уйдёт: mark_dispatch держит пол согласия по времени (см. ниже).
+    update public.reminder_occurrences o
+       set due_date = (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1))::date,
+           due_at = ((pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1)
+                       + pg_catalog.make_interval(mins => p_send_minute)
+                       - interval '5 hours') at time zone 'UTC'),
+           schedule_revision = v_row.schedule_revision,
+           updated_at = pg_catalog.now()
+     where o.schedule_id = v_row.id and o.status = 'planned';
+  else
+    -- выключение: planned становится терминальной, месяц остаётся занятым, задачи не трогаем
+    update public.reminder_occurrences
+       set status = 'skipped', error = 'schedule_disabled',
+           lease_token = null, lease_until = null, updated_at = pg_catalog.now()
+     where schedule_id = v_row.id and status = 'planned';
+  end if;
+  return jsonb_build_object('ok', true, 'schedule', to_jsonb(v_row));
+end;
+$$;
+
+-- ── планировщик: сегодняшние и догоняемые (≤3 дней) даты → occurrence + задача, АТОМАРНО.
+--    Расписания блокируются (FOR UPDATE OF s) — правка/выключение не гонится со вставкой.
+--    Согласие по ВРЕМЕНИ: due_at не раньше GREATEST(enabled_at, recipient_verified_at) ──────────
+create or replace function public.reminder_plan_occurrences(p_today date, p_catchup_days integer default 3)
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare v_count integer;
+begin
+  with days as (
+    select g.d::date as due_date
+      from pg_catalog.generate_series(
+             (p_today - least(greatest(coalesce(p_catchup_days, 0), 0), 3))::timestamp,
+             p_today::timestamp, interval '1 day') g(d)
+  ),
+  locked as (
+    -- расписание первым, до любых вставок — единый порядок блокировок с save/mark_dispatch
+    select s.id, s.account_id, s.title, s.schedule_revision, s.send_minute, s.day_of_month, s.enabled_at
+      from public.reminder_schedules s
+      join public.accounts a on a.id = s.account_id and a.blocked = false
+      join public.briefing_settings bs on bs.account_id = s.account_id
+           and bs.recipient_verified_at is not null
+     where s.enabled
+       for update of s
+  ),
+  cand as (
+    select l.id as schedule_id, l.account_id, l.schedule_revision, d.due_date,
+           pg_catalog.to_char(d.due_date, 'YYYY-MM') as month_key,
+           -- Ташкент = фиксированный UTC+5: местные минуты минус 5 часов дают момент в UTC
+           ((d.due_date::timestamp + pg_catalog.make_interval(mins => l.send_minute)
+             - interval '5 hours') at time zone 'UTC') as due_at
+      from locked l
+      join days d on true
+      join public.briefing_settings bs on bs.account_id = l.account_id
+     where extract(day from d.due_date)::integer = least(
+             l.day_of_month,
+             extract(day from (pg_catalog.date_trunc('month', d.due_date::timestamp)
+               + interval '1 month - 1 day'))::integer)
+       -- согласие по времени: ни правка, ни повторная верификация не открывают догон
+       -- в прошлое до ТЕКУЩЕГО согласия
+       and ((d.due_date::timestamp + pg_catalog.make_interval(mins => l.send_minute)
+             - interval '5 hours') at time zone 'UTC')
+           >= greatest(coalesce(l.enabled_at, bs.recipient_verified_at), bs.recipient_verified_at)
+  ),
+  ins as (
+    insert into public.reminder_occurrences
+        (schedule_id, account_id, month_key, due_date, due_at, schedule_revision)
+    select schedule_id, account_id, month_key, due_date, due_at, schedule_revision from cand
+    on conflict (schedule_id, month_key) do nothing
+    returning id, schedule_id, account_id, due_date
+  ),
+  linked as (
+    insert into public.tasks (account_id, title, deadline, status, source, reminder_occurrence_id)
+    select i.account_id, l.title, i.due_date, 'todo', 'reminder', i.id
+      from ins i
+      join locked l on l.id = i.schedule_id
+    returning 1
+  )
+  select count(*)::integer into v_count from ins;
+  return v_count;
+end;
+$$;
+
+-- ── lease-CAS выборка к отправке: due-гейт в SQL (drain не отправляет раньше срока) И нижняя
+--    граница p_min_due_date — просроченные строки структурно невыбираемы даже если recovery
+--    перед этим не отработал ─────────────────────────────────────────────────────────────────────
+create or replace function public.reminder_claim_due(
+  p_now timestamptz, p_min_due_date date, p_limit integer, p_lease_seconds integer
+) returns table (
+  id uuid, account_id uuid, schedule_id uuid, due_date date, due_at timestamptz,
+  lease_token uuid, attempt_count integer, title text
+)
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  return query
+  update public.reminder_occurrences o
+     set status = 'sending',
+         lease_token = pg_catalog.gen_random_uuid(),
+         lease_until = pg_catalog.now() + pg_catalog.make_interval(secs => greatest(30, least(p_lease_seconds, 300))),
+         attempt_count = o.attempt_count + 1,
+         updated_at = pg_catalog.now()
+    from public.reminder_schedules s
+   where s.id = o.schedule_id
+     and o.id in (
+       select b.id from public.reminder_occurrences b
+        where b.due_at <= p_now
+          and b.due_date >= p_min_due_date
+          and (b.status = 'planned'
+               or (b.status = 'sending' and b.lease_until < pg_catalog.now()
+                   and b.dispatched_at is null and b.attempt_count < 2))
+        order by b.due_at
+        limit greatest(1, least(p_limit, 25))
+        for update skip locked
+     )
+  returning o.id, o.account_id, o.schedule_id, o.due_date, o.due_at, o.lease_token, o.attempt_count, s.title;
+end;
+$$;
+
+-- ── восстановление: всё, что уже нельзя отправить честно, становится терминальным ───────────────
+create or replace function public.reminder_recover(p_now timestamptz, p_expire_before date)
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare v_total integer := 0; v_count integer;
+begin
+  -- просроченный lease ПОСЛЕ диспетчеризации: исход неизвестен, повторной отправки не будет
+  update public.reminder_occurrences
+     set status = 'unknown', error = 'dispatch_lease_expired', lease_token = null,
+         updated_at = pg_catalog.now()
+   where status = 'sending' and lease_until < p_now and dispatched_at is not null;
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  -- попытки исчерпаны ДО диспетчеризации: определённый отказ, не вечное 'sending'
+  update public.reminder_occurrences
+     set status = 'failed', error = 'attempts_exhausted', lease_token = null,
+         updated_at = pg_catalog.now()
+   where status = 'sending' and lease_until < p_now
+     and dispatched_at is null and attempt_count >= 2;
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  -- напоминание старше окна догона опоздало навсегда — закрывается честно, не отправляется
+  update public.reminder_occurrences
+     set status = 'skipped', error = 'expired_unsent', lease_token = null,
+         updated_at = pg_catalog.now()
+   where due_date < p_expire_before
+     and (status = 'planned'
+          or (status = 'sending' and lease_until < p_now and dispatched_at is null));
+  get diagnostics v_count = row_count; v_total := v_total + v_count;
+  return v_total;
+end;
+$$;
+
+-- ── CAS-маркер диспетчеризации: заново проверяет ТЕКУЩЕЕ согласие и ревизию расписания,
+--    снимает получателя. Порядок блокировок: расписание → occurrence → briefing_settings.
+--    Отправка возможна ТОЛЬКО в возвращённый снимок ───────────────────────────────────────────
+create or replace function public.reminder_mark_dispatch(p_occurrence_id uuid, p_lease_token uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_schedule_id uuid;
+  v_occ public.reminder_occurrences%rowtype;
+  v_schedule public.reminder_schedules%rowtype;
+  v_settings public.briefing_settings%rowtype;
+  v_blocked boolean;
+begin
+  -- id расписания читается БЕЗ блокировки, чтобы взять замки в едином порядке (расписание
+  -- первым); все проверки состояния выполняются ПОСЛЕ захвата обоих замков
+  select schedule_id into v_schedule_id from public.reminder_occurrences where id = p_occurrence_id;
+  if v_schedule_id is null then return jsonb_build_object('ok', false, 'reason', 'lease_lost'); end if;
+
+  select * into v_schedule from public.reminder_schedules
+   where id = v_schedule_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'schedule_disabled'); end if;
+
+  select * into v_occ from public.reminder_occurrences
+   where id = p_occurrence_id and lease_token = p_lease_token
+     and status = 'sending' and dispatched_at is null and lease_until > pg_catalog.now()
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'lease_lost'); end if;
+
+  if not v_schedule.enabled then
+    return jsonb_build_object('ok', false, 'reason', 'schedule_disabled');
+  end if;
+  -- правка после планирования: устаревшая occurrence не отправляется
+  if v_schedule.schedule_revision <> v_occ.schedule_revision then
+    return jsonb_build_object('ok', false, 'reason', 'superseded');
+  end if;
+
+  -- согласие получателя = верификация брифинга. Пересохранение получателя сбрасывает
+  -- verified_at — с этого момента и месячная отправка закрыта до повторной верификации.
+  -- Флаги morning/evening сознательно НЕ участвуют: это независимые подписки.
+  select * into v_settings from public.briefing_settings
+   where account_id = v_occ.account_id for update;
+  if not found or v_settings.recipient_verified_at is null
+     or v_settings.notify_channel_id is null or v_settings.notify_chat_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'recipient_not_verified');
+  end if;
+
+  -- пол согласия ПО ВРЕМЕНИ и на диспетчеризации, не только в планировщике: перенос дня назад
+  -- (due_at раньше enabled_at этой ревизии) или повторная верификация ПОСЛЕ срока (due_at
+  -- раньше recipient_verified_at) не имеют права отправиться
+  if v_occ.due_at < greatest(coalesce(v_schedule.enabled_at, v_settings.recipient_verified_at),
+                             v_settings.recipient_verified_at) then
+    return jsonb_build_object('ok', false, 'reason', 'pre_consent');
+  end if;
+
+  select blocked into v_blocked from public.accounts where id = v_occ.account_id;
+  if v_blocked is distinct from false then
+    return jsonb_build_object('ok', false, 'reason', 'blocked');
+  end if;
+
+  update public.reminder_occurrences
+     set dispatched_at = pg_catalog.now(),
+         dispatch_channel_id = v_settings.notify_channel_id,
+         dispatch_chat_id = v_settings.notify_chat_id,
+         dispatch_settings_revision = v_settings.settings_revision,
+         updated_at = pg_catalog.now()
+   where id = p_occurrence_id;
+  return jsonb_build_object('ok', true,
+    'channel_id', v_settings.notify_channel_id, 'chat_id', v_settings.notify_chat_id);
+end;
+$$;
+
+-- ── терминальный переход, огороженный тем же lease ──────────────────────────────────────────────
+create or replace function public.reminder_finish(
+  p_occurrence_id uuid, p_lease_token uuid, p_status text, p_message_id bigint, p_error text
+) returns boolean
+language plpgsql security definer set search_path = ''
+as $$
+declare v_count integer;
+begin
+  if p_status not in ('sent', 'failed', 'skipped', 'unknown') then
+    raise exception using errcode = '22023', message = 'REMINDER_BAD_FINISH_STATUS';
+  end if;
+  update public.reminder_occurrences
+     set status = p_status,
+         telegram_message_id = p_message_id,
+         error = p_error,
+         lease_token = null,
+         lease_until = null,
+         updated_at = pg_catalog.now()
+   where id = p_occurrence_id and lease_token = p_lease_token and status = 'sending';
+  get diagnostics v_count = row_count;
+  return v_count = 1;
+end;
+$$;
+
+revoke all on function public.reminder_save_schedule(uuid, uuid, text, integer, integer, boolean, timestamptz) from public, anon, authenticated;
+revoke all on function public.reminder_plan_occurrences(date, integer) from public, anon, authenticated;
+revoke all on function public.reminder_claim_due(timestamptz, date, integer, integer) from public, anon, authenticated;
+revoke all on function public.reminder_recover(timestamptz, date) from public, anon, authenticated;
+revoke all on function public.reminder_mark_dispatch(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.reminder_finish(uuid, uuid, text, bigint, text) from public, anon, authenticated;
+grant execute on function public.reminder_save_schedule(uuid, uuid, text, integer, integer, boolean, timestamptz) to service_role;
+grant execute on function public.reminder_plan_occurrences(date, integer) to service_role;
+grant execute on function public.reminder_claim_due(timestamptz, date, integer, integer) to service_role;
+grant execute on function public.reminder_recover(timestamptz, date) to service_role;
+grant execute on function public.reminder_mark_dispatch(uuid, uuid) to service_role;
+grant execute on function public.reminder_finish(uuid, uuid, text, bigint, text) to service_role;
+
+-- ─── 20260905233000_product_report_files.sql ─────────────────────────────────────────────────
+-- Ежемесячный ФАЙЛ отчёта (Plan B, стадия документа): реестр загрузок с ЯВНО объявленным
+-- отчётным периодом, вид расписания product_report и заморозка ПОЛНОГО снимка источника на
+-- occurrence. Условия ревью:
+--   • период — только явное объявление (никакой эвристики по датам в этой итерации), месяц
+--     проверяется как КАЛЕНДАРНЫЙ (01–12), не только формой строки;
+--   • occurrence замораживает ВСЁ: sha, имя файла, период, момент загрузки, валюту (ревизия
+--     уже заморожена) — повторное объявление периода в реестре НЕ переименовывает уже
+--     подготовленную occurrence, подпись документа собирается из снимка occurrence;
+--   • повторная загрузка того же файла сохраняет ПЕРВОНАЧАЛЬНЫЕ uploaded_at и период —
+--     метка времени «данные по состоянию на» не омолаживается пере-загрузкой (обработчик
+--     обновляет только имя файла);
+--   • отправляемый документ строится PER-OCCURRENCE в памяти и НЕ переиспользует общий
+--     артефакт margin-reports/<sha>/... — период/as-of/sha вшиваются в сам workbook;
+--   • смена сигнатур reminder_save_schedule / reminder_claim_due — через ЯВНЫЙ drop без
+--     cascade и повторные revoke/grant: у RETURNS TABLE нельзя добавить колонки через
+--     create or replace, а параметры по умолчанию создали бы ПЕРЕГРУЗКУ со старыми правами.
+--     Старые 7-аргументные вызовы продолжают работать через значения по умолчанию.
+
+-- ── реестр загрузок с отчётным периодом ─────────────────────────────────────────────────────────
+create table if not exists public.margin_upload_registry (
+  account_id    uuid not null references public.accounts(id) on delete cascade,
+  file_sha256   text not null check (file_sha256 ~ '^[0-9a-f]{64}$'),
+  file_name     text not null check (char_length(file_name) between 1 and 200),
+  uploaded_at   timestamptz not null default now(),
+  -- календарный месяц: 2026-13 не проходит, не только «четыре цифры-дефис-две цифры»
+  period_month  text check (period_month ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  period_set_at timestamptz,
+  primary key (account_id, file_sha256)
+);
+
+alter table public.margin_upload_registry enable row level security;
+drop policy if exists margin_upload_registry_read on public.margin_upload_registry;
+create policy margin_upload_registry_read on public.margin_upload_registry for select to authenticated
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+       where u.id = auth.uid() and (u.role = 'owner' or u.is_admin = true)
+         and u.account_id = margin_upload_registry.account_id
+    )
+  );
+revoke insert, update, delete on public.margin_upload_registry from anon, authenticated;
+
+-- ── вид расписания и снимок источника на occurrence ─────────────────────────────────────────────
+alter table public.reminder_schedules add column if not exists kind text not null default 'reminder'
+  check (kind in ('reminder', 'product_report'));
+alter table public.reminder_schedules add column if not exists report_currency text
+  check (report_currency is null or report_currency in ('UZS', 'USD', 'RUB', 'EUR'));
+
+alter table public.reminder_occurrences add column if not exists source_file_sha256 text
+  check (source_file_sha256 is null or source_file_sha256 ~ '^[0-9a-f]{64}$');
+alter table public.reminder_occurrences add column if not exists source_file_name text;
+alter table public.reminder_occurrences add column if not exists source_period_month text
+  check (source_period_month is null or source_period_month ~ '^\d{4}-(0[1-9]|1[0-2])$');
+alter table public.reminder_occurrences add column if not exists source_uploaded_at timestamptz;
+alter table public.reminder_occurrences add column if not exists source_currency text;
+
+-- ── save: добавлены p_kind/p_report_currency. Перегрузка недопустима — старую сигнатуру
+--    сносим явно и переназначаем права; прежние 7-аргументные вызовы работают через default ─────
+drop function public.reminder_save_schedule(uuid, uuid, text, integer, integer, boolean, timestamptz);
+create function public.reminder_save_schedule(
+  p_account_id uuid, p_schedule_id uuid, p_title text,
+  p_day_of_month integer, p_send_minute integer, p_enabled boolean, p_now timestamptz,
+  p_kind text default 'reminder', p_report_currency text default null
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_row public.reminder_schedules%rowtype;
+  v_verified timestamptz;
+  v_currency text;
+begin
+  if p_title is null or char_length(pg_catalog.btrim(p_title)) not between 1 and 200 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_title');
+  end if;
+  if p_day_of_month is null or p_day_of_month not between 1 and 31 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_day');
+  end if;
+  if p_send_minute is null or p_send_minute not between 0 and 1439 then
+    return jsonb_build_object('ok', false, 'reason', 'bad_minute');
+  end if;
+  if p_kind is null or p_kind not in ('reminder', 'product_report') then
+    return jsonb_build_object('ok', false, 'reason', 'bad_kind');
+  end if;
+  -- отчёт без валюты не имеет смысла; валюта простого напоминания всегда NULL
+  if p_kind = 'product_report'
+     and (p_report_currency is null or p_report_currency not in ('UZS', 'USD', 'RUB', 'EUR')) then
+    return jsonb_build_object('ok', false, 'reason', 'bad_currency');
+  end if;
+  v_currency := case when p_kind = 'product_report' then p_report_currency end;
+  if p_enabled then
+    select recipient_verified_at into v_verified
+      from public.briefing_settings where account_id = p_account_id;
+    if v_verified is null then
+      return jsonb_build_object('ok', false, 'reason', 'recipient_not_verified');
+    end if;
+  end if;
+
+  if p_schedule_id is null then
+    perform 1 from public.accounts where id = p_account_id for update;
+    if (select count(*) from public.reminder_schedules where account_id = p_account_id) >= 30 then
+      return jsonb_build_object('ok', false, 'reason', 'schedule_limit');
+    end if;
+    insert into public.reminder_schedules
+        (account_id, title, day_of_month, send_minute, enabled, enabled_at, kind, report_currency)
+    values (p_account_id, pg_catalog.btrim(p_title), p_day_of_month, p_send_minute, p_enabled,
+            case when p_enabled then p_now end, p_kind, v_currency)
+    returning * into v_row;
+    return jsonb_build_object('ok', true, 'schedule', to_jsonb(v_row));
+  end if;
+
+  select * into v_row from public.reminder_schedules
+   where id = p_schedule_id and account_id = p_account_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  -- вид заморожен при создании: превращение напоминания в отчёт (и обратно) меняло бы смысл
+  -- уже существующих occurrence этого месяца
+  if v_row.kind <> p_kind then
+    return jsonb_build_object('ok', false, 'reason', 'kind_immutable');
+  end if;
+
+  update public.reminder_schedules
+     set title = pg_catalog.btrim(p_title),
+         day_of_month = p_day_of_month,
+         send_minute = p_send_minute,
+         enabled = p_enabled,
+         enabled_at = case when p_enabled then p_now end,
+         report_currency = v_currency,
+         schedule_revision = v_row.schedule_revision + 1,
+         updated_at = pg_catalog.now()
+   where id = v_row.id
+  returning * into v_row;
+
+  if p_enabled then
+    update public.tasks t
+       set deadline = (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1))::date
+      from public.reminder_occurrences o
+     where o.schedule_id = v_row.id and o.status = 'planned'
+       and t.reminder_occurrence_id = o.id
+       and t.status = 'todo'
+       and t.deadline = o.due_date;
+    update public.reminder_occurrences o
+       set due_date = (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1))::date,
+           due_at = ((pg_catalog.date_trunc('month', o.due_date::timestamp)
+                       + pg_catalog.make_interval(days => least(
+                           p_day_of_month,
+                           extract(day from (pg_catalog.date_trunc('month', o.due_date::timestamp)
+                             + interval '1 month - 1 day'))::integer) - 1)
+                       + pg_catalog.make_interval(mins => p_send_minute)
+                       - interval '5 hours') at time zone 'UTC'),
+           schedule_revision = v_row.schedule_revision,
+           updated_at = pg_catalog.now()
+     where o.schedule_id = v_row.id and o.status = 'planned';
+  else
+    update public.reminder_occurrences
+       set status = 'skipped', error = 'schedule_disabled',
+           lease_token = null, lease_until = null, updated_at = pg_catalog.now()
+     where schedule_id = v_row.id and status = 'planned';
+  end if;
+  return jsonb_build_object('ok', true, 'schedule', to_jsonb(v_row));
+end;
+$$;
+
+-- ── claim: RETURNS TABLE расширяется видом/валютой/снимком/lease_until — только через drop ──────
+drop function public.reminder_claim_due(timestamptz, date, integer, integer);
+create function public.reminder_claim_due(
+  p_now timestamptz, p_min_due_date date, p_limit integer, p_lease_seconds integer
+) returns table (
+  id uuid, account_id uuid, schedule_id uuid, due_date date, due_at timestamptz,
+  lease_token uuid, lease_until timestamptz, attempt_count integer, title text,
+  kind text, report_currency text,
+  source_file_sha256 text, source_file_name text, source_period_month text,
+  source_uploaded_at timestamptz, source_currency text
+)
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  return query
+  update public.reminder_occurrences o
+     set status = 'sending',
+         lease_token = pg_catalog.gen_random_uuid(),
+         lease_until = pg_catalog.now() + pg_catalog.make_interval(secs => greatest(30, least(p_lease_seconds, 300))),
+         attempt_count = o.attempt_count + 1,
+         updated_at = pg_catalog.now()
+    from public.reminder_schedules s
+   where s.id = o.schedule_id
+     and o.id in (
+       select b.id from public.reminder_occurrences b
+        where b.due_at <= p_now
+          and b.due_date >= p_min_due_date
+          and (b.status = 'planned'
+               or (b.status = 'sending' and b.lease_until < pg_catalog.now()
+                   and b.dispatched_at is null and b.attempt_count < 2))
+        order by b.due_at
+        limit greatest(1, least(p_limit, 25))
+        for update skip locked
+     )
+  returning o.id, o.account_id, o.schedule_id, o.due_date, o.due_at,
+            o.lease_token, o.lease_until, o.attempt_count, s.title,
+            s.kind, s.report_currency,
+            o.source_file_sha256, o.source_file_name, o.source_period_month,
+            o.source_uploaded_at, o.source_currency;
+end;
+$$;
+
+-- ── заморозка источника: АТОМАРНО выбирает свежайший файл РОВНО этого месяца и снимает ВСЁ.
+--    Повторный вызов возвращает уже замороженный снимок — свежая загрузка или переобъявление
+--    периода в реестре НЕ меняют однажды подготовленную occurrence ─────────────────────────────
+create function public.reminder_freeze_source(p_occurrence_id uuid, p_lease_token uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_schedule_id uuid;
+  v_occ public.reminder_occurrences%rowtype;
+  v_schedule public.reminder_schedules%rowtype;
+  v_src record;
+begin
+  select schedule_id into v_schedule_id from public.reminder_occurrences where id = p_occurrence_id;
+  if v_schedule_id is null then return jsonb_build_object('ok', false, 'reason', 'lease_lost'); end if;
+
+  -- порядок блокировок единый: расписание → occurrence
+  select * into v_schedule from public.reminder_schedules where id = v_schedule_id for update;
+  if not found or not v_schedule.enabled then
+    return jsonb_build_object('ok', false, 'reason', 'schedule_disabled');
+  end if;
+  select * into v_occ from public.reminder_occurrences
+   where id = p_occurrence_id and lease_token = p_lease_token
+     and status = 'sending' and dispatched_at is null and lease_until > pg_catalog.now()
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'lease_lost'); end if;
+  if v_schedule.schedule_revision <> v_occ.schedule_revision then
+    return jsonb_build_object('ok', false, 'reason', 'superseded');
+  end if;
+  if v_schedule.kind <> 'product_report' then
+    return jsonb_build_object('ok', false, 'reason', 'not_report');
+  end if;
+  if v_schedule.report_currency is null then
+    return jsonb_build_object('ok', false, 'reason', 'currency_missing');
+  end if;
+
+  if v_occ.source_file_sha256 is not null then
+    -- уже заморожено: отвечаем СНИМКОМ occurrence, не реестром
+    return jsonb_build_object('ok', true,
+      'file_sha256', v_occ.source_file_sha256, 'file_name', v_occ.source_file_name,
+      'period_month', v_occ.source_period_month, 'uploaded_at', v_occ.source_uploaded_at,
+      'currency', v_occ.source_currency);
+  end if;
+
+  select r.file_sha256, r.file_name, r.uploaded_at into v_src
+    from public.margin_upload_registry r
+   where r.account_id = v_occ.account_id and r.period_month = v_occ.month_key
+   -- стабильная развязка при равных метках времени — заморозка детерминирована
+   order by r.uploaded_at desc, r.file_sha256 asc
+   limit 1;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'source_missing_period'); end if;
+
+  update public.reminder_occurrences
+     set source_file_sha256 = v_src.file_sha256,
+         source_file_name = v_src.file_name,
+         source_period_month = v_occ.month_key,
+         source_uploaded_at = v_src.uploaded_at,
+         source_currency = v_schedule.report_currency,
+         updated_at = pg_catalog.now()
+   where id = p_occurrence_id;
+  return jsonb_build_object('ok', true,
+    'file_sha256', v_src.file_sha256, 'file_name', v_src.file_name,
+    'period_month', v_occ.month_key, 'uploaded_at', v_src.uploaded_at,
+    'currency', v_schedule.report_currency);
+end;
+$$;
+
+-- ── явное объявление отчётного периода файла (единственный способ его изменить) ─────────────────
+create function public.margin_registry_set_period(
+  p_account_id uuid, p_file_sha256 text, p_period_month text
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare v_row public.margin_upload_registry%rowtype;
+begin
+  if p_file_sha256 is null or p_file_sha256 !~ '^[0-9a-f]{64}$' then
+    return jsonb_build_object('ok', false, 'reason', 'bad_sha');
+  end if;
+  if p_period_month is null or p_period_month !~ '^\d{4}-(0[1-9]|1[0-2])$' then
+    return jsonb_build_object('ok', false, 'reason', 'bad_period');
+  end if;
+  update public.margin_upload_registry
+     set period_month = p_period_month, period_set_at = pg_catalog.now()
+   where account_id = p_account_id and file_sha256 = p_file_sha256
+  returning * into v_row;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  return jsonb_build_object('ok', true, 'source', to_jsonb(v_row));
+end;
+$$;
+
+-- права переназначаются ЗАНОВО для пересозданных функций и выдаются новым
+revoke all on function public.reminder_save_schedule(uuid, uuid, text, integer, integer, boolean, timestamptz, text, text) from public, anon, authenticated;
+revoke all on function public.reminder_claim_due(timestamptz, date, integer, integer) from public, anon, authenticated;
+revoke all on function public.reminder_freeze_source(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.margin_registry_set_period(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.reminder_save_schedule(uuid, uuid, text, integer, integer, boolean, timestamptz, text, text) to service_role;
+grant execute on function public.reminder_claim_due(timestamptz, date, integer, integer) to service_role;
+grant execute on function public.reminder_freeze_source(uuid, uuid) to service_role;
+grant execute on function public.margin_registry_set_period(uuid, text, text) to service_role;
+
+-- ─── 20260906000000_document_jobs_lifecycle.sql ──────────────────────────────────────────────
+-- Документные задания из чата — D2-жизненный цикл: НАСТОЯЩЕЕ активное состояние
+-- waiting_compute в машине состояний runtime, идемпотентная постановка и CAS-финализация.
+--
+-- МАШИНА СОСТОЯНИЙ (расширение контракта runtime, пред-ревью D2):
+--   • новое состояние waiting_compute — «workflow ждёт своё compute-задание». Оно НЕтерминально
+--     (terminal_at обязан быть NULL) и НЕ running (lease-поля обязаны быть NULL);
+--   • разрешённые переходы ДОБАВЛЯЮТСЯ ровно три: queued→waiting_compute (только внутри
+--     транзакции постановки, type 'action_enqueued'), waiting_compute→completed и
+--     waiting_compute→failed (только финализатором, type 'completed'/'failed').
+--     waiting_compute→cancelled НЕ вводится, пока не существует настоящей семантики отмены;
+--   • ИЗОЛЯЦИЯ ВЛАДЕНИЯ структурная: runtime_claim_workflow выбирает только queued,
+--     просроченный running и созревший retry_scheduled — waiting_compute не подходит ни под
+--     одно условие, поэтому НИКАКОЙ клеймер (в т.ч. без фильтра типа) не может забрать
+--     родителя, при этом состояние честно видно активным;
+--   • наблюдаемость: читатели «активных прогонов» расширяются на waiting_compute
+--     (tgProcess/morning-brief в этом же изменении), контракты дашборда состояние не
+--     перечисляют и передают строку как есть;
+--   • ОТКАТ этой миграции запрещён, пока существуют строки в waiting_compute: сначала
+--     финализировать/дренировать, никакой принудительной перекраски состояний.
+--
+-- ЦИКЛ ЗАДАНИЯ: enqueue = одна транзакция (workflow queued → compute-задание →
+-- queued→waiting_compute → строка запроса); исход compute ведут воркерные RPC под воркерным
+-- lease; финализатор переносит РОВНО этот исход на родителя (completed→completed,
+-- failed/dead_letter→failed c terminal_reason_code из error_code задания), идемпотентен,
+-- никогда не трогает cancelled и никогда не завершает родителя раньше задания.
+--
+-- МАНИФЕСТ-ГЕЙТ (условие D2 «невалидный манифест не становится успехом»): job completed
+-- превращается в workflow completed ТОЛЬКО если result_manifest структурно привязан к
+-- аккаунту/заданию/виду (job_id, MIME по kind, размер 1..64МиБ, sha256, storage_path с
+-- префиксом арендатора и вхождением job_id); иначе — failed/DOCUMENT_MANIFEST_INVALID.
+-- Проверка детерминирована, поэтому повторная финализация вычисляет тот же исход.
+-- ГРАНИЦА ЧЕСТНОСТИ: структурная валидность ≠ зарегистрированный объект хранилища —
+-- download-этап обязан дополнительно проверить регистрацию (upload-граница ещё на пред-ревью)
+-- и никогда не выдавать файл по одному лишь манифесту.
+
+-- ── состояние и переходы ────────────────────────────────────────────────────────────────────────
+alter table runtime.allowed_workflow_transitions drop constraint allowed_transition_from_state_check;
+alter table runtime.allowed_workflow_transitions add constraint allowed_transition_from_state_check check (from_state in (
+  'received', 'queued', 'running', 'waiting_for_policy', 'waiting_for_approval',
+  'waiting_for_action', 'retry_scheduled', 'waiting_compute'
+));
+alter table runtime.allowed_workflow_transitions drop constraint allowed_transition_to_state_check;
+alter table runtime.allowed_workflow_transitions add constraint allowed_transition_to_state_check check (to_state in (
+  'queued', 'running', 'waiting_for_policy', 'waiting_for_approval',
+  'waiting_for_action', 'retry_scheduled', 'completed', 'failed', 'denied',
+  'dead_letter', 'cancelled', 'waiting_compute'
+));
+alter table runtime.workflow_runs drop constraint workflow_runs_state_check;
+alter table runtime.workflow_runs add constraint workflow_runs_state_check check (current_state in (
+  'received', 'queued', 'running', 'waiting_for_policy', 'waiting_for_approval',
+  'waiting_for_action', 'retry_scheduled', 'completed', 'failed', 'denied',
+  'dead_letter', 'cancelled', 'waiting_compute'
+));
+
+insert into runtime.allowed_workflow_transitions (from_state, to_state) values
+  ('queued', 'waiting_compute'),
+  ('waiting_compute', 'completed'),
+  ('waiting_compute', 'failed');
+
+-- ── запросы: идемпотентность и арендаторские инварианты ────────────────────────────────────────
+create table if not exists public.document_job_requests (
+  account_id   uuid not null references public.accounts(id) on delete cascade,
+  request_id   uuid not null,
+  kind         text not null check (kind in ('docx_document', 'pptx_presentation')),
+  input_sha256 text not null check (input_sha256 ~ '^[a-f0-9]{64}$'),
+  workflow_id  uuid not null,
+  job_id       uuid not null,
+  created_at   timestamptz not null default now(),
+  primary key (account_id, request_id),
+  unique (account_id, workflow_id),
+  unique (account_id, job_id),
+  foreign key (account_id, workflow_id) references runtime.workflow_runs(account_id, id) on delete restrict,
+  foreign key (account_id, job_id) references runtime.compute_jobs(account_id, id) on delete restrict
+);
+
+create index if not exists document_job_requests_day_idx
+  on public.document_job_requests (account_id, created_at desc);
+
+alter table public.document_job_requests enable row level security;
+drop policy if exists document_job_requests_read on public.document_job_requests;
+create policy document_job_requests_read on public.document_job_requests for select to authenticated
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+       where u.id = auth.uid() and (u.role = 'owner' or u.is_admin = true)
+         and u.account_id = document_job_requests.account_id
+    )
+  );
+revoke insert, update, delete on public.document_job_requests from anon, authenticated;
+
+-- ── постановка ──────────────────────────────────────────────────────────────────────────────────
+create or replace function public.document_enqueue_job(
+  p_account_id uuid,
+  p_request_id uuid,
+  p_kind text,
+  p_input jsonb,
+  p_daily_quota integer default 50
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_existing public.document_job_requests%rowtype;
+  v_blocked boolean;
+  v_input_sha text;
+  v_workflow_id uuid;
+  v_job_id uuid;
+  v_used integer;
+  v_ingest jsonb;
+  v_enqueue jsonb;
+  v_seq bigint;
+begin
+  if p_account_id is null or p_request_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+  if p_kind is null or p_kind not in ('docx_document', 'pptx_presentation') then
+    return jsonb_build_object('ok', false, 'reason', 'bad_kind');
+  end if;
+  if p_input is null or pg_catalog.jsonb_typeof(p_input) <> 'object'
+     or (p_input->>'kind') is distinct from p_kind then
+    return jsonb_build_object('ok', false, 'reason', 'bad_input');
+  end if;
+  -- SQL — авторитет размера, с запасом к жёсткому 65536 нижнего RPC
+  if pg_catalog.octet_length(p_input::text) > 60000 then
+    return jsonb_build_object('ok', false, 'reason', 'payload_too_large');
+  end if;
+
+  select blocked into v_blocked from public.accounts where id = p_account_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_account'); end if;
+  -- под замком: параллельная блокировка не проскочит между авторизацией и постановкой
+  if v_blocked then return jsonb_build_object('ok', false, 'reason', 'blocked'); end if;
+
+  v_input_sha := runtime.sha256_jsonb(p_input);
+
+  -- идемпотентность РАНЬШЕ квоты: повтор на исчерпанной квоте получает СВОЁ задание
+  select * into v_existing from public.document_job_requests
+   where account_id = p_account_id and request_id = p_request_id;
+  if found then
+    if v_existing.kind = p_kind and v_existing.input_sha256 = v_input_sha then
+      return jsonb_build_object('ok', true, 'job_id', v_existing.job_id,
+        'workflow_id', v_existing.workflow_id, 'deduplicated', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'idempotency_conflict');
+  end if;
+
+  -- местные сутки Ташкента (+05:00, DST нет) детерминированной арифметикой — без tzdata и
+  -- без зависимости от TimeZone сессии
+  select count(*)::integer into v_used
+    from public.document_job_requests
+   where account_id = p_account_id
+     and (((created_at at time zone 'UTC') + interval '5 hours')::date)
+       = (((pg_catalog.now() at time zone 'UTC') + interval '5 hours')::date);
+  if v_used >= greatest(1, least(coalesce(p_daily_quota, 50), 500)) then
+    return jsonb_build_object('ok', false, 'reason', 'quota_exceeded');
+  end if;
+
+  begin
+    v_ingest := public.runtime_ingest_event(
+      p_account_id      => p_account_id,
+      p_provider        => 'document_jobs',
+      p_external_event_id => p_request_id::text,
+      p_payload         => jsonb_build_object('kind', p_kind, 'input_sha256', v_input_sha),
+      p_execution_mode  => 'live',
+      p_correlation_id  => p_request_id,
+      p_event_type      => 'document.requested',
+      p_workflow_type   => 'document_job',
+      p_actor_id        => 'document-jobs'
+    );
+    v_workflow_id := (v_ingest->>'workflow_id')::uuid;
+    v_enqueue := public.runtime_enqueue_compute_job(
+      p_account_id, v_workflow_id, 'PROFILE_B_DOCS', p_input
+    );
+    v_job_id := (v_enqueue->>'job_id')::uuid;
+
+    -- НАСТОЯЩЕЕ активное состояние в той же транзакции: claimable 'queued' снаружи не существует
+    select coalesce(max(t.transition_seq), 0) + 1 into v_seq
+      from runtime.workflow_transitions t
+     where t.account_id = p_account_id and t.workflow_id = v_workflow_id;
+    insert into runtime.workflow_transitions (
+      account_id, workflow_id, transition_seq, from_state, to_state,
+      transition_type, actor_type, actor_id, correlation_id,
+      workflow_version, lease_epoch, transition_payload, payload_hash
+    ) values (
+      p_account_id, v_workflow_id, v_seq, 'queued', 'waiting_compute',
+      'action_enqueued', 'system', 'document-jobs', p_request_id,
+      'v1', 0, jsonb_build_object('job_id', v_job_id),
+      runtime.sha256_jsonb(jsonb_build_object('job_id', v_job_id))
+    );
+    update runtime.workflow_runs
+       set current_state = 'waiting_compute', updated_at = pg_catalog.clock_timestamp()
+     where account_id = p_account_id and id = v_workflow_id;
+    insert into runtime.audit_events (
+      account_id, workflow_id, event_type, actor_type, actor_id,
+      correlation_id, details, runtime_contract_version, workflow_version
+    ) values (
+      p_account_id, v_workflow_id, 'runtime.document_workflow_waiting_compute',
+      'system', 'document-jobs', p_request_id,
+      jsonb_build_object('job_id', v_job_id), 'runtime-v1', 'v1'
+    );
+  exception
+    when sqlstate '55000' then
+      return jsonb_build_object('ok', false, 'reason', 'runtime_paused');
+    when others then
+      return jsonb_build_object('ok', false, 'reason', 'enqueue_failed');
+  end;
+
+  insert into public.document_job_requests (account_id, request_id, kind, input_sha256, workflow_id, job_id)
+  values (p_account_id, p_request_id, p_kind, v_input_sha, v_workflow_id, v_job_id);
+
+  return jsonb_build_object('ok', true, 'job_id', v_job_id, 'workflow_id', v_workflow_id, 'deduplicated', false);
+end;
+$$;
+
+-- ── структурная привязка манифеста к аккаунту/заданию/виду ──────────────────────────────────────
+-- Чистая детерминированная проверка (никаких таблиц): {} и любой несвязанный манифест — false.
+-- NULL-цепочки схлопываются coalesce'ом в false, никогда в «неизвестно».
+create or replace function public.document_manifest_valid(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_kind text,
+  p_profile text,
+  p_manifest jsonb
+) returns boolean
+language sql immutable set search_path = ''
+as $$
+  select coalesce(
+    p_profile = 'PROFILE_B_DOCS'
+    and pg_catalog.jsonb_typeof(p_manifest) = 'object'
+    and (p_manifest->>'job_id') = p_job_id::text
+    and (p_manifest->>'status') = 'COMPLETED'
+    and pg_catalog.jsonb_typeof(p_manifest->'artifacts') = 'array'
+    and pg_catalog.jsonb_array_length(p_manifest->'artifacts') = 1
+    and (
+      select coalesce(
+        pg_catalog.jsonb_typeof(s.a) = 'object'
+        and (s.a->>'name') ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$'
+        -- расширение имени привязано к kind: report.exe для DOCX не проходит
+        and (s.a->>'name') like case p_kind
+              when 'docx_document' then '%.docx'
+              when 'pptx_presentation' then '%.pptx'
+            end
+        and (s.a->>'mime_type') = case p_kind
+              when 'docx_document' then 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              when 'pptx_presentation' then 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            end
+        and pg_catalog.jsonb_typeof(s.a->'size_bytes') = 'number'
+        and (s.a->>'size_bytes')::numeric = pg_catalog.floor((s.a->>'size_bytes')::numeric)
+        and (s.a->>'size_bytes')::numeric between 1 and 67108864
+        and (s.a->>'sha256') ~ '^[a-f0-9]{64}$'
+        and pg_catalog.length(s.a->>'storage_path') between 1 and 500
+        -- ОДИН канонический неизменяемый путь, проверяемый ТОЧНО (не префикс/подстрока):
+        -- tenants/<account>/artifacts/YYYY/MM/DD/<job_id>-<name>. Upload-граница обязана
+        -- порождать РОВНО эту форму (пред-ревью хранилища проверит её же).
+        and (s.a->>'storage_path') ~ (
+          '^tenants/' || p_account_id::text || '/artifacts/[0-9]{4}/[0-9]{2}/[0-9]{2}/[^/]+$'
+        )
+        and pg_catalog.regexp_replace((s.a->>'storage_path'), '^.*/', '')
+          = p_job_id::text || '-' || (s.a->>'name')
+        and pg_catalog.strpos((s.a->>'storage_path'), '..') = 0
+      , false)
+      from (select p_manifest->'artifacts'->0 as a) s
+    )
+  , false);
+$$;
+
+-- ── статус: ТОЛЬКО документные задания собственного аккаунта ────────────────────────────────────
+-- Наружу отдаётся ИСХОД РОДИТЕЛЯ, а не сырой статус задания: пока финализатор не перенёс
+-- терминал задания, это «processing». Манифест виден ТОЛЬКО у workflow completed — job
+-- completed с {} или несвязанным манифестом финализируется в failed и никогда не выглядит
+-- готовым документом. Пригодность к ВЫДАЧЕ дополнительно проверяет download-этап по
+-- зарегистрированному объекту хранилища (upload-граница ещё на пред-ревью).
+create or replace function public.document_job_status(p_account_id uuid, p_job_id uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_job runtime.compute_jobs%rowtype;
+  v_state text;
+  v_terminal_reason text;
+  v_status text;
+begin
+  if p_account_id is null or p_job_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_found');
+  end if;
+  select j.* into v_job
+    from runtime.compute_jobs j
+    join public.document_job_requests r
+      on r.account_id = j.account_id and r.job_id = j.id
+   where j.account_id = p_account_id and j.id = p_job_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  select run.current_state, run.terminal_reason_code into v_state, v_terminal_reason
+    from runtime.workflow_runs run
+   where run.account_id = p_account_id and run.id = v_job.workflow_id;
+  v_status := case
+    when v_state = 'completed' then 'completed'
+    when v_state = 'failed' then 'failed'
+    when v_state = 'cancelled' then 'cancelled'
+    else 'processing'
+  end;
+  return jsonb_build_object(
+    'ok', true,
+    'status', v_status,
+    'workflow_state', v_state,
+    'compute_status', v_job.status,
+    'error_code', case when v_status = 'failed' then coalesce(v_terminal_reason, v_job.error_code) end,
+    'attempt_count', v_job.attempt_count,
+    'kind', v_job.input_payload->>'kind',
+    'manifest', case when v_status = 'completed' then v_job.result_manifest end,
+    'created_at', v_job.created_at
+  );
+end;
+$$;
+
+-- ── CAS-финализация: переносит на родителя РОВНО терминальный исход задания ─────────────────────
+create or replace function public.document_finalize_workflow(p_account_id uuid, p_workflow_id uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_run runtime.workflow_runs%rowtype;
+  v_request public.document_job_requests%rowtype;
+  v_job runtime.compute_jobs%rowtype;
+  v_target text;
+  v_reason text;
+  v_seq bigint;
+begin
+  if p_account_id is null or p_workflow_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков: родитель, затем задание
+  select * into v_run from runtime.workflow_runs
+   where account_id = p_account_id and id = p_workflow_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_run.workflow_type <> 'document_job' then
+    return jsonb_build_object('ok', false, 'reason', 'not_document');
+  end if;
+  -- отменённого родителя финализатор НЕ трогает никогда
+  if v_run.current_state = 'cancelled' then
+    return jsonb_build_object('ok', false, 'reason', 'cancelled');
+  end if;
+
+  select * into v_request from public.document_job_requests
+   where account_id = p_account_id and workflow_id = p_workflow_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_document'); end if;
+
+  select * into v_job from runtime.compute_jobs
+   where account_id = p_account_id and id = v_request.job_id
+   for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'finalize_conflict'); end if;
+  -- инвариант связи: задание обязано принадлежать именно этому родителю
+  if v_job.workflow_id <> p_workflow_id then
+    return jsonb_build_object('ok', false, 'reason', 'finalize_conflict');
+  end if;
+
+  if v_job.status in ('pending', 'running') then
+    return jsonb_build_object('ok', false, 'reason', 'compute_not_terminal');
+  end if;
+  -- условие D2: НЕвалидный манифест НЕ становится успехом. Проверка детерминирована по
+  -- (job, kind, manifest), поэтому повторная финализация вычисляет тот же исход.
+  if v_job.status = 'completed' then
+    if public.document_manifest_valid(p_account_id, v_job.id, v_request.kind, v_job.profile, v_job.result_manifest) then
+      v_target := 'completed';
+      v_reason := null;
+    else
+      v_target := 'failed';
+      v_reason := 'DOCUMENT_MANIFEST_INVALID';
+    end if;
+  else
+    v_target := 'failed';
+    v_reason := coalesce(v_job.error_code, 'DOCUMENT_JOB_FAILED');
+  end if;
+
+  -- идемпотентность: совпадающий терминал — уже сделано; расходящийся — конфликт, не перекраска
+  if v_run.current_state in ('completed', 'failed') then
+    if v_run.current_state = v_target then
+      return jsonb_build_object('ok', true, 'status', v_target, 'already', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'finalize_conflict');
+  end if;
+  if v_run.current_state <> 'waiting_compute' then
+    return jsonb_build_object('ok', false, 'reason', 'not_waiting');
+  end if;
+
+  select coalesce(max(t.transition_seq), 0) + 1 into v_seq
+    from runtime.workflow_transitions t
+   where t.account_id = p_account_id and t.workflow_id = p_workflow_id;
+  insert into runtime.workflow_transitions (
+    account_id, workflow_id, transition_seq, from_state, to_state,
+    transition_type, actor_type, actor_id, correlation_id,
+    workflow_version, lease_epoch, transition_payload, payload_hash
+  ) values (
+    p_account_id, p_workflow_id, v_seq, 'waiting_compute', v_target,
+    v_target, 'worker', 'document-worker', v_run.correlation_id,
+    v_run.workflow_version, 0, jsonb_build_object('job_id', v_job.id, 'job_status', v_job.status),
+    runtime.sha256_jsonb(jsonb_build_object('job_id', v_job.id, 'job_status', v_job.status))
+  );
+  -- терминальные поля по контракту: completed — без причины, failed — с кодом из задания;
+  -- lease-поля не трогаются (они NULL по инварианту нетерминального неclaimable состояния)
+  update runtime.workflow_runs
+     set current_state = v_target,
+         terminal_at = pg_catalog.clock_timestamp(),
+         terminal_reason_code = v_reason,
+         updated_at = pg_catalog.clock_timestamp()
+   where account_id = p_account_id and id = p_workflow_id;
+  insert into runtime.audit_events (
+    account_id, workflow_id, event_type, actor_type, actor_id,
+    correlation_id, details, runtime_contract_version, workflow_version
+  ) values (
+    p_account_id, p_workflow_id, 'runtime.document_workflow_finalized',
+    'worker', 'document-worker', v_run.correlation_id,
+    jsonb_build_object('status', v_target, 'job_id', v_job.id, 'job_status', v_job.status,
+      'reason', v_reason), 'runtime-v1', v_run.workflow_version
+  );
+  return jsonb_build_object('ok', true, 'status', v_target, 'already', false);
+end;
+$$;
+
+-- ── детерминированная развёртка незакрытых: только документные, только терминальные задания ─────
+create or replace function public.document_list_unfinalized(p_limit integer default 25)
+returns table (account_id uuid, workflow_id uuid)
+language sql security definer set search_path = ''
+as $$
+  select run.account_id, run.id
+    from runtime.workflow_runs run
+    join public.document_job_requests r
+      on r.account_id = run.account_id and r.workflow_id = run.id
+    join runtime.compute_jobs j
+      on j.account_id = r.account_id and j.id = r.job_id
+   where run.workflow_type = 'document_job'
+     and run.current_state = 'waiting_compute'
+     and j.status in ('completed', 'failed', 'dead_letter')
+   order by run.created_at, run.id
+   limit greatest(1, least(coalesce(p_limit, 25), 25));
+$$;
+
+revoke all on function public.document_manifest_valid(uuid, uuid, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.document_enqueue_job(uuid, uuid, text, jsonb, integer) from public, anon, authenticated;
+revoke all on function public.document_job_status(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.document_finalize_workflow(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.document_list_unfinalized(integer) from public, anon, authenticated;
+grant execute on function public.document_enqueue_job(uuid, uuid, text, jsonb, integer) to service_role;
+grant execute on function public.document_job_status(uuid, uuid) to service_role;
+grant execute on function public.document_finalize_workflow(uuid, uuid) to service_role;
+grant execute on function public.document_list_unfinalized(integer) to service_role;
+
+-- ─── 20260906010000_document_artifacts_storage.sql ───────────────────────────────────────────
+-- Документные артефакты: хранилище + РЕГИСТРАЦИЯ как единственная правда о выдаче.
+-- Условное GO Codex (локально, БЕЗ деплоя): публикационный забор — ПОВТОРНАЯ проверка
+-- lease в транзакции регистрации (первичная проверка на endpoint только совещательная:
+-- она не может обещать отсутствие поздних записей байтов устаревшим воркером);
+-- канонический путь квалифицирован попыткой и содержимым, чтобы сирота после
+-- upload-успеха/registration-сбоя НИКОГДА не блокировал повтор; финализатор принимает
+-- completed ТОЛЬКО при неизменяемой регистрации, совпадающей с манифестом.
+--
+-- КАНОНИЧЕСКИЙ ПУТЬ (единственная форма, порождается ТОЛЬКО сервером, клиентского пути
+-- не существует): tenants/<account_id>/artifacts/<job_id>/<lease_epoch>/<sha256>-<name>
+--   • epoch-сегмент: повтор с новым lease пишет в НОВЫЙ путь — сирота прежней попытки
+--     не мешает; коллизия возможна только в ТОЙ ЖЕ попытке с ТЕМ ЖЕ содержимым, и
+--     endpoint обязан сверить фактические размер/хэш сохранённого объекта перед
+--     переиспользованием (никогда не регистрировать коллизию вслепую);
+--   • sha-сегмент: содержимое входит в путь — перезапись другим содержимым по тому же
+--     пути невозможна структурно; CHECK таблицы пересобирает путь из колонок.
+--
+-- ПОРЯДОК ОБЯЗАТЕЛЕН: upload → register → finish → finalize. Регистрация требует
+-- живой running-lease (token+epoch+срок) под замком родителя — после терминального
+-- исхода родителя регистрация невозможна (тот же замок, что у финализатора).
+--
+-- ИДЕМПОТЕНТНОСТЬ РЕГИСТРАЦИИ: одна строка на job (PK); повтор со ВСЕМИ совпадающими
+-- метаданными содержимого (kind/name/mime/size/sha) → already:true и ЗАРЕГИСТРИРОВАННЫЙ
+-- путь (истина публикации); любое расхождение → registration_conflict, без перезаписи.
+-- Расхождение только в epoch/пути при полном совпадении содержимого НЕ конфликт: это
+-- повтор после сбоя finish — воркер обязан использовать зарегистрированный путь.
+--
+-- УБОРКИ НЕТ СОЗНАТЕЛЬНО (как margin-files): несвязанные объекты копятся, настоящая
+-- уборка — отдельный worker через Storage API после собственного ревью.
+
+-- ── бакет: приватный, без браузерных политик, только service role ───────────────────────────────
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('document-artifacts', 'document-artifacts', false, 64 * 1024 * 1024)
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit;
+
+-- ── составная связь workflow↔job для FK регистрации ────────────────────────────────────────────
+alter table public.document_job_requests
+  add constraint document_job_requests_job_workflow_key unique (account_id, job_id, workflow_id);
+
+-- ── регистрация: append-only, одна строка на job ────────────────────────────────────────────────
+create table public.document_artifacts (
+  account_id   uuid not null references public.accounts(id) on delete restrict,
+  job_id       uuid not null,
+  workflow_id  uuid not null,
+  kind         text not null check (kind in ('docx_document', 'pptx_presentation')),
+  name         text not null,
+  mime_type    text not null,
+  size_bytes   bigint not null check (size_bytes between 1 and 67108864),
+  sha256       text not null check (sha256 ~ '^[a-f0-9]{64}$'),
+  lease_epoch  bigint not null check (lease_epoch >= 0),
+  storage_path text not null,
+  uploaded_at  timestamptz not null default clock_timestamp(),
+  primary key (account_id, job_id),
+  unique (storage_path),
+  foreign key (account_id, job_id, workflow_id)
+    references public.document_job_requests(account_id, job_id, workflow_id) on delete restrict,
+  constraint document_artifacts_name_check check (name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$'),
+  constraint document_artifacts_extension_check check (
+    (kind = 'docx_document' and name like '%.docx')
+    or (kind = 'pptx_presentation' and name like '%.pptx')
+  ),
+  constraint document_artifacts_mime_check check (
+    (kind = 'docx_document'
+      and mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    or (kind = 'pptx_presentation'
+      and mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+  ),
+  -- путь ПЕРЕСОБИРАЕТСЯ из колонок: никакая строка с иным путём не существует
+  constraint document_artifacts_canonical_path_check check (
+    storage_path = 'tenants/' || account_id::text || '/artifacts/' || job_id::text
+      || '/' || lease_epoch::text || '/' || sha256 || '-' || name
+  )
+);
+
+create trigger document_artifacts_immutable
+before update or delete on public.document_artifacts
+for each row execute function runtime.prevent_mutation();
+
+alter table public.document_artifacts enable row level security;
+drop policy if exists document_artifacts_read on public.document_artifacts;
+create policy document_artifacts_read on public.document_artifacts for select to authenticated
+  using (
+    account_id = public.current_account_id()
+    and exists (
+      select 1 from public.users u
+       where u.id = auth.uid() and (u.role = 'owner' or u.is_admin = true)
+         and u.account_id = document_artifacts.account_id
+    )
+    and not exists (
+      select 1 from public.accounts a where a.id = document_artifacts.account_id and a.blocked
+    )
+  );
+revoke insert, update, delete on public.document_artifacts from anon, authenticated;
+
+-- ── валидатор манифеста: путь той же канонической формы, что и регистрация ─────────────────────
+create or replace function public.document_manifest_valid(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_kind text,
+  p_profile text,
+  p_manifest jsonb
+) returns boolean
+language sql immutable set search_path = ''
+as $$
+  select coalesce(
+    p_profile = 'PROFILE_B_DOCS'
+    and pg_catalog.jsonb_typeof(p_manifest) = 'object'
+    and (p_manifest->>'job_id') = p_job_id::text
+    and (p_manifest->>'status') = 'COMPLETED'
+    and pg_catalog.jsonb_typeof(p_manifest->'artifacts') = 'array'
+    and pg_catalog.jsonb_array_length(p_manifest->'artifacts') = 1
+    and (
+      select coalesce(
+        pg_catalog.jsonb_typeof(s.a) = 'object'
+        and (s.a->>'name') ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$'
+        -- расширение имени привязано к kind: report.exe для DOCX не проходит
+        and (s.a->>'name') like case p_kind
+              when 'docx_document' then '%.docx'
+              when 'pptx_presentation' then '%.pptx'
+            end
+        and (s.a->>'mime_type') = case p_kind
+              when 'docx_document' then 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              when 'pptx_presentation' then 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            end
+        and pg_catalog.jsonb_typeof(s.a->'size_bytes') = 'number'
+        and (s.a->>'size_bytes')::numeric = pg_catalog.floor((s.a->>'size_bytes')::numeric)
+        and (s.a->>'size_bytes')::numeric between 1 and 67108864
+        and (s.a->>'sha256') ~ '^[a-f0-9]{64}$'
+        and pg_catalog.length(s.a->>'storage_path') between 1 and 500
+        -- ТОЧНАЯ каноническая форма tenants/<acc>/artifacts/<job>/<epoch>/<sha>-<name>:
+        -- содержимое (sha) и имя обязаны совпадать с полями артефакта, epoch — число
+        and (s.a->>'storage_path') ~ (
+          '^tenants/' || p_account_id::text || '/artifacts/' || p_job_id::text || '/[0-9]{1,19}/[^/]+$'
+        )
+        and pg_catalog.regexp_replace((s.a->>'storage_path'), '^.*/', '')
+          = (s.a->>'sha256') || '-' || (s.a->>'name')
+        and pg_catalog.strpos((s.a->>'storage_path'), '..') = 0
+      , false)
+      from (select p_manifest->'artifacts'->0 as a) s
+    )
+  , false);
+$$;
+
+-- ── совещательная предпроверка загрузки (НЕ забор — забор в регистрации) ───────────────────────
+-- Экономит стриминг 64 МиБ для явно устаревшего воркера и отдаёт kind для проверок
+-- расширения/MIME на endpoint. Между этой проверкой и регистрацией lease может истечь —
+-- публикацию решает ТОЛЬКО document_register_artifact.
+create or replace function public.document_verify_upload(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_expected_epoch bigint
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_blocked boolean;
+  v_job runtime.compute_jobs%rowtype;
+  v_request public.document_job_requests%rowtype;
+  v_state text;
+begin
+  if p_account_id is null or p_job_id is null or p_claim_token is null or p_expected_epoch is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+  select blocked into v_blocked from public.accounts where id = p_account_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_blocked then return jsonb_build_object('ok', false, 'reason', 'blocked'); end if;
+  select * into v_job from runtime.compute_jobs
+   where account_id = p_account_id and id = p_job_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  select * into v_request from public.document_job_requests
+   where account_id = p_account_id and job_id = p_job_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_document'); end if;
+  -- та же строгость, что и у забора: профиль, связь job↔request, родитель в waiting_compute
+  if v_job.profile <> 'PROFILE_B_DOCS' or v_job.workflow_id <> v_request.workflow_id then
+    return jsonb_build_object('ok', false, 'reason', 'mapping_conflict');
+  end if;
+  select run.current_state into v_state from runtime.workflow_runs run
+   where run.account_id = p_account_id and run.id = v_request.workflow_id;
+  if v_state is distinct from 'waiting_compute' then
+    return jsonb_build_object('ok', false, 'reason', 'not_waiting');
+  end if;
+  if v_job.status <> 'running'
+     or v_job.claim_token is distinct from p_claim_token
+     or v_job.lease_epoch <> p_expected_epoch
+     or v_job.lease_until <= pg_catalog.clock_timestamp() then
+    return jsonb_build_object('ok', false, 'reason', 'stale_lease');
+  end if;
+  return jsonb_build_object('ok', true, 'kind', v_request.kind, 'workflow_id', v_request.workflow_id);
+end;
+$$;
+
+-- ── регистрация: публикационный забор ──────────────────────────────────────────────────────────
+create or replace function public.document_register_artifact(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_expected_epoch bigint,
+  p_name text,
+  p_mime_type text,
+  p_size_bytes bigint,
+  p_sha256 text
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_blocked boolean;
+  v_run runtime.workflow_runs%rowtype;
+  v_request public.document_job_requests%rowtype;
+  v_job runtime.compute_jobs%rowtype;
+  v_existing public.document_artifacts%rowtype;
+  v_path text;
+begin
+  if p_account_id is null or p_job_id is null or p_claim_token is null or p_expected_epoch is null
+     or p_name is null or p_mime_type is null or p_size_bytes is null or p_sha256 is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+  if p_name !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$' or pg_catalog.strpos(p_name, '..') > 0
+     or p_size_bytes not between 1 and 67108864
+     or p_sha256 !~ '^[a-f0-9]{64}$' then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков ГЛОБАЛЬНО согласован с постановкой: аккаунт → родитель → задание.
+  -- FOR SHARE достаточно для стабильного blocked и не сталкивается с другими регистрациями
+  select blocked into v_blocked from public.accounts where id = p_account_id for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_blocked then return jsonb_build_object('ok', false, 'reason', 'blocked'); end if;
+
+  select * into v_request from public.document_job_requests
+   where account_id = p_account_id and job_id = p_job_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_document'); end if;
+
+  -- привязка имени/MIME к виду ДО замков
+  if (v_request.kind = 'docx_document'
+        and (p_name not like '%.docx'
+          or p_mime_type <> 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
+     or (v_request.kind = 'pptx_presentation'
+        and (p_name not like '%.pptx'
+          or p_mime_type <> 'application/vnd.openxmlformats-officedocument.presentationml.presentation')) then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков как у финализатора: родитель FOR UPDATE, затем задание FOR SHARE.
+  -- Этот замок и делает регистрацию невозможной ПОСЛЕ терминала родителя: финализатор
+  -- держит родителя, пока пишет терминал; мы держим родителя, пока публикуем.
+  select * into v_run from runtime.workflow_runs
+   where account_id = p_account_id and id = v_request.workflow_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_run.workflow_type <> 'document_job' then
+    return jsonb_build_object('ok', false, 'reason', 'not_document');
+  end if;
+  if v_run.current_state in ('completed', 'failed', 'denied', 'dead_letter', 'cancelled') then
+    return jsonb_build_object('ok', false, 'reason', 'workflow_terminal');
+  end if;
+  if v_run.current_state <> 'waiting_compute' then
+    return jsonb_build_object('ok', false, 'reason', 'not_waiting');
+  end if;
+
+  select * into v_job from runtime.compute_jobs
+   where account_id = p_account_id and id = p_job_id
+   for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  -- инварианты связи и профиля: документная регистрация не принимает чужой профиль
+  -- (перекоммутированное media-задание) и задание, ведущее к другому родителю
+  if v_job.profile <> 'PROFILE_B_DOCS' or v_job.workflow_id <> v_request.workflow_id then
+    return jsonb_build_object('ok', false, 'reason', 'mapping_conflict');
+  end if;
+  -- ЗАБОР: живой running-lease с точным token+epoch; устаревшая попытка не публикует
+  if v_job.status <> 'running'
+     or v_job.claim_token is distinct from p_claim_token
+     or v_job.lease_epoch <> p_expected_epoch
+     or v_job.lease_until <= pg_catalog.clock_timestamp() then
+    return jsonb_build_object('ok', false, 'reason', 'stale_lease');
+  end if;
+
+  -- идемпотентность: одна строка на job; ВСЕ метаданные содержимого обязаны совпасть —
+  -- тогда отдаётся ЗАРЕГИСТРИРОВАННЫЙ путь (истина публикации), иначе конфликт
+  select * into v_existing from public.document_artifacts
+   where account_id = p_account_id and job_id = p_job_id;
+  if found then
+    if v_existing.name = p_name and v_existing.mime_type = p_mime_type
+       and v_existing.size_bytes = p_size_bytes and v_existing.sha256 = p_sha256 then
+      return jsonb_build_object('ok', true, 'storage_path', v_existing.storage_path, 'already', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'registration_conflict');
+  end if;
+
+  v_path := 'tenants/' || p_account_id::text || '/artifacts/' || p_job_id::text
+    || '/' || p_expected_epoch::text || '/' || p_sha256 || '-' || p_name;
+  insert into public.document_artifacts (
+    account_id, job_id, workflow_id, kind, name, mime_type, size_bytes, sha256, lease_epoch, storage_path
+  ) values (
+    p_account_id, p_job_id, v_request.workflow_id, v_request.kind,
+    p_name, p_mime_type, p_size_bytes, p_sha256, p_expected_epoch, v_path
+  );
+  insert into runtime.audit_events (
+    account_id, workflow_id, event_type, actor_type, actor_id,
+    correlation_id, details, runtime_contract_version, workflow_version
+  ) values (
+    p_account_id, v_request.workflow_id, 'runtime.document_artifact_registered',
+    'worker', 'document-worker', v_run.correlation_id,
+    jsonb_build_object('job_id', p_job_id, 'sha256', p_sha256, 'size_bytes', p_size_bytes,
+      'lease_epoch', p_expected_epoch), 'runtime-v1', v_run.workflow_version
+  );
+  return jsonb_build_object('ok', true, 'storage_path', v_path, 'already', false);
+end;
+$$;
+
+-- ── финализатор: completed ТОЛЬКО при валидном манифесте И совпадающей регистрации ─────────────
+create or replace function public.document_finalize_workflow(p_account_id uuid, p_workflow_id uuid)
+returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_run runtime.workflow_runs%rowtype;
+  v_request public.document_job_requests%rowtype;
+  v_job runtime.compute_jobs%rowtype;
+  v_target text;
+  v_reason text;
+  v_seq bigint;
+begin
+  if p_account_id is null or p_workflow_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков: родитель, затем задание (тот же, что у регистрации — взаимное
+  -- исключение: регистрация не может закоммититься после того, как здесь записан терминал)
+  select * into v_run from runtime.workflow_runs
+   where account_id = p_account_id and id = p_workflow_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_run.workflow_type <> 'document_job' then
+    return jsonb_build_object('ok', false, 'reason', 'not_document');
+  end if;
+  -- отменённого родителя финализатор НЕ трогает никогда
+  if v_run.current_state = 'cancelled' then
+    return jsonb_build_object('ok', false, 'reason', 'cancelled');
+  end if;
+
+  select * into v_request from public.document_job_requests
+   where account_id = p_account_id and workflow_id = p_workflow_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_document'); end if;
+
+  select * into v_job from runtime.compute_jobs
+   where account_id = p_account_id and id = v_request.job_id
+   for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'finalize_conflict'); end if;
+  -- инвариант связи: задание обязано принадлежать именно этому родителю
+  if v_job.workflow_id <> p_workflow_id then
+    return jsonb_build_object('ok', false, 'reason', 'finalize_conflict');
+  end if;
+
+  if v_job.status in ('pending', 'running') then
+    return jsonb_build_object('ok', false, 'reason', 'compute_not_terminal');
+  end if;
+  -- условие D2: НЕвалидный манифест НЕ становится успехом; условие границы хранилища:
+  -- УСПЕХ требует неизменяемой регистрации, совпадающей с манифестом по job/имени/MIME/
+  -- размеру/хэшу/пути — локальный или незарегистрированный файл никогда не «готов».
+  -- Обе проверки детерминированы (регистрация append-only, после терминала невозможна),
+  -- поэтому повторная финализация вычисляет тот же исход.
+  if v_job.status = 'completed' then
+    if not public.document_manifest_valid(p_account_id, v_job.id, v_request.kind, v_job.profile, v_job.result_manifest) then
+      v_target := 'failed';
+      v_reason := 'DOCUMENT_MANIFEST_INVALID';
+    elsif not exists (
+      select 1
+        from public.document_artifacts a
+       where a.account_id = p_account_id and a.job_id = v_job.id
+         and a.name = (v_job.result_manifest->'artifacts'->0->>'name')
+         and a.mime_type = (v_job.result_manifest->'artifacts'->0->>'mime_type')
+         and a.size_bytes::numeric = (v_job.result_manifest->'artifacts'->0->>'size_bytes')::numeric
+         and a.sha256 = (v_job.result_manifest->'artifacts'->0->>'sha256')
+         and a.storage_path = (v_job.result_manifest->'artifacts'->0->>'storage_path')
+    ) then
+      v_target := 'failed';
+      v_reason := 'DOCUMENT_ARTIFACT_UNREGISTERED';
+    else
+      v_target := 'completed';
+      v_reason := null;
+    end if;
+  else
+    v_target := 'failed';
+    v_reason := coalesce(v_job.error_code, 'DOCUMENT_JOB_FAILED');
+  end if;
+
+  -- идемпотентность: совпадающий терминал — уже сделано; расходящийся — конфликт, не перекраска
+  if v_run.current_state in ('completed', 'failed') then
+    if v_run.current_state = v_target then
+      return jsonb_build_object('ok', true, 'status', v_target, 'already', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'finalize_conflict');
+  end if;
+  if v_run.current_state <> 'waiting_compute' then
+    return jsonb_build_object('ok', false, 'reason', 'not_waiting');
+  end if;
+
+  select coalesce(max(t.transition_seq), 0) + 1 into v_seq
+    from runtime.workflow_transitions t
+   where t.account_id = p_account_id and t.workflow_id = p_workflow_id;
+  insert into runtime.workflow_transitions (
+    account_id, workflow_id, transition_seq, from_state, to_state,
+    transition_type, actor_type, actor_id, correlation_id,
+    workflow_version, lease_epoch, transition_payload, payload_hash
+  ) values (
+    p_account_id, p_workflow_id, v_seq, 'waiting_compute', v_target,
+    v_target, 'worker', 'document-worker', v_run.correlation_id,
+    v_run.workflow_version, 0, jsonb_build_object('job_id', v_job.id, 'job_status', v_job.status),
+    runtime.sha256_jsonb(jsonb_build_object('job_id', v_job.id, 'job_status', v_job.status))
+  );
+  -- терминальные поля по контракту: completed — без причины, failed — с кодом;
+  -- lease-поля не трогаются (NULL по инварианту нетерминального неclaimable состояния)
+  update runtime.workflow_runs
+     set current_state = v_target,
+         terminal_at = pg_catalog.clock_timestamp(),
+         terminal_reason_code = v_reason,
+         updated_at = pg_catalog.clock_timestamp()
+   where account_id = p_account_id and id = p_workflow_id;
+  insert into runtime.audit_events (
+    account_id, workflow_id, event_type, actor_type, actor_id,
+    correlation_id, details, runtime_contract_version, workflow_version
+  ) values (
+    p_account_id, p_workflow_id, 'runtime.document_workflow_finalized',
+    'worker', 'document-worker', v_run.correlation_id,
+    jsonb_build_object('status', v_target, 'job_id', v_job.id, 'job_status', v_job.status,
+      'reason', v_reason), 'runtime-v1', v_run.workflow_version
+  );
+  return jsonb_build_object('ok', true, 'status', v_target, 'already', false);
+end;
+$$;
+
+revoke all on function public.document_verify_upload(uuid, uuid, uuid, bigint) from public, anon, authenticated;
+revoke all on function public.document_register_artifact(uuid, uuid, uuid, bigint, text, text, bigint, text) from public, anon, authenticated;
+grant execute on function public.document_verify_upload(uuid, uuid, uuid, bigint) to service_role;
+grant execute on function public.document_register_artifact(uuid, uuid, uuid, bigint, text, text, bigint, text) to service_role;
+
+-- ─── 20260906020000_document_pdf_artifacts.sql ───────────────────────────────────────────────
+-- Forward-only extension of the reviewed document lifecycle to typed Typst PDF.
+-- No existing rows are rewritten. Account/parent/job locks, idempotency, immutable
+-- registration and lease fencing are preserved verbatim in the replaced functions.
+-- Local validation only; applying this migration to production is not authorized.
+
+alter table public.document_job_requests drop constraint document_job_requests_kind_check;
+alter table public.document_job_requests add constraint document_job_requests_kind_check
+  check (kind in ('docx_document', 'pptx_presentation', 'typst_document'));
+alter table public.document_artifacts drop constraint document_artifacts_kind_check;
+alter table public.document_artifacts add constraint document_artifacts_kind_check
+  check (kind in ('docx_document', 'pptx_presentation', 'typst_document'));
+alter table public.document_artifacts drop constraint document_artifacts_extension_check;
+alter table public.document_artifacts add constraint document_artifacts_extension_check check (
+  (kind = 'docx_document' and name like '%.docx')
+  or (kind = 'pptx_presentation' and name like '%.pptx')
+  or (kind = 'typst_document' and name like '%.pdf')
+);
+alter table public.document_artifacts drop constraint document_artifacts_mime_check;
+alter table public.document_artifacts add constraint document_artifacts_mime_check check (
+  (kind = 'docx_document' and mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+  or (kind = 'pptx_presentation' and mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+  or (kind = 'typst_document' and mime_type = 'application/pdf')
+);
+
+create or replace function public.document_enqueue_job(
+  p_account_id uuid,
+  p_request_id uuid,
+  p_kind text,
+  p_input jsonb,
+  p_daily_quota integer default 50
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_existing public.document_job_requests%rowtype;
+  v_blocked boolean;
+  v_input_sha text;
+  v_workflow_id uuid;
+  v_job_id uuid;
+  v_used integer;
+  v_ingest jsonb;
+  v_enqueue jsonb;
+  v_seq bigint;
+begin
+  if p_account_id is null or p_request_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+  if p_kind is null or p_kind not in ('docx_document', 'pptx_presentation', 'typst_document') then
+    return jsonb_build_object('ok', false, 'reason', 'bad_kind');
+  end if;
+  if p_input is null or pg_catalog.jsonb_typeof(p_input) <> 'object'
+     or (p_input->>'kind') is distinct from p_kind then
+    return jsonb_build_object('ok', false, 'reason', 'bad_input');
+  end if;
+  -- SQL — авторитет размера, с запасом к жёсткому 65536 нижнего RPC
+  if pg_catalog.octet_length(p_input::text) > 60000 then
+    return jsonb_build_object('ok', false, 'reason', 'payload_too_large');
+  end if;
+
+  select blocked into v_blocked from public.accounts where id = p_account_id for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'no_account'); end if;
+  -- под замком: параллельная блокировка не проскочит между авторизацией и постановкой
+  if v_blocked then return jsonb_build_object('ok', false, 'reason', 'blocked'); end if;
+
+  v_input_sha := runtime.sha256_jsonb(p_input);
+
+  -- идемпотентность РАНЬШЕ квоты: повтор на исчерпанной квоте получает СВОЁ задание
+  select * into v_existing from public.document_job_requests
+   where account_id = p_account_id and request_id = p_request_id;
+  if found then
+    if v_existing.kind = p_kind and v_existing.input_sha256 = v_input_sha then
+      return jsonb_build_object('ok', true, 'job_id', v_existing.job_id,
+        'workflow_id', v_existing.workflow_id, 'deduplicated', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'idempotency_conflict');
+  end if;
+
+  -- местные сутки Ташкента (+05:00, DST нет) детерминированной арифметикой — без tzdata и
+  -- без зависимости от TimeZone сессии
+  select count(*)::integer into v_used
+    from public.document_job_requests
+   where account_id = p_account_id
+     and (((created_at at time zone 'UTC') + interval '5 hours')::date)
+       = (((pg_catalog.now() at time zone 'UTC') + interval '5 hours')::date);
+  if v_used >= greatest(1, least(coalesce(p_daily_quota, 50), 500)) then
+    return jsonb_build_object('ok', false, 'reason', 'quota_exceeded');
+  end if;
+
+  begin
+    v_ingest := public.runtime_ingest_event(
+      p_account_id      => p_account_id,
+      p_provider        => 'document_jobs',
+      p_external_event_id => p_request_id::text,
+      p_payload         => jsonb_build_object('kind', p_kind, 'input_sha256', v_input_sha),
+      p_execution_mode  => 'live',
+      p_correlation_id  => p_request_id,
+      p_event_type      => 'document.requested',
+      p_workflow_type   => 'document_job',
+      p_actor_id        => 'document-jobs'
+    );
+    v_workflow_id := (v_ingest->>'workflow_id')::uuid;
+    v_enqueue := public.runtime_enqueue_compute_job(
+      p_account_id, v_workflow_id, 'PROFILE_B_DOCS', p_input
+    );
+    v_job_id := (v_enqueue->>'job_id')::uuid;
+
+    -- НАСТОЯЩЕЕ активное состояние в той же транзакции: claimable 'queued' снаружи не существует
+    select coalesce(max(t.transition_seq), 0) + 1 into v_seq
+      from runtime.workflow_transitions t
+     where t.account_id = p_account_id and t.workflow_id = v_workflow_id;
+    insert into runtime.workflow_transitions (
+      account_id, workflow_id, transition_seq, from_state, to_state,
+      transition_type, actor_type, actor_id, correlation_id,
+      workflow_version, lease_epoch, transition_payload, payload_hash
+    ) values (
+      p_account_id, v_workflow_id, v_seq, 'queued', 'waiting_compute',
+      'action_enqueued', 'system', 'document-jobs', p_request_id,
+      'v1', 0, jsonb_build_object('job_id', v_job_id),
+      runtime.sha256_jsonb(jsonb_build_object('job_id', v_job_id))
+    );
+    update runtime.workflow_runs
+       set current_state = 'waiting_compute', updated_at = pg_catalog.clock_timestamp()
+     where account_id = p_account_id and id = v_workflow_id;
+    insert into runtime.audit_events (
+      account_id, workflow_id, event_type, actor_type, actor_id,
+      correlation_id, details, runtime_contract_version, workflow_version
+    ) values (
+      p_account_id, v_workflow_id, 'runtime.document_workflow_waiting_compute',
+      'system', 'document-jobs', p_request_id,
+      jsonb_build_object('job_id', v_job_id), 'runtime-v1', 'v1'
+    );
+  exception
+    when sqlstate '55000' then
+      return jsonb_build_object('ok', false, 'reason', 'runtime_paused');
+    when others then
+      return jsonb_build_object('ok', false, 'reason', 'enqueue_failed');
+  end;
+
+  insert into public.document_job_requests (account_id, request_id, kind, input_sha256, workflow_id, job_id)
+  values (p_account_id, p_request_id, p_kind, v_input_sha, v_workflow_id, v_job_id);
+
+  return jsonb_build_object('ok', true, 'job_id', v_job_id, 'workflow_id', v_workflow_id, 'deduplicated', false);
+end;
+$$;
+
+create or replace function public.document_manifest_valid(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_kind text,
+  p_profile text,
+  p_manifest jsonb
+) returns boolean
+language sql immutable set search_path = ''
+as $$
+  select coalesce(
+    p_profile = 'PROFILE_B_DOCS'
+    and pg_catalog.jsonb_typeof(p_manifest) = 'object'
+    and (p_manifest->>'job_id') = p_job_id::text
+    and (p_manifest->>'status') = 'COMPLETED'
+    and pg_catalog.jsonb_typeof(p_manifest->'artifacts') = 'array'
+    and pg_catalog.jsonb_array_length(p_manifest->'artifacts') = 1
+    and (
+      select coalesce(
+        pg_catalog.jsonb_typeof(s.a) = 'object'
+        and (s.a->>'name') ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$'
+        -- расширение имени привязано к kind: report.exe для DOCX не проходит
+        and (s.a->>'name') like case p_kind
+              when 'docx_document' then '%.docx'
+              when 'pptx_presentation' then '%.pptx'
+              when 'typst_document' then '%.pdf'
+            end
+        and (s.a->>'mime_type') = case p_kind
+              when 'docx_document' then 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              when 'pptx_presentation' then 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+              when 'typst_document' then 'application/pdf'
+            end
+        and pg_catalog.jsonb_typeof(s.a->'size_bytes') = 'number'
+        and (s.a->>'size_bytes')::numeric = pg_catalog.floor((s.a->>'size_bytes')::numeric)
+        and (s.a->>'size_bytes')::numeric between 1 and 67108864
+        and (s.a->>'sha256') ~ '^[a-f0-9]{64}$'
+        and pg_catalog.length(s.a->>'storage_path') between 1 and 500
+        -- ТОЧНАЯ каноническая форма tenants/<acc>/artifacts/<job>/<epoch>/<sha>-<name>:
+        -- содержимое (sha) и имя обязаны совпадать с полями артефакта, epoch — число
+        and (s.a->>'storage_path') ~ (
+          '^tenants/' || p_account_id::text || '/artifacts/' || p_job_id::text || '/[0-9]{1,19}/[^/]+$'
+        )
+        and pg_catalog.regexp_replace((s.a->>'storage_path'), '^.*/', '')
+          = (s.a->>'sha256') || '-' || (s.a->>'name')
+        and pg_catalog.strpos((s.a->>'storage_path'), '..') = 0
+      , false)
+      from (select p_manifest->'artifacts'->0 as a) s
+    )
+  , false);
+$$;
+
+create or replace function public.document_register_artifact(
+  p_account_id uuid,
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_expected_epoch bigint,
+  p_name text,
+  p_mime_type text,
+  p_size_bytes bigint,
+  p_sha256 text
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_blocked boolean;
+  v_run runtime.workflow_runs%rowtype;
+  v_request public.document_job_requests%rowtype;
+  v_job runtime.compute_jobs%rowtype;
+  v_existing public.document_artifacts%rowtype;
+  v_path text;
+begin
+  if p_account_id is null or p_job_id is null or p_claim_token is null or p_expected_epoch is null
+     or p_name is null or p_mime_type is null or p_size_bytes is null or p_sha256 is null then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+  if p_name !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$' or pg_catalog.strpos(p_name, '..') > 0
+     or p_size_bytes not between 1 and 67108864
+     or p_sha256 !~ '^[a-f0-9]{64}$' then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков ГЛОБАЛЬНО согласован с постановкой: аккаунт → родитель → задание.
+  -- FOR SHARE достаточно для стабильного blocked и не сталкивается с другими регистрациями
+  select blocked into v_blocked from public.accounts where id = p_account_id for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_blocked then return jsonb_build_object('ok', false, 'reason', 'blocked'); end if;
+
+  select * into v_request from public.document_job_requests
+   where account_id = p_account_id and job_id = p_job_id;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_document'); end if;
+
+  -- привязка имени/MIME к виду ДО замков
+  if (v_request.kind = 'docx_document'
+        and (p_name not like '%.docx'
+          or p_mime_type <> 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
+     or (v_request.kind = 'pptx_presentation'
+        and (p_name not like '%.pptx'
+          or p_mime_type <> 'application/vnd.openxmlformats-officedocument.presentationml.presentation'))
+     or (v_request.kind = 'typst_document'
+        and (p_name not like '%.pdf' or p_mime_type <> 'application/pdf')) then
+    return jsonb_build_object('ok', false, 'reason', 'bad_request');
+  end if;
+
+  -- порядок замков как у финализатора: родитель FOR UPDATE, затем задание FOR SHARE.
+  -- Этот замок и делает регистрацию невозможной ПОСЛЕ терминала родителя: финализатор
+  -- держит родителя, пока пишет терминал; мы держим родителя, пока публикуем.
+  select * into v_run from runtime.workflow_runs
+   where account_id = p_account_id and id = v_request.workflow_id
+   for update;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  if v_run.workflow_type <> 'document_job' then
+    return jsonb_build_object('ok', false, 'reason', 'not_document');
+  end if;
+  if v_run.current_state in ('completed', 'failed', 'denied', 'dead_letter', 'cancelled') then
+    return jsonb_build_object('ok', false, 'reason', 'workflow_terminal');
+  end if;
+  if v_run.current_state <> 'waiting_compute' then
+    return jsonb_build_object('ok', false, 'reason', 'not_waiting');
+  end if;
+
+  select * into v_job from runtime.compute_jobs
+   where account_id = p_account_id and id = p_job_id
+   for share;
+  if not found then return jsonb_build_object('ok', false, 'reason', 'not_found'); end if;
+  -- инварианты связи и профиля: документная регистрация не принимает чужой профиль
+  -- (перекоммутированное media-задание) и задание, ведущее к другому родителю
+  if v_job.profile <> 'PROFILE_B_DOCS' or v_job.workflow_id <> v_request.workflow_id then
+    return jsonb_build_object('ok', false, 'reason', 'mapping_conflict');
+  end if;
+  -- ЗАБОР: живой running-lease с точным token+epoch; устаревшая попытка не публикует
+  if v_job.status <> 'running'
+     or v_job.claim_token is distinct from p_claim_token
+     or v_job.lease_epoch <> p_expected_epoch
+     or v_job.lease_until <= pg_catalog.clock_timestamp() then
+    return jsonb_build_object('ok', false, 'reason', 'stale_lease');
+  end if;
+
+  -- идемпотентность: одна строка на job; ВСЕ метаданные содержимого обязаны совпасть —
+  -- тогда отдаётся ЗАРЕГИСТРИРОВАННЫЙ путь (истина публикации), иначе конфликт
+  select * into v_existing from public.document_artifacts
+   where account_id = p_account_id and job_id = p_job_id;
+  if found then
+    if v_existing.name = p_name and v_existing.mime_type = p_mime_type
+       and v_existing.size_bytes = p_size_bytes and v_existing.sha256 = p_sha256 then
+      return jsonb_build_object('ok', true, 'storage_path', v_existing.storage_path, 'already', true);
+    end if;
+    return jsonb_build_object('ok', false, 'reason', 'registration_conflict');
+  end if;
+
+  v_path := 'tenants/' || p_account_id::text || '/artifacts/' || p_job_id::text
+    || '/' || p_expected_epoch::text || '/' || p_sha256 || '-' || p_name;
+  insert into public.document_artifacts (
+    account_id, job_id, workflow_id, kind, name, mime_type, size_bytes, sha256, lease_epoch, storage_path
+  ) values (
+    p_account_id, p_job_id, v_request.workflow_id, v_request.kind,
+    p_name, p_mime_type, p_size_bytes, p_sha256, p_expected_epoch, v_path
+  );
+  insert into runtime.audit_events (
+    account_id, workflow_id, event_type, actor_type, actor_id,
+    correlation_id, details, runtime_contract_version, workflow_version
+  ) values (
+    p_account_id, v_request.workflow_id, 'runtime.document_artifact_registered',
+    'worker', 'document-worker', v_run.correlation_id,
+    jsonb_build_object('job_id', p_job_id, 'sha256', p_sha256, 'size_bytes', p_size_bytes,
+      'lease_epoch', p_expected_epoch), 'runtime-v1', v_run.workflow_version
+  );
+  return jsonb_build_object('ok', true, 'storage_path', v_path, 'already', false);
+end;
+$$;
+
+-- ─── 20260908120000_trial_booking.sql ────────────────────────────────────────────────────────
+-- Local trial booking vertical slice. No external delivery or model execution.
+-- Reuses the durable inbox/workflow/policy/approval/outbox/audit and public.bookings.
+-- Courses and capacity-bearing sessions are absent from the existing schema.
+create table public.trial_courses (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id),
+  name text not null check (char_length(name) between 1 and 160),
+  unique(account_id,id)
+);
+create table public.trial_sessions (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.accounts(id),
+  course_id uuid not null,
+  starts_at timestamptz not null,
+  timezone text not null default 'Asia/Tashkent' check (timezone = 'Asia/Tashkent'),
+  capacity integer not null check (capacity between 1 and 10000),
+  status text not null default 'scheduled' check (status in ('scheduled','cancelled')),
+  unique(account_id,id),
+  foreign key(account_id,course_id) references public.trial_courses(account_id,id)
+);
+alter table public.trial_courses enable row level security;
+alter table public.trial_sessions enable row level security;
+revoke all on public.trial_courses, public.trial_sessions from public,anon,authenticated;
+-- Explicit ACLs: a fresh database need not grant new public tables by default.
+-- Browser profiles remain constrained by the existing users/accounts SELECT RLS.
+grant select on public.users, public.accounts to authenticated;
+grant select, update on public.users to service_role;
+grant select, update, delete on public.accounts to service_role;
+grant select, insert, update on public.trial_courses, public.trial_sessions to service_role;
+grant select on public.bookings to service_role;
+alter table public.bookings add column trial_session_id uuid;
+alter table public.bookings add column trial_operation_id uuid;
+alter table public.bookings add constraint bookings_trial_identity_check
+  check ((trial_session_id is null and trial_operation_id is null)
+    or (trial_session_id is not null and account_id is not null));
+alter table public.bookings add constraint bookings_trial_session_fk
+  foreign key(account_id,trial_session_id) references public.trial_sessions(account_id,id);
+alter table public.bookings add constraint bookings_trial_operation_fk
+  foreign key(account_id,trial_operation_id) references runtime.workflow_runs(account_id,id);
+create unique index bookings_trial_operation_unique on public.bookings(trial_operation_id)
+  where trial_operation_id is not null;
+create index bookings_trial_session_idx on public.bookings(account_id,trial_session_id);
+
+-- The existing general approval endpoint also reaches this table. It must not weaken this action's owner policy.
+create function runtime.trial_guard_approval_owner()
+returns trigger language plpgsql security definer set search_path='' as $$
+begin
+  if new.status in ('approved','rejected') and new.status is distinct from old.status
+    and exists(select 1 from runtime.workflow_runs where account_id=new.account_id and id=new.workflow_id and workflow_type='trial_booking') then
+    perform id from public.users where id=new.decided_by and account_id=new.account_id and role='owner' for share;
+    if not found then raise exception using errcode='42501',message='TRIAL_OWNER_APPROVAL_REQUIRED'; end if;
+  end if;
+  return new;
+end $$;
+create trigger trial_approval_owner before update on public.approval_requests
+  for each row execute function runtime.trial_guard_approval_owner();
+
+create function runtime.trial_assert_user(p_account_id uuid,p_owner boolean default false)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare v_user uuid := auth.uid();
+begin
+  perform id from public.accounts where id=p_account_id and not blocked and not is_production_e2e for share;
+  if not found then raise exception using errcode='42501',message='TRIAL_ACCOUNT_NOT_AVAILABLE'; end if;
+  if v_user is null or not exists(select 1 from public.users u
+    where u.id=v_user and u.account_id=p_account_id
+      and (u.role='owner' or (not p_owner and u.role='operator'))) then
+    raise exception using errcode='42501',message='TRIAL_PERMISSION_DENIED';
+  end if;
+  return v_user;
+end $$;
+
+create function public.trial_booking_schedule(p_account_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb;
+begin
+  perform runtime.trial_assert_user(p_account_id);
+  select coalesce(jsonb_agg(x.payload order by x.starts_at,x.id),'[]'::jsonb) into v_result from (
+    select s.id,s.starts_at,jsonb_build_object('id',s.id,'course_id',c.id,'course_name',c.name,
+      'starts_at',s.starts_at,'timezone',s.timezone,'capacity',s.capacity,'status',s.status,
+      'available',greatest(0,s.capacity-(select count(*) from public.bookings b
+        where b.account_id=p_account_id and b.trial_session_id=s.id and b.status='booked'))) payload
+    from public.trial_sessions s join public.trial_courses c on c.account_id=s.account_id and c.id=s.course_id
+    where s.account_id=p_account_id
+  ) x;
+  return v_result;
+end $$;
+
+create function public.trial_booking_result(p_account_id uuid,p_operation_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_run runtime.workflow_runs%rowtype; v_request public.approval_requests%rowtype; v_booking public.bookings%rowtype;
+begin
+  perform runtime.trial_assert_user(p_account_id);
+  select * into v_run from runtime.workflow_runs where account_id=p_account_id and id=p_operation_id and workflow_type='trial_booking';
+  if not found then raise exception using errcode='42501',message='TRIAL_OPERATION_NOT_ACCESSIBLE'; end if;
+  if v_run.context->'proposed_action'->>'requested_by' is distinct from auth.uid()::text
+    and not exists(select 1 from public.users where id=auth.uid() and account_id=p_account_id and role='owner') then
+    raise exception using errcode='42501',message='TRIAL_OPERATION_NOT_ACCESSIBLE';
+  end if;
+  select * into v_request from public.approval_requests where account_id=p_account_id and workflow_id=p_operation_id;
+  select * into v_booking from public.bookings where account_id=p_account_id and trial_operation_id=p_operation_id;
+  if v_run.current_state='completed' and (v_booking.id is null or v_run.context->'result'->>'booking_id' <> v_booking.id::text) then
+    raise exception using errcode='55000',message='TRIAL_RESULT_INCONSISTENT';
+  end if;
+  return jsonb_build_object('operation_id',v_run.id,'approval_request_id',v_request.id,
+    'status',v_run.current_state,'approval_status',v_request.status,'payload',v_run.context->'proposed_action',
+    'booking_id',v_booking.id,'result',v_run.context->'result');
+end $$;
+
+create function public.trial_booking_recover(p_account_id uuid,p_operation_key text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_id uuid;
+begin
+  v_user:=runtime.trial_assert_user(p_account_id);
+  select w.id into v_id from runtime.workflow_runs w join runtime.inbox_events i
+    on i.account_id=w.account_id and i.id=w.inbox_event_id
+    where w.account_id=p_account_id and w.workflow_type='trial_booking'
+      and i.provider='trial_booking' and i.external_event_id=v_user::text||':'||p_operation_key;
+  if v_id is null then return null; end if;
+  return public.trial_booking_result(p_account_id,v_id);
+end $$;
+
+create function public.trial_booking_recent(p_account_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_owner boolean; v_result jsonb;
+begin
+  v_user:=runtime.trial_assert_user(p_account_id);
+  select role='owner' into v_owner from public.users where id=v_user and account_id=p_account_id;
+  select coalesce(jsonb_agg(public.trial_booking_result(p_account_id,r.id) order by r.created_at desc),'[]'::jsonb)
+    into v_result from (select id,created_at from runtime.workflow_runs
+      where account_id=p_account_id and workflow_type='trial_booking'
+        and (v_owner or context->'proposed_action'->>'requested_by'=v_user::text)
+      order by created_at desc,id limit 50) r;
+  return v_result;
+end $$;
+
+create function public.trial_booking_request(p_account_id uuid,p_session_id uuid,p_operation_key text,p_attendee_label text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_slot public.trial_sessions%rowtype; v_payload jsonb; v_ingest jsonb; v_id uuid;
+  v_existing jsonb; v_course text; v_correlation uuid:=gen_random_uuid(); v_policy jsonb;
+begin
+  v_user:=runtime.trial_assert_user(p_account_id);
+  if p_session_id is null or p_operation_key is null or char_length(p_operation_key) not between 8 and 128
+    or p_attendee_label is null or char_length(btrim(p_attendee_label)) not between 1 and 120 then
+    raise exception using errcode='22023',message='TRIAL_INVALID_INPUT';
+  end if;
+  -- Serialize retries before looking up existing identity; no advisory-lock hash collision can change identity.
+  perform pg_advisory_xact_lock(hashtextextended(p_account_id::text||':'||v_user::text||':'||p_operation_key,0));
+  v_existing:=public.trial_booking_recover(p_account_id,p_operation_key);
+  if v_existing is not null then
+    if v_existing->'payload'->>'session_id' <> p_session_id::text
+      or v_existing->'payload'->>'attendee_label' <> btrim(p_attendee_label) then
+      raise exception using errcode='22000',message='TRIAL_OPERATION_PARAMETERS_CHANGED';
+    end if;
+    return v_existing;
+  end if;
+  select * into v_slot from public.trial_sessions where account_id=p_account_id and id=p_session_id for share;
+  if not found then raise exception using errcode='42501',message='TRIAL_SESSION_NOT_ACCESSIBLE'; end if;
+  if v_slot.status<>'scheduled' or v_slot.starts_at<=clock_timestamp() then
+    raise exception using errcode='55000',message='TRIAL_SESSION_UNAVAILABLE';
+  end if;
+  select name into v_course from public.trial_courses where account_id=p_account_id and id=v_slot.course_id;
+  v_payload:=jsonb_build_object('action_type','trial_booking','session_id',v_slot.id,'course_id',v_slot.course_id,
+    'course_name',v_course,'starts_at',v_slot.starts_at,'timezone',v_slot.timezone,'attendee_label',btrim(p_attendee_label),
+    'requested_by',v_user,'account_id',p_account_id);
+  v_ingest:=public.runtime_ingest_event(p_account_id,'trial_booking',v_user::text||':'||p_operation_key,
+    v_payload,'live',v_correlation,p_workflow_type=>'trial_booking',p_actor_id=>v_user::text);
+  v_id:=(v_ingest->>'workflow_id')::uuid;
+  -- Synchronous database planning is atomic and never hands an unclaimed running job to a worker.
+  insert into runtime.workflow_transitions(account_id,workflow_id,transition_seq,from_state,to_state,transition_type,
+    actor_type,actor_id,correlation_id,workflow_version,lease_epoch) values
+    (p_account_id,v_id,2,'queued','running','planned','user',v_user::text,v_correlation,'v1',0),
+    (p_account_id,v_id,3,'running','waiting_for_policy','policy_requested','user',v_user::text,v_correlation,'v1',0);
+  update runtime.workflow_runs set current_state='waiting_for_policy',context=jsonb_build_object(
+    'proposed_action',v_payload,'proposed_connector_id','internal_trial_booking','proposed_action_type','trial_booking')
+    where id=v_id and account_id=p_account_id;
+  v_policy:=public.runtime_record_policy_decision(p_account_id,v_id,'trial-booking-owner-approval','v1','require_approval',
+    '["OWNER_APPROVAL_REQUIRED"]'::jsonb,'{}'::jsonb,v_payload,v_user::text,
+    p_approval_summary=>'Trial booking: '||v_course||' / '||v_slot.starts_at::text);
+  return public.trial_booking_result(p_account_id,v_id);
+end $$;
+
+create function public.trial_booking_decide(p_account_id uuid,p_operation_id uuid,p_decision text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_run runtime.workflow_runs%rowtype; v_request public.approval_requests%rowtype;
+begin
+  v_user:=runtime.trial_assert_user(p_account_id,true);
+  if p_decision is null or p_decision not in ('approve','reject') then
+    raise exception using errcode='22023',message='TRIAL_INVALID_DECISION'; end if;
+  select * into v_run from runtime.workflow_runs where account_id=p_account_id and id=p_operation_id and workflow_type='trial_booking' for update;
+  if not found then raise exception using errcode='42501',message='TRIAL_OPERATION_NOT_ACCESSIBLE'; end if;
+  select * into strict v_request from public.approval_requests where account_id=p_account_id and workflow_id=p_operation_id for update;
+  if v_request.status=(case when p_decision='approve' then 'approved' else 'rejected' end) then
+    return public.trial_booking_result(p_account_id,p_operation_id);
+  end if;
+  perform public.runtime_resolve_approval_and_enqueue_action(p_account_id,p_operation_id,v_request.id,v_user,
+    case when p_decision='approve' then 'approved' else 'rejected' end,
+    'internal_trial_booking','trial_booking',v_run.context->'proposed_action','trial-booking:'||p_operation_id::text);
+  return public.trial_booking_result(p_account_id,p_operation_id);
+end $$;
+
+create function public.trial_booking_execute(p_account_id uuid,p_operation_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_run runtime.workflow_runs%rowtype; v_request public.approval_requests%rowtype;
+  v_action runtime.outbox_actions%rowtype; v_slot public.trial_sessions%rowtype; v_payload jsonb;
+  v_booking uuid; v_result jsonb; v_seq bigint; v_transition uuid; v_control runtime.system_controls%rowtype;
+begin
+  v_user:=runtime.trial_assert_user(p_account_id);
+  select * into v_control from runtime.system_controls where singleton for share;
+  if not found or v_control.kill_switch_active or v_control.claims_paused then
+    raise exception using errcode='55000',message='TRIAL_RUNTIME_PAUSED'; end if;
+  -- Order: operation, approval, outbox, session. All competing operations lock the same capacity row.
+  select * into v_run from runtime.workflow_runs where account_id=p_account_id and id=p_operation_id and workflow_type='trial_booking' for update;
+  if not found then raise exception using errcode='42501',message='TRIAL_OPERATION_NOT_ACCESSIBLE'; end if;
+  if v_run.current_state='completed' then return public.trial_booking_result(p_account_id,p_operation_id); end if;
+  select * into strict v_request from public.approval_requests where account_id=p_account_id and workflow_id=p_operation_id for update;
+  if v_run.current_state<>'waiting_for_action' or v_request.status<>'approved' or v_request.expires_at<=clock_timestamp() then
+    raise exception using errcode='55000',message='TRIAL_APPROVAL_REQUIRED'; end if;
+  v_payload:=v_run.context->'proposed_action';
+  -- Hold all authorization rows until commit. Revocation cannot race between revalidation and insert.
+  perform id from public.users where id in (v_user,(v_payload->>'requested_by')::uuid,v_request.decided_by)
+    order by id for share;
+  perform runtime.trial_assert_user(p_account_id);
+  if v_payload->>'requested_by' is distinct from v_user::text
+    and not exists(select 1 from public.users where id=v_user and account_id=p_account_id and role='owner') then
+    raise exception using errcode='42501',message='TRIAL_OPERATION_NOT_ACCESSIBLE';
+  end if;
+  if not exists(select 1 from public.users where id=(v_payload->>'requested_by')::uuid and account_id=p_account_id and role in ('owner','operator'))
+    or not exists(select 1 from public.users where id=v_request.decided_by and account_id=p_account_id and role='owner') then
+    raise exception using errcode='42501',message='TRIAL_PERMISSION_REVOKED'; end if;
+  select * into strict v_action from runtime.outbox_actions where id=v_request.outbox_action_id and account_id=p_account_id and workflow_id=p_operation_id for update;
+  if v_action.connector_id<>'internal_trial_booking' or v_action.action_type<>'trial_booking' or v_action.status<>'pending'
+    or v_action.execution_mode<>'live' or v_action.payload<>v_payload or runtime.sha256_jsonb(v_payload)<>v_request.action_payload_hash
+    or runtime.sha256_jsonb(v_payload)<>v_action.action_payload_hash then
+    raise exception using errcode='55000',message='TRIAL_ACTION_NOT_EXECUTABLE'; end if;
+  select * into v_slot from public.trial_sessions where account_id=p_account_id and id=(v_payload->>'session_id')::uuid for update;
+  if not found or v_slot.status<>'scheduled' or v_slot.starts_at<=clock_timestamp() or v_slot.starts_at<>(v_payload->>'starts_at')::timestamptz
+    or v_slot.course_id<>(v_payload->>'course_id')::uuid or v_slot.timezone<>(v_payload->>'timezone') then
+    raise exception using errcode='55000',message='TRIAL_SESSION_CHANGED_OR_UNAVAILABLE'; end if;
+  if (select count(*) from public.bookings where account_id=p_account_id and trial_session_id=v_slot.id and status='booked')>=v_slot.capacity then
+    raise exception using errcode='55000',message='TRIAL_SESSION_FULL'; end if;
+  insert into public.bookings(account_id,customer_name,service,scheduled_at,scheduled_text,status,trial_session_id,trial_operation_id)
+    values(p_account_id,v_payload->>'attendee_label',v_payload->>'course_name',v_slot.starts_at,
+      (v_slot.starts_at at time zone 'Asia/Tashkent')::text||' Asia/Tashkent','booked',v_slot.id,p_operation_id) returning id into v_booking;
+  v_result:=jsonb_build_object('booking_id',v_booking,'session_id',v_slot.id,'starts_at',v_slot.starts_at,'timezone',v_slot.timezone,'status','booked');
+  select coalesce(max(transition_seq),0)+1 into v_seq from runtime.workflow_transitions where account_id=p_account_id and workflow_id=p_operation_id;
+  insert into runtime.workflow_transitions(account_id,workflow_id,transition_seq,from_state,to_state,transition_type,actor_type,actor_id,
+    correlation_id,workflow_version,policy_version,lease_epoch,transition_payload)
+    values(p_account_id,p_operation_id,v_seq,'waiting_for_action','completed','action_completed','user',v_user::text,
+      v_run.correlation_id,v_run.workflow_version,v_action.policy_version,v_run.lease_epoch,v_result) returning id into v_transition;
+  update runtime.outbox_actions set status='completed',completed_at=clock_timestamp(),provider_result_ref=v_booking::text,
+    attempt_count=attempt_count+1,updated_at=clock_timestamp() where id=v_action.id;
+  update runtime.workflow_runs set current_state='completed',terminal_at=clock_timestamp(),context=context||jsonb_build_object('result',v_result),
+    updated_at=clock_timestamp() where id=p_operation_id;
+  -- Mandatory append-only audit is in the same transaction. Any audit failure rolls back the booking and completion.
+  insert into runtime.audit_events(account_id,workflow_id,transition_id,policy_decision_id,approval_request_id,outbox_action_id,
+    event_type,actor_type,actor_id,correlation_id,details,payload_hash,runtime_contract_version,workflow_version,policy_version)
+    values(p_account_id,p_operation_id,v_transition,v_action.policy_decision_id,v_request.id,v_action.id,'trial.booking_created',
+      'user',v_user::text,v_run.correlation_id,v_result,runtime.sha256_jsonb(v_payload),'runtime-v1',v_run.workflow_version,v_action.policy_version);
+  return jsonb_build_object('operation_id',p_operation_id,'status','execution_saved');
+  -- Caller MUST issue trial_booking_result separately before chat confirmation.
+end $$;
+
+revoke all on function runtime.trial_assert_user(uuid,boolean) from public,anon,authenticated;
+revoke all on function runtime.trial_guard_approval_owner() from public,anon,authenticated;
+revoke all on function public.trial_booking_schedule(uuid),public.trial_booking_result(uuid,uuid),
+  public.trial_booking_recent(uuid),public.trial_booking_recover(uuid,text),public.trial_booking_request(uuid,uuid,text,text),
+  public.trial_booking_decide(uuid,uuid,text),public.trial_booking_execute(uuid,uuid) from public,anon;
+grant execute on function public.trial_booking_schedule(uuid),public.trial_booking_result(uuid,uuid),
+  public.trial_booking_recent(uuid),public.trial_booking_recover(uuid,text),public.trial_booking_request(uuid,uuid,text,text),
+  public.trial_booking_decide(uuid,uuid,text),public.trial_booking_execute(uuid,uuid) to authenticated;
+
+-- Preserve the existing fenced/kill-switch-aware worker path; internal SQL actions have their own atomic executor.
+create or replace function public.runtime_claim_outbox_actions(
+  p_worker_id text,
+  p_lease_duration_seconds integer default 300,
+  p_limit integer default 1,
+  p_connector_id text default null
+)
+returns table (
+  account_id uuid,
+  outbox_action_id uuid,
+  workflow_id uuid,
+  connector_id text,
+  action_type text,
+  payload jsonb,
+  idempotency_key text,
+  claim_token uuid,
+  lease_epoch bigint,
+  lease_until timestamptz,
+  attempt_count integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_control runtime.system_controls%rowtype;
+  v_action runtime.outbox_actions%rowtype;
+  v_token uuid;
+  v_epoch bigint;
+  v_until timestamptz;
+begin
+  if p_worker_id is null or char_length(p_worker_id) not between 1 and 160 then
+    raise exception using errcode = '22023', message = 'invalid outbox worker id';
+  end if;
+  if p_lease_duration_seconds not between 5 and 3600 then
+    raise exception using errcode = '22023', message = 'invalid outbox lease duration';
+  end if;
+  if p_limit not between 1 and 100 then
+    raise exception using errcode = '22023', message = 'invalid outbox claim limit';
+  end if;
+
+  select controls.* into strict v_control
+  from runtime.system_controls as controls
+  where controls.singleton
+  for share;
+  if v_control.kill_switch_active or v_control.claims_paused then
+    return;
+  end if;
+
+  for v_action in
+    select action.*
+    from runtime.outbox_actions as action
+    where action.execution_mode = 'live'
+      and action.connector_id <> 'internal_trial_booking'
+      and action.attempt_count < action.max_attempts
+      and (p_connector_id is null or action.connector_id = p_connector_id)
+      and (
+        action.status = 'pending'
+        or (action.status = 'retry_scheduled' and action.next_attempt_at <= clock_timestamp())
+        or (action.status = 'processing' and action.lease_until <= clock_timestamp())
+      )
+      and not exists (
+        select 1 from runtime.connector_health as health
+        where health.account_id = action.account_id
+          and health.connector_id = action.connector_id
+          and health.operation = action.action_type
+          -- Fail closed. A separate health controller must explicitly close the circuit after a
+          -- bounded half-open probe; normal action workers never bypass open/half-open state.
+          and health.state in ('open', 'half_open')
+      )
+    order by coalesce(action.next_attempt_at, action.created_at), action.created_at, action.id
+    for update skip locked
+    limit p_limit
+  loop
+    v_token := gen_random_uuid();
+    v_epoch := v_action.lease_epoch + 1;
+    v_until := clock_timestamp() + pg_catalog.make_interval(secs => p_lease_duration_seconds);
+
+    update runtime.outbox_actions as action
+    set status = 'processing', claimed_at = clock_timestamp(), lease_until = v_until,
+        claim_token = v_token, lease_epoch = v_epoch,
+        attempt_count = action.attempt_count + 1, next_attempt_at = null,
+        completed_at = null, updated_at = clock_timestamp()
+    where action.account_id = v_action.account_id and action.id = v_action.id;
+
+    insert into runtime.audit_events (
+      account_id, workflow_id, transition_id, policy_decision_id, approval_request_id,
+      outbox_action_id, event_type, actor_type, actor_id, correlation_id,
+      details, payload_hash, runtime_contract_version, policy_version
+    )
+    select action.account_id, action.workflow_id, action.transition_id,
+      action.policy_decision_id, action.approval_request_id, action.id,
+      'runtime.outbox_claimed', 'worker', p_worker_id, run.correlation_id,
+      pg_catalog.jsonb_build_object('lease_epoch', v_epoch, 'lease_until', v_until),
+      action.action_payload_hash, 'runtime-v1', action.policy_version
+    from runtime.outbox_actions as action
+    join runtime.workflow_runs as run
+      on run.account_id = action.account_id and run.id = action.workflow_id
+    where action.account_id = v_action.account_id and action.id = v_action.id;
+
+    return query
+    select action.account_id, action.id, action.workflow_id, action.connector_id,
+      action.action_type, action.payload, action.idempotency_key,
+      action.claim_token, action.lease_epoch, action.lease_until, action.attempt_count
+    from runtime.outbox_actions as action
+    where action.account_id = v_action.account_id and action.id = v_action.id;
+  end loop;
+end
+$$;
 
 commit;

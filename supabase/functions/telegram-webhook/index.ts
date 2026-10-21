@@ -21,6 +21,7 @@ import { entitlementFor, lockMessage } from '../_shared/entitlement.ts'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import { timingSafeEqual } from '../_shared/safeEqual.ts'
 import { blocksExternalActions } from '../_shared/productionE2E.ts'
+import { handleBriefingTelegramUpdate } from '../_shared/briefingRecipient.ts'
 import { handleForgeVoiceCallback } from '../_shared/telegramVoiceCallback.ts'
 import { enqueueTelegramVoiceForge } from '../_shared/telegramVoiceForge.ts'
 
@@ -402,6 +403,20 @@ Deno.serve(async (req) => {
         enqueue: enqueueTelegramVoiceForge,
       })
       return new Response('ok')
+    }
+
+    // Ежедневный брифинг (Step 2b): подтверждение получателя и запись итогов дня. Узкая ветка —
+    // обрабатывает ТОЛЬКО /start brf_<token>, /day_result и ответ на ОТПРАВЛЕННЫЙ вечерний
+    // брифинг (сверка по dispatch-снимку самого рана); всё остальное проходит дальше нетронутым,
+    // включая легаси-привязку commerce ниже.
+    if (update?.message) {
+      const briefing = await handleBriefingTelegramUpdate({
+        db,
+        sendReply: async (replyChatId, replyText) => {
+          if (channel.credentials?.bot_token) await tgSendHtml(channel.credentials.bot_token, replyChatId, escapeHtml(replyText))
+        },
+      }, { channelId, message: update.message, updateId: Number(update?.update_id ?? 0) })
+      if (briefing.handled) return new Response('ok')
     }
 
     // Ответ числом на приглашение «своя цена». Стоит ДО остальных обработчиков сообщений: иначе

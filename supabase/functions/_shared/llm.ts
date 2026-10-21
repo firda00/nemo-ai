@@ -3,6 +3,8 @@
 // e.g. "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-...".
 import { roleSkillBlock } from './skills.ts'
 import { selectedSkillBlock } from './capabilitySkills.ts'
+import { Deadline } from './requestDeadline.ts'
+import { readBytesBounded } from './boundedBody.ts'
 
 /**
  * Кусок сообщения. Текст или картинка.
@@ -56,7 +58,23 @@ export const FALLBACK_MODEL = Deno.env.get('FALLBACK_MODEL') ?? 'google/gemma-4-
 const MAX_CONCURRENT = 6
 let inFlight = 0
 const waiters: Array<() => void> = []
-async function acquireSlot(): Promise<void> { if (inFlight < MAX_CONCURRENT) { inFlight++; return } await new Promise<void>((r) => waiters.push(r)); inFlight++ }
+async function acquireSlot(deadline: Deadline): Promise<void> {
+  if (deadline.expired) throw new Error('MODEL_TIMEOUT')
+  if (inFlight < MAX_CONCURRENT) { inFlight++; return }
+  let acquired = false
+  let wake: () => void = () => {}
+  try {
+    await deadline.bound(() => new Promise<void>((resolve) => {
+      wake = () => { inFlight++; acquired = true; resolve() }
+      waiters.push(wake)
+    }))
+  } catch (error) {
+    const index = waiters.indexOf(wake)
+    if (index >= 0) waiters.splice(index, 1)
+    if (acquired) releaseSlot()
+    throw error
+  }
+}
 function releaseSlot(): void { inFlight = Math.max(0, inFlight - 1); const w = waiters.shift(); if (w) w() }
 // Keyed by credential AND model, never global. One model rate-limiting a tenant used to open a
 // circuit that then refused the fallback model as well — the degrade chain existed and could not
@@ -77,16 +95,13 @@ async function attemptModel(opts: {
   // OpenRouter plugins are opt-in per request. Research agents use the web plugin
   // so current claims arrive with URL citations instead of plausible filler.
   plugins?: Array<Record<string, unknown>>
-}): Promise<OpenRouterResult> {
+}, deadline: Deadline): Promise<OpenRouterResult> {
   const breakerKey = `${opts.apiKey}:${opts.model}`
   if (Date.now() < (breakerUntil.get(breakerKey) ?? 0)) throw new Error(`OpenRouter temporarily throttled for ${opts.model} (circuit open)`)
-  await acquireSlot()
+  await acquireSlot(deadline)
   try {
-  // Retry transient errors (429 / 5xx) with backoff. 402 = out of credits (no retry).
-  const MAX = 3
-  let res: Response | null = null
-  for (let attempt = 1; attempt <= MAX; attempt++) {
-    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  // Retries belong to callOpenRouter. Queue, request, body and backoff share one budget.
+  const res = await deadline.bound(() => fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.apiKey}`,
@@ -103,28 +118,23 @@ async function attemptModel(opts: {
         ...(opts.provider ? { provider: opts.provider } : {}),
         ...(opts.plugins?.length ? { plugins: opts.plugins } : {}),
       }),
-      // A hung provider connection otherwise holds the isolate until the platform kills it, and
-      // the caller never learns why. 45s is above any legitimate completion and below the
-      // function's own limit, so the degrade chain still gets its turn.
-      signal: AbortSignal.timeout(45_000),
-    })
-    if (res.ok) break
+      signal: deadline.controller.signal,
+    }))
+    if (!res.ok) {
+    void res.body?.cancel().catch(() => {})
     if (res.status === 402) throw new Error('NO_CREDITS')
-    if ((res.status === 429 || res.status >= 500) && attempt < MAX) {
-      // Respect the provider's Retry-After (capped at 8s); otherwise exponential-ish backoff WITH
-      // jitter so many concurrent invocations that all 429 at once don't retry in lockstep.
-      const ra = Number(res.headers.get('retry-after'))
-      const wait = ra > 0 ? Math.min(ra * 1000, 8000) : attempt * 1500 + Math.floor(Math.random() * 700)
-      await new Promise((r) => setTimeout(r, wait))
-      continue
-    }
-    const detail = await res.text()
-    if (res.status === 429 || res.status >= 500) breakerUntil.set(breakerKey, Date.now() + 4000) // trip this model only
-    throw new Error(`OpenRouter ${res.status}: ${detail}`)
+    const retryAfter = res.headers.get('retry-after')
+    const seconds = Number(retryAfter)
+    const requestedDelay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter ?? '') - Date.now()
+    throw Object.assign(new Error(`OpenRouter ${res.status}`), {
+      retryAfterMs: Number.isFinite(requestedDelay) && requestedDelay > 0 ? Math.min(requestedDelay, 8000) : 0,
+    })
   }
-  if (!res || !res.ok) { breakerUntil.set(breakerKey, Date.now() + 4000); throw new Error('OpenRouter: retries exhausted') }
-
-  const data = await res.json()
+  const body = await deadline.bound(() => readBytesBounded(res, { maxBytes: 2 * 1024 * 1024, deadlineAt: deadline.at }))
+  if (!body.ok) throw new Error(body.reason === 'timeout' ? 'MODEL_TIMEOUT' : 'INVALID_PROVIDER_RESPONSE')
+  let data
+  try { data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body.bytes)) }
+  catch { throw new Error('INVALID_PROVIDER_RESPONSE') }
   breakerUntil.delete(breakerKey) // success — reset only this model
   const content = data?.choices?.[0]?.message?.content?.trim() ?? ''
   const usage: OpenRouterUsage = {
@@ -166,6 +176,7 @@ export async function callOpenRouter(opts: {
   // Last resort in the degrade chain (see below).
   fallbackModel?: string
 }): Promise<OpenRouterResult> {
+  const deadline = new Deadline(45_000, 'MODEL_TIMEOUT')
   // The degrade chain used to be exactly two links: the requested model, then FALLBACK_MODEL —
   // which is a `:free` tier that OpenRouter rate-limits routinely. So the safety net was the least
   // reliable component in the system, and one 429 on it ended the whole reply in silence.
@@ -180,13 +191,16 @@ export async function callOpenRouter(opts: {
   for (const model of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        return await attemptModel({ ...opts, model })
+        return await attemptModel({ ...opts, model }, deadline)
       } catch (e) {
+        if (deadline.expired) throw new Error('MODEL_TIMEOUT', { cause: e })
         lastError = e
         if (attempt === 0 && isTransientModelError(e)) {
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+          const wait = Math.max(RETRY_DELAY_MS + Math.floor(Math.random() * 700), Number((e as { retryAfterMs?: number })?.retryAfterMs) || 0)
+          await deadline.bound(() => new Promise((resolve) => setTimeout(resolve, wait)))
           continue
         }
+        if (isTransientModelError(e)) breakerUntil.set(`${opts.apiKey}:${model}`, Date.now() + 4000)
         break
       }
     }

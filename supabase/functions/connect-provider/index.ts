@@ -20,7 +20,11 @@ const PROVIDERS: Record<string, { label: string; ok: (k: string) => boolean }> =
   // media / voice / video generation
   openrouter: { label: 'OpenRouter (текст, изображения, видео и голос)', ok: (k) => k.startsWith('sk-or-') && k.length > 24 },
   openai: { label: 'OpenAI (изображения)', ok: (k) => k.startsWith('sk-') && k.length > 20 },
+  anthropic: { label: 'Anthropic (Claude)', ok: (k) => k.startsWith('sk-ant-') && k.length > 24 },
+  gemini: { label: 'Google AI (Gemini / Imagen / Veo)', ok: (k) => k.length >= 24 },
+  groq: { label: 'Groq (быстрые текстовые модели)', ok: (k) => k.startsWith('gsk_') && k.length > 20 },
   replicate: { label: 'Replicate (видео/фото)', ok: (k) => k.length >= 20 },
+  fal: { label: 'fal.ai (изображения и видео)', ok: (k) => k.length >= 20 },
   heygen: { label: 'HeyGen (аватары)', ok: (k) => k.length >= 16 },
   elevenlabs: { label: 'ElevenLabs (озвучка/дубляж)', ok: (k) => k.length >= 24 },
   did: { label: 'D-ID (говорящие аватары)', ok: (k) => k.length >= 16 },
@@ -86,7 +90,12 @@ Deno.serve(async (req) => {
 
   if (action === 'status') {
     // which providers are connected (never return the keys)
-    const { data } = await admin.from('provider_keys').select('provider').eq('account_id', accountId)
+    const { data, error } = await admin.from('provider_keys').select('provider').eq('account_id', accountId)
+    if (error) {
+      // log the code only — Postgrest messages can echo row values
+      console.error('connect-provider status query failed', error.code)
+      return json({ ok: false, error: 'Не удалось получить статусы подключений.' }, 500)
+    }
     const connected = (data ?? []).map((r: { provider: string }) => r.provider)
     return json({ ok: true, connected, providers: Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label, connected: connected.includes(id) })) })
   }
@@ -94,7 +103,11 @@ Deno.serve(async (req) => {
   if (action === 'disconnect') {
     const provider = String(body?.provider ?? '')
     if (!provider_def(provider)) return json({ ok: false, error: 'unknown provider' }, 200)
-    await admin.from('provider_keys').delete().eq('account_id', accountId).eq('provider', provider)
+    const { error } = await admin.from('provider_keys').delete().eq('account_id', accountId).eq('provider', provider)
+    if (error) {
+      console.error('connect-provider disconnect delete failed', error.code)
+      return json({ ok: false, error: 'Не удалось удалить ключ.' }, 500)
+    }
     return json({ ok: true })
   }
 
@@ -116,11 +129,22 @@ Deno.serve(async (req) => {
       const payload = response ? await response.json().catch(() => null) as { ok?: boolean } | null : null
       if (!response?.ok || payload?.ok !== true) return json({ ok: false, error: 'Telegram отклонил токен бота.' }, 200)
     }
-    await admin.from('provider_keys').upsert({
+    let sealed: string
+    try {
+      sealed = await sealSecret(key, providerSecretContext(accountId, provider))
+    } catch {
+      console.error('connect-provider sealSecret failed')
+      return json({ ok: false, error: 'Не удалось сохранить ключ. Попробуйте ещё раз.' }, 500)
+    }
+    const { error: upsertError } = await admin.from('provider_keys').upsert({
       account_id: accountId,
       provider,
-      api_key: await sealSecret(key, providerSecretContext(accountId, provider)),
+      api_key: sealed,
     }, { onConflict: 'account_id,provider' })
+    if (upsertError) {
+      console.error('connect-provider upsert failed', upsertError.code)
+      return json({ ok: false, error: 'Не удалось сохранить ключ. Попробуйте ещё раз.' }, 500)
+    }
     return json({ ok: true, connected: true, provider, label: def.label })
   }
 

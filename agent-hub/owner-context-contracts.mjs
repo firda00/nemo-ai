@@ -37,7 +37,7 @@ for (const writeTool of ['slack_send_message', 'github_create_issue', 'notion_cr
 // The exemption applies only when owner context was actually established.
 assert.match(tools, /!\(ownerContext && OWNER_READ_TOOLS\.has\(name\)\)/,
   'the exemption must be gated on ownerContext, not granted unconditionally')
-assert.match(tools, /runAgentTools\([^)]*ownerContext = false\)/,
+assert.match(tools, /runAgentTools\([\s\S]*?ownerContext = false/,
   'ownerContext must default to false so every existing caller stays customer-scoped')
 
 // Owner identity comes from the Telegram envelope, never from anything the writer can type.

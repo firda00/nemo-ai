@@ -1,7 +1,7 @@
 // Agent tool-use INSIDE a normal reply. Given the user's message, if the account has
 // connected tools (Google, GitHub/Slack/CRM, browser) and the message asks to DO something
-// a tool can do, the model calls the tool and it is EXECUTED for real — so a channel bot
-// actually creates the Google Sheet / sends the email instead of hallucinating a link.
+// a tool can do, reads execute and mutations pass through the shared owner-approval
+// policy. A queued or blocked action is returned directly, never reported as completed.
 import { PRIMARY_MODEL, callOpenRouter } from './llm.ts'
 import { runBrowserTask, validateReadOnlyMarketplaceBrowserTask } from './browser.ts'
 import { googleAccessToken } from './google.ts'
@@ -15,6 +15,8 @@ import { redactText, redactValue } from './redact.ts'
 import { openSecret, providerSecretContext } from './secretBox.ts'
 import { storeSnapshot } from './marketplaceSnapshot.ts'
 import { blocksExternalActions } from './productionE2E.ts'
+import { guardAgentAction, type AgentActionContext } from './agentActionPolicy.ts'
+import { executeLegacyBooking, guardLegacyBooking } from './legacyBooking.ts'
 
 export { SKILL_TOOLS } from './capabilitySkills.ts'
 
@@ -27,23 +29,7 @@ const RUNCODE_TOOL = { type: 'function', function: { name: 'run_code', descripti
 
 // Internal booking — always available to booking/sales agents so they can ACTUALLY schedule
 // (reliable record) instead of hallucinating "записал" when Google Calendar isn't connected.
-const BOOK_TOOL = { type: 'function', function: { name: 'book_appointment', description: 'Book/schedule an appointment or reservation for the customer. Use this for ANY booking / appointment / reservation / запись request — it records the booking reliably (works even without Google Calendar). Resolve relative dates like "tomorrow 18:00" / "завтра в 18:00" against today into ISO 8601 for datetime_iso.', parameters: { type: 'object', properties: { name: { type: 'string', description: "customer's name if given" }, phone: { type: 'string' }, service: { type: 'string', description: 'what the appointment is for' }, datetime_iso: { type: 'string', description: 'ISO 8601, e.g. 2026-07-09T18:00' }, datetime_text: { type: 'string', description: 'the date/time exactly as the customer said' }, notes: { type: 'string' } }, required: ['datetime_text'] } } }
-
-async function execBooking(args: any, db: any, accountId: string, dialogueId?: string): Promise<{ ok: boolean; result: string }> {
-  const iso = String(args?.datetime_iso ?? '')
-  const at = iso && !isNaN(Date.parse(iso)) ? new Date(iso).toISOString() : null
-  // never claim a confirmed booking without a real machine-readable time — re-ask instead of
-  // telling the customer "записал вас" against a broken/empty datetime.
-  if (!at) return { ok: false, result: `Уточните, пожалуйста, точную дату и время${args?.datetime_text ? ` («${String(args.datetime_text).slice(0, 60)}» не удалось распознать)` : ''}, и я оформлю запись.` }
-  const { error } = await db.from('bookings').insert({
-    account_id: accountId, dialogue_id: dialogueId ?? null,
-    customer_name: String(args?.name ?? '') || null, phone: String(args?.phone ?? '') || null,
-    service: String(args?.service ?? '') || null, scheduled_at: at, scheduled_text: String(args?.datetime_text ?? '') || null,
-    notes: String(args?.notes ?? '') || null,
-  })
-  if (error) return { ok: false, result: `Не смог сохранить запись (${String(error.message).slice(0, 120)}).` }
-  return { ok: true, result: `Запись создана: ${[args?.service, args?.datetime_text].filter(Boolean).join(' — ')}${args?.name ? ' для ' + args.name : ''}.` }
-}
+const BOOK_TOOL = { type: 'function', function: { name: 'book_appointment', description: 'Book/schedule an appointment or reservation for the customer. For ordinary appointments only. Accounts with configured trial courses must use the trial schedule and owner-approved booking workflow; this tool cannot create their bookings. Resolve relative dates like "tomorrow 18:00" / "завтра в 18:00" against today into ISO 8601 for datetime_iso.', parameters: { type: 'object', properties: { name: { type: 'string', description: "customer's name if given" }, phone: { type: 'string' }, service: { type: 'string', description: 'what the appointment is for' }, datetime_iso: { type: 'string', description: 'ISO 8601, e.g. 2026-07-09T18:00' }, datetime_text: { type: 'string', description: 'the date/time exactly as the customer said' }, notes: { type: 'string' } }, required: ['datetime_text'] } } }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const TOOLS: Record<string, { provider: string; spec: any }> = {
@@ -316,7 +302,7 @@ async function execAnyTool(
   }
   if (ctx.customIndex[name]) return await execCustomTool(ctx.customIndex, name, args)
   if (name === 'run_code') return await execRunCode(args)
-  if (name === 'book_appointment') return await execBooking(args, ctx.db, ctx.accountId, ctx.tgCtx?.dialogueId)
+  if (name === 'book_appointment') return await executeLegacyBooking(args, ctx.db, ctx.accountId, ctx.tgCtx?.dialogueId)
   if (ALWAYS_TOOLS[name]) return await execAlways(name, args, ctx.orKey)
   if (GOOGLE_TOOLS[name]) {
     const gt = await googleAccessToken(ctx.db, ctx.accountId)
@@ -360,7 +346,8 @@ async function execAnyTool(
  * the next action, and it ends with a short natural-language reply. Returns { ran:true, result }
  * if any tool executed, { ran:false } if none were needed, or null if no tools are connected.
  */
-export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string, tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string }, skills?: string[], ownerContext = false): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
+export async function runAgentTools(db: any, orKey: string, accountId: string, userText: string, history?: any[], agentType?: string, tgCtx?: { channelId?: string; chatId?: string; dialogueId?: string }, skills?: string[], ownerContext = false, actionContext: AgentActionContext = {}): Promise<{ ran: boolean; tool?: string; result?: string; tokens: number } | null> {
+  if (!accountId) return { ran: true, result: 'Аккаунт недоступен. Действие не выполнено.', tokens: 0 }
   const { data: keysRows } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId)
   const keyByProvider: Record<string, string> = {}
   for (const r of keysRows ?? []) {
@@ -459,7 +446,7 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
   const ctx = { orKey, db, accountId, keyByProvider, customIndex, tgCtx }
   const today = new Date().toISOString().slice(0, 10)
   // name -> spec, so we can validate a tool call's required args BEFORE executing it
-  const specByName: Record<string, any> = {}
+  const specByName: Record<string, any> = Object.create(null)
   for (const sp of specs as any[]) { const nm = sp?.function?.name; if (nm) specByName[nm] = sp }
   // Who the assistant is serving decides what it may do with the connected tools. Kept as one
   // variable so the two versions cannot silently drift apart.
@@ -518,6 +505,11 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
       for (const c of calls) {
         const name = c.function?.name
         const args = (() => { try { return JSON.parse(c.function?.arguments ?? '{}') } catch { return {} } })()
+        // A returned name is untrusted. Never dispatch a hidden, disconnected or custom
+        // tool that was not offered for this agent, even if its executor exists.
+        if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(specByName, name)) {
+          return { ran: true, tool: typeof name === 'string' ? name : undefined, result: 'Инструмент недоступен для этого сотрудника. Действие не выполнено.', tokens: totalTokens }
+        }
         // validate required args before executing — a call missing a required field must not run
         // (it would 400 the provider or create a broken record); feed the error back so the model
         // asks the customer for the missing info instead of silently failing.
@@ -529,6 +521,16 @@ export async function runAgentTools(db: any, orKey: string, accountId: string, u
           msgs.push({ role: 'tool', tool_call_id: c.id, name, content: msg })
           ranAny = true; lastTool = name; lastResult = msg
           continue
+        }
+        const browserValidation = name === 'browser_task'
+          ? validateReadOnlyMarketplaceBrowserTask(String(args.url ?? ''), String(args.task ?? '')) : undefined
+        const trialDecision = name === 'book_appointment' ? await guardLegacyBooking(db, accountId) : null
+        const decision = trialDecision ?? await guardAgentAction(db, accountId, name, args, actionContext, browserValidation)
+        if (decision) {
+          try { await db.from('tool_runs').insert({ account_id: accountId, tool: name, args: redactValue(args), result: redactText(decision.result).slice(0, 1000), ok: decision.ok }) } catch { /* audit transport cannot hide the policy decision */ }
+          // Return the server's actual outcome directly. A subsequent model turn must
+          // not turn an approval request or denial into a claim of completed work.
+          return { ran: true, tool: name, result: decision.result, tokens: totalTokens }
         }
         const out = await execAnyTool(name, args, ctx)
         totalTokens += out.tokens ?? 0

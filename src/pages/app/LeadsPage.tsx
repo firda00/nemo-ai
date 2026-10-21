@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ClipboardList, User, Download, Repeat } from 'lucide-react'
+import { ClipboardList, User, Download } from 'lucide-react'
 import { useI18n } from '../../i18n'
 import { useAgentStore } from '../../store/useAgentStore'
 import { AgentAvatar } from '../../components/ui/AgentAvatar'
@@ -119,7 +119,6 @@ export default function LeadsPage() {
                 <span className="truncate text-text">{l.fields?.name ?? l.fields?.Ism ?? '—'}</span>
                 <span className="truncate text-muted">{l.fields?.phone ?? l.fields?.Telefon ?? ''}</span>
                 <span className="shrink-0 text-[11px] text-muted">{fmtDate(l.created_at)}</span>
-                {l.dialogue_id && <Link to={`/app/followups?dialogue=${encodeURIComponent(l.dialogue_id)}&lead=${encodeURIComponent(l.id)}`} className="inline-flex items-center gap-1 rounded-lg border border-violet/20 px-2 py-1 text-[11px] text-violet hover:bg-violet/10"><Repeat size={11} /> {t('appLayout.navFollowups')}</Link>}
               </li>
             ))}
           </ul>

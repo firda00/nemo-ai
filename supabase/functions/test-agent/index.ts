@@ -42,20 +42,21 @@ Deno.serve(async (req) => {
   const persist = Boolean(body?.persist) && Boolean(agentId)
 
   // token guard against the caller's account
-  const { data: prof } = await userDb.from('users').select('account_id').maybeSingle()
+  const { data: prof, error: profileError } = await userDb.from('users').select('account_id').eq('id', user.id).maybeSingle()
   const accountId = prof?.account_id
-  if (!accountId) return json({ error: 'no account' }, 403)
+  if (profileError || !accountId) return json({ error: 'no account' }, 403)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
   // A saved id is never trusted from the client. Validate tenant ownership and load the
   // authoritative server-side config before knowledge retrieval or model/tool execution.
   let agent = submittedAgent
   if (agentId) {
-    const { data: savedAgent } = await admin.from('agents').select('*').eq('id', agentId).eq('account_id', accountId).maybeSingle()
-    if (!savedAgent) return json({ error: 'agent_not_found' }, 404)
+    const { data: savedAgent, error } = await admin.from('agents').select('*').eq('id', agentId).eq('account_id', accountId).maybeSingle()
+    if (error || !savedAgent) return json({ error: 'agent_not_found' }, 404)
     agent = savedAgent
   }
   const temperature = Number.isFinite(agent?.temperature) ? Number(agent.temperature) : 0.6
-  const { data: acc } = await admin.from('accounts').select('token_balance, blocked, plan').eq('id', accountId).single()
+  const { data: acc, error: accountError } = await admin.from('accounts').select('token_balance, blocked, plan').eq('id', accountId).single()
+  if (accountError || !acc) return json({ error: 'account_unavailable' }, 503)
   if (acc?.blocked) return json({ error: 'blocked' }, 403)
   if (acc && Number(acc.token_balance) <= 0) return json({ error: 'no_tokens' }, 402)
   // sandbox mirrors the live runtime exactly: same premium plan gate, same fallback —
@@ -136,8 +137,9 @@ Deno.serve(async (req) => {
     if (!apiKey) return json({ ok: false, code: 'MISSING_PROVIDER_SECRET', message: 'OpenRouter key is not configured on the server.' }, 503)
 
     // tool-use: if the account has connected tools and the message asks to DO something,
-    // execute it for real (create Google Sheet/Doc, send email, browse) and return the REAL result
-    const toolRun = await runAgentTools(admin, apiKey, accountId, message, [], agent?.type, undefined, Array.isArray(agent?.skills) ? agent.skills : [])
+    // read immediately or queue a mutation under the saved agent's server policy.
+    // An unsaved draft has no authoritative action policy and cannot perform writes.
+    const toolRun = await runAgentTools(admin, apiKey, accountId, message, [], agent?.type, undefined, Array.isArray(agent?.skills) ? agent.skills : [], false, { agentId: agentId ?? undefined, actorUserId: user.id, dialogueId: dialogueId ?? undefined })
     if (toolRun?.ran) {
       if (toolRun.tokens) { await admin.from('usage').insert({ account_id: accountId, tokens: toolRun.tokens, model: null, stage: 'tool' }); await admin.rpc('decrement_token_balance', { p_account: accountId, p_amount: toolRun.tokens }) }
       return json({ ok: true, tool: toolRun.tool, reply: toolRun.result, dialogue_id: dialogueId })

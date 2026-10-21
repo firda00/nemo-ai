@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Building2, Loader2, Check, ShieldCheck, Sparkles, Target, PenLine } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Building2, Loader2, Check, ShieldCheck, Sparkles } from 'lucide-react'
 import { supabase, isSupabaseEnabled } from '../../lib/supabase'
 import { useAgentStore } from '../../store/useAgentStore'
 import { useI18n } from '../../i18n'
@@ -102,7 +101,7 @@ export default function CompanyBrainPage() {
 
       <div className="card mt-5 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5"><Sparkles size={14} className="text-violet" /> {t('companyBrainPage.filledLabel')} <b className="text-text">{filled}/{FIELDS.length}</b></span>
-        <span className="inline-flex items-center gap-1.5"><ShieldCheck size={13} className="text-teal" /> {t('companyBrainPage.usedEverywhere')} <Link to="/app/marketing" className="text-violet hover:underline"><Target size={11} className="inline" /> {t('companyBrainPage.strategyLink')}</Link>, <Link to="/app/content" className="text-violet hover:underline"><PenLine size={11} className="inline" /> {t('companyBrainPage.contentLink')}</Link></span>
+        <span className="inline-flex items-center gap-1.5"><ShieldCheck size={13} className="text-teal" /> {t('companyBrainPage.usedEverywhere')}</span>
       </div>
 
       <div className="mt-4 rounded-2xl border border-violet/20 bg-violet/[0.06] p-4">

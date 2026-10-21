@@ -4,7 +4,9 @@ const MAX_STREAM_BYTES = 64 * 1024
 const MAX_JSON_BYTES = 64 * 1024
 const SHA256 = /^[a-f0-9]{64}$/
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const STORAGE_PATH = /^tenants\/[0-9a-f-]{36}\/(?:artifacts|vision)\/\d{4}\/\d{2}\/\d{2}\/[A-Za-z0-9._-]{1,160}$/
+// two canonical shapes: date-partitioned (media/vision) and the document boundary's
+// attempt/content-qualified tenants/<acc>/artifacts/<job>/<epoch>/<sha256>-<name>
+const STORAGE_PATH = /^tenants\/[0-9a-f-]{36}\/(?:(?:artifacts|vision)\/\d{4}\/\d{2}\/\d{2}\/[A-Za-z0-9._-]{1,160}|artifacts\/[0-9a-f-]{36}\/\d{1,19}\/[a-f0-9]{64}-[A-Za-z0-9._-]{1,160})$/
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength

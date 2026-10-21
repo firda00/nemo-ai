@@ -4,9 +4,11 @@ import {
   BookOpen, Library, Link2, Plug, Sparkles,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/Button'
 import { MfaSetupPanel } from '../../components/platform/MfaSetupPanel'
+import { BriefingPanel } from '../../components/settings/BriefingPanel'
+import { ReminderPanel } from '../../components/settings/ReminderPanel'
 import { ConnectAIModel } from '../../components/platform/ConnectAIModel'
 import BillingPage from './BillingPage'
 import KnowledgePage from './KnowledgePage'
@@ -154,6 +156,13 @@ function PersonalizationTab() {
           <Field label={t('settingsPage.workspaceName')}><input value={draft.workspaceName} onChange={(event) => update('workspaceName', event.target.value)} maxLength={120} className={inputCls} placeholder="Nemo AI" /></Field>
           <Field label={t('settingsPage.industry')}><input value={draft.industry} onChange={(event) => update('industry', event.target.value)} maxLength={160} className={inputCls} placeholder={t('settingsPage.industryPlaceholder')} /></Field>
           <Field label={t('settingsPage.timezone')}><select value={draft.timezone} onChange={(event) => update('timezone', event.target.value)} className={inputCls}><option value="Asia/Tashkent">Asia/Tashkent</option><option value="Asia/Almaty">Asia/Almaty</option><option value="Europe/Moscow">Europe/Moscow</option><option value="UTC">UTC</option></select></Field>
+          {/* Единственный вход на /app/memory: сайдбар упрощён до трёх пунктов, и без этой
+              ссылки выпущенный экран памяти снова станет сиротой (org-memory contract). */}
+          <Link to="/app/memory" className="group flex items-center gap-3 rounded-xl border border-ice/10 bg-black/15 px-3 py-2.5 text-sm font-semibold text-text transition duration-200 hover:border-accent-cyan/40 hover:bg-white/5">
+            <Library size={16} className="text-accent-cyan" />
+            {t('appLayout.navMemory')}
+            <span aria-hidden className="ml-auto text-fog transition group-hover:translate-x-0.5 group-hover:text-muted">→</span>
+          </Link>
         </div>
       </Panel>
     </div>
@@ -162,6 +171,8 @@ function PersonalizationTab() {
       <ConnectAIModel />
       <GitHubKeyCard />
     </div>
+    <BriefingPanel />
+    <ReminderPanel />
     <ProfilePreferences />
   </div>
 }
@@ -238,7 +249,7 @@ function GitHubKeyCard() {
 }
 
 function ConnectorsTab() {
-  const { lang } = useI18n()
+  const { t } = useI18n()
   const [searchParams] = useSearchParams()
   const querySection = searchParams.get('section')
   const directoryQuery = searchParams.get('directory')
@@ -246,19 +257,6 @@ function ConnectorsTab() {
   const legacyDirectory = querySection === 'skills' || querySection === 'services'
   const [directoryOpen, setDirectoryOpen] = useState(Boolean(directoryQuery || legacyDirectory))
   const [directoryTab, setDirectoryTab] = useState<DirectoryTab>(legacyDirectory && !searchParams.get('integration') ? 'skills' : requestedDirectory)
-  const copy = lang === 'uz' ? {
-    eyebrow: 'Bitta katalog', title: 'Directory', description: 'Ulanishlar, agent ko‘nikmalari va plaginlar endi bir joyda. Keraklisini toping va vazifa paytida ulang.',
-    open: 'Directory’ni ochish', skills: 'Ko‘nikmalar', connections: 'Ulanishlar', plugins: 'Plaginlar',
-    knowledgeTitle: 'Bilimlar bazasi', knowledgeText: 'Agentlar va jamoalar uchun fayllar, havolalar va tasdiqlangan biznes ma’lumotlarini shu yerda saqlang.',
-  } : lang === 'en' ? {
-    eyebrow: 'One catalog', title: 'Directory', description: 'Connections, agent skills, and plugins now live in one place. Find what you need and connect it when a task calls for it.',
-    open: 'Open Directory', skills: 'Skills', connections: 'Connections', plugins: 'Plugins',
-    knowledgeTitle: 'Knowledge base', knowledgeText: 'Keep files, links, and verified business context for agents and teams here.',
-  } : {
-    eyebrow: 'Один каталог', title: 'Directory', description: 'Подключения, навыки агентов и плагины теперь находятся в одном месте. Находите нужное и подключайте только для конкретной задачи.',
-    open: 'Открыть Directory', skills: 'Навыки', connections: 'Подключения', plugins: 'Плагины',
-    knowledgeTitle: 'База знаний', knowledgeText: 'Храните здесь файлы, ссылки и подтверждённый контекст бизнеса для агентов и команд.',
-  }
 
   const openDirectory = (next: DirectoryTab) => { setDirectoryTab(next); setDirectoryOpen(true) }
   return <div className="space-y-5">
@@ -266,22 +264,22 @@ function ConnectorsTab() {
       <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-cyan/[0.08] blur-3xl" />
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
-          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan/10 text-cyan ring-1 ring-inset ring-cyan/20"><Library size={20} /></span><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan">{copy.eyebrow}</p><h2 className="mt-0.5 text-2xl font-bold tracking-tight text-text">{copy.title}</h2></div></div>
-          <p className="mt-4 max-w-xl text-sm leading-6 text-muted">{copy.description}</p>
+          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan/10 text-cyan ring-1 ring-inset ring-cyan/20"><Library size={20} /></span><div><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan">{t('settingsPage.directoryEyebrow')}</p><h2 className="mt-0.5 text-2xl font-bold tracking-tight text-text">{t('settingsPage.directoryTitle')}</h2></div></div>
+          <p className="mt-4 max-w-xl text-sm leading-6 text-muted">{t('settingsPage.directoryDesc')}</p>
         </div>
-        <Button onClick={() => openDirectory('connectors')} className="shrink-0" leftIcon={<Library size={16} />}>{copy.open}</Button>
+        <Button onClick={() => openDirectory('connectors')} className="shrink-0" leftIcon={<Library size={16} />}>{t('settingsPage.directoryOpen')}</Button>
       </div>
       <div className="relative mt-6 grid gap-2 sm:grid-cols-3">
         {([
-          { id: 'connectors' as const, label: copy.connections, icon: Link2, tone: 'text-cyan bg-cyan/10' },
-          { id: 'skills' as const, label: copy.skills, icon: Sparkles, tone: 'text-violet bg-violet/10' },
-          { id: 'plugins' as const, label: copy.plugins, icon: Plug, tone: 'text-amber bg-amber/10' },
+          { id: 'connectors' as const, label: t('settingsPage.directoryConnections'), icon: Link2, tone: 'text-cyan bg-cyan/10' },
+          { id: 'skills' as const, label: t('settingsPage.directorySkills'), icon: Sparkles, tone: 'text-violet bg-violet/10' },
+          { id: 'plugins' as const, label: t('settingsPage.directoryPlugins'), icon: Plug, tone: 'text-amber bg-amber/10' },
         ]).map(({ id, label, icon: Icon, tone }) => <button key={id} type="button" onClick={() => openDirectory(id)} className="group flex items-center gap-3 rounded-2xl bg-black/[0.08] px-4 py-3 text-left ring-1 ring-inset ring-ice/10 transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.055] hover:ring-ice/20 active:translate-y-0"><span className={cn('grid h-9 w-9 place-items-center rounded-xl', tone)}><Icon size={16} /></span><span className="text-sm font-semibold text-text">{label}</span><span className="ml-auto text-fog transition group-hover:translate-x-0.5 group-hover:text-muted">→</span></button>)}
       </div>
     </section>
 
     <section id="knowledge-base" className="scroll-mt-24 rounded-[1.75rem] border border-ice/10 bg-panel p-5 sm:p-7">
-      <div className="mb-6 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.055] text-text"><BookOpen size={18} /></span><div><h2 className="text-lg font-semibold text-text">{copy.knowledgeTitle}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{copy.knowledgeText}</p></div></div>
+      <div className="mb-6 flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.055] text-text"><BookOpen size={18} /></span><div><h2 className="text-lg font-semibold text-text">{t('settingsPage.knowledgeTitle')}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{t('settingsPage.knowledgeDesc')}</p></div></div>
       <KnowledgePage embedded />
     </section>
     <CapabilityDirectory key={directoryTab} open={directoryOpen} onClose={() => setDirectoryOpen(false)} initialTab={directoryTab} />

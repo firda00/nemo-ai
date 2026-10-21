@@ -1,0 +1,23 @@
+{
+  "kind": "real-local-browser-auth-postgrest",
+  "mocks": false,
+  "modelCalls": 0,
+  "checks": [
+    "operator authenticated through login UI, read actual schedule and requested owner approval",
+    "owner separately approved and executed; operator confirmed via fresh result read",
+    "actual page reload reopens same saved operation; direct database REST read confirms exactly one booking"
+  ],
+  "rpcCounts": {
+    "trial_booking_schedule": 7,
+    "trial_booking_recent": 7,
+    "trial_booking_request": 1,
+    "trial_booking_result": 5,
+    "trial_booking_decide": 1,
+    "trial_booking_execute": 1
+  },
+  "blockedRemoteRequests": 5,
+  "sourceSha256": "ffb9b360bf23a4f638117e4f0f725258cf231bd981f04813a27df6e6d3d7fe7a",
+  "bookingCount": 1,
+  "status": "passed",
+  "sourceSha256After": "ffb9b360bf23a4f638117e4f0f725258cf231bd981f04813a27df6e6d3d7fe7a"
+}

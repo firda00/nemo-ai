@@ -68,8 +68,9 @@ export default function TemplatesPage() {
       prompt: tpl.preset,
       status: 'draft',
     })
+    if (result.error || !result.id) { toast(t('employees.saveError')); return }
     toast(t('platform.templatesPage.created'))
-    navigate(result.id ? `/app/agents/${result.id}` : '/app/agents')
+    navigate(`/app/agents/${result.id}`)
   }
 
   const createFromTeamTemplate = async (tpl: (typeof TEAM_TEMPLATES)[number]) => {
@@ -101,6 +102,7 @@ export default function TemplatesPage() {
         ],
       },
     })
+    if (result.error || !result.id) { toast(t('employees.saveError')); return }
     if (result.id) {
       localStorage.setItem(`nemo-team-blueprint:${result.id}`, JSON.stringify({ goal: tpl.desc, tools: tpl.tools, agents: tpl.agents, template: tpl.title, savedAt: new Date().toISOString() }))
       toast(t('platform.templatesPage.created'))

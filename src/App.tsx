@@ -12,6 +12,8 @@ import CliAuthPage from './pages/CliAuthPage'
 import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/app/DashboardPage'
 import AgentsPage from './pages/app/AgentsPage'
+import EmployeesPage from './pages/app/EmployeesPage'
+import ApprovalsPage from './pages/app/ApprovalsPage'
 import AgentEditorPage from './pages/app/AgentEditorPage'
 import AnalyticsPage from './pages/app/AnalyticsPage'
 import SettingsPage from './pages/app/SettingsPage'
@@ -31,10 +33,7 @@ import TeamDetailPage from './pages/app/TeamDetailPage'
 import AutonomousPage from './pages/app/AutonomousPage'
 import MemoryPage from './pages/app/MemoryPage'
 import AutomationsPage from './pages/app/AutomationsPage'
-import MarketingStrategyPage from './pages/app/MarketingStrategyPage'
-import AutopostPage from './pages/app/AutopostPage'
 import LibraryPage from './pages/app/LibraryPage'
-import FollowUpsPage from './pages/app/FollowUpsPage'
 import ObservabilityPage from './pages/app/ObservabilityPage'
 import SetupPage from './pages/SetupPage'
 import { PrivacyPage, TermsPage } from './pages/LegalPage'
@@ -114,15 +113,16 @@ export default function App() {
         <Route path="memory" element={<MemoryPage />} />
         <Route path="automations" element={<AutomationsPage />} />
         <Route path="content" element={<Navigate to="/app" replace />} />
-        <Route path="marketing" element={<MarketingStrategyPage />} />
-        <Route path="autopost" element={<AutopostPage />} />
+        {/* Retired standalone marketing screens stay as redirects for old bookmarks. */}
+        <Route path="marketing" element={<Navigate to="/app" replace />} />
+        <Route path="autopost" element={<Navigate to="/app" replace />} />
         <Route path="commerce" element={<Navigate to="/app" replace />} />
         <Route path="forge" element={<Navigate to="/app/teams" replace />} />
         <Route path="finance" element={<Navigate to="/app" replace />} />
-        <Route path="followups" element={<FollowUpsPage />} />
+        <Route path="followups" element={<Navigate to="/app" replace />} />
         <Route path="monitor" element={<ObservabilityPage />} />
         <Route path="activity" element={<Navigate to="/app" replace />} />
-        <Route path="approvals" element={<Navigate to="/app" replace />} />
+        <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="tools" element={<Navigate to="/app/settings?tab=integrations&directory=skills" replace />} />
         <Route path="create-agent" element={<Navigate to="/app?create=agent" replace />} />
@@ -144,6 +144,7 @@ export default function App() {
         <Route path="demo-datasets" element={<DemoDatasetsPage />} />
         <Route path="trust" element={<TrustPage />} />
         <Route path="agents" element={<AgentsPage />} />
+        <Route path="employees" element={<EmployeesPage />} />
         <Route path="agents/:id" element={<AgentEditorPage />} />
         <Route path="research" element={<Navigate to="/app" replace />} />
         <Route path="dialogues" element={<Navigate to="/app" replace />} />

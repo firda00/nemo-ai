@@ -18,15 +18,15 @@ import { ContentSalesNav } from '../../components/platform/ContentSalesNav'
 import { MarketingCampaignStudio } from '../../components/platform/MarketingCampaignStudio'
 
 /**
- * Content Factory — simplified to THREE top-level groups so the first screen is
- * one decision, not eight:
- *   «Autopilot» (default) — the one-click full cycle, with the coordinator agent;
+ * Content Factory — campaign workflow plus the three existing capability groups:
+ *   «Campaign» (default) — the marketing campaign workspace;
+ *   «Autopilot» — the one-click full cycle, with the coordinator agent;
  *   «Studio»   — production: video assembly + media engines;
  *   «Tools»    — advanced modes (strategy / content team / analysis / competitor
  *                battle / multilang / channel watch) behind an inner selector.
  * Every previous capability is preserved. Old deep links keep working: the LEAF
  * ids in ?tab= are unchanged (plus 'watch' for the channel-watch tool, which was
- * previously buried inside multilang) and unknown values fall back to Autopilot.
+ * previously buried inside multilang) and unknown values fall back to Campaign.
  */
 type Leaf = 'campaign' | 'autopilot' | 'video' | 'media' | 'strategy' | 'content' | 'analyze' | 'battle' | 'multilang' | 'watch'
 type Group = 'campaign' | 'autopilot' | 'studio' | 'tools'
@@ -60,7 +60,7 @@ export default function ContentStudioPage() {
   const rawTab = params.get('tab') ?? ''
   const tab: Leaf = (LEAVES as string[]).includes(rawTab) ? (rawTab as Leaf) : 'campaign'
   const group = GROUP_OF[tab]
-  const openLeaf = (leaf: Leaf) => setParams(leaf === 'autopilot' ? {} : { tab: leaf }, { replace: true })
+  const openLeaf = (leaf: Leaf) => setParams(leaf === 'campaign' ? {} : { tab: leaf }, { replace: true })
 
   const GROUPS: { id: Group; label: string; icon: typeof Target; hint: string }[] = [
     { id: 'campaign', label: t('marketingCampaignNav.title'), icon: WandSparkles, hint: t('marketingCampaignNav.hint') },

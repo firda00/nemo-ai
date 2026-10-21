@@ -207,9 +207,23 @@ check(() => assert.equal(buildAssFile([]).includes('Dialogue'), false, 'пуст
  */
 check(() => {
   const escaped = escapeFilterPath(`C:${BACKSLASH}renders${BACKSLASH}a.ass`)
-  assert.ok(escaped.includes('/renders/a.ass'), 'косые не приведены к прямым')
-  assert.ok(!/(^|[^\\]):/.test(escaped), 'двоеточие не экранировано')
+  assert.equal(escaped, `C${BACKSLASH}:/renders/a.ass`, 'путь для кавычек графа: прямые косые, одна косая перед двоеточием')
 })
+// Двойная косая перед двоеточием — прежняя поломка Windows: значение стоит в кавычках, разборщик
+// графа доносит обе косые до разборщика параметров дословно, там `\\` схлопывается в одну, живое
+// двоеточие режет путь, и ffmpeg жалуется на original_size, ни словом не упоминая экранирование.
+check(() => assert.equal(
+  escapeFilterPath(`C:${BACKSLASH}a.ass`).includes(BACKSLASH + BACKSLASH), false,
+  'двойное экранирование внутри кавычек снова режет путь по двоеточию',
+))
+// POSIX-путь проходит без изменений: экранировать в нём нечего.
+check(() => assert.equal(escapeFilterPath('/tmp/subs.ass'), '/tmp/subs.ass'))
+// Кавычка в пути не должна выпускать остаток строки из кавычек графа: она закрывает их, вставляется
+// экранированной для обоих уровней разбора и открывает снова.
+check(() => assert.equal(
+  escapeFilterPath(`/tmp/o'brien.ass`),
+  `/tmp/o'${BACKSLASH}${BACKSLASH}${BACKSLASH}''brien.ass`,
+))
 
 // ─── Фильтр-граф ──────────────────────────────────────────────────────────────────────────────────
 
@@ -239,6 +253,13 @@ check(() => {
   assert.ok(graph.chain.includes('concat=n=2:v=1:a=0'))
   assert.ok(graph.chain.includes('ass='), 'субтитры не накладываются при доступном фильтре')
   assert.equal(graph.outLabel, 'vsub')
+})
+
+// Windows-путь попадает в граф в кавычках и с ОДНОЙ косой перед двоеточием — ровно та форма, которую
+// понимают оба уровня разбора настоящего ffmpeg.
+check(() => {
+  const graph = buildVideoGraph(TASK.scenes, { assPath: `C:${BACKSLASH}w${BACKSLASH}s.ass`, capabilities: FULL })
+  assert.ok(graph.chain.includes(`ass='C${BACKSLASH}:/w/s.ass'`), 'граф собрал путь не в той форме, которую разберёт ffmpeg')
   // Длительность сцены задаём мы, а не исходник: без обрезки видео длиной в минуту проигрывается
   // целиком, и ролик из пяти сцен по три секунды выходит пятиминутным.
   assert.ok(graph.chain.includes('trim=duration=2') && graph.chain.includes('trim=duration=3'))

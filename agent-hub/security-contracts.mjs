@@ -56,7 +56,7 @@ check(10, 'Provider-key encryption at rest',
     && /revoke select on public\.provider_keys/i.test(migrations),
   'tenant/provider-bound AES-256-GCM; database rejects plaintext and browser DML')
 check(11, 'Agent creation rate limit', /guard_agent_creation_rate[\s\S]*pg_advisory_xact_lock[\s\S]*recent_count >= 30/i.test(migrations), 'per-account creation bursts are serialized and capped')
-check(12, 'Provider 429 retry', /res\.status === 429[\s\S]*retry-after[\s\S]*breakerUntil/i.test(llm), 'bounded retry, jitter and circuit breaker are present')
+check(12, 'Provider 429 retry', /isTransientModelError/.test(llm) && /retry-after/.test(llm) && /Math\.random\(\) \* 700/.test(llm) && /breakerUntil\.set/.test(llm) && /deadline\.bound/.test(llm), 'bounded retry, jitter and circuit breaker are present')
 check(13, 'Voice balance limit', /token_balance, blocked/.test(makeCall) && /NO_CREDITS/.test(makeCall), 'blocked/zero-balance accounts cannot start paid calls')
 check(14, 'Forged Stripe webhook', /stripe-signature/i.test(stripe) && /timingSafeEqual|crypto\.subtle\.verify|hmac/i.test(stripe), 'signature, timestamp and event id are verified')
 check(15, 'Lead memory isolation', /dialogueId \? query\.eq\('dialogue_id'/.test(memory) && /loadMemory\(db, agent\.account_id, agent\.id, dialogueId\)/.test(read('supabase/functions/_shared/agent.ts')), 'memory is scoped to one account, agent, and dialogue/lead')

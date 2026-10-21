@@ -180,11 +180,12 @@ const check = (name, condition, detail = '') => {
   check('CRM push never fans out after an ambiguous failure', (pushFn.match(/return \{ provider: r/g) ?? []).length >= 3 && !/if \(r\.ok\) return \{ provider/.test(pushFn))
 }
 
-// ---------- C. Content Factory simplification (3 groups, nothing removed) ----------
+// ---------- C. Content Factory (campaign entry plus all existing groups) ----------
 {
   const cs = read('src/pages/app/ContentStudioPage.tsx')
-  check('factory shows three top-level groups', /type Group = 'autopilot' \| 'studio' \| 'tools'/.test(cs))
-  check('old deep-link leaf ids stay canonical with a safe fallback', /useSearchParams/.test(cs) && cs.includes("'autopilot' | 'video' | 'media' | 'strategy' | 'content' | 'analyze' | 'battle' | 'multilang' | 'watch'") && cs.includes(": 'autopilot'"))
+  check('factory retains its three groups alongside the campaign entry', /type Group = 'campaign' \| 'autopilot' \| 'studio' \| 'tools'/.test(cs) && cs.includes("tab === 'campaign' && <MarketingCampaignStudio />"))
+  check('old deep-link leaf ids stay canonical with a safe campaign fallback', /useSearchParams/.test(cs) && cs.includes("'autopilot' | 'video' | 'media' | 'strategy' | 'content' | 'analyze' | 'battle' | 'multilang' | 'watch'") && cs.includes(": 'campaign'"))
+  check('only the default campaign clears the query; Autopilot keeps its explicit deep link', cs.includes("setParams(leaf === 'campaign' ? {} : { tab: leaf }, { replace: true })"))
   check('no capability was removed in the regroup', ['FactoryAutopilotPanel', 'CompetitorTeamPanel', 'MultiLangPanel', 'ChannelWatchPanel', 'MarketingStrategyPanel', 'ContentTeamPanel', 'ContentAnalyzePanel', 'VideoRenderPanel', 'MediaConnectPanel'].every((p) => cs.includes(`<${p}`)))
   check('the coordinator lives with Autopilot only', cs.includes("group === 'autopilot' && ("))
   check('channel watch is its own tool', cs.includes("tab === 'watch' && <ChannelWatchPanel />"))

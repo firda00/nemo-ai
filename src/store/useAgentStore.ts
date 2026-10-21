@@ -4,8 +4,24 @@ import { supabase, isSupabaseEnabled } from '../lib/supabase'
 import type { AgentColor } from '../types'
 import type { PlatformAgent } from '../types/platform'
 import { trackEvent } from '../lib/telemetry'
+import { EmployeePersistenceError, persistEmployeeDraft, resolveEmployeeAccount } from '../lib/employeePersistence'
 
 let counter = 100
+let agentSessionVersion = 0
+interface RowMutation { revision: number; pending: number; confirmed: PlatformAgent | null }
+const rowMutations = new Map<string, RowMutation>()
+const writeQueues = new Map<string, Promise<void>>()
+const beginRowMutation = (id: string, current: PlatformAgent) => {
+  const mutation = rowMutations.get(id) ?? { revision: 0, pending: 0, confirmed: current }
+  mutation.revision += 1
+  mutation.pending += 1
+  rowMutations.set(id, mutation)
+  return mutation
+}
+const finishRowMutation = (id: string, mutation: RowMutation) => {
+  mutation.pending -= 1
+  if (!mutation.pending && rowMutations.get(id) === mutation) rowMutations.delete(id)
+}
 export const newAgentId = () => `ag_${++counter}`
 
 const palette: AgentColor[] = ['violet', 'blue', 'cyan', 'teal', 'amber']
@@ -133,6 +149,85 @@ function toRow(a: PlatformAgent): any {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// A mutation never borrows a replacement session while getSession/fetch/body waits.
+// The profile and write share one JWT, deadline and explicit tenant boundary.
+async function writeAgentRow(id: string, accountId: string, method: 'PATCH' | 'DELETE', payload: unknown,
+  alive: () => boolean): Promise<Record<string, unknown>> {
+  if (!supabase) throw new EmployeePersistenceError('BACKEND_UNAVAILABLE')
+  // Serialize writes to the same tenant row. A later optimistic edit must also
+  // be the last persisted edit, not merely the last response accepted by the UI.
+  const queueKey = `${accountId}:${id}`
+  const predecessor = writeQueues.get(queueKey) ?? Promise.resolve()
+  let release!: () => void
+  const finished = new Promise<void>((resolve) => { release = resolve })
+  const tail = Promise.all([predecessor, finished]).then(() => {})
+  writeQueues.set(queueKey, tail)
+  void tail.then(() => { if (writeQueues.get(queueKey) === tail) writeQueues.delete(queueKey) })
+  const controller = new AbortController()
+  let stopCode: 'SESSION_CHANGED' | 'SAVE_TIMEOUT' = 'SESSION_CHANGED'
+  let userId: string | undefined
+  let observedId: string | null | undefined
+  const stop = (code: typeof stopCode) => { stopCode = code; controller.abort() }
+  const subscription = supabase.auth.onAuthStateChange((event, session) => {
+    observedId = session?.user.id ?? null
+    if (event === 'SIGNED_OUT' || (userId === undefined && event === 'SIGNED_IN') || (userId !== undefined && userId !== observedId)) stop('SESSION_CHANGED')
+  }).data.subscription
+  const check = () => {
+    if (!alive()) stop('SESSION_CHANGED')
+    if (controller.signal.aborted) throw new EmployeePersistenceError(stopCode)
+  }
+  let onAbort: (() => void) | undefined
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new EmployeePersistenceError(stopCode))
+    controller.signal.addEventListener('abort', onAbort, { once: true })
+  })
+  const timer = setTimeout(() => stop('SAVE_TIMEOUT'), 15_000)
+  try {
+    const operation = (async () => {
+      check()
+      const { data, error } = await supabase.auth.getSession()
+      check()
+      const session = data?.session
+      if (error || !session?.access_token || !session.user.id) throw new EmployeePersistenceError('AUTH_REQUIRED')
+      userId = session.user.id
+      if (observedId !== undefined && observedId !== userId) throw new EmployeePersistenceError('SESSION_CHANGED')
+      // The token is already pinned, and queue time is part of the same deadline.
+      await predecessor
+      check()
+      const base = String(import.meta.env.VITE_SUPABASE_URL ?? '')
+      const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? '')
+      if (!base || !anonKey) throw new EmployeePersistenceError('BACKEND_UNAVAILABLE')
+      const headers = { apikey: anonKey, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }
+      const request = async (table: string, query: Record<string, string>, write = false) => {
+        check()
+        const url = new URL(`rest/v1/${table}`, base.replace(/\/?$/, '/'))
+        for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+        const response = await fetch(url, { method: write ? method : 'GET', headers, signal: controller.signal,
+          ...(write && method === 'PATCH' ? { body: JSON.stringify(payload) } : {}) })
+        check()
+        const text = await response.text()
+        check()
+        if (text.length > 2_000_000 || !response.ok) throw new EmployeePersistenceError('SAVE_FAILED')
+        try { return JSON.parse(text) as unknown } catch { throw new EmployeePersistenceError('SAVE_FAILED') }
+      }
+      const profile = await request('users', { select: 'account_id', id: `eq.${userId}`, limit: '1' })
+      if (!Array.isArray(profile) || profile.length !== 1 || profile[0]?.account_id !== accountId) throw new EmployeePersistenceError('SESSION_CHANGED')
+      const rows = await request('agents', { select: '*,channels(type)', id: `eq.${id}`, account_id: `eq.${accountId}` }, true)
+      if (!Array.isArray(rows) || rows.length !== 1 || rows[0]?.id !== id || rows[0]?.account_id !== accountId) throw new EmployeePersistenceError('SAVE_FAILED')
+      check()
+      return rows[0] as Record<string, unknown>
+    })()
+    return await Promise.race([operation, aborted])
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) controller.signal.removeEventListener('abort', onAbort)
+    subscription.unsubscribe()
+    release()
+  }
+}
+
+const mutationError = (error: unknown) => error instanceof EmployeePersistenceError ? error.code : 'SAVE_FAILED'
+
 interface AgentStore {
   agents: PlatformAgent[]
   hydrated: boolean
@@ -148,7 +243,7 @@ interface AgentStore {
   addAgent: (a: PlatformAgent) => Promise<{ id?: string; error?: string }>
   updateAgent: (id: string, patch: Partial<PlatformAgent>) => Promise<{ error?: string }>
   deleteAgent: (id: string) => Promise<{ error?: string }>
-  duplicateAgent: (id: string) => string
+  duplicateAgent: (id: string) => Promise<{ id?: string; error?: string }>
   toggleAgent: (id: string) => Promise<{ error?: string }>
 
   getAgent: (id: string) => PlatformAgent | undefined
@@ -167,34 +262,38 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       set({ agents: localAgents(), hydrated: true, profileResolved: true })
       return
     }
+    const operationVersion = agentSessionVersion
+    const alive = () => operationVersion === agentSessionVersion
     const { profileResolved, accountId: cachedAccountId, isAdmin: cachedIsAdmin } = get()
     let accountId = cachedAccountId
     let isAdmin = cachedIsAdmin
 
     if (options?.forceProfile || !profileResolved) {
       const { data: sessionData } = await supabase.auth.getSession()
+      if (!alive()) return
       if (!sessionData.session) {
-        set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
+        set({ agents: [], accountId: null, isAdmin: false, tokenBalance: 0, profileResolved: false, hydrated: true })
         return
       }
 
       const { data: prof, error: profileError } = await supabase.from('users').select('account_id, is_admin').eq('id', sessionData.session.user.id).maybeSingle()
+      if (!alive()) return
       if (profileError) {
         // A transient profile read must not switch an authenticated tenant into demo mode.
         set({ profileResolved: false, hydrated: true })
         return
       }
       if (!prof?.account_id) {
-        set({ agents: localAgents(), accountId: 'demo', isAdmin: false, tokenBalance: 0, profileResolved: true, hydrated: true })
+        set({ agents: [], accountId: null, isAdmin: false, tokenBalance: 0, profileResolved: false, hydrated: true })
         return
       }
-      accountId = prof?.account_id ?? 'demo'
+      accountId = prof.account_id
       isAdmin = Boolean(prof?.is_admin)
-      set({ accountId, isAdmin, profileResolved: true })
+      // Publish the verified profile with the registry below, not ahead of it.
     }
 
     if (accountId === 'demo') {
-      set({ agents: localAgents(), accountId, isAdmin: false, tokenBalance: 0, hydrated: true })
+      set({ agents: [], accountId: null, isAdmin: false, tokenBalance: 0, profileResolved: false, hydrated: true })
       return
     }
 
@@ -202,15 +301,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       accountId ? supabase.from('agents').select('*, channels(type)').eq('account_id', accountId).order('created_at', { ascending: false }) : Promise.resolve({ data: [] }),
       accountId ? supabase.from('accounts').select('token_balance').eq('id', accountId).single() : Promise.resolve({ data: null }),
     ])
+    if (!alive()) return
     if ('error' in agentResult && agentResult.error) {
       // Preserve the last known registry rather than showing a false empty state.
-      set({ accountId, isAdmin, hydrated: true })
+      set({ ...(get().accountId === accountId ? {} : { agents: [] }), accountId, isAdmin, hydrated: true })
       return
     }
     set({
       agents: (agentResult.data ?? []).map(mapAgent),
       accountId,
       isAdmin,
+      profileResolved: Boolean(accountId),
       tokenBalance: Number((accountResult as { data: { token_balance?: number } | null })?.data?.token_balance ?? 0),
       hydrated: true,
     })
@@ -220,28 +321,25 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     if (!isSupabaseEnabled || !supabase) return
     const accountId = await get().ensureAccountId()
     if (!accountId || accountId === 'demo') return
+    const operationVersion = agentSessionVersion
     const { data } = await supabase.from('accounts').select('token_balance').eq('id', accountId).single()
+    if (operationVersion !== agentSessionVersion || get().accountId !== accountId) return
     set({ tokenBalance: Number(data?.token_balance ?? 0) })
   },
 
   ensureAccountId: async () => {
-    const cached = get().accountId
-    if (cached) return cached
-    if (get().profileResolved) return cached || null
     if (!isSupabaseEnabled || !supabase) return null
-    const { data: sessionData } = await supabase.auth.getSession()
-    if (!sessionData.session) {
-      set({ accountId: 'demo', isAdmin: false, profileResolved: true })
-      return 'demo'
+    const operationVersion = agentSessionVersion
+    const alive = () => operationVersion === agentSessionVersion
+    try {
+      const result = await resolveEmployeeAccount(supabase, { alive })
+      if (!alive()) return null
+      set((s) => ({ ...(s.accountId === result.accountId ? {} : { agents: [], tokenBalance: 0 }), accountId: result.accountId, isAdmin: result.isAdmin, profileResolved: true }))
+      return result.accountId
+    } catch {
+      if (alive()) set({ accountId: null, isAdmin: false, profileResolved: false, agents: [], tokenBalance: 0 })
+      return null
     }
-    const { data, error } = await supabase.from('users').select('account_id, is_admin').eq('id', sessionData.session.user.id).maybeSingle()
-    if (error) {
-      set({ accountId: 'demo', isAdmin: false, profileResolved: true })
-      return 'demo'
-    }
-    const id = data?.account_id ?? 'demo'
-    set({ accountId: id, isAdmin: Boolean(data?.is_admin), profileResolved: true })
-    return id
   },
 
   // Async + robust: the onboarding wizard calls this before the app shell has
@@ -252,89 +350,137 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       set((s) => ({ agents: [a, ...s.agents] }))
       return { id: a.id }
     }
-    // optimistic insert with the temp client id
-    set((s) => ({ agents: [a, ...s.agents] }))
-    const accountId = await get().ensureAccountId()
-    if (accountId === 'demo') return { id: a.id }
-    const { data, error } = await supabase
-      .from('agents')
-      .insert({ ...toRow(a), ...(accountId ? { account_id: accountId } : {}) })
-      .select('*, channels(type)')
-      .single()
-    if (error || !data) {
-      // roll back the optimistic row so the UI doesn't lie about success
-      set((s) => ({ agents: s.agents.filter((x) => x.id !== a.id) }))
-      return { error: error?.message ?? 'insert failed' }
+    const operationVersion = agentSessionVersion
+    const alive = () => operationVersion === agentSessionVersion
+    try {
+      // No optimistic success: only a confirmed row can enter the live registry.
+      const result = await persistEmployeeDraft(supabase, a.id, toRow(a), { alive })
+      if (!alive()) return { error: 'SESSION_CHANGED' }
+      const real = mapAgent(result.row)
+      set((s) => ({ agents: [real, ...(s.accountId === result.accountId ? s.agents.filter((x) => x.id !== real.id) : [])], accountId: result.accountId, isAdmin: result.isAdmin, profileResolved: true }))
+      void trackEvent('agent_created', { type: real.type, status: real.status })
+      return { id: real.id }
+    } catch (error) {
+      return { error: error instanceof EmployeePersistenceError ? error.code : 'SAVE_FAILED' }
     }
-    const real = mapAgent(data)
-    set((s) => ({ agents: s.agents.map((x) => (x.id === a.id ? real : x)) }))
-    void trackEvent('agent_created', { type: real.type, status: real.status })
-    return { id: real.id }
   },
 
   updateAgent: async (id, patch) => {
-    set((s) => ({ agents: s.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
-    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
-      const merged = get().agents.find((a) => a.id === id)
-      if (merged) {
-        const { data, error } = await supabase.from('agents').update(toRow(merged)).eq('id', id).eq('account_id', get().accountId as string).select('*, channels(type)').single()
-        if (error || !data) return { error: error?.message ?? 'update failed' }
-        set((s) => ({ agents: s.agents.map((a) => a.id === id ? mapAgent(data) : a) }))
-      }
+    const previous = get().agents.find((a) => a.id === id)
+    if (!previous) return { error: 'agent not found' }
+    const accountId = get().accountId
+    if (isSupabaseEnabled && (!accountId || accountId === 'demo')) return { error: 'PROFILE_UNAVAILABLE' }
+    const version = agentSessionVersion
+    const mutation = beginRowMutation(id, previous)
+    const revision = mutation.revision
+    const alive = () => version === agentSessionVersion && get().accountId === accountId
+    const latest = () => alive() && mutation.revision === revision
+    const merged = { ...previous, ...patch, id }
+    const payload = JSON.parse(JSON.stringify(toRow(merged)))
+    set((s) => ({ agents: s.agents.map((a) => a.id === id ? merged : a) }))
+    if (!isSupabaseEnabled) { finishRowMutation(id, mutation); return {} }
+    try {
+      const row = await writeAgentRow(id, accountId!, 'PATCH', payload, alive)
+      if (!alive()) return { error: 'SESSION_CHANGED' }
+      mutation.confirmed = mapAgent(row)
+      if (latest()) set((s) => ({ agents: s.agents.map((a) => a.id === id ? mutation.confirmed! : a) }))
+    } catch (error) {
+      if (latest() && mutation.confirmed) set((s) => ({ agents: s.agents.map((a) => a === merged ? mutation.confirmed! : a) }))
+      return { error: mutationError(error) }
+    } finally {
+      finishRowMutation(id, mutation)
     }
     return {}
   },
 
   deleteAgent: async (id) => {
-    const prev = get().agents
+    const previous = get().agents.find((a) => a.id === id)
+    if (!previous) return { error: 'agent not found' }
+    const accountId = get().accountId
+    if (isSupabaseEnabled && (!accountId || accountId === 'demo')) return { error: 'PROFILE_UNAVAILABLE' }
+    const version = agentSessionVersion
+    const mutation = beginRowMutation(id, previous)
+    const revision = mutation.revision
+    const alive = () => version === agentSessionVersion && get().accountId === accountId
     set((s) => ({ agents: s.agents.filter((a) => a.id !== id) }))
-    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
-      const { error } = await supabase.from('agents').delete().eq('id', id).eq('account_id', get().accountId as string)
-      if (error) {
-        set({ agents: prev }) // restore so the UI doesn't lie about a delete that failed
-        return { error: error.message }
-      }
+    if (!isSupabaseEnabled) { finishRowMutation(id, mutation); return {} }
+    try {
+      await writeAgentRow(id, accountId!, 'DELETE', undefined, alive)
+      if (!alive()) return { error: 'SESSION_CHANGED' }
+      mutation.confirmed = null
+    } catch (error) {
+      if (alive() && mutation.revision === revision && mutation.confirmed) set((s) => ({ agents: s.agents.some((a) => a.id === id) ? s.agents : [mutation.confirmed!, ...s.agents] }))
+      return { error: mutationError(error) }
+    } finally {
+      finishRowMutation(id, mutation)
     }
     return {}
   },
 
-  duplicateAgent: (id) => {
+  duplicateAgent: async (id) => {
     const src = get().agents.find((a) => a.id === id)
+    if (!src) return { error: 'agent not found' }
     const copy: PlatformAgent = {
-      ...(src ?? blankAgent()),
-      id: newAgentId(),
-      name: (src?.name ?? 'Agent') + ' (nusxa)',
+      ...structuredClone(src),
+      id: crypto.randomUUID(),
+      name: src.name + ' (nusxa)',
       status: 'draft',
+      channels: [], knowledge: [], configRevision: 1,
+      publishedRevision: null, publishedAt: null, latestEvalRunId: null,
       dialoguesToday: 0,
       lastActivity: '—',
     }
-    set((s) => ({ agents: [copy, ...s.agents] }))
-    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
-      const accountId = get().accountId
-      void supabase
-        .from('agents')
-        .insert({ ...toRow(copy), ...(accountId ? { account_id: accountId } : {}) })
-        .then(() => get().hydrate())
-    }
-    return copy.id
+    return get().addAgent(copy)
   },
 
   toggleAgent: async (id) => {
-    const before = get().agents
-    const current = before.find((a) => a.id === id)
+    const current = get().agents.find((a) => a.id === id)
     if (!current) return { error: 'agent not found' }
     if (current.status !== 'active') return { error: 'Run a passing evaluation before publishing this agent.' }
-    set((s) => ({ agents: s.agents.map((a) => a.id === id ? { ...a, status: 'paused' } : a) }))
-    if (isSupabaseEnabled && supabase && get().accountId && get().accountId !== 'demo') {
-        const { data, error } = await supabase.from('agents').update({ status: 'paused' }).eq('id', id).eq('account_id', get().accountId as string).select('*, channels(type)').single()
-        if (error || !data) {
-          set({ agents: before })
-          return { error: error?.message ?? 'pause failed' }
-        }
-        set((s) => ({ agents: s.agents.map((a) => a.id === id ? mapAgent(data) : a) }))
+    const accountId = get().accountId
+    if (isSupabaseEnabled && (!accountId || accountId === 'demo')) return { error: 'PROFILE_UNAVAILABLE' }
+    const version = agentSessionVersion
+    const mutation = beginRowMutation(id, current)
+    const revision = mutation.revision
+    const alive = () => version === agentSessionVersion && get().accountId === accountId
+    const latest = () => alive() && mutation.revision === revision
+    const paused: PlatformAgent = { ...current, status: 'paused' }
+    set((s) => ({ agents: s.agents.map((a) => a.id === id ? paused : a) }))
+    if (!isSupabaseEnabled) { finishRowMutation(id, mutation); return {} }
+    try {
+      const row = await writeAgentRow(id, accountId!, 'PATCH', { status: 'paused' }, alive)
+      if (!alive()) return { error: 'SESSION_CHANGED' }
+      mutation.confirmed = mapAgent(row)
+      if (latest()) set((s) => ({ agents: s.agents.map((a) => a.id === id ? mutation.confirmed! : a) }))
+    } catch (error) {
+      if (latest() && mutation.confirmed) set((s) => ({ agents: s.agents.map((a) => a === paused ? mutation.confirmed! : a) }))
+      return { error: mutationError(error) }
+    } finally {
+      finishRowMutation(id, mutation)
     }
     return {}
   },
 
   getAgent: (id) => get().agents.find((a) => a.id === id),
 }))
+
+// Clear cached tenant state synchronously on identity loss/replacement; in-flight
+// profile, hydration and insert results also check this generation before publish.
+if (isSupabaseEnabled && supabase) {
+  let userId: string | null | undefined
+  supabase.auth.onAuthStateChange((event, session) => {
+    const nextUserId = session?.user.id ?? null
+    if (event === 'SIGNED_OUT' || (userId !== undefined && userId !== nextUserId)) {
+      agentSessionVersion += 1
+      rowMutations.clear()
+      useAgentStore.setState({ agents: [], accountId: null, isAdmin: false, tokenBalance: 0, profileResolved: false, hydrated: false })
+    }
+    userId = nextUserId
+  })
+  useAgentStore.subscribe((state, previous) => {
+    if (previous.accountId && state.accountId !== previous.accountId) {
+      agentSessionVersion += 1
+      rowMutations.clear()
+    }
+  })
+}

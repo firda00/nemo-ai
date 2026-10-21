@@ -240,15 +240,19 @@ export default function AgentsPage() {
           <h1 className="text-2xl font-normal tracking-tight text-text">{teamsView ? t('agentsPage.teamsTitle') : t('agentsPage.agentsTitle')}</h1>
           <p className="mt-1 text-sm text-muted">{teamsView ? t('agentsPage.teamsSubtitle') : t('agentsPage.agentsSubtitle')}</p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <Button to="/app/employees" variant="secondary" size="md"><Bot size={16} />{t('employees.browse')}</Button>
         <Button to="/app?create=team" size="md">
           <Plus size={16} /> {t('agentsPage.createTeam')}
         </Button>
+        </div>
       </div>
 
       <nav className="mt-5 flex w-full gap-1 overflow-x-auto rounded-2xl border border-white/8 bg-panel/70 p-1 sm:w-fit" aria-label={t('teamOffice.navTeams')}>
         {[
           { to: '/app/agents', label: t('teamOffice.office'), icon: LayoutGrid, active: officeView },
           { to: '/app/teams', label: t('teamOffice.navTeams'), icon: List, active: teamsView },
+          { to: '/app/approvals', label: t('approvals.title'), icon: ShieldCheck, active: false },
           { to: '/app?create=team', label: t('teamOffice.builder'), icon: Sparkles, active: false },
         ].map((tab) => (
           <NavLink
@@ -412,10 +416,10 @@ export default function AgentsPage() {
                         <MenuBtn
                           icon={Copy}
                           label={t('platform.agents.duplicate')}
-                          onClick={() => {
-                            duplicateAgent(a.id)
+                          onClick={async () => {
                             setMenu(null)
-                            toast(t('platform.toast.duplicated'))
+                            const result = await duplicateAgent(a.id)
+                            toast(result.error ? t('employees.saveError') : t('platform.toast.duplicated'))
                           }}
                         />
                         <MenuBtn

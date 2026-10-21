@@ -24,6 +24,7 @@ import { marketplaceEvidenceBlock } from '../_shared/marketplaceData.ts'
 import { storeSnapshot, type StoreSnapshot } from '../_shared/marketplaceSnapshot.ts'
 import { chooseExecutionPlan } from '../_shared/executionBudget.ts'
 import { validateDependencies } from '../_shared/executionDag.ts'
+import { MIN_STAFF_SPECIALISTS, MAX_STAFF_SPECIALISTS, staffCandidates } from '../_shared/staffRoster.ts'
 import { embedText } from '../_shared/knowledge.ts'
 import { memoryForPhase, type Claim, type Phase, type RecallOutcome } from '../_shared/orgMemory.ts'
 import { GoalSchema } from '../_shared/goal.ts'
@@ -841,7 +842,7 @@ ${artifacts.length === 0
       const translation = await translateBrief(goal, 'staff:translation')
       const enBrief = translation?.content ?? ''
       const staffSystem =
-`You are Nemo's Team Architect. Nemo is a B2B platform that turns one user GOAL into a running team of AI specialist sub-agents. Given a GOAL, dynamically design a dependency graph of 2-7 specialists whose COMBINED work directly accomplishes that GOAL and produces EXACTLY the deliverables it names. Use the smallest competent team: add specialists only for distinct expertise the goal actually requires.
+`You are Nemo's Team Architect. Nemo is a B2B platform that turns one user GOAL into a running team of AI specialist sub-agents. Given a GOAL, dynamically design a dependency graph of ${MIN_STAFF_SPECIALISTS}-${MAX_STAFF_SPECIALISTS} specialists whose COMBINED work directly accomplishes that GOAL and produces EXACTLY the deliverables it names. Use the smallest competent team: add specialists only for distinct expertise the goal actually requires.
 
 ABSOLUTE RULE — GOAL FIDELITY (highest priority, overrides everything below):
 - Never reinterpret, broaden, narrow, or replace the GOAL, and never swap the requested deliverable for an easier or "better" adjacent one. If the GOAL is not in English, first understand it precisely in its own language, then design to its literal intent.
@@ -849,7 +850,7 @@ ABSOLUTE RULE — GOAL FIDELITY (highest priority, overrides everything below):
 
 TEAM STRUCTURE — ROLE SEPARATION IS THE BACKBONE. Build distinct, non-overlapping roles; parallelize only genuinely independent work streams and concentrate reasoning at the two ends:
 1. MANAGER / LEAD PLANNER (always first): the team manager who owns the outcome. Decomposes the GOAL into an explicit plan, the exact deliverable specification, and the acceptance criteria (the checklist the final output must pass), assigns each downstream specialist its slice, and is accountable for the final delivery. Front-load the hardest thinking here — "what exactly must exist at the end," in what format and scope. Give this role a clear manager/lead title.
-2. EXECUTOR(S) (one to five): do the concrete production work — research, drafting, data assembly, building, computing, outreach — filling in the substance per the plan. Split executors only when the GOAL has genuinely separable work streams; keep their outputs non-overlapping. Scale their number to the GOAL's complexity and never add filler roles.
+2. EXECUTOR(S) (one to ${MAX_STAFF_SPECIALISTS - 2}): do the concrete production work — research, drafting, data assembly, building, computing, outreach — filling in the substance per the plan. Split executors only when the GOAL has genuinely separable work streams; keep their outputs non-overlapping. Scale their number to the GOAL's complexity and never add filler roles.
 3. REVIEWER / QA (always last, MANDATORY): verifies the finished deliverable line-by-line against the exact GOAL and the planner's acceptance criteria (format, counts, fields, scope) BEFORE delivery, returns it with specific fixes if anything is missing or off-goal, and only then approves. A team without a dedicated reviewer is invalid. Minimum team = Planner + Executor + Reviewer.
 
 TYPED HANDOFFS — multi-agent systems fail at the seams, so make every seam explicit. In each specialist's "tasks", state the contract in this order:
@@ -902,11 +903,11 @@ OUTPUT CONTRACT:
       for (let attempt = 0; attempt < 3 && subagents.length === 0; attempt++) {
         const attemptMsgs: ChatMsg[] = attempt === 0
           ? msgs
-          : [...msgs, { role: 'system', content: 'Your previous reply could not be parsed. Reply with ONLY the raw JSON object {"subagents":[...]} — no prose, no markdown, no code fences, and make sure it is complete and valid.' }]
+          : [...msgs, { role: 'system', content: `Your previous reply was not a valid team. Reply with ONLY the raw JSON object {"subagents":[...]} containing ${MIN_STAFF_SPECIALISTS}-${MAX_STAFF_SPECIALISTS} specialists, including a planner, executor, and reviewer. Use valid dependencies on earlier indexes. No prose, markdown, or code fences; make sure every member and the complete JSON are valid.` }]
         const r = await meteredCall({ apiKey: orKey, model: managerModel, messages: attemptMsgs, temperature: attempt === 0 ? 0.4 : 0.2, maxTokens: 3500, fallbackModel: PRIMARY_MODEL }, action, `main:${attempt}`)
         const parsed = extractJson(r.content)
-        const rawSubs = Array.isArray(parsed?.subagents) ? (parsed!.subagents as Array<Record<string, unknown>>) : []
-        const candidates = rawSubs.filter((s) => s && typeof s.role === 'string').slice(0, MAX_SYNTH_STEPS)
+        const candidates = staffCandidates(parsed?.subagents)
+        if (!candidates) continue
         const mapped = candidates.map((s, index) => {
             const dependencies = validateDependencies(s.depends_on, index)
             if (!dependencies) return null

@@ -138,7 +138,8 @@ Deno.serve(async (req) => {
           const since = new Date(nowMs); since.setHours(0, 0, 0, 0)
           const [leads, activeRuns, approvals] = await Promise.all([
             db.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', since.toISOString()),
-            db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action']),
+            // waiting_compute — активные документные задания входят в «активные прогоны»
+            db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action', 'waiting_compute']),
             db.from('approval_requests').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'pending'),
           ])
           const summary = await generateMorningBriefSummary(accountId, {

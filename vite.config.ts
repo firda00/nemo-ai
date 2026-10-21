@@ -57,5 +57,17 @@ export default defineConfig(({ command, mode }) => {
     }
   }
 
-  return { plugins: [react()] }
+  return {
+    plugins: [react()],
+    // This is a single-entry SPA. Generated acceptance HTML and standalone test
+    // harnesses under agent-hub are not application dependency-scan entries.
+    optimizeDeps: { entries: ['index.html'] },
+    server: {
+      watch: {
+        // Evidence and disposable runtime data can contain thousands of files;
+        // writes there must not trigger application HMR or recursive watching.
+        ignored: ['**/agent-hub/artifacts/**', '**/agent-hub/**/.data/**'],
+      },
+    },
+  }
 })

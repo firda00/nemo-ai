@@ -25,9 +25,30 @@ assert.deepEqual(classified, sourceFunctions, 'every Edge Function directory mus
 // необходимости: ни платёжный провайдер, ни незалогиненный посетитель формы не пришлют JWT
 // Supabase; авторизация своя — Basic/подпись у касс, honeypot + HMAC-лимит с обязательным перцем
 // у waitlist.
-assert.equal(publicFunctions.length, 37)
-assert.equal(authenticatedFunctions.length, 53)
+// 39: document-artifact-upload accepts a scoped worker token, not a Supabase user JWT.
+assert.equal(publicFunctions.length, 39)
+// 54 после daily-briefing (Step 2a: настройки + предпросмотр под JWT владельца),
+// 55 после margin-report (маржинальный отчёт из XLSX-вложения в чате),
+// 56 после reminders (месячные напоминания: список/сохранение расписаний).
+// 57: document-jobs exposes user enqueue/status/download behind JWT verification.
+assert.equal(authenticatedFunctions.length, 57)
 assert.deepEqual(excludedFunctions, ['qtest'])
+// daily-briefing обязан ехать вместе со своей миграцией и UI: выпадение из манифеста означает
+// задеплоенную таблицу и панель при отсутствующей функции.
+assert.ok(authenticatedFunctions.includes('daily-briefing'), 'daily-briefing must deploy as an authenticated function')
+assert.match(config, /\[functions\.daily-briefing\]\s*\r?\n\s*verify_jwt\s*=\s*true/, 'daily-briefing must be explicit verify_jwt=true in config.toml')
+// margin-report принимает финансовые файлы — деплой без verify_jwt открыл бы приём байтов всем.
+assert.ok(authenticatedFunctions.includes('margin-report'), 'margin-report must deploy as an authenticated function')
+assert.match(config, /\[functions\.margin-report\]\s*\r?\n\s*verify_jwt\s*=\s*true/, 'margin-report must be explicit verify_jwt=true in config.toml')
+// reminders управляет расписаниями отправок — без JWT это принимал бы кто угодно.
+assert.ok(authenticatedFunctions.includes('reminders'), 'reminders must deploy as an authenticated function')
+assert.match(config, /\[functions\.reminders\]\s*\r?\n\s*verify_jwt\s*=\s*true/, 'reminders must be explicit verify_jwt=true in config.toml')
+assert.ok(authenticatedFunctions.includes('document-jobs'), 'document-jobs must require a user JWT')
+assert.match(config, /\[functions\.document-jobs\]\s*\r?\n\s*verify_jwt\s*=\s*true/, 'document-jobs must retain gateway JWT verification')
+assert.ok(publicFunctions.includes('document-artifact-upload'), 'worker artifact upload must deploy with its own token validation')
+const documentUpload = fs.readFileSync(path.join(functionsRoot, 'document-artifact-upload', 'index.ts'), 'utf8')
+assert.match(documentUpload, /documentToken\.length < 32/, 'worker upload must fail closed without its scoped token')
+assert.match(documentUpload, /constantTimeTokenMatch\(provided, documentToken\)/, 'worker upload must verify the provided token')
 assert.ok(Object.values(manifest.excluded).every((reason) => typeof reason === 'string' && reason.length >= 20), 'every exclusion needs a concrete reason')
 
 for (const fn of publicFunctions) {
@@ -40,7 +61,7 @@ assert.match(deploy, /\$edgeManifest\.authenticated/)
 
 const knowledgeIndex = fs.readFileSync(path.join(functionsRoot, 'knowledge-index', 'index.ts'), 'utf8')
 assert.match(knowledgeIndex, /!CRON_SECRET\s*\|\|/, 'public knowledge indexing cron must fail closed without a configured secret')
-for (const fn of ['commerce-worker', 'commerce-digest', 'org-memory-worker']) {
+for (const fn of ['commerce-worker', 'commerce-digest', 'org-memory-worker', 'daily-briefing-worker']) {
   const source = fs.readFileSync(path.join(functionsRoot, fn, 'index.ts'), 'utf8')
   assert.match(source, /!CRON(?:_SECRET)?\s*\|\|/, `public ${fn} cron must fail closed without a configured secret`)
   assert.match(source, /403/, `public ${fn} must reject unauthorized callers`)

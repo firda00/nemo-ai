@@ -3,6 +3,8 @@ export interface AutonomousInputArtifact {
   content: string
   originalChars: number
   truncated: boolean
+  /** Data URL for a pasted image. Text-only artifacts leave this empty. */
+  imageData?: string
 }
 
 export const MAX_AUTONOMOUS_INPUT_FILES = 4

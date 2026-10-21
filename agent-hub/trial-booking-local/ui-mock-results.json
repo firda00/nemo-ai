@@ -1,0 +1,13 @@
+{
+  "kind": "MOCK-mounted-ui-only",
+  "realAuth": false,
+  "realBackend": false,
+  "modelCalls": 0,
+  "checks": [
+    "execute returned completed booking but failed readback shows error and never confirmation",
+    "retry reads existing operation without another request or execution",
+    "remount restores saved operation and reads persisted confirmation",
+    "switch user removes old booking confirmation"
+  ],
+  "status": "passed"
+}

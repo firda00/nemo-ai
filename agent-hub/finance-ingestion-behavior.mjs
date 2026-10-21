@@ -24,7 +24,7 @@ const excel = FinanceInputSourceSchema.parse({
 })
 const pdf = FinanceInputSourceSchema.parse({
   format: 'pdf_json', source_id: 'statement-pdf', imported_at: importedAt, default_currency: 'UZS', amount_scale: 100,
-  pages: [{ page: 4, text: 'Statement', tables: [[{ date: '2026-08-04', type: 'expense', amount: 10000, account: 'main', category: 'Bank fee', group: 'bank fee', reference: 'P-1' }]] }],
+  pages: [{ page: 4, text: '', tables: [[{ date: '2026-08-04', type: 'expense', amount: 10000, account: 'main', category: 'Bank fee', group: 'bank fee', reference: 'P-1' }]] }],
 })
 const ingested = ingestFinanceSources([csv, excel, pdf], workspaceId)
 assert.equal(ingested.transactions.length, 4, JSON.stringify(ingested.rejected))

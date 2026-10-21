@@ -22,6 +22,7 @@ const ownerFn = read('supabase/functions/org-memory/index.ts')
 const memoryPage = read('src/pages/app/MemoryPage.tsx')
 const app = read('src/App.tsx')
 const appLayout = read('src/components/layout/AppLayout.tsx')
+const settingsPage = read('src/pages/app/SettingsPage.tsx')
 const i18n = read('src/i18n/extra.ts')
 const siteSmoke = read('agent-hub/site-smoke.mjs')
 const bridge = read('supabase/migrations/20260807270000_commerce_decision_bridge.sql')
@@ -432,11 +433,15 @@ const checks = [
     deploy.includes('20260807260000_org_memory_owner.sql')],
 
   // Страница была задеплоена без пункта в меню: маршрут существовал, дойти до него было нельзя.
-  // Комментарий над списком навигации говорит ровно это — «every released workflow must remain
-  // reachable», — и его пришлось нарушить, чтобы он заработал как проверка.
-  ['the memory screen is reachable from the navigation, not only by URL',
-    /\{ to: '\/app\/memory'/.test(appLayout)
-    && /appLayout\.navMemory/.test(appLayout)
+  // Позже сайдбар осознанно упростили до трёх пунктов, и вход переехал в настройки (вкладка
+  // профиля, панель воркспейса). Проверяем НАСТОЯЩУЮ переведённую ссылку, а не только маршрут:
+  // регресс «маршрут есть, дойти нельзя» уже случался дважды.
+  // Цепочка целиком: сайдбар ведёт на /app/settings, а настройки — на /app/memory. Выпадение
+  // любого звена снова делает экран памяти недостижимым.
+  ['the memory screen is reachable from settings, not only by URL',
+    /\{ to: '\/app\/settings'/.test(appLayout)
+    && /to="\/app\/memory"/.test(settingsPage)
+    && /appLayout\.navMemory/.test(settingsPage)
     && ['navMemory": "Tashkilot xotirasi', 'navMemory": "Память компании', 'navMemory": "Company memory']
         .every((label) => i18n.includes(label))],
 

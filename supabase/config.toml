@@ -53,6 +53,33 @@ verify_jwt = true
 [functions.agent-evals]
 verify_jwt = true
 
+# Daily briefing (Step 2a): settings + read-only preview under the user's session JWT.
+[functions.daily-briefing]
+verify_jwt = true
+
+# Daily briefing delivery worker (Step 2b): called by pg_cron with x-cron-secret — a Supabase JWT
+# cannot come from cron, so the function fails closed on its own secret (constant-time).
+[functions.daily-briefing-worker]
+verify_jwt = false
+
+# Margin report from a chat XLSX attachment — deterministic compute under the user's session JWT.
+[functions.margin-report]
+verify_jwt = true
+
+# Monthly reminder schedules (list/save) under the user's session JWT; all writes go through
+# the reviewed reminder_save_schedule RPC.
+[functions.reminders]
+verify_jwt = true
+
+# Document enqueue/status/download uses the signed-in user's Supabase JWT.
+[functions.document-jobs]
+verify_jwt = true
+
+# Render workers use NEMO_DOCUMENT_WORKER_TOKEN, verified inside the upload handler.
+# They cannot supply a Supabase user JWT; the handler rejects a missing or wrong token.
+[functions.document-artifact-upload]
+verify_jwt = false
+
 # Test sandbox — runs an agent config through the LLM (no persistence).
 [functions.test-agent]
 verify_jwt = true

@@ -18,6 +18,7 @@ assert.doesNotMatch(page, /update\(\{ model: selectedModel \}\)\.eq\('department
 // The picker must offer the same registry as the rest of the product, with premium marked.
 assert.match(page, /PROVIDERS\.map/, 'models come from the single shared registry')
 assert.match(page, /model\.premium \? ' 💎' : ''/, 'premium models must be visibly marked')
-assert.match(page, /Plan limits are enforced by the server when the team runs/, 'the UI must state that server-side plan gates remain authoritative')
+assert.match(page, /t\('teamDetailPage\.independentModels'\)/, 'the model picker must show the localized plan-limit explanation')
+assert.match(read('src/i18n/extra.ts'), /The server enforces plan limits when the team runs/, 'the explanation must retain server-side plan authority')
 
 console.log('Team model contracts passed.')

@@ -37,7 +37,8 @@ async function morningBriefFor(db: any, accountId: string) {
   since.setHours(0, 0, 0, 0)
   const [leads, activeRuns, completedTasks, pendingTasks, approvals] = await Promise.all([
     db.from('leads').select('id', { count: 'exact', head: true }).eq('account_id', accountId).gte('created_at', since.toISOString()),
-    db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action']),
+    // waiting_compute — активные документные задания; без него они пропадают из «активных»
+    db.schema('runtime').from('workflow_runs').select('id', { count: 'exact', head: true }).eq('account_id', accountId).in('current_state', ['queued', 'running', 'waiting_for_action', 'waiting_compute']),
     db.from('tasks').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'done').gte('updated_at', since.toISOString()),
     db.from('tasks').select('id', { count: 'exact', head: true }).eq('account_id', accountId).neq('status', 'done'),
     db.from('approval_requests').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('status', 'pending'),

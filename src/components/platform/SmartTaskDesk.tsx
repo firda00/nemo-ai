@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowUp,
@@ -28,15 +28,33 @@ import { cn } from '../../lib/cn'
 import { classifyTaskArtifact, explicitlyRequestsBrowserSubmission, type SmartArtifactKind } from '../../lib/smartArtifactIntent'
 import { MarketingCampaignStudio } from './MarketingCampaignStudio'
 import { FinanceCashFlowDashboard } from '../finance/FinanceCashFlowDashboard'
+import { MarginChatCard } from '../finance/MarginChatCard'
+import { DocumentChatCard } from '../documents/DocumentChatCard'
+import { classifyDocumentChatIntent, type DocumentChatIntent } from '../../lib/documentChatIntent'
+import { hasDocumentRecoveryIssue, listRecentDocumentJobs } from '../../lib/documentJobs'
+import { useAuth } from '../../context/AuthContext'
 import { ResearchNotebookHub } from '../research/ResearchNotebookHub'
 import { AutonomousRunner } from './AutonomousRunner'
 import { classifyChatEntityIntent, createEntityFromChat, type ChatCreatedEntity } from '../../lib/chatEntityFactory'
 import { useAgentStore } from '../../store/useAgentStore'
 import { LiveCodeSandboxArtifact } from './LiveCodeSandboxArtifact'
 import { runExtensionBrowserTask, type BrowserTaskResult } from '../../lib/extensionLink'
+import { DIRECT_ANSWER_MODEL, fetchDirectAnswer } from '../../lib/directAnswer'
+import { FRONTIER_MODELS, FRONTIER_EFFORTS, fetchFrontierAnswer, type FrontierEffort } from '../../lib/frontierChatClient'
+import { invokeScopedFunction } from '../../lib/scopedFunctionCall'
 import { isSupabaseEnabled, supabase } from '../../lib/supabase'
 import { Markdown } from '../ui/Markdown'
 import { VideoMontageArtifact } from './VideoMontageArtifact'
+import { TrialBookingChatCard } from './TrialBookingChatCard'
+import { isLocalTrialUrl } from '../../lib/trialBookingClient'
+import { hasTrialModelChat, trialModelChat, type TrialChatView } from '../../lib/trialModelChat'
+import { trialModelCopy } from '../../i18n/trialModel'
+import { trialStatusCopy } from '../../i18n/trialBooking'
+import { isCapabilityQuestion, isExplicitCreation, isDiscoveryCancellation, startChatDiscovery, advanceChatDiscovery, nextDiscoveryStep, discoveryPrompt, type DiscoveryState } from '../../lib/chatDiscovery'
+import { CHAT_HISTORY_LIMIT, readChatSession, writeChatSession, type SavedChatTurn } from '../../lib/chatSession'
+import { chatExperienceCopy } from '../../i18n/chatExperience'
+import { resolveChatScope } from '../../lib/chatScope'
+import { AttachmentPreview } from '../chat/AttachmentPreview'
 
 type ChatTurn = {
   id: number
@@ -50,9 +68,17 @@ type ChatTurn = {
   error?: boolean
   attachments?: File[]
   direct?: boolean
+  model?: string
+  marginFiles?: File[]
+  trialBooking?: boolean
+  trialBookingKey?: string
+  trialOperationOnly?: boolean
+  // submissionId — UUID момента отправки: идентичность ЭТОГО запроса (ретраи/таймауты держат
+  // его), новая отправка даже с тем же текстом — новый id и новый документ
+  documentJob?: DocumentChatIntent & { submissionId: string; files?: File[] }
 }
 
-const CHAT_FILE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.csv,.txt,.md,.json,.mp3,.m4a,.wav,.mp4'
+const CHAT_FILE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.csv,.tsv,.txt,.md,.json,.mp3,.m4a,.wav,.mp4'
 const CHAT_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 
 const fileToDataUrl = (file: Blob): Promise<string> => new Promise((resolve, reject) => {
@@ -86,31 +112,56 @@ function attachmentSize(bytes: number) {
   return bytes >= 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
-type DiscoveryState = {
-  step: 'goal' | 'channels' | 'format'
-  initialRequest: string
-  requestedKind: 'team' | 'agent' | null
-  goal?: string
-  channels?: string
-}
-
 const DISCOVERY_COPY = {
   ru: {
     goal: 'Начнём с цели. Какой конкретный результат должен давать агент или команда?',
     channels: 'С какими каналами, файлами или сервисами нужно работать? Например: Telegram, Google Drive, CRM, CSV или сайт.',
     format: 'Какой формат вам нужен: один узкий агент или команда специалистов?',
+    capabilities: `## Что умеет Nemo
+
+Здесь можно обсудить задачу, подготовить материалы и настроить AI-команду под конкретную цель.
+
+- **Вопросы и тексты:** объяснения, черновики и разбор изображений через подключённую модель.
+- **Файлы и расчёты:** загрузите исходные данные — в чате откроется подходящий инструмент для анализа или подготовки документа. Поддержка зависит от формата файла и доступного сервиса.
+- **AI-команда:** опишите результат и источники. Я помогу создать её конфигурацию; доступ к сервисам и готовность к работе проверяются отдельно.
+
+Telegram, Google Drive и CRM требуют подключения и разрешений владельца. Наличие пункта в интерфейсе не означает, что сервис уже подключён. Выполненное действие подтверждается сохранённым результатом.
+
+Можно начать так: «Объясни этот скриншот», «Проанализируй расходы по выписке» или «Создай команду для подготовки контента».`,
     progress: 'Настройка команды · вопрос {step} из 3',
   },
   uz: {
     goal: 'Maqsaddan boshlaymiz. Agent yoki jamoa qanday aniq natija berishi kerak?',
     channels: 'Qaysi kanallar, fayllar yoki servislar bilan ishlash kerak? Masalan: Telegram, Google Drive, CRM, CSV yoki sayt.',
     format: 'Qaysi format kerak: bitta maxsus agentmi yoki mutaxassislar jamoasimi?',
+    capabilities: `## Nemo nimalarni qila oladi
+
+Bu yerda vazifani muhokama qilish, material tayyorlash va aniq maqsad uchun AI-jamoani sozlash mumkin.
+
+- **Savol va matnlar:** ulangan model orqali tushuntirish, qoralama va rasmlarni tahlil qilish.
+- **Fayl va hisob-kitoblar:** manba maʼlumotlarini yuklang — chatda tahlil yoki hujjat tayyorlash vositasi ochiladi. Imkoniyatlar fayl formati va servisga bog‘liq.
+- **AI-jamoa:** kerakli natija va manbalarni yozing. Jamoa sozlamalari yaratiladi; servisga kirish va ishga tayyorlik alohida tekshiriladi.
+
+Telegram, Google Drive va CRM egasining ulashi va ruxsatini talab qiladi. Menyuda mavjudligi servis ulanganini anglatmaydi. Bajarilgan amal saqlangan natija bilan tasdiqlanadi.
+
+Masalan: «Bu skrinshotni tushuntir», «Ko‘chirmadagi xarajatlarni tahlil qil» yoki «Kontent tayyorlash uchun jamoa yarat».`,
     progress: 'Jamoani sozlash · 3 savoldan {step}-savol',
   },
   en: {
     goal: 'Let’s start with the goal. What concrete outcome should the agent or team deliver?',
     channels: 'Which channels, files, or services should it use? For example: Telegram, Google Drive, CRM, CSV, or a website.',
     format: 'Which format do you need: one focused agent or a team of specialists?',
+    capabilities: `## What Nemo can do
+
+Use this chat to discuss a task, prepare materials, and configure an AI team for a specific goal.
+
+- **Questions and writing:** explanations, drafts, and image analysis through a connected model.
+- **Files and calculations:** upload source data to open an analysis or document tool in the chat. Support depends on the file format and available service.
+- **AI teams:** describe the outcome and sources to create a team configuration. Service access and readiness to work are checked separately.
+
+Telegram, Google Drive, and CRM require connections and owner permissions. A menu entry does not prove a service is connected. Completed actions require a saved result as confirmation.
+
+Try “Explain this screenshot”, “Analyse expenses in this statement”, or “Create a team for content preparation”.`,
     progress: 'Team setup · question {step} of 3',
   },
 } as const
@@ -125,36 +176,136 @@ const ARTIFACT_META = {
 } as const
 
 export function SmartTaskDesk() {
+  const { user, loading, sessionGeneration } = useAuth()
+  if (loading) return null
+  // React discards the entire conversation, draft, files and active context together.
+  // Late closures belong to the old instance and cannot append to the next user's chat.
+  return <ScopedSmartTaskDesk key={`${user?.id ?? 'anonymous'}:${sessionGeneration}`} userId={user?.id ?? ''} />
+}
+
+function ScopedSmartTaskDesk({ userId }: { userId: string }) {
+  const { lang } = useI18n()
+  const trialMode = import.meta.env.DEV && import.meta.env.VITE_TRIAL_MODEL_CHAT === '1'
+  const [scope, setScope] = useState<{ ready: boolean; value: string | null; error: boolean }>({ ready: trialMode, value: null, error: false })
+  const [retry, setRetry] = useState(0)
+  useEffect(() => {
+    if (trialMode) return
+    const controller = new AbortController()
+    void resolveChatScope(userId, controller.signal).then(value => {
+      if (!controller.signal.aborted) setScope({ ready: true, value, error: false })
+    }).catch(() => { if (!controller.signal.aborted) setScope({ ready: true, value: null, error: true }) })
+    return () => controller.abort()
+  }, [userId, trialMode, retry])
+  if (!scope.ready) return <p role="status">{chatExperienceCopy[lang].checkingScope}</p>
+  if (scope.error) return <div role="alert"><p>{chatExperienceCopy[lang].scopeFailed}</p><button type="button" onClick={() => { setScope({ ready: false, value: null, error: false }); setRetry(value => value + 1) }}>{chatExperienceCopy[lang].retryScope}</button></div>
+  return <SessionSmartTaskDesk chatScope={scope.value} />
+}
+
+function SessionSmartTaskDesk({ chatScope }: { chatScope: string | null }) {
   const { t, lang } = useI18n()
+  const { user: authUser } = useAuth()
+  const trialMode = import.meta.env.DEV && import.meta.env.VITE_TRIAL_MODEL_CHAT === '1'
+  const [restored] = useState(() => {
+    try { return readChatSession(trialMode ? '' : chatScope ?? '', sessionStorage) }
+    catch { return { turns: [], discovery: null, model: 'fast', effort: 'low', historyFrom: 0, continuation: undefined } }
+  })
+  const experienceCopy = chatExperienceCopy[lang]
+  const [storageFailed, setStorageFailed] = useState(false)
+  const [sessionRevision, setSessionRevision] = useState(0)
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const addAgent = useAgentStore((state) => state.addAgent)
   const deleteAgent = useAgentStore((state) => state.deleteAgent)
   const [draft, setDraft] = useState('')
-  const [turns, setTurns] = useState<ChatTurn[]>([])
+  const [turns, setTurns] = useState<ChatTurn[]>(restored.turns)
   const [activeArtifactId, setActiveArtifactId] = useState<number | null>(null)
   const [activeEntity, setActiveEntity] = useState<ChatCreatedEntity | null>(null)
   const [creating, setCreating] = useState(false)
   const [answering, setAnswering] = useState(false)
-  const [discovery, setDiscovery] = useState<DiscoveryState | null>(null)
+  const [answerModel, setAnswerModel] = useState(restored.model)
+  const [answerEffort, setAnswerEffort] = useState<FrontierEffort>(restored.effort as FrontierEffort)
+  const continuation = useRef<string | undefined>(restored.continuation)
+  const historyFrom = useRef(restored.historyFrom)
+  const answerRequest = useRef<AbortController | null>(null)
+  const checkingScope = useRef(false)
+  const [discovery, setDiscovery] = useState<DiscoveryState | null>(restored.discovery)
   const [attachments, setAttachments] = useState<File[]>([])
   const [attachmentError, setAttachmentError] = useState('')
-  const turnId = useRef(0)
+  const turnId = useRef(Math.max(0, ...restored.turns.map(turn => turn.id)))
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const discoveryStartedFromUrl = useRef(false)
   const discoveryCopy = DISCOVERY_COPY[lang]
+  const modelMounted = useRef(true)
+  useEffect(() => {
+    if (trialMode || !authUser?.id || !chatScope) return
+    const savedTurns: SavedChatTurn[] = turns.flatMap(turn => turn.text && turn.id > 0 && !turn.error && !turn.trialBooking && !turn.artifact && !turn.entity && !turn.documentJob && !turn.marginFiles
+      ? [{ id: turn.id, role: turn.role, text: turn.text, direct: true as const, ...(turn.model ? { model: turn.model } : {}) }] : []).slice(-CHAT_HISTORY_LIMIT)
+    try { setStorageFailed(!writeChatSession(chatScope, { turns: savedTurns, discovery, model: answerModel, effort: answerEffort, historyFrom: historyFrom.current, continuation: continuation.current }, sessionStorage)) }
+    catch { setStorageFailed(true) }
+  }, [turns, discovery, answerModel, answerEffort, authUser?.id, trialMode, sessionRevision, chatScope])
+  const showTrialConversation = (view: TrialChatView) => {
+    if (!modelMounted.current) return
+    setTurns([...view.messages.map((m, index) => ({ id: index + 1, role: m.role, text: m.content, direct: true })),
+      ...(view.error ? [{ id: 9000, role: 'assistant' as const, text: view.error === 'WAITING_FOR_HUMAN_APPROVAL' ? trialStatusCopy[lang].waiting_for_approval : trialModelCopy[lang].stopped, direct: true }] : []),
+      { id: 9001, role: 'assistant', trialBooking: true, trialOperationOnly: true, trialBookingKey: view.operation?.operation_id ?? view.chatId, direct: true }])
+  }
+  useEffect(() => {
+    modelMounted.current = true
+    if (trialMode && authUser?.id && hasTrialModelChat(authUser.id)) {
+      void trialModelChat(authUser.id).then(showTrialConversation).catch(() => {
+        if (modelMounted.current) setAttachmentError(trialModelCopy[lang].failure)
+      })
+    }
+    return () => { modelMounted.current = false }
+    // The parent remounts this entire desk for every auth generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const lifetime = useRef<AbortController | null>(null)
+  useLayoutEffect(() => {
+    const controller = new AbortController()
+    lifetime.current = controller
+    return () => { controller.abort(); answerRequest.current?.abort() }
+  }, [])
+  const documentsRestoredFor = useRef<string | null>(null)
+
+  useEffect(() => {
+    // восстановление после перезагрузки: недавние документные отправки этого пользователя
+    // возвращаются карточками, которые ОПРАШИВАЮТ существующие задания по сохранённым
+    // метаданным (submissionId+jobId) — не перегенерируют. Один раз на личность, только в
+    // пустой чат; ходы чата по-прежнему не персистентны — восстанавливаются ЗАДАНИЯ.
+    const identity = authUser?.id ?? null
+    if (!identity || documentsRestoredFor.current === identity) return
+    documentsRestoredFor.current = identity
+    const recent = listRecentDocumentJobs(identity)
+    const recoveryIssue = hasDocumentRecoveryIssue(identity)
+    if (!recent.length && !recoveryIssue) return
+    const restored: ChatTurn[] = recent.map((job, index) => ({
+      // отрицательные id не сталкиваются со счётчиком новых ходов
+      id: -(index + 1) * 2,
+      role: 'assistant' as const,
+      copyKey: 'smartTaskDesk.documentRestored',
+      documentJob: { kind: job.kind, title: job.title, brief: job.brief, submissionId: job.submissionId },
+    }))
+    if (recoveryIssue) restored.push({ id: -999, role: 'assistant', error: true, text: {
+      ru: 'Часть сохранённых запросов файлов недоступна или повреждена. Автоматическая повторная генерация остановлена. Пришлите исходный материал, если нужен новый файл.',
+      uz: 'Saqlangan fayl so‘rovlarining bir qismi mavjud emas yoki buzilgan. Avtomatik qayta generatsiya to‘xtatildi. Yangi fayl kerak bo‘lsa, asl materialni yuboring.',
+      en: 'Some saved file requests are unavailable or damaged. Automatic regeneration has stopped. Send the original material if you need a new file.',
+    }[lang] })
+    setTurns((current) => [...current, ...restored.filter(turn => !turn.documentJob || !current.some(existing => existing.documentJob?.submissionId === turn.documentJob?.submissionId))])
+  }, [authUser?.id, lang])
 
   const askDiscoveryQuestion = (copy: string) => {
     const id = ++turnId.current
-    setTurns((current) => [...current.slice(-10), { id, role: 'assistant', text: copy }])
+    setTurns((current) => [...current.slice(-(CHAT_HISTORY_LIMIT - 1)), { id, role: 'assistant', text: copy }])
     window.setTimeout(() => composerRef.current?.focus(), 0)
   }
 
   const startDiscovery = (requestedKind: 'team' | 'agent' | null, initialRequest = '') => {
     setActiveEntity(null)
-    setDiscovery({ step: 'goal', initialRequest, requestedKind })
-    askDiscoveryQuestion(discoveryCopy.goal)
+    const state = startChatDiscovery(requestedKind, initialRequest)
+    setDiscovery(state)
+    askDiscoveryQuestion(discoveryCopy[state.step])
   }
 
   useEffect(() => {
@@ -183,34 +334,71 @@ export function SmartTaskDesk() {
   const runTask = async (text: string, forcedKind?: SmartArtifactKind) => {
     const selectedFiles = attachments
     const value = text.trim() || (selectedFiles.length ? t('smartTaskDesk.analyzeAttachments') : '')
-    if (!value || creating || answering) return
-    const entityIntent = classifyChatEntityIntent(value)
+    if (!value || creating || answering || checkingScope.current) return
+    if (chatScope && !trialMode) {
+      checkingScope.current = true
+      setAnswering(true)
+      try {
+        const current = await resolveChatScope(authUser?.id ?? '', lifetime.current!.signal)
+        if (lifetime.current?.signal.aborted) return
+        if (current !== chatScope) { setAttachmentError(experienceCopy.scopeChanged); return }
+      } catch {
+        if (!lifetime.current?.signal.aborted) setAttachmentError(experienceCopy.scopeFailed)
+        return
+      } finally {
+        checkingScope.current = false
+        if (!lifetime.current?.signal.aborted) setAnswering(false)
+      }
+    }
+    const entityIntent = isExplicitCreation(value) ? classifyChatEntityIntent(value) : null
     const hasVideo = selectedFiles.some((file) => file.type.startsWith('video/') || /\.mp4$/i.test(file.name))
     const asksForVideoEdit = /монтаж|смонтир|субтитр|motion|моушн|нарежь|обработай видео|edit (?:the )?video/i.test(value)
     const hasResearchSource = selectedFiles.some((file) => file.type.startsWith('audio/') || /\.(pdf|docx|xlsx|csv|txt|md|json)$/i.test(file.name))
-    const artifact = forcedKind ?? (hasVideo && asksForVideoEdit ? 'video-edit' : hasVideo || hasResearchSource ? 'research' : classifyTaskArtifact(value))
+    const artifact = forcedKind ?? (hasVideo && asksForVideoEdit ? 'video-edit' : hasVideo || hasResearchSource ? 'research' : classifyTaskArtifact(value, { hasAttachments: selectedFiles.length > 0 }))
+    const documentIntent = !forcedKind && !activeEntity ? classifyDocumentChatIntent(value) : null
+    const directRoute = !discovery && !entityIntent && !activeEntity && !artifact && !documentIntent && isSupabaseEnabled
+    const preparingImages = directRoute && selectedFiles.length > 0
+    if (preparingImages && (selectedFiles.length > 2 || selectedFiles.some(file=>!/^image\/(png|jpeg|webp|gif)$/.test(file.type) || file.size > CHAT_IMAGE_MAX_BYTES))) {
+      setAttachmentError(t('frontierChat.imagesLimit'))
+      return
+    }
     const stamp = turnId.current += 2
-    setTurns((current) => [...current.slice(-8), { id: stamp, role: 'user', text: value, attachments: selectedFiles }])
-    setDraft('')
-    setAttachments([])
+    setTurns((current) => [...current.slice(-(CHAT_HISTORY_LIMIT - 2)), { id: stamp, role: 'user', text: value, attachments: selectedFiles }])
+    if (!preparingImages) { setDraft(''); setAttachments([]) }
     setAttachmentError('')
-    if (discovery) {
-      if (discovery.step === 'goal') {
-        setDiscovery({ ...discovery, step: 'channels', goal: value })
-        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.channels }])
+    // Informational questions never become tool calls or answers to intake,
+    // including while an existing trial operation awaits human approval.
+    if (isCapabilityQuestion(value) && selectedFiles.length === 0) {
+      setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.capabilities, direct: true }])
+      window.setTimeout(() => composerRef.current?.focus(), 0)
+      return
+    }
+    if (trialMode && authUser?.id && (hasTrialModelChat(authUser.id) || /пробн[а-я]*\s+занят|trial\s+lesson|sinov\s+dars/i.test(value))) {
+      setAnswering(true)
+      try { showTrialConversation(await trialModelChat(authUser.id, value)) }
+      catch { if (modelMounted.current) setAttachmentError(trialModelCopy[lang].failure) }
+      finally { if (modelMounted.current) setAnswering(false) }
+      return
+    }
+    if (import.meta.env.DEV && isLocalTrialUrl(String(import.meta.env.VITE_SUPABASE_URL)) && /пробн[а-я]*\s+занят|trial\s+lesson|sinov\s+dars/i.test(value)) {
+      setTurns(current => [...current, { id: stamp + 1, role: 'assistant', trialBooking: true, direct: true }])
+      return
+    }
+    if (discovery && isDiscoveryCancellation(value)) {
+      setDiscovery(null)
+      setTurns(current => [...current, { id: stamp + 1, role: 'assistant', text: experienceCopy.setupCancelled, direct: true }])
+      return
+    }
+    if (discovery || entityIntent) {
+      const state = discovery ? advanceChatDiscovery(discovery, value) : startChatDiscovery(entityIntent, value)
+      const missing = nextDiscoveryStep(state)
+      if (missing) {
+        setDiscovery(state)
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy[missing] }])
         window.setTimeout(() => composerRef.current?.focus(), 0)
         return
       }
-      if (discovery.step === 'channels') {
-        setDiscovery({ ...discovery, step: 'format', channels: value })
-        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.format }])
-        window.setTimeout(() => composerRef.current?.focus(), 0)
-        return
-      }
-      const soloAnswer = /(?:один|соло|агент|solo|single|bitta|agent)/i.test(value)
-      const teamAnswer = /(?:команд|team|jamoa|специалист)/i.test(value)
-      const kind = soloAnswer ? 'agent' : teamAnswer ? 'team' : discovery.requestedKind ?? 'team'
-      const creationPrompt = `${kind === 'team' ? 'Создай команду' : 'Создай агента'}. Цель: ${discovery.goal}. Каналы и источники: ${discovery.channels}. Формат: ${value}. Исходный запрос: ${discovery.initialRequest}`
+      const creationPrompt = discoveryPrompt(state)
       setDiscovery(null)
       setCreating(true)
       try {
@@ -223,31 +411,86 @@ export function SmartTaskDesk() {
       }
       return
     }
-    if (entityIntent) {
-      setDiscovery({ step: 'goal', initialRequest: value, requestedKind: entityIntent })
-      setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: discoveryCopy.goal }])
-      window.setTimeout(() => composerRef.current?.focus(), 0)
+    // Explicit file creation takes precedence over a margin preview. Pass the entire batch;
+    // the document card either extracts every supported file or stops with a visible error.
+    if (documentIntent) {
+      setTurns((current) => [...current, {
+        id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.documentReady',
+        documentJob: { ...documentIntent, submissionId: crypto.randomUUID(), files: selectedFiles },
+      }])
+      setActiveArtifactId(null)
       return
     }
+    // margin intent + .xlsx wins BEFORE the generic routes: an active entity must not swallow
+    // the file, and the research classifier must not claim it. A spreadsheet WITHOUT margin
+    // words still goes to research as before. The branch claims the turn only when EVERY
+    // attachment is an .xlsx — each one gets its own card, nothing is silently discarded; a
+    // mixed batch falls through to research, which handles all the files together.
+    const marginIntent = /марж|рентабельн|прибыл|margin|profitab|marja|rentabel|foyda/i.test(value)
+    const marginXlsx = selectedFiles.filter((file) => /\.xlsx$/i.test(file.name))
+    if (!forcedKind && marginIntent && marginXlsx.length > 0) {
+      if (marginXlsx.length === selectedFiles.length) {
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', copyKey: 'smartTaskDesk.marginReady', marginFiles: marginXlsx }])
+        setActiveArtifactId(null)
+        return
+      }
+      // mixed batch: research below takes ALL the files — say so out loud instead of silently
+      // losing the margin route the user asked for
+      const noteId = turnId.current += 2
+      setTurns((current) => [...current, { id: noteId, role: 'assistant', copyKey: 'smartTaskDesk.marginMixedNote', direct: true }])
+    }
     if (!activeEntity && !artifact && isSupabaseEnabled) {
+      const controller = new AbortController()
+      answerRequest.current = controller
+      const alive = () => !lifetime.current?.signal.aborted && !controller.signal.aborted && answerRequest.current === controller
       setAnswering(true)
+      let imagesPrepared = false
       try {
         if (!supabase) throw new Error('auth')
-        const history = turns.flatMap((turn) => turn.text ? [{ role: turn.role, content: turn.text }] : []).slice(-10)
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith('image/') && file.size <= CHAT_IMAGE_MAX_BYTES).slice(0, 2)
+        const history = turns.flatMap((turn) => turn.id > historyFrom.current && !turn.error && turn.text ? [{ role: turn.role, content: turn.text }] : []).slice(-(CHAT_HISTORY_LIMIT - 1))
+        const imageFiles = selectedFiles
         const userContent = imageFiles.length
           ? [{ type: 'text', text: value }, ...await Promise.all(imageFiles.map(async (file) => ({ type: 'image_url', image_url: { url: await imageFileToDataUrl(file) } })))]
           : value
-        const { data: body, error } = await supabase.functions.invoke('cli-chat', {
-          body: { model: 'openai/gpt-4o-mini', messages: [...history, { role: 'user', content: userContent }], tools: [] },
-        })
-        const answer = typeof body?.message?.content === 'string' ? body.message.content.trim() : ''
-        if (error || !answer) throw new Error('answer')
-        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: answer, direct: true }])
+        // bounded: a hung function (or a hung error body) must release the answering state
+        // with an honest failure — this is a fast conversational call, not file processing
+        if (!alive() || !controller) return
+        const frontierModel = FRONTIER_MODELS.find(model => model.model === answerModel)
+        if (frontierModel && Array.isArray(userContent) && userContent.some(part=>'image_url' in part && part.image_url!.url.length > 400_000)) throw new Error('IMAGE_LIMIT')
+        imagesPrepared = true
+        if (preparingImages) { setDraft(current=>current===text ? '' : current); setAttachments(current=>current===selectedFiles ? [] : current) }
+        if (frontierModel) {
+          const selection = { provider: frontierModel.provider, model: frontierModel.model, effort: answerEffort }
+          const direct = await fetchFrontierAnswer(() => invokeScopedFunction(supabase!, 'cli-chat',
+            { selection, messages: [{role:'user',content:userContent}], tools:[], ...(continuation.current ? {continuation:continuation.current} : {}) },
+            {userId:authUser?.id ?? '',alive,signal:controller.signal},90_000), selection)
+          if (!alive()) return
+          if (!direct.ok) {
+            const reason = ['NEED_KEY','KEY_UNAVAILABLE','KEY_REJECTED'].includes(direct.code) ? 'needKey' : direct.code === 'UNSUPPORTED_CAPABILITY' ? 'unsupported' : ['INVALID_CONTINUATION','CONTEXT_LIMIT'].includes(direct.code) ? 'newConversation' : 'failed'
+            if (reason === 'newConversation') continuation.current = undefined
+            setTurns(current=>[...current,{id:stamp+1,role:'assistant',text:t(`frontierChat.${reason}`),error:true,direct:true,model:selection.model}])
+            return
+          }
+          continuation.current = direct.continuation
+          setTurns(current=>[...current,{id:stamp+1,role:'assistant',text:direct.text,direct:true,model:direct.model}])
+          return
+        }
+        const direct = await fetchDirectAnswer(() => invokeScopedFunction(supabase!, 'cli-chat',
+          { model: DIRECT_ANSWER_MODEL, messages: [...history, { role: 'user', content: userContent }], tools: [], ...(chatScope && !chatScope.startsWith('demo:') ? { contextAccountId: chatScope.split(':').at(-2) } : {}) },
+          { userId: authUser?.id ?? '', alive, signal: controller.signal }, 45_000))
+        if (!alive()) return
+        if (!direct.ok) throw new Error('answer')
+        setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: direct.text, direct: true }])
       } catch {
+        if (!alive()) return
+        if (preparingImages && !imagesPrepared) {
+          setAttachmentError(t('frontierChat.imagesLimit'))
+          setTurns(current=>current.filter(turn=>turn.id!==stamp))
+          return
+        }
         setTurns((current) => [...current, { id: stamp + 1, role: 'assistant', text: t('smartTaskDesk.answerFailed'), error: true, direct: true }])
       } finally {
-        setAnswering(false)
+        if (answerRequest.current === controller) { answerRequest.current = null; setAnswering(false) }
       }
       return
     }
@@ -272,9 +515,8 @@ export function SmartTaskDesk() {
     }
   }
 
-  const selectAttachments = (files: FileList | null) => {
-    if (!files?.length) return
-    const incoming = Array.from(files)
+  const appendAttachments = (incoming: File[]) => {
+    if (!incoming.length) return
     const supported = incoming.filter((file) => file.size > 0 && file.size <= CHAT_FILE_MAX_BYTES)
     setAttachments((current) => [...current, ...supported].slice(0, CHAT_FILE_LIMIT))
     setAttachmentError(
@@ -282,8 +524,37 @@ export function SmartTaskDesk() {
         ? t('smartTaskDesk.fileRejected')
         : attachments.length + supported.length > CHAT_FILE_LIMIT
           ? t('smartTaskDesk.fileLimit', { count: CHAT_FILE_LIMIT })
-          : '',
+        : '',
     )
+  }
+
+  const selectAttachments = (files: FileList | null) => {
+    if (!files?.length) return
+    appendAttachments(Array.from(files))
+  }
+
+  const onComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
+    const pastedImages = items.length ? items : Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'))
+
+    // Keep ordinary text paste native. Only image clipboard items become chat attachments.
+    if (!pastedImages.length) return
+    event.preventDefault()
+    const pastedText = event.clipboardData.getData('text/plain')
+    if (pastedText) {
+      const { selectionStart, selectionEnd } = event.currentTarget
+      setDraft(current => current.slice(0, selectionStart) + pastedText + current.slice(selectionEnd))
+    }
+    const stamp = Date.now()
+    appendAttachments(pastedImages.map((file, index) => {
+      if (file.name) return file
+      const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+      return new File([file], `clipboard-image-${stamp}-${index + 1}.${extension}`, { type: file.type, lastModified: file.lastModified })
+    }))
+    window.setTimeout(() => composerRef.current?.focus(), 0)
   }
 
   return (
@@ -328,6 +599,7 @@ export function SmartTaskDesk() {
                 {turn.direct && turn.role === 'assistant' && turn.text
                   ? <Markdown content={turn.text} />
                   : (turn.text ?? (turn.copyKey ? t(turn.copyKey) : ''))}
+                {turn.model && <p className="mt-2 text-[10px] text-fog">{FRONTIER_MODELS.find(model=>model.model===turn.model)?.label ?? turn.model}</p>}
                 {!!turn.attachments?.length && <div className="mt-2 flex flex-wrap gap-2">{turn.attachments.map((file, index) => {
                   const Icon = attachmentIcon(file)
                   return <span key={`${file.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-black/15 px-2 py-1 text-[10px] text-white/90"><Icon size={12} /><span className="max-w-48 truncate">{file.name}</span><span className="text-white/60">{attachmentSize(file.size)}</span></span>
@@ -343,9 +615,12 @@ export function SmartTaskDesk() {
                   onToggle={() => setActiveArtifactId((current) => current === turn.id ? null : turn.id)}
                 />
               )}
+              {turn.marginFiles?.map((file, index) => <MarginChatCard key={`${turn.id}:${index}`} runKey={turn.id * 8 + index} file={file} />)}
+              {turn.documentJob && <DocumentChatCard runKey={turn.id} kind={turn.documentJob.kind} title={turn.documentJob.title} brief={turn.documentJob.brief} submissionId={turn.documentJob.submissionId} files={turn.documentJob.files} />}
+              {turn.trialBooking && <TrialBookingChatCard key={turn.trialBookingKey} operationOnly={turn.trialOperationOnly} />}
               {turn.entity && !turn.teamRunGoal && <TeamArtifact entity={turn.entity} onOpen={() => navigate(turn.entity!.kind === 'team' ? `/app/teams/${turn.entity!.id}` : `/app/agents/${turn.entity!.id}`)} onWorkHere={() => setActiveEntity(turn.entity ?? null)} />}
               {turn.entity && turn.teamRunGoal && <TeamRunArtifact entity={turn.entity} goal={turn.teamRunGoal} />}
-              {!turn.artifact && !turn.entity && !turn.direct && turn.role === 'assistant' && !turn.error && (
+              {!turn.artifact && !turn.entity && !turn.marginFiles && !turn.documentJob && !turn.direct && turn.role === 'assistant' && !turn.error && (
                 <Link to="/app/teams" className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-ice/[0.08] px-3 py-2 text-xs font-semibold text-muted transition hover:border-accent-cyan/25 hover:text-text">
                   <Users size={14} />{t('smartTaskDesk.openTeams')}
                 </Link>
@@ -358,20 +633,41 @@ export function SmartTaskDesk() {
       </div>
 
       <div className="border-t border-ice/[0.07] bg-bg/20 p-3 sm:p-5">
-        {discovery && <div className="mb-3 flex items-center gap-2 rounded-xl border border-violet/20 bg-violet/[0.06] px-3 py-2 text-[11px] font-semibold text-violet"><Sparkles size={13} className="animate-pulse" />{discoveryCopy.progress.replace('{step}', discovery.step === 'goal' ? '1' : discovery.step === 'channels' ? '2' : '3')}</div>}
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-2 text-muted">{t('frontierChat.model')}
+            <select aria-label={t('frontierChat.model')} value={answerModel} disabled={trialMode || answering || creating} onChange={event=>{setAnswerModel(event.target.value);continuation.current=undefined;historyFrom.current=turnId.current+1}} className="max-w-full rounded-lg border border-ice/15 bg-bg px-2 py-2 text-text">
+              <option value="fast">{t('frontierChat.fast')}</option>
+              {FRONTIER_MODELS.map(model=><option key={model.model} value={model.model}>{model.label}</option>)}
+            </select>
+          </label>
+          {trialMode && <span className="text-xs text-muted" data-testid="trial-model-identity">OpenRouter · openai/gpt-4o-mini · OpenAI</span>}
+          {trialMode && <p className="w-full text-xs text-muted">{trialModelCopy[lang].note}</p>}
+          {answerModel !== 'fast' && <>
+            <select aria-label={t('frontierChat.effort')} value={answerEffort} disabled={answering || creating} onChange={event=>{setAnswerEffort(event.target.value as FrontierEffort);continuation.current=undefined;historyFrom.current=turnId.current+1}} className="rounded-lg border border-ice/15 bg-bg px-2 py-2 text-text">
+              {FRONTIER_EFFORTS.map(effort=><option key={effort} value={effort}>{t(`frontierChat.${effort}`)}</option>)}
+            </select>
+            <Link to="/app/providers" className="text-cyan underline underline-offset-2">{t('frontierChat.connect')}</Link>
+            <button type="button" disabled={answering} onClick={()=>{continuation.current=undefined;historyFrom.current=turnId.current+1;setSessionRevision(value=>value+1)}} className="text-muted underline underline-offset-2">{t('frontierChat.reset')}</button>
+            <p className="w-full text-[11px] leading-relaxed text-muted">{t('frontierChat.scope')}</p>
+          </>}
+          {answering && !trialMode && <button type="button" onClick={()=>{answerRequest.current?.abort();answerRequest.current=null;setAnswering(false);setTurns(current=>[...current,{id:++turnId.current,role:'assistant',text:t('frontierChat.stopped'),direct:true,error:true}])}} className="rounded-lg border border-ice/20 px-3 py-2 text-text">{t('frontierChat.stop')}</button>}
+        </div>
+        {discovery && <div role="status" className="mb-3 flex items-center gap-2 rounded-xl border border-violet/20 bg-violet/[0.06] px-3 py-2 text-[11px] font-semibold text-violet"><Sparkles size={13} />{experienceCopy.clarifying}: {discoveryCopy[discovery.step]}<button type="button" className="ml-auto underline" onClick={() => setDiscovery(null)}>{experienceCopy.cancelSetup}</button></div>}
+        {(answering || creating) && <p role="status" aria-live="polite" className="mb-2 text-xs text-muted">{creating ? experienceCopy.creating : experienceCopy.answering}</p>}
         {!turns.length && <div className="mb-3 flex flex-wrap gap-2">
           {suggestions.map((suggestion) => <button key={suggestion.kind} type="button" onClick={() => void runTask(suggestion.label, suggestion.kind)} className="rounded-xl border border-ice/[0.08] bg-card/[0.025] px-3 py-2 text-left text-xs text-muted transition hover:-translate-y-0.5 hover:border-accent-cyan/25 hover:text-text">{suggestion.label}</button>)}
         </div>}
         <form onSubmit={submit} className="relative rounded-2xl border border-ice/[0.1] bg-card/[0.04] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] focus-within:border-accent-cyan/30 focus-within:ring-2 focus-within:ring-accent-cyan/[0.06]">
           {!!attachments.length && <div className="flex flex-wrap gap-2 px-2 pb-1">{attachments.map((file, index) => {
             const Icon = attachmentIcon(file)
-            return <span key={`${file.name}-${index}`} className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-accent-cyan/15 bg-accent-cyan/[0.06] px-2.5 py-2 text-[11px] text-text"><Icon size={14} className="shrink-0 text-accent-cyan" /><span className="max-w-48 truncate">{file.name}</span><span className="text-fog">{attachmentSize(file.size)}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-md p-0.5 text-fog hover:bg-white/[0.06] hover:text-text" aria-label={t('smartTaskDesk.removeFile')}><X size={12} /></button></span>
+            return <span key={`${file.name}-${index}`} className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-accent-cyan/15 bg-accent-cyan/[0.06] px-2.5 py-2 text-[11px] text-text"><AttachmentPreview file={file} /><Icon size={14} className="shrink-0 text-accent-cyan" /><span className="max-w-48 truncate">{file.name}</span><span className="text-fog">{attachmentSize(file.size)}</span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-md p-0.5 text-fog hover:bg-white/[0.06] hover:text-text" aria-label={t('smartTaskDesk.removeFile')}><X size={12} /></button></span>
           })}</div>}
           <textarea
             ref={composerRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onComposerKeyDown}
+            onPaste={onComposerPaste}
             rows={2}
             placeholder={t('smartTaskDesk.placeholder')}
             className="min-h-16 w-full resize-none bg-transparent px-2 py-2 pb-10 pr-12 text-sm leading-6 text-text outline-none placeholder:text-fog"
@@ -381,6 +677,11 @@ export function SmartTaskDesk() {
           <button type="submit" disabled={(!draft.trim() && !attachments.length) || creating || answering} aria-label={t('smartTaskDesk.send')} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-accent-cyan text-bg transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-35"><ArrowUp size={17} /></button>
         </form>
         {attachmentError && <p role="alert" className="mt-2 px-1 text-[10px] text-amber">{attachmentError}</p>}
+        {!trialMode && <div className="mt-3 space-y-1 text-[11px] leading-5 text-muted">
+          {storageFailed || !chatScope ? <p role="alert">{experienceCopy.storageFailed}</p> : <p>{experienceCopy.memory}</p>}
+          {restored.turns.length > 0 && <p>{experienceCopy.restored}</p>}
+          {turns.length > 0 && !turns.some(turn => turn.artifact || turn.entity || turn.documentJob || turn.trialBooking || turn.marginFiles) && <button type="button" className="underline underline-offset-2" disabled={answering || creating} onClick={() => { continuation.current = undefined; historyFrom.current = 0; setTurns([]); setDiscovery(null); setDraft(''); setAttachments([]) }}>{experienceCopy.newConversation}</button>}
+        </div>}
         <p className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-fog"><MessageSquareText size={12} />{t('smartTaskDesk.routingHint')}</p>
       </div>
     </section>

@@ -12,7 +12,13 @@ const DashboardArtifactManifestSchema = ArtifactManifestSchema.pick({
   artifacts: true,
   provenance: true,
 }).strip()
-const DASHBOARD_ARTIFACT_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'video/mp4'])
+// OOXML added with the document-jobs chain: a docx/pptx approval artifact must not be
+// silently dropped from the dashboard response
+const DASHBOARD_ARTIFACT_MIME_TYPES = new Set([
+  'application/pdf', 'image/jpeg', 'video/mp4',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+])
 
 const MetricsSchema = z.object({
   inbox_total: z.number().int().nonnegative(),

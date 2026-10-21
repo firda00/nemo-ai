@@ -19,6 +19,18 @@ interface ConnectorItem {
 }
 
 const CONNECTORS: ConnectorItem[] = [
+  { id: 'openrouter', title: 'OpenRouter', description: 'Необязательный единый шлюз для моделей разных компаний.', tools: ['chat', 'image', 'video', 'voice'], provider: 'openrouter', color: '#8B7CF8' },
+  { id: 'openai', title: 'OpenAI', description: 'GPT Image и голос напрямую, без баланса OpenRouter.', tools: ['generate_image', 'text_to_speech'], provider: 'openai', color: '#10A37F' },
+  { id: 'anthropic', title: 'Anthropic', description: 'Claude для сложного анализа и текста.', tools: ['chat', 'reasoning'], provider: 'anthropic', color: '#D97757' },
+  { id: 'gemini', title: 'Google AI', description: 'Gemini, Imagen и Veo через отдельный API-ключ.', tools: ['chat', 'generate_image', 'generate_video'], provider: 'gemini', color: '#4285F4' },
+  { id: 'groq', title: 'Groq', description: 'Быстрый маршрут для простых вопросов.', tools: ['fast_chat'], provider: 'groq', color: '#F55036' },
+  { id: 'replicate', title: 'Replicate', description: 'Прямой запуск моделей видео и изображений.', tools: ['generate_video', 'generate_image'], provider: 'replicate', color: '#A78BFA' },
+  { id: 'fal', title: 'fal.ai', description: 'Каталог моделей изображений и видео.', tools: ['generate_image', 'generate_video'], provider: 'fal', color: '#F5C542' },
+  { id: 'heygen', title: 'HeyGen', description: 'Видео с говорящими аватарами.', tools: ['avatar_video'], provider: 'heygen', color: '#13C5B4' },
+  { id: 'elevenlabs', title: 'ElevenLabs', description: 'Озвучка, клонирование голоса и дубляж.', tools: ['text_to_speech', 'dubbing'], provider: 'elevenlabs', color: '#F59F00' },
+  { id: 'deepgram', title: 'Deepgram', description: 'Распознавание речи и подготовка субтитров.', tools: ['transcribe', 'subtitles'], provider: 'deepgram', color: '#6D5EF5' },
+  { id: 'bland', title: 'Bland.ai', description: 'Исходящие звонки голосового агента.', tools: ['make_call'], provider: 'bland', color: '#EC4899' },
+  { id: 'vapi', title: 'Vapi', description: 'Телефонные AI-агенты и звонки.', tools: ['make_call'], provider: 'vapi', color: '#22C55E' },
   { id: 'google', title: 'Google Workspace', description: 'Drive, Gmail, Calendar и Sheets для рабочих задач агента.', tools: ['search_files', 'read_file', 'send_draft', 'calendar_read', 'sheet_read'], provider: 'google', color: '#4285F4' },
   { id: 'telegram', title: 'Telegram', description: 'Несколько ботов, входящие диалоги, публикации и воронки.', tools: ['receive_message', 'send_message', 'schedule_post'], provider: 'telegram', color: '#2AABEE' },
   { id: 'hubspot', title: 'HubSpot', description: 'Контакты, сделки и безопасная передача лидов в CRM.', tools: ['find_contact', 'create_contact', 'create_deal'], provider: 'hubspot', color: '#FF7A59' },
@@ -33,7 +45,7 @@ const COPY = {
   ru: {
     tabs: { skills: 'Навыки', connectors: 'Подключения', plugins: 'Плагины' },
     eyebrow: 'Каталог возможностей', subtitle: 'Всё, что агенты могут использовать в работе.', search: 'Найти навык, сервис или плагин…',
-    connectorIntro: 'Обычные задачи работают без сторонних сервисов. Когда агенту понадобится файл, календарь, CRM или канал, Nemo запросит доступ в момент использования.',
+    connectorIntro: 'Единый центр ключей: подключайте OpenAI, Replicate, Google AI, голос, звонки и рабочие сервисы отдельно. Расходы идут напрямую через выбранного провайдера; OpenRouter не обязателен.',
     access: 'Доступные действия', authTitle: 'Доступ только по запросу', authText: 'Nemo подключает сервис только после вашего действия. Секреты хранятся на сервере и не попадают во frontend.', setup: 'Настроить подключение',
     skillsTitle: 'Навыки уже доступны агентам', skillsText: 'Выберите нужные навыки в настройках конкретного агента. Загруженные навыки остаются приватными.', addSkill: 'Настроить навыки',
     pluginsTitle: 'Проверяемые плагины', pluginsText: 'HTTPS и MCP-подключения проверяются перед сохранением. Плагин не получает серверные права автоматически.', allTools: 'Расширенные настройки', empty: 'Ничего не найдено', close: 'Закрыть', back: 'Назад', footer: 'Nemo подключает возможности к задаче, а не перегружает ими рабочий стол.',

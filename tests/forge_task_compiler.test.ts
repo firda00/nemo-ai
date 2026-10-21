@@ -37,6 +37,16 @@ assert.deepEqual(crmAction.steps.map((step) => step.type), ['research', 'quality
 const generic = compileTask('Проверь эту задачу', { totalBudgetCapUsd: 1 })
 assert.deepEqual(generic.steps.map((step) => step.type), ['research', 'quality_check'])
 
+// Explicit editable-format requests route to documents, never fall to research — the five
+// fixtures root reproduced against the compiled bundle (5 Sep 2026), plus the PDF control.
+for (const request of ['Сделай Word', 'Создай DOCX', 'Сделай PPTX', 'Word fayl yarat', 'PPTX tayyorla', 'Сделай PDF']) {
+  assert.deepEqual(
+    compileTask(request, { totalBudgetCapUsd: 1 }).steps.map((step) => step.type),
+    ['documents', 'quality_check'],
+    `${request} must compile to a documents step`,
+  )
+}
+
 assert.throws(() => compileTask('  '), /FORGE_PROMPT_TOO_SHORT/)
 assert.throws(() => compileTask('x'.repeat(16_385)), /FORGE_PROMPT_TOO_LONG/)
 assert.throws(

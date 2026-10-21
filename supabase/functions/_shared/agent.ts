@@ -14,6 +14,7 @@ import { amoCreateLead } from './amocrm.ts'
 import { buildLeadKeys, sanitizeLeadPatch } from './leadPatch.ts'
 import { runAgentTools } from './tools.ts'
 import { blocksExternalActions } from './productionE2E.ts'
+import { guardAgentAction, type AgentActionContext } from './agentActionPolicy.ts'
 import { roleSkillBlock } from './skills.ts'
 import { tgSend } from './telegram.ts'
 
@@ -129,11 +130,17 @@ export async function classifyRoute(apiKey: string, text: string, self: any, sib
 // `attempted` reports whether any HTTP call actually left the building: an attempted-but-failed
 // push is AMBIGUOUS (a timeout may still have landed remotely), which the caller must treat
 // differently from "no CRM was contacted at all".
-async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>): Promise<{ provider: string | null; attempted: boolean }> {
+async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, unknown>, actionContext: AgentActionContext): Promise<{ provider: string | null; attempted: boolean }> {
   let attempted = false
   try {
     if (await blocksExternalActions(db, accountId)) return { provider: null, attempted: false }
     const { data: keys } = await db.from('provider_keys').select('provider, api_key').eq('account_id', accountId).in('provider', ['bitrix24', 'hubspot', 'amocrm'])
+    if (!keys?.length) return { provider: null, attempted: false }
+    const decision = await guardAgentAction(db, accountId, 'lead_crm_push', { lead, providers: keys.map((key: any) => key.provider) }, actionContext)
+    if (decision) {
+      await db.from('tool_runs').insert({ account_id: accountId, tool: 'lead_crm_push', args: { agent_id: actionContext.agentId, dialogue_id: actionContext.dialogueId }, result: decision.result.slice(0, 1000), ok: decision.ok })
+      return { provider: null, attempted: false }
+    }
     const byP: Record<string, string> = {}
     for (const k of (keys ?? []) as any[]) {
       byP[k.provider] = await openSecret(k.api_key, providerSecretContext(accountId, k.provider))
@@ -175,7 +182,7 @@ async function pushLeadToCrm(db: any, accountId: string, lead: Record<string, un
   } catch { return { provider: null, attempted } }
 }
 
-async function extractLead(db: any, apiKey: string, dialogueId: string, history: any[], existing: Record<string, unknown>, rowId: string | null, wantFields: string[] = [], eager = false, accountId = ''): Promise<number> {
+async function extractLead(db: any, apiKey: string, dialogueId: string, history: any[], existing: Record<string, unknown>, rowId: string | null, wantFields: string[] = [], eager = false, accountId = '', agentId?: string): Promise<number> {
   // all lead writes go through tenant-verified RPCs, so the account is mandatory
   if (!accountId) return 0
   const convo = (history ?? []).map((m: any) => `${m.author === 'customer' ? 'Customer' : 'Agent'}: ${String(m.content ?? '')}`).join('\n').slice(-4000)
@@ -226,7 +233,7 @@ async function extractLead(db: any, apiKey: string, dialogueId: string, history:
     const claim = Array.isArray(claimData) ? claimData[0] : claimData
     if (claim?.claim_token) {
       // push the claimed row's CURRENT fields, not this turn's snapshot
-      const push = await pushLeadToCrm(db, accountId, (claim.lead_fields ?? fields) as Record<string, unknown>)
+      const push = await pushLeadToCrm(db, accountId, (claim.lead_fields ?? fields) as Record<string, unknown>, { agentId, dialogueId, requestKey: `lead_crm_push:${agentId ?? 'unknown'}:${rowId}` })
       if (push.provider) {
         const { data: finished, error: finishError } = await db.rpc('finish_lead_crm_push', { p_account_id: accountId, p_lead_id: rowId, p_token: claim.claim_token, p_provider: push.provider })
         if (finishError || finished !== true) console.error('lead push finish failed:', finishError ?? 'claim token no longer valid')
@@ -245,12 +252,20 @@ async function extractLead(db: any, apiKey: string, dialogueId: string, history:
 // Best-effort Telegram ping to the business admin when a dialogue is escalated.
 // Requires business_profiles.notify_chat_id set + any Telegram bot on the account.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function notifyEscalation(db: any, agent: any, lastCustomer: string, reason: string): Promise<void> {
+async function notifyEscalation(db: any, agent: any, lastCustomer: string, reason: string, dialogueId: string): Promise<void> {
   try {
     if (await blocksExternalActions(db, agent.account_id)) return
     const { data: bp } = await db.from('business_profiles').select('notify_chat_id').eq('account_id', agent.account_id).maybeSingle()
     const target = bp?.notify_chat_id
     if (!target) return
+    // In-app needs_operator state is already persisted by the caller. A separate
+    // Telegram notification carries customer data off-platform and needs approval.
+    const decision = await guardAgentAction(db, agent.account_id, 'escalation_notify', { recipient: String(target), customer_message: String(lastCustomer).slice(0, 300), reason },
+      { agentId: agent.id, dialogueId, requestKey: `escalation_notify:${agent.id}:${dialogueId}` })
+    if (decision) {
+      await db.from('tool_runs').insert({ account_id: agent.account_id, tool: 'escalation_notify', args: { agent_id: agent.id, dialogue_id: dialogueId }, result: decision.result.slice(0, 1000), ok: decision.ok })
+      return
+    }
     const { data: ch } = await db.from('channels').select('credentials').eq('agent_id', agent.id).eq('type', 'telegram').limit(1).maybeSingle()
     const token = ch?.credentials?.bot_token
     if (!token) return
@@ -674,7 +689,8 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
   if ((recent ?? 0) > RATE_LIMIT_PER_MIN) { diag.reason = 'rate_limited'; return '' }
 
   // Cost guard — stop when the account has no AI tokens left.
-  const { data: acc } = await db.from('accounts').select('token_balance, plan').eq('id', agent.account_id).single()
+  const { data: acc, error: accountError } = await db.from('accounts').select('token_balance, plan, blocked').eq('id', agent.account_id).single()
+  if (accountError || !acc || acc.blocked) { diag.reason = 'error'; return '' }
   if (acc && Number(acc.token_balance) <= 0) { diag.reason = 'no_tokens'; return '' }
 
   // Per-session cost guard — cap cumulative tokens for THIS dialogue; on exceed, hand off to a
@@ -752,7 +768,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
 
     // TOOL-USE (ALL agent types, incl. teams): if the account has connected tools and the
     // message asks to DO an action (create Google Sheet/Doc, send email, calendar, CRM),
-    // execute it for real and reply with the REAL result — instead of hallucinating a link.
+    // return the real read/approval/block result, without claiming a queued action ran.
     // pass the Telegram chat context so task tools can create remindable DB tasks in this chat
     const { data: dia } = await db.from('dialogues').select('channel_id, external_id, channel').eq('id', dialogueId).maybeSingle()
     const tgCtx = { dialogueId, ...(dia?.channel === 'telegram' && dia?.external_id ? { channelId: dia.channel_id as string, chatId: String(dia.external_id) } : {}) }
@@ -768,7 +784,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       ownerContext = ownerChat.length > 0 && ownerChat === tgCtx.chatId
       diag.ownerContext = ownerContext
     }
-    const toolRun = lastCustomer ? await runAgentTools(db, apiKey, agent.account_id, String(lastCustomer), history ?? [], agent.type, tgCtx, Array.isArray(agent.skills) ? agent.skills : [], ownerContext) : null
+    const toolRun = lastCustomer ? await runAgentTools(db, apiKey, agent.account_id, String(lastCustomer), history ?? [], agent.type, tgCtx, Array.isArray(agent.skills) ? agent.skills : [], ownerContext, { agentId: agent.id, dialogueId, channelId: tgCtx?.channelId }) : null
     if (toolRun?.ran) {
       replyText = String(toolRun.result ?? 'Готово.')
       tokensUsed = toolRun.tokens
@@ -785,7 +801,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
       // caller will send its existing graceful operator-handoff message.
       if (team.humanReviewReason) {
         await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
-        await notifyEscalation(db, agent, String(lastCustomer), team.humanReviewReason)
+        await notifyEscalation(db, agent, String(lastCustomer), team.humanReviewReason, dialogueId)
         if (traceSteps.length) {
           const { error: traceErr } = await db.from('messages').insert({
             dialogue_id: dialogueId,
@@ -838,7 +854,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
         const tesc = parseEscalation(tout.content)
         if (tesc.escalated) {
           await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
-          await notifyEscalation(db, tgt, String(lastCustomer), tesc.reason)
+          await notifyEscalation(db, tgt, String(lastCustomer), tesc.reason, dialogueId)
           if (tokensUsed) { await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model: tModel, dialogue_id: dialogueId, cost: estimateCostUsd(tModel, tokensUsed) }); await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed }) }
           return ''
         }
@@ -860,7 +876,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
         const esc = parseEscalation(out.content)
         if (!personal && esc.escalated) {
           await db.from('dialogues').update({ status: 'needs_operator' }).eq('id', dialogueId)
-          await notifyEscalation(db, agent, String(lastCustomer), esc.reason)
+          await notifyEscalation(db, agent, String(lastCustomer), esc.reason, dialogueId)
           if (tokensUsed) { await db.from('usage').insert({ account_id: agent.account_id, tokens: tokensUsed, model, dialogue_id: dialogueId, cost: estimateCostUsd(model, tokensUsed) }); await db.rpc('decrement_token_balance', { p_account: agent.account_id, p_amount: tokensUsed }) }
           diag.reason = 'escalated'
           return '' // caller sends the graceful "operator will join" message to the customer
@@ -873,7 +889,7 @@ export async function buildReply(db: any, openrouterKey: string, agent: any, dia
     // actually stated — no invention) so a lead is persisted and can be handed off / pushed to CRM.
     if (isCustomerFacing && !personal && replyText) {
       const eager = ['qualifier', 'sales', 'booking'].includes(agent.type)
-      try { tokensUsed += await extractLead(db, apiKey, dialogueId, history, knownLead, leadRowId, leadFields, eager, agent.account_id) } catch { /* best effort */ }
+      try { tokensUsed += await extractLead(db, apiKey, dialogueId, history, knownLead, leadRowId, leadFields, eager, agent.account_id, replyAgentId ?? agent.id) } catch { /* best effort */ }
     }
 
     if (replyText) {

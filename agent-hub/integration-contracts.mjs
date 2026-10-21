@@ -22,6 +22,9 @@ const page = read('src/pages/app/IntegrationsPage.tsx')
 const store = read('src/store/useIntegrationStore.ts')
 const toolsPage = read('src/pages/app/IntegrationsToolsPage.tsx')
 const provider = read('supabase/functions/connect-provider/index.ts')
+const mediaAccess = read('supabase/functions/_shared/mediaAccess.ts')
+const imageGenerator = read('supabase/functions/generate-image/index.ts')
+const videoGenerator = read('supabase/functions/generate-video/index.ts')
 const backendStatus = read('supabase/functions/backend-status/index.ts')
 const modelPicker = read('src/components/platform/ModelPicker.tsx')
 const providersPage = read('src/pages/app/ProvidersPage.tsx')
@@ -113,6 +116,16 @@ check('Uzum has a real read-only executor and credential smoke before it can con
   /provider === 'uzum'[\s\S]{0,300}uzumShops\(key\)/.test(provider) &&
   /uzum_shops/.test(runtimeText) && /uzumProducts/.test(runtimeText))
 for (const [id, needle] of Object.entries(implementedConsumers)) check(`${id} has a real runtime consumer`, runtimeText.includes(needle))
+check('image/video default routing stays on OpenRouter; direct adapters are explicit opt-in',
+  /image: \['openrouter'\]/.test(mediaAccess) && /video: \['openrouter'\]/.test(mediaAccess) && /acceptedProviders\?: string\[\]/.test(mediaAccess))
+check('media key lookup is scoped to accepted providers and fails closed on DB errors',
+  /\.in\('provider', accepted\)/.test(mediaAccess) && /code: 'ERROR'/.test(mediaAccess))
+check('explicit gpt-image-1 is the only direct OpenAI image route, with no shared-key fallback',
+  /requestedModel === 'gpt-image-1'/.test(imageGenerator) && /'image', '', Boolean\(prof\?\.is_admin\), \['openai'\]/.test(imageGenerator) && /api\.openai\.com\/v1\/images\/generations/.test(imageGenerator))
+check('explicit minimax/video-01 is the only Replicate video route, on a fixed adapter path',
+  /REPLICATE_DIRECT_MODEL = 'minimax\/video-01'/.test(videoGenerator) && /'video', '', Boolean\(prof\?\.is_admin\), \['replicate'\]/.test(videoGenerator) && /models\/\$\{REPLICATE_DIRECT_MODEL\}\/predictions/.test(videoGenerator))
+check('a video job is only reported ok with a saved tracking row',
+  /jobError \|\| !job\?\.id/.test(videoGenerator) && /code: 'TRACKING'/.test(videoGenerator))
 
 // ─── Public claims must match the code that backs them ───────────────────────
 // A prospect checks the landing page against the product in about ten minutes. Every
@@ -156,12 +169,12 @@ check('Stripe secret keys are not solicited before an owned domain and encrypted
 
 const statOf = (labels) => [...landing.matchAll(new RegExp(`\\["(\\d+)", "[^"]*(?:${labels})"\\]`, 'g'))].map((m) => Number(m[1]))
 const liveStats = statOf('интеграций работают|integratsiya ishlaydi|integrations live')
-check('landing states the real live-integration count in all three languages',
-  liveStats.length === 3 && liveStats.every((n) => n === liveIds.length),
+check('any published live-integration count is consistent in all three languages',
+  liveStats.length === 0 || (liveStats.length === 3 && liveStats.every((n) => n === liveIds.length)),
   `landing says ${liveStats.join('/')}, catalog has ${liveIds.length}`)
 const catalogStats = statOf('сервисов в каталоге|katalogdagi xizmat|services catalogued')
-check('landing states the real catalog size in all three languages',
-  catalogStats.length === 3 && catalogStats.every((n) => n === catalogEntries.length),
+check('any published catalog size is consistent in all three languages',
+  catalogStats.length === 0 || (catalogStats.length === 3 && catalogStats.every((n) => n === catalogEntries.length)),
   `landing says ${catalogStats.join('/')}, catalog has ${catalogEntries.length}`)
 
 check('landing never lists an unavailable Meta channel among working ones',

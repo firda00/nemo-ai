@@ -207,6 +207,8 @@ assert.match(
 )
 assert.match(runner, /use_skills: true/)
 assert.match(runner, /input_artifacts: runArtifacts/)
+assert.match(runner, /onComposerPaste/)
+assert.match(runner, /imageToDataUrl/)
 assert.match(runner, /marketplacePlanningWithoutData/)
 assert.doesNotMatch(
   runner,

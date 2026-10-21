@@ -1,5 +1,5 @@
 param(
-  [string]$Model = 'claude-fable-5[1m]',
+  [string]$Model = 'claude-fable-5-1',
   [switch]$SkipSetupCheck
 )
 

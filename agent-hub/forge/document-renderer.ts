@@ -3,12 +3,25 @@ import { z } from 'zod'
 import type { ForgeComputeProfile } from '../../src/types/forge-contracts.ts'
 import { MarpPresentationInputSchema } from '../documents/marp-renderer.ts'
 import { TypstDocumentInputSchema } from '../documents/typst-renderer.ts'
+import { DocxDocumentInputSchema } from '../documents/docx-assembler.ts'
+import { PptxPresentationInputSchema } from '../documents/pptx-assembler.ts'
 import { renderProfileBDocument } from '../workers/document-worker.ts'
 
 const DocumentInputSchema = z.discriminatedUnion('kind', [
   TypstDocumentInputSchema,
   MarpPresentationInputSchema,
+  DocxDocumentInputSchema,
+  PptxPresentationInputSchema,
 ])
+
+/** every MIME the profile-B chain can carry — worker, adapter and artifact ref stay in sync */
+export const FORGE_DOCUMENT_MIME_TYPES = [
+  'application/pdf',
+  'text/html',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+] as const
+export type ForgeDocumentMimeType = (typeof FORGE_DOCUMENT_MIME_TYPES)[number]
 
 export const ForgeDocumentRenderRequestSchema = z.object({
   accountId: z.string().uuid(),
@@ -26,7 +39,7 @@ export const ForgeDocumentArtifactRefSchema = z.object({
   stepId: z.string().uuid(),
   storagePath: z.string().min(1).max(512),
   name: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-  mimeType: z.enum(['application/pdf', 'text/html']),
+  mimeType: z.enum(FORGE_DOCUMENT_MIME_TYPES),
   sizeBytes: z.number().int().positive().max(64 * 1024 * 1024),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   engineVersion: z.string().min(1).max(128),
@@ -43,7 +56,7 @@ export interface ForgeDocumentArtifactRegistrar {
     executionId: string
     stepId: string
     name: string
-    mimeType: 'application/pdf' | 'text/html'
+    mimeType: ForgeDocumentMimeType
     bytes: Uint8Array
     sha256: string
   }): Promise<{ storagePath: string }>

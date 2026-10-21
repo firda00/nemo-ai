@@ -10,7 +10,7 @@ export function MarketingFooter() {
     {
       title: t('landing.footer.product'),
       links: [
-        { label: t('nav.howItWorks'), href: '/#how' },
+        { label: t('nav.howItWorks'), href: '/#product' },
         { label: t('nav.features'), href: '/#features' },
         { label: t('nav.pricing'), href: '/pricing' },
         { label: t('nav.faq'), href: '/#faq' },
@@ -19,8 +19,8 @@ export function MarketingFooter() {
     {
       title: t('landing.footer.company'),
       links: [
-        { label: 'Nemo AI', href: '#' },
-        { label: t('nav.scenarios'), href: '/#scenarios' },
+        { label: 'Nemo AI', href: '/' },
+        { label: t('nav.scenarios'), href: '/#templates' },
       ],
     },
     {
@@ -46,7 +46,7 @@ export function MarketingFooter() {
           </div>
           {cols.map((c) => (
             <div key={c.title}>
-              <h4 className="text-sm font-medium text-text">{c.title}</h4>
+              <h2 className="text-sm font-medium text-text">{c.title}</h2>
               <ul className="mt-4 space-y-2.5">
                 {c.links.map((l) => (
                   <li key={l.label}>

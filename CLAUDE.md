@@ -64,13 +64,13 @@ Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
 
 ## Claude + Codex development team (REQUIRED)
 
-Start coordinated work through `agent-hub/start-team.ps1`. Claude is the team lead and implementation owner. Codex is the independent architect/reviewer exposed by the `codex-reviewer` MCP server.
+Current coordination follows `AGENTS.md` and `docs/AI_WORKFLOW.md` (user updated 2026-09-06). Codex owns the current implementation. Claude Fable 5.1 can perform explicitly delegated reviews or bounded implementation on exclusively assigned files. The legacy interactive `agent-hub/start-team.ps1` is only for a separately requested Claude-led session, not a prerequisite for every task.
 
 - Keep at most three Claude teammates active. Recruit only when parallel work is genuinely independent.
 - Every created team task must contain the exact fields `RECRUIT_REQUEST`, `ROLE`, `TASK`, `OWNED_PATHS`, `REASON`, and `DONE_WHEN`.
 - A file may be edited by only one Claude session at a time. The project hook enforces session-level file ownership.
-- Use Codex with `sandbox: read-only` for architecture and review. Do not ask Codex to edit while Claude teammates are editing.
+- Use read-only access for review. Do not write files owned by another active agent. A delegated review must not start another team or select unrelated work.
 - Reuse the feature's Codex `threadId` through `codex-reply`; store thread mappings in `agent-hub/state/codex-threads.json`.
-- Auth, RLS, migrations, billing, secrets, agent routing, external integrations, and deploy require Claude + Codex discussion before implementation and a second review after the diff exists.
+- Auth, RLS, migrations, billing, secrets, agent routing, external integrations, and deploy require independent review as specified in AGENTS.md. Keep unfinished review explicit when a provider is unavailable.
 - Never configure a reverse Claude MCP call from Codex. The allowed direction is Claude -> Codex only.
-- Before completion run `npm run quality`. Use the live agent eval only when external API usage is intended.
+- The implementation owner runs `npm run quality` after the final changes. Read-only reviewers inspect that evidence and run only independent focused probes, not another full gate. Nemo live API usage remains prohibited for this stage.

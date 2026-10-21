@@ -1,0 +1,66 @@
+{
+  "kind": "embedded-postgresql-supplemental",
+  "substituted": [
+    "Supabase auth.users/auth.uid infrastructure",
+    "pgcrypto digest wrapper uses PostgreSQL built-in sha256",
+    "realtime publication unavailable"
+  ],
+  "realAuthIntegration": false,
+  "concurrencyVerified": false,
+  "modelCalls": 0,
+  "tests": [
+    {
+      "name": "migration:20260624090000_init.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260627160000_account_blocked.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260709040000_bookings.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260803110000_owner_approval_queue.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260803160000_production_test_account.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260824120000_durable_runtime_phase1.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260824140000_durable_runtime_phase2_rpc.sql",
+      "status": "passed"
+    },
+    {
+      "name": "migration:20260908120000_trial_booking.sql",
+      "status": "passed"
+    },
+    {
+      "name": "request/approval/execution/readback/retry and mandatory audit (embedded SQL)",
+      "status": "passed"
+    },
+    {
+      "name": "full session refuses second booking (sequential, not concurrency)",
+      "status": "passed"
+    },
+    {
+      "name": "changed intent, unauthorized approval, rejected execution refused",
+      "status": "passed"
+    },
+    {
+      "name": "mandatory audit insert failure rolls back booking and operation result",
+      "status": "passed"
+    },
+    {
+      "name": "blocked and production-e2e guards enforced",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}
